@@ -87,7 +87,7 @@ https://github.com/GaoHu1997/NestCraft/releases/latest/download/nestcraft-win64.
 3. 可执行文件同目录存在 `uninstall.exe` → `installed`（NSIS 安装目录特征）。
 4. 其余 → `unsupported`（无法安全判定，不显示入口）。
 
-免安装版构建需在产物目录写入 `portable.marker`；本批不提供构建脚本，判定逻辑先就绪。
+免安装版构建由 `.github/workflows/release-windows.yml` 在发布包内写入 `portable.marker`，并同时生成同版本更新清单；本仓库不再手工准备该标记。
 
 ### 2.5 下载与校验
 
@@ -172,10 +172,11 @@ https://github.com/GaoHu1997/NestCraft/releases/latest/download/nestcraft-win64.
 | 大文件下载 | 无断点续传 | 本轮范围外；失败重下，`.part` 清理 |
 | 安装版替换时机 | 安装器可能在应用退出前开始 | 启动安装器后立即退出；安装器自身负责文件占用处理 |
 
-未决：Q-046-01 更新源、Q-046-02 安装器界面／UAC 接受度、Q-046-03 是否本批交付免安装构建脚本。三者均不阻塞代码结构，按默认值实现并在交付说明中标注。
+未决：Q-046-01 更新源（当前使用内置默认地址）、Q-046-02 安装器界面／UAC 接受度。Q-046-03（免安装构建脚本）已由 2026-11-20 的 GitHub Actions 发布流水线交付。
 
 ## 6. 变更记录
 
 | 日期 | 变更 | 依据 |
 | --- | --- | --- |
 | 2026-11-20 | 建立 LLD-CR046：自研清单＋SHA-256 更新、安装版／免安装版分叉、五态前端与命令契约 | 用户直接指令先需求设计后代码；UI-CR046-v1 已登记 |
+| 2026-11-20 | 交付 0.0.1 发布流水线：`.github/workflows/ci.yml` 做前端构建、`cargo check --all-targets`、`cargo test --lib`；`.github/workflows/release-windows.yml` 以 `--no-bundle` 构建 Windows x64 单文件免安装 exe，写入 `portable.marker`、生成 `nestcraft-win64.json` 并创建 Release，暂不构建安装包 | 用户要求版本调整为 0.0.1、发布到 GitHub、经 CI 检测并手动触发构建，现阶段只触发 win amd64 免安装 exe |

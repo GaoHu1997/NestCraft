@@ -1,5 +1,9 @@
 # 项目文档导航
 
+## 0.0.1 发布：Windows x64 免安装 exe（GitHub Actions）
+
+2026-11-20 用户要求版本调整为 0.0.1、发布到 GitHub、经 CI 检测并触发构建，现阶段只触发 win amd64 免安装 exe。三处版本号（`package.json`／`tauri.conf.json`／`Cargo.toml`）统一为 0.0.1；新增 [CI](../.github/workflows/ci.yml)（push／PR：前端类型检查与构建、`cargo check --all-targets`、`cargo test --lib`）与 [Windows 免安装发布](../.github/workflows/release-windows.yml)（手动或 `v*` 标签：`npx tauri build --no-bundle --target x86_64-pc-windows-msvc` 构建单文件 exe，发布包写入 `portable.marker`，生成 `nestcraft-win64.json` 更新清单并创建 Release；当前不构建安装包）。更新清单格式沿用 [LLD-CR046](LLD/LLD-CR046-右上角软件更新入口实现.md#22-更新源与清单)。实际运行结果见 GitHub Actions 运行记录，未通过项如实记录。
+
 ## CR-048：文档自动保存与所见即所得（仅设计）
 
 本轮只修需求与可操作原型：代码及可编辑文档取消日常保存按钮，Markdown直接在排版内输入并自动保存；知识库保留只读阅读防误改／排版编辑双视图，不是源码恢复。编码、需求正文、设计、知识及办公均登记；13条增量AC复用6个Story，未新增业务层级。正式软件未在本轮修改，磁盘持久化与完整格式兼容不以原型操作冒充。
