@@ -1,0 +1,164 @@
+/* ============ CR-042：AI 侧栏交互细化 ============
+   1) 顶部子智能体/后台任务改为按钮下方下拉悬浮框，不再打开模态弹窗；
+   2) 历史会话为覆盖在侧栏左侧的浮层，不挤占左侧布局；右侧重复历史图标已删除；
+   3) 模型列表末尾依次显示上下文/视觉/思考，生图模型从会话候选过滤；
+   4) 三统计入口移到输入框下方，弹层右对齐各自控件并紧贴；
+   5) 分步骤执行显示与消息区等宽的折叠框与步骤状态。
+   只覆盖上述结构，主题令牌、既有页面与状态机不变。 */
+
+/* ---------- 通用：面板内定位上下文 ---------- */
+.ai-panel { position: relative; }
+
+/* ---------- 1. 历史浮层：覆盖左侧，不参与布局 ---------- */
+.ai-history {
+  position: absolute; top: 0; bottom: 0; right: 100%; width: 296px; z-index: 46;
+  display: flex; flex-direction: column; min-height: 0;
+  background: var(--surface); border: 1px solid var(--line); border-right: 0;
+  border-radius: var(--r-md) 0 0 var(--r-md);
+  box-shadow: -14px 0 34px rgba(15, 23, 42, .16);
+  animation: aiHistIn .14s ease-out;
+}
+html[data-theme="dark"] .ai-history { box-shadow: -14px 0 34px rgba(0, 0, 0, .5); }
+@keyframes aiHistIn { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: none; } }
+.ai-history-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 8px 8px 12px; border-bottom: 1px solid var(--line-soft); }
+.ai-history-h .ah-title { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; min-width: 0; }
+.ai-history-h .ah-title .ico { color: var(--muted); }
+.ai-history-h .icon-btn { width: 26px; height: 26px; flex: 0 0 auto; }
+.ai-history .ai-history-list { flex: 1; overflow: auto; padding: 6px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; align-content: start; }
+.ai-history .ai-session { width: 100%; min-width: 0; display: flex; align-items: flex-start; gap: 8px; padding: 9px 10px; border-radius: var(--r-sm); text-align: left; }
+.ai-history .ai-session .s-main { flex: 1; min-width: 0; }
+.ai-history .ai-session .s-main b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-history .ai-session .s-state { flex: 0 0 auto; min-width: 34px; text-align: right; font-size: 10px; color: var(--muted); padding-top: 2px; }
+.ai-history .ai-session.active .s-state { color: var(--primary-strong); }
+.ai-history .ai-session.active { border: 1px solid var(--primary-line); background: var(--primary-soft); }
+
+/* ---------- 2. 顶部下拉：子智能体 / 后台任务 ---------- */
+.ai-top { overflow: visible; }
+.ai-drop-wrap { position: relative; display: inline-flex; min-width: 0; }
+.ai-count { max-width: 138px; white-space: nowrap; }
+.ai-count > .ico:last-child { margin-left: 1px; opacity: .7; }
+.ai-count[aria-expanded="true"] { background: var(--surface-3); }
+
+.ai-drop {
+  position: absolute; top: calc(100% + 6px); z-index: 45; width: min(330px, calc(100vw - 24px));
+  max-height: min(460px, calc(100vh - 150px)); overflow: hidden;
+  display: flex; flex-direction: column;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop); animation: aiDropIn .12s ease-out;
+}
+@keyframes aiDropIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.ai-drop-agents { left: 0; }
+.ai-drop-bg { right: 0; }
+.drop-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 10px 7px; border-bottom: 1px solid var(--line-soft); }
+.drop-h b { font-size: 12px; font-weight: 600; }
+.drop-h .caption { font-size: 10px; }
+.drop-list { flex: 1; overflow: auto; padding: 4px; }
+.drop-f { padding: 6px 10px; border-top: 1px solid var(--line-soft); background: var(--surface-2); font-size: 10px; color: var(--muted-2); }
+.drop-empty { padding: 14px 10px; font-size: 11px; color: var(--muted); text-align: center; }
+
+.agent-row { display: flex; align-items: flex-start; gap: 8px; padding: 8px; border-radius: var(--r-sm); }
+.agent-row:hover { background: var(--surface-2); }
+.agent-row .ar-main { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.4; }
+.agent-row .ar-main b { font-size: 11.5px; font-weight: 550; }
+.agent-row .ar-main span { font-size: 10px; color: var(--muted); }
+.agent-row .tag { flex: 0 0 auto; }
+
+.bg-group + .bg-group { margin-top: 4px; border-top: 1px solid var(--line-soft); padding-top: 3px; }
+.bg-group-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 7px; font-size: 10px; color: var(--muted); letter-spacing: .02em; }
+.bg-row { border-top: 1px solid var(--line-soft); }
+.bg-row:first-of-type { border-top: 0; }
+.bg-head { display: flex; align-items: center; gap: 7px; width: 100%; padding: 7px; text-align: left; border-radius: var(--r-sm); }
+.bg-head:hover { background: var(--surface-2); }
+.bg-dot { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; margin-top: 4px; }
+.bg-dot.run { background: var(--primary); }
+.bg-dot.ok { background: var(--success); }
+.bg-dot.fail { background: var(--danger); }
+.bg-main { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.4; }
+.bg-main b { font-size: 11px; font-weight: 550; }
+.bg-main span { font-size: 10px; color: var(--muted); }
+.bg-head .chev { flex: 0 0 auto; color: var(--muted); display: grid; place-items: center; transition: transform .12s ease; }
+.bg-row.open .bg-head .chev { transform: rotate(180deg); }
+.bg-detail { padding: 0 8px 8px 21px; display: flex; flex-direction: column; gap: 4px; }
+.bg-detail pre { margin: 0; max-height: 150px; overflow: auto; padding: 8px; background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--r-sm); font-size: 10.5px; line-height: 1.55; white-space: pre-wrap; color: var(--ink-2); }
+
+/* ---------- 3. 模型能力：上下文 / 视觉 / 思考 ---------- */
+.ai-pop-model .model-row { display: flex; align-items: center; gap: 8px; }
+.ai-pop-model .mr-name { flex: 1; min-width: 0; }
+.ai-pop-model .mr-caps { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; }
+.m-cap { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; color: var(--muted); }
+.m-cap b { font-weight: 550; font-variant-numeric: tabular-nums; }
+.m-cap .ico { width: 13px; height: 13px; }
+.m-cap.ctx { width: 50px; justify-content: flex-end; }
+.m-cap.vision, .m-cap.think { width: 14px; justify-content: center; }
+.m-cap.on { color: var(--ink-2); }
+.m-cap.vision.on { color: var(--teal); }
+.m-cap.think.on { color: var(--violet); }
+.m-cap.off { opacity: .26; }
+.ai-pop .model-row.on .m-cap.on { color: var(--primary-strong); }
+.ai-pop .model-level.disabled { opacity: .72; }
+.level-note { padding: 7px 0 2px; font-size: 10.5px; color: var(--muted); }
+.ai-pop .model-level.disabled .range { opacity: .4; }
+
+/* ---------- 4. 统计：输入框下方，弹层右对齐各自控件并紧贴 ---------- */
+.ai-composer-wrap { padding-bottom: 10px; }
+.ai-stats { display: flex; align-items: center; gap: 10px; padding: 7px 2px 0; font-size: 10.5px; color: var(--muted); overflow: visible; }
+.ai-stat-wrap { position: relative; display: inline-flex; }
+.ai-stat-wrap .ai-pop-stat {
+  position: absolute; right: 0; left: auto; bottom: calc(100% + 4px); width: 296px;
+  max-width: calc(100vw - 20px); z-index: 45;
+  box-shadow: var(--shadow-pop);
+}
+.ai-stat-wrap .ai-pop-stat::after {
+  content: ""; position: absolute; right: 14px; bottom: -5px; width: 8px; height: 8px;
+  background: var(--surface); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  transform: rotate(45deg);
+}
+
+/* ---------- 5. 分步骤执行：与消息区等宽的折叠框 ---------- */
+.ai-steps {
+  flex: 0 0 auto; border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--surface); box-shadow: 0 6px 18px rgba(15, 23, 42, .07); overflow: hidden;
+}
+html[data-theme="dark"] .ai-steps { box-shadow: 0 6px 18px rgba(0, 0, 0, .34); }
+.steps-h { display: flex; align-items: center; gap: 7px; width: 100%; padding: 7px 10px; text-align: left; background: var(--surface-2); }
+.steps-h:hover { background: var(--surface-3); }
+.steps-h b { font-size: 11.5px; font-weight: 600; }
+.steps-count { font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.steps-state { font-size: 10px; padding: 1px 6px; border-radius: 999px; background: var(--surface-3); color: var(--ink-2); }
+.steps-state.run { background: var(--primary-soft); color: var(--primary-strong); }
+.steps-state.done { background: var(--success-soft); color: var(--success); }
+.steps-state.fail { background: var(--danger-soft); color: var(--danger); }
+.steps-chev { color: var(--muted); display: grid; place-items: center; transition: transform .14s ease; }
+.ai-steps.open .steps-chev { transform: rotate(180deg); }
+.steps-list { display: flex; flex-direction: column; padding: 3px 0; }
+.ai-step { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 10px; border-left: 2px solid transparent; font-family: var(--mono); font-size: 10.8px; line-height: 1.5; }
+.ai-step.running { background: var(--primary-soft); border-left-color: var(--primary); }
+.ai-step.done { color: var(--ink-2); }
+.ai-step.todo { color: var(--muted); }
+.ai-step.failed { background: var(--danger-soft); border-left-color: var(--danger); color: var(--danger); }
+.ai-step-ico { width: 15px; display: grid; place-items: center; flex: 0 0 auto; }
+.ai-step.done .ai-step-ico { color: var(--success); }
+.ai-step.running .ai-step-ico { color: var(--primary); }
+.ai-step.failed .ai-step-ico { color: var(--danger); }
+.ai-step-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.ai-step-meta { flex: 0 0 auto; font-size: 9.5px; color: var(--muted); white-space: nowrap; }
+.ai-step.running .ai-step-meta { color: var(--primary-strong); }
+.ai-step-spin { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid var(--primary-line); border-top-color: var(--primary); animation: aiSpin .8s linear infinite; display: inline-block; }
+@keyframes aiSpin { to { transform: rotate(360deg); } }
+.steps-f { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 8px 5px; border-top: 1px solid var(--line-soft); }
+
+/* ---------- 视口与深色 ---------- */
+@media (max-width: 960px) {
+  .ai-history {
+    position: fixed; top: var(--topbar-h); bottom: 0; left: 0; right: 0;
+    width: auto; z-index: 60; border-radius: 0;
+    border-right: 0; border-left: 0;
+  }
+  .ai-stat-wrap .ai-pop-stat { position: fixed; left: 12px; right: 12px; bottom: 132px; width: auto; }
+  .ai-stat-wrap .ai-pop-stat::after { display: none; }
+  .ai-drop { max-height: min(420px, calc(100vh - 180px)); }
+}
+@media (max-width: 420px) {
+  .ai-stats { gap: 8px; }
+  .ai-stats .s { font-size: 10px; }
+}

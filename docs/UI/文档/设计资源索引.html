@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>栖造 NestCraft · 设计资源索引</title>
+<link rel="icon" type="image/png" href="../brand-assets-v2/favicon.png">
+<link rel="stylesheet" href="../task-workbench/theme-tokens.css">
+<link rel="stylesheet" href="../brand-assets-v2/brand.css">
+<style>
+*{box-sizing:border-box}body{margin:0;font:14px/1.65 var(--font-title);color:var(--ink);background:var(--base)}a{color:var(--accent);text-decoration:none;overflow-wrap:anywhere}a:hover{text-decoration:underline}a:focus-visible{outline:2px solid var(--focus);outline-offset:3px}.brand{height:56px;padding:0 24px;display:flex;align-items:center;gap:12px;background:var(--paper);border-bottom:1px solid var(--line)}.mark{display:grid;place-items:center;width:28px;height:28px;border-radius:var(--radius-ctl);background:var(--accent);color:var(--accent-ink);font-weight:700}.tag{padding:2px 8px;border-radius:4px;font-size:12px;color:var(--tag-ink);background:var(--tag-bg)}.shell{display:grid;grid-template-columns:208px minmax(0,1fr);min-height:calc(100vh - 56px)}aside{padding:24px 14px;background:var(--nav);border-right:1px solid var(--line)}aside strong{font-size:12px;color:var(--muted);display:block;padding:0 10px 10px}.nav{display:block;padding:9px 12px;border-radius:var(--radius-ctl);margin-bottom:6px}.nav.active{background:var(--nav-active-bg);color:var(--nav-active-ink)}main{max-width:1400px;width:100%;padding:28px 32px}h1{font-size:24px;margin:0 0 8px}h2{font-size:18px;margin:0 0 8px}h3{font-size:15px;margin:0 0 8px}p{margin:8px 0;color:var(--muted)}.tabs{display:flex;gap:20px;flex-wrap:wrap;margin:20px 0;border-bottom:1px solid var(--line);padding:0 0 12px}.notice{padding:12px 16px;border:1px solid var(--warn-line);background:var(--warn-bg);color:var(--warn-deep);border-radius:var(--radius-ctl)}.hero{padding:22px;background:var(--paper);border:1px solid var(--accent-line);border-radius:var(--radius-card);margin:20px 0}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}.btn{display:inline-block;padding:8px 13px;border:1px solid var(--input-line);border-radius:var(--radius-ctl);background:var(--paper);font-weight:600}.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:20px 0}.card{padding:18px;min-width:0;border:1px solid var(--line);border-radius:var(--radius-card);background:var(--paper)}.card img{width:100%;display:block;border:1px solid var(--line);border-radius:var(--radius-ctl);margin-top:12px}.history{margin-top:32px}footer{margin-top:24px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:12px}li{margin:4px 0}@media(max-width:800px){.shell{grid-template-columns:1fr}aside{display:none}main{padding:22px 14px}.grid{grid-template-columns:1fr}h1{font-size:21px}.brand{padding:0 14px}}
+</style>
+</head>
+<body>
+<header class="brand" data-brand-version="UI-BRAND-001-v2"><span class="mark" aria-hidden="true"><img src="../brand-assets-v2/logo-sail.png" alt="" width="28" height="28"></span><span class="brand-copy"><strong>栖造</strong><small lang="en">NestCraft</small></span><span class="tag">设计资源 · 静态目录</span></header>
+<div class="shell">
+<aside aria-label="设计资源导航"><strong>项目设计</strong><a class="nav active" href="#current">当前评审</a><a class="nav" href="#requirements">需求与方案</a><a class="nav" href="#tasks">任务工作台</a><a class="nav" href="#results">交付与证据</a><a class="nav" href="#history">历史设计</a><a class="nav" href="../../README.md">返回文档导航</a></aside>
+<main>
+<section id="cr044" class="hero"><span class="tag">UI-CR044-v1 · 原型已制作并锁版，软件采用中</span><h2>窗口融合、统一图标与首页／对象Tab</h2><p>管理列表不新增Tab，详情隐藏主菜单、首页最左、同对象唯一；界面帆船透明无框，系统图标有底；平台线图标／官方CLI图形统一登记。先原型后软件，实际覆盖与验证以记录为准。</p><div class="actions"><a class="btn primary" href="../仿真原型UI.html">打开唯一业务原型</a><a class="btn" href="UI-ICON-001-图标样例.html">UI规范图标样例（仅资料）</a><a class="btn" href="UI-CR044-窗口图标与导航规范.md">版本与场景</a><a class="btn" href="../../PRD/CR-044-窗口融合图标与Tab导航.md">需求与边界</a></div></section>
+<section id="execution-plan-cr026" class="hero"><span class="tag">UI-CR026-v4 · 新壳集成 · 设计待评审</span><h2>任务执行配置闭环</h2><p>智能体默认→具体CLI/模型/权限/Tool/Skill/MCP→预检确认→原Task/Attempt冻结→实时撤权/原计划重试/新组合授权→独立只读阶段→交付追溯。仅设计，真实CLI未运行。</p><div class="actions"><a class="btn primary" href="../仿真原型UI.html">打开唯一原型</a><a class="btn" href="UI-CR026-任务执行配置闭环.md">场景与操作</a><a class="btn" href="../../Test/screenshots/cr026-v4-01-plan.png">执行计划预检</a><a class="btn" href="../../Test/REPORT-CR026-执行计划闭环设计验证.md">实际验证</a></div></section>
+<p class="notice">并行说明（CR-036）：本次按 PDF 重构外壳时，CR-026 的 <code>execution-plan-model.js</code>／<code>execution-closure.js</code>／<code>execution-closure.css</code> 已原位保留，但暂未在 <code>index.html</code> 挂载——其包装旧 Screens 并劫持派发确认，与本次“固定尺寸弹窗＋新派发流程”冲突；合并需单独确认后再接入。</p>
+<h1>设计资源索引</h1>
+<p>同款白蓝工作台样式的静态资料索引，不是并列原型入口。本页不执行任务；通过UI外层唯一公开入口打开原型后，可操作一次派发、依赖等待、资源互斥、有限重试和结果追溯。</p>
+<nav class="tabs" aria-label="设计范围"><a href="#requirements">需求</a><a href="#current">设计</a><a href="#tasks">任务</a><a href="#results">编码与交付证据</a></nav>
+<div class="notice">CR-022：保留用户新增／调整设计，在原正常路径补供应商/SDK/能力、知识管理/授权、主机配置；当前入口和位置不变。<a href="UI-CR022-存量回填与固定入口.md">查看版本、保护区与场景</a>。软件尚未视觉对齐，项目/UI画布/Git等其余差异仍待核查；设计仿真不证明正式执行或全量视觉验收。</div>
+<section id="cr042" class="hero">
+<span class="tag">UI-CR042-v1 · AI 侧栏交互 · 设计待视觉评审</span>
+<h2>AI 侧栏：顶部下拉、历史浮层、模型能力、底部统计与步骤框</h2>
+<p>按用户 5 项要求收敛 AI 侧栏：子智能体与后台任务改为按钮下方下拉悬浮框；历史会话改为覆盖侧栏左侧的浮层（不占布局、外点收起），删除右侧重复图标并重做历史图标；模型列表依次显示上下文大小／视觉／思考，生图模型不进入候选；会话统计／Token／上下文移到输入框下方，弹层右对齐各自控件并贴住；分步骤执行显示与消息区等宽的折叠框，区分执行中／已完成／未开始／失败。</p>
+<p>只改 AI 侧栏设计资源与需求文档，主题令牌、其他页面与正式软件未变；真实后台任务、模型能力与步骤事件未接入。</p>
+<div class="actions"><a class="btn primary" href="../仿真原型UI.html">打开唯一原型 → 预约服务 → AI 侧栏</a><a class="btn" href="UI-CR042-AI侧栏交互细节.md">版本、场景与资源哈希</a><a class="btn" href="../../PRD/CR-042-AI侧栏交互细节调整.md">需求与边界</a><a class="btn" href="../../Test/REPORT-CR042-AI侧栏交互细节验证.md">21/21 实际验证</a><a class="btn" href="../../Test/screenshots/cr042-01-agents-dropdown.png">顶部下拉</a><a class="btn" href="../../Test/screenshots/cr042-03-history-overlay.png">历史浮层</a><a class="btn" href="../../Test/screenshots/cr042-07-steps.png">步骤折叠框</a></div>
+</section>
+<section id="cr039" class="hero">
+<span class="tag">UI-CR039-v1 · 任务页派发树 · 设计待视觉评审</span>
+<h2>一次派发一棵树：协调者 → 各 CLI 工作代理</h2>
+<p>任务页左侧改为派发树：根是协调者那一次派发（显示「协调者 · N 个子任务」），子行是该派发下的工作代理（显示 CLI、进度与模型），带缩进与连接线。右侧根详情给出派发目标、职责和「本次派发的子任务」列表，点任一项进入子任务；子任务详情有「所属派发」面包屑可返回。支持折叠、展开全部／收起子项；单层派发保留为只有根的树并注明协调者直接执行。</p>
+<p>只改任务页组织方式，沿用 CR-036 令牌与外壳；需求、设计、编码与既有任务操作未变。正式软件未修改、未运行。</p>
+<div class="actions"><a class="btn primary" href="../仿真原型UI.html">打开唯一原型 → 预约服务 → 任务</a><a class="btn" href="UI-CR039-任务派发树设计.md">版本、资源哈希与覆盖</a><a class="btn" href="../../PRD/CR-039-任务页派发树与协调视图.md">需求与边界</a><a class="btn" href="../../Test/REPORT-CR039-任务派发树验证.md">11/11 实际验证</a><a class="btn" href="../../Test/screenshots/cr039-01-dispatch-tree.png">派发树</a><a class="btn" href="../../Test/screenshots/cr039-03-child-detail.png">子任务详情</a></div>
+</section>
+<section id="cr043" class="hero"><span class="tag">UI-CR043-v1 · 办公文件树与统一AI · 待视觉评审</span><h2>办公项目：文件夹树、同款AI侧栏与业务仿真</h2><p>左侧可展开折叠的目录树，根／子目录新建文件夹和文件；右侧与编码模式同一AIPanel渲染器和公共样式，历史／菜单／模型／权限／统计／步骤与发送完整继承，内容按项目＋会话隔离。报告、活动台账、PPT、PDF、品牌发布样例同源可核算。只设计，未创建真实目录或连接模型。</p><div class="actions"><a class="btn primary" href="../仿真原型UI.html">打开唯一原型 → 办公项目</a><a class="btn" href="UI-CR043-办公文件树与统一侧栏.md">版本与场景</a><a class="btn" href="../../Test/REPORT-CR043-办公文件树与统一侧栏.md">实际验证</a><a class="btn" href="../../Test/screenshots/cr043/02-office-tree-shared-ai.png">办公文件树和AI</a></div></section>
+<section id="cr038" class="hero">
+<span class="tag">UI-CR038-v1 · 办公类型项目 · 新设计待实现</span>
+<h2>办公项目：资料 → 编辑／AI协作 → 审阅 → 保存成果</h2>
+<p>仅 project.kind=work。项目内部文档／成果两页签，来源只读与编辑副本，Markdown／Word／表格／PPT／PDF分格式操作、项目内AI引用、逐项接受拒绝、冲突保护、版本恢复与导出检查；不新增全局办公模式，不改变Code项目。原型仅合成仿真，Office下载无引擎时禁用。</p>
+<p>主代理验证：模型23/23、办公浏览器23/23，22张办公场景截图；当前公共模块脚本回归27/27。正式软件、真实Office格式与软件视觉对照未执行，待用户设计评审。</p>
+<div class="actions"><a class="btn primary" href="../仿真原型UI.html">打开唯一原型 → 项目管理 → 办公</a><a class="btn" href="UI-CR038-办公项目文档协作.md">版本与覆盖</a><a class="btn" href="../../PRD/CR-038-办公类型项目文档协作.md">需求与易用性标准</a><a class="btn" href="../../Test/REPORT-CR038-办公项目设计验证.md">实际验证</a><a class="btn" href="../../Test/screenshots/cr038/01-office-documents.png">办公项目预览</a></div>
+</section>
+<section id="cr036" class="hero">
+<span class="tag">UI-CR036-v4 · 当前唯一可操作稿 · 待视觉评审</span>
+<h2>主界面按评审意见重构：工作台、卡片、三栏与 AI 侧栏</h2>
+<p>依据用户 16 页 PDF 修改意见重构：新增默认「工作台」；项目卡片＋本地目录选择；需求树整宽＋行尾菜单＋固定尺寸弹窗；设计左中右一体；任务行首 CLI 标识；编码三栏＋Git 面板；AI 侧栏可拖拽、无标题、历史栏、<code>@</code>/<code>/</code> 浮层、CLI／权限／模型与统计；知识库多格式树＋授权多选；服务器满高三栏；设置固定 1040×700 弹窗。v2：页签置顶与单面一体化；v3：模型卡片内联、账户入口合并；v4：获取模型勾选、模型行展开与自动配置、SDK 卡片、嵌套弹窗（设置不消失）、密钥悬停协议/模型/别名、AI 模型弹层固定尺寸。所有主要操作均产生状态变化，不是只弹提示。</p>
+<p>旧 <code>task-workbench/</code>、CR-035 稿与 CR-026 执行计划桥接文件原位保留；桥接暂未挂载，避免与本次派发流程冲突。正式软件未修改、未运行。</p>
+<div class="actions"><a class="btn primary" href="../仿真原型UI.html">打开唯一原型</a><a class="btn" href="UI-CR036-主界面重构设计.md">版本、结构与文件哈希</a><a class="btn" href="../../PRD/CR-036-主界面按评审意见重构.md">意见与落实对照</a><a class="btn" href="../../Test/REPORT-CR036-主界面按意见重构验证.md">27/27 实际验证</a><a class="btn" href="../../Test/screenshots/cr036-01-workbench.png">工作台截图</a><a class="btn" href="../../Test/screenshots/cr036-15-ai-history.png">AI 历史栏</a></div>
+</section>
+<section id="cr035" class="hero">
+<span class="tag">UI-CR035-v1 · 历史（已由 CR-036 继续）</span>
+<h2>主界面重构：白蓝研发管理风与完整仿真样例</h2>
+<p>按用户「UI 重做、样例数据要全、要仿真、不是示意图」的指令，唯一公开入口指向重构后的 <code>workbench-v4/</code>：固定管理首页＋独立窗口；项目需求／设计／任务／编码、知识库三栏、服务器终端与设置七类、AI 侧栏均可操作。样例为虚构夹具，4 个项目、20 条需求、7 条运行、12 篇知识文档、3 台主机，统计跨页自洽。</p>
+<p>旧 <code>task-workbench/</code> 原位保留为历史资源，不删除、不作为第二公开入口。本批只改设计稿与文档，正式软件未修改、未运行、未构建。</p>
+<div class="actions"><a class="btn primary" href="../仿真原型UI.html">打开唯一原型</a><a class="btn" href="UI-CR035-主界面重构设计.md">版本、令牌与场景覆盖</a><a class="btn" href="../../PRD/CR-035-主界面重构与仿真样例补全.md">需求与边界</a><a class="btn" href="../../Test/REPORT-CR035-主界面重构验证.md">18/18 实际验证</a><a class="btn" href="../../Test/screenshots/cr035-01-home-light.png">首页截图</a><a class="btn" href="../../Test/screenshots/cr035-02-project-requirements.png">项目与 AI 侧栏</a></div>
+</section>
+<p class="notice">以下 CR-001～CR-035 各节为历史方案与专门场景记录，用于追溯版本、场景与验收依据；原型入口统一指向 CR-035 当前稿，旧页面仅在历史区显式打开。</p>
+<section id="cr022" class="hero">
+<span class="tag">UI-CR022-v1 · 存量回填 · 新设计待实现</span>
+<h2>原地补稿，保留新设计与可信样例</h2>
+<p>CR-017任务闭环、CR-018/019完整AI会话、CR-021管理／详情导航及栖造品牌保持。普通模型供应商四分类、SDK版本与作业、Skill正文/MCP配置/Tool风险、知识管理与只读授权、主机三认证占位不再只藏在历史只读查看区。</p>
+<p>样例提供来源和hash：仓库规则摘录、虚构预约情景、故障／执行仿真、未知实测分开；监控与终端同源，已存草稿不自动覆盖。原AI库存和独立配置DEMO分别标明作用域，不宣称真实安装或授权隔离。</p>
+<p>本批只需求／设计，无正式软件修改或运行授权。Agent工作包／视觉证据门禁补入需求，软件承接及专属可視字段稿尚待后续设计和明确编码授权。</p>
+<div class="actions"><a class="btn primary" href="../仿真原型UI.html">打开同一固定原型</a><a class="btn" href="UI-CR022-存量回填与固定入口.md">回填范围与保护记录</a><a class="btn" href="../../PRD/CR-022-存量设计回填与Agent思想承接.md">Agent思想与需求</a><a class="btn" href="../../Test/REPORT-015-存量设计回填与Agent需求验证.md">实际验证与遗留</a></div>
+</section>
+<section id="detail-navigation" class="hero">
+<span class="tag">UI-CR021-v1 · 新设计待实现 · 仅设计</span>
+<h2>管理页 → 详情工作区 → 返回管理页</h2>
+<p>进入具体项目、知识库或服务器后，隐藏整条左管理栏及其占位，左上角只保留返回所属管理页入口；返回时恢复管理栏与选中菜单。知识库先进入库列表再进入三栏阅读；项目所有页签与办公、服务器原业务栏保持。窄屏详情同样隐藏模块菜单。</p>
+<p>本轮只调整需求、设计稿和代理授权规则，未修改或运行正式软件。没有明确写代码的指令一律按需求／设计处理；设计确认不自动授权开发。品牌资产保持，详情左上品牌位置让给返回。</p>
+<div class="actions"><a class="btn primary" href="../仿真原型UI.html">打开当前导航设计</a><a class="btn" href="UI-CR021-管理页与详情工作区导航设计.md">版本与场景说明</a><a class="btn" href="../../Test/screenshots/cr021-02-project-1440-light.png">详情：左栏隐藏</a><a class="btn" href="../../Test/screenshots/cr021-01-projects-1440-light.png">返回：左栏恢复</a></div>
+</section>
+<section id="agent-management" class="hero"><span class="tag">UI-CR023-v1 · 设计待验收</span><h2>智能体管理：严格实例</h2><p>顶部零子代理隐藏，执行器汇总与Token上/耗时下；设置里CLI管理与SDK管理两tab，按图卡片/顺序，同源M库存，原任务修复保留。仅本机演示。</p><div class="actions"><a class="btn primary" href="../仿真原型UI.html">打开同一设计稿</a><a class="btn" href="../../Test/screenshots/cr023-01-cli-management-light-2026-11-19T06-56-21-486Z.png">CLI管理</a><a class="btn" href="../../Test/screenshots/cr023-02-sdk-management-light-2026-11-19T06-56-21-486Z.png">SDK管理</a><a class="btn" href="../../Test/REPORT-016-智能体管理与子目录实例验证.md">本轮验证</a></div></section>
+<section id="background-tasks" class="hero"><span class="tag">UI-CR025-v1 · 新设计待实现 · 仅设计</span><h2>AI顶部：后台任务下拉</h2><p>紧邻子智能体，当前会话无后台记录时隐藏；同源运行／已结束分组，命令、退出码、耗时和展开输出，清空只清结束展示。切换会话不串结果，未知不填0，不接真实执行。</p><div class="actions"><a class="btn primary" href="../仿真原型UI.html">打开同一固定原型</a><a class="btn" href="UI-CR025-后台任务下拉设计.md">场景、版本与边界</a><a class="btn" href="../../Test/screenshots/cr025-02-mixed-crop.png">顶部与混合记录</a><a class="btn" href="../../Test/screenshots/cr025-04-ended-crop.png">11条已结束</a><a class="btn" href="../../Test/REPORT-017-后台任务下拉设计验证.md">实际验证</a></div></section>
+<section id="design-resources" class="hero"><span class="tag">UI-CR027-v1 · 新设计待实现 · 视觉待评审</span><h2>Code设计资料：PRD / UI / 方案 / 数据库设计</h2><p>PRD/方案Markdown阅读与编辑，主区右文件/章节菜单不占AI；UI直接合成项目入口，数据库设计一个模型一个菜单。AI先查摘要/位置/版本索引，再读取必要片段，不整包注入。真实工具、数据库持久化和HTML托管未实现。</p><div class="actions"><a class="btn primary" href="../仿真原型UI.html">打开同一原型 → 设计</a><a class="btn" href="UI-CR027-设计资料四入口.md">版本与9场景</a><a class="btn" href="../../LLD/LLD-CR027-设计资料与按需工具契约.md">按需工具契约</a><a class="btn" href="../../Test/screenshots/cr027-01-prd-1440-light-2026-11-19T08-55-38-560Z.png">PRD和内部右菜单</a><a class="btn" href="../../Test/REPORT-019-设计资料四入口与按需加载验证.md">14/14设计交互与32/32AI纯模型</a></div></section>
+<section id="window-navigation" class="hero"><span class="tag">UI-CR033-v1 · 新设计待实现 · 仅设计</span><h2>固定管理首页与独立窗口</h2><p>首页固定，项目／知识库／服务器在独立窗口打开；同一对象再次打开只聚焦原窗口，页签、笔记、主机与草稿保持；详情返回按钮取消，关闭窗口即回首页。关闭有草稿需确认，运行中任务继续。</p><div class="actions"><a class="btn primary" href="../仿真原型UI.html">打开同一唯一原型</a><a class="btn" href="UI-CR033-固定首页与独立窗口.md">版本与场景</a><a class="btn" href="../../PRD/CR-033-固定首页与独立窗口导航.md">需求与边界</a><a class="btn" href="../../Test/REPORT-021-固定首页与独立窗口设计验证.md">本批实际验证</a></div></section>
+<section id="chat-answer-rendering" class="hero"><span class="tag">UI-CR034-v1 · 新设计待实现 · 仅设计</span><h2>会话答复：工具配对、图片预览、文件定位</h2><p>工具调用与结果按 toolId 合并为带状态条的工具块；结果默认折叠、失败展开摘要；图片在卡内等比缩放（高≤360px）并可放大；<code>路径:行</code> 渲染为链接，点击在编码页签左侧打开并高亮目标行；执行配置回填实际值、失效保留标注。现状实测 5 失败/7 未实现，见实测报告。</p><div class="actions"><a class="btn" href="UI-CR034-会话答复呈现与文件定位.md">版本、规格与12场景</a><a class="btn" href="../../PRD/CR-034-会话答复呈现与文件定位.md">需求与14条AC</a><a class="btn" href="../../Plan/Story/STORY-062-会话答复呈现与文件定位.md">Story与准入</a><a class="btn" href="../../Test/REPORT-022-会话答复呈现实测.md">现状实测</a><a class="btn" href="../../Test/screenshots/chat-ui/05-chat-top.png">现状基线（软件）</a></div></section>
+<section id="requirement-reading" class="hero"><span class="tag">UI-CR029-v1 · 新设计待实现 · 仅设计</span><h2>需求：全量分级正文与思维导图</h2><p>需求树旁相邻预览／思维导图。完整预览包含所有史诗、特性、Story，未确认／完成／取消不漏；五类节点含数据库设计模型，点击主区右侧阅读全文与全字段，AI独立。模型关联虚线不改业务父项；正文和关系为合成评审夹具，缺项如实标记。</p><div class="actions"><a class="btn primary" href="../仿真原型UI.html">打开同一唯一原型</a><a class="btn" href="UI-CR029-需求预览与思维导图.md">版本与场景</a><a class="btn" href="../../PRD/CR-029-需求全量预览与思维导图.md">需求与边界</a><a class="btn" href="../../Test/REPORT-020-需求预览与思维导图设计验证.md">本批实际验证</a></div></section>
+<section id="knowledge-local-index" class="hero"><span class="tag">UI-CR030-v1 · 知识本地索引 · 设计待评审</span><h2>知识原件 → 本地切片索引 → 有界引用</h2><p>沿用现有管理列表、项目授权和库内三栏，不造第二套授权／AI入口。格式夹具演示增量、中文短词、来源定位、stale/unknown/metadata_only、撤权与预算拒绝；仅本地固定DEMO，不执行模型、真实解析、FTS或文件访问。扫描件无OCR时仅元数据。</p><div class="actions"><a class="btn primary" href="../仿真原型UI.html">打开同一设计稿 → 知识库</a><a class="btn" href="UI-CR030-知识索引与按需引用.md">版本、场景和边界</a><a class="btn" href="../../PRD/CR-030-本地知识索引与按需引用.md">需求与13条AC</a><a class="btn" href="../../LLD/LLD-FEAT-008-本地知识索引与按需检索.md">技术检索契约</a><a class="btn" href="../../DB/DB-FEAT-008-知识原件切片与全文索引.md">数据／FTS设计</a><a class="btn" href="../../Test/REPORT-CR030-知识索引设计验证.md">本轮实际设计检查</a></div></section>
+<section id="current" class="hero">
+<span class="tag">CR-017 / CR-018 · 统一工作台设计 · 待评审</span>
+<h2>统一工作台：需求、任务与交付闭环</h2>
+<p>本轮AI侧栏沿用已有会话结构，按参考图调整圆角输入框、框内工具栏与同宽分组菜单；顶栏可打开/关闭，关闭扩展主区，重新打开保留本页会话与草稿。设计页UI与模型均补齐侧栏。</p>
+<p>一个当前交互入口整合项目管理、需求、设计、任务、编码、知识库、服务器与设置。所有Tab只名称，任务行开头以CLI Logo标识实际执行器。</p>
+<p>需求维护/确认与派发、运行日志/评论、原CLI重试、Runtime配置修复、阶段评审退回、验收通过/退回、条件唤醒、父项聚合及证据返回在同一需求源上联动。不是iframe拼接两个独立稿，也不以只显示待验收作为演示终点。</p>
+<div class="actions"><a class="btn primary" href="../仿真原型UI.html">打开唯一当前交互设计稿</a><a class="btn" href="UI-FEAT-018-任务工作台交互设计.md">闭环交互说明</a><a class="btn" href="../../PRD/CR-017-统一设计入口与需求任务闭环.md">本轮需求</a></div>
+</section>
+<div class="grid">
+<section id="ai-sidebar-design" class="card"><span class="tag">UI-CR019-v1-r3 · 设计待验收</span><h3>AI会话完整七项</h3><p>任务折叠/目标、三统计、外侧历史末三色、子任务总结及时间/token、模型两栏滑杆、已安装CLI Logo与按CLI权限配置。开关和设计页侧栏保持；模型32/32、侧栏25/25与原闭环回归通过。仅DEMO，不宣称真实权限生效。</p><div class="actions"><a class="btn" href="../仿真原型UI.html">打开同一设计稿</a><a class="btn" href="../../Test/screenshots/cr019-02-tasks-goal-2026-11-19T05-38-07-726Z.png">任务与目标</a><a class="btn" href="../../Test/screenshots/cr019-03-history-external-2026-11-19T05-38-07-726Z.png">外侧历史</a><a class="btn" href="../../Test/screenshots/cr019-08-model-two-columns-2026-11-19T05-38-07-726Z.png">模型与档位</a><a class="btn" href="../../Test/REPORT-013-AI会话完整设计验证.md">七项验证与截图</a></div></section>
+<section id="requirements" class="card"><h3>需求派发与预检</h3><p>从需求行派发故事、特性或史诗，工具栏派发全部合格需求；预检展示冻结范围、排除原因、必要前置、允许执行器、权限/预算及交付终点，取消不创建任务。</p><div class="actions"><a class="btn" href="../仿真原型UI.html">需求派发入口</a><a class="btn" href="../../PRD/PRD-002-需求派发与自主执行.md">完整PRD</a><a class="btn" href="../../Test/screenshots/cr016-02-preflight-1440.png">预检截图</a></div></section>
+<section id="tasks" class="card"><h3>任务、Run与需求状态闭环</h3><p>任务开头显示实际CLI Logo；业务阶段、Run记录、评论/重试、评审/验收、前置产物与父项聚合在同一项目中联动。配置或Runtime失败可到统一设置修复并返回原任务，不止显示阻塞文字。</p><div class="actions"><a class="btn" href="UI-FEAT-018-任务工作台交互设计.md">闭环交互规范</a><a class="btn" href="../../Test/TEST-FEAT-018-任务系统设计验证.md">现行72条AC检查</a></div><p>本版预览与截图在最终验证后登记；CR016旧截图仅历史，不作为当前UI。</p></section>
+<section class="card"><h3>依赖调度与受管执行设计</h3><p>业务树与执行DAG分离，前置失败或取消不放行。独立工作区之外仍需执行层权限控制；正式常驻runner、租约/心跳/fencing和副作用对账属于待实现设计。</p><div class="actions"><a class="btn" href="../../LLD/LLD-FEAT-019-依赖调度与受管执行.md">调度与恢复方案</a><a class="btn" href="../../DB/DB-FEAT-019-任务执行数据设计.md">任务数据设计</a><a class="btn" href="../../LLD/ADR-003-任务执行权威与调度边界.md">关键决策</a></div></section>
+<section id="results" class="card"><h3>验证、返工与交付报告</h3><p>CLI退出不是成功。验证、适用集成和产物门槛通过才技术交付；报告分别显示任务、Story、验收和发布状态，保留失败尝试与旧修订证据。默认待验收，自动验收演示需显式规则。</p><div class="actions"><a class="btn" href="../../LLD/LLD-FEAT-020-自动验证与交付.md">验证与交付方案</a><a class="btn" href="../../Test/screenshots/cr016-05-success-report-1920-2026-11-19T01-12-04-652Z.png">成功报告</a><a class="btn" href="../../Test/screenshots/cr016-06-partial-report-1920-2026-11-19T01-12-04-652Z.png">部分成功报告</a></div></section>
+<section class="card"><h3>窄屏与深色</h3><p>390×844 时筛选和操作折行，详情顺序回落；仿真提示保持可见。状态有文本，模态键盘焦点与Escape取消可用。</p><div class="actions"><a class="btn" href="../../Test/screenshots/cr016-09-tasks-390-2026-11-19T01-12-04-652Z.png">窄屏任务页</a><a class="btn" href="../../Test/screenshots/cr016-11-dark-390-2026-11-19T01-12-04-652Z.png">深色设计</a></div></section>
+<section class="card"><h3>验收追踪</h3><p>3个Feature、6个Story、48条AC，唯一所属现有EPIC-002。文档静态验证、仿真状态机/浏览器验证与后续正式安全/集成测试分层，不拿DEMO证明正式能力完成。</p><div class="actions"><a class="btn" href="../../需求汇总.md">一次读完需求</a><a class="btn" href="../../Test/TEST-FEAT-018-任务系统设计验证.md">48条AC验证映射</a><a class="btn" href="../../Test/REPORT-009-任务系统设计评审验证.md">本轮实际结果</a></div></section>
+</div>
+<section id="brand" class="hero">
+<span class="tag">UI-BRAND-001-v2 · 已应用到设计稿 · 视觉待评审</span>
+<h2>栖造 / NestCraft＋03 号「知识之舟」Logo</h2>
+<p>当前主设计稿公共壳、页面标题与favicon已经采用所选青绿色帆船图形和独立中英文名称；Logo本体无字母或文字。品牌专属离线浏览器验证12/12通过，覆盖各模块和1440/1920/390/320浅深主题；已目视复核桌面与窄屏设计截图。正式软件名称、图标和主题尚未替换，不据此声称软件视觉一致。</p>
+<div class="actions"><a class="btn primary" href="../仿真原型UI.html">打开已调整的唯一主设计稿</a><a class="btn" href="../../Test/screenshots/brand-v2-1440-light-2026-11-19T03-30-46-451Z.png">浅色设计截图</a><a class="btn" href="../../Test/screenshots/brand-v2-1440-dark-2026-11-19T03-30-46-451Z.png">深色设计截图</a><a class="btn" href="../brand-candidates-v1/index.html">原候选资料</a><a class="btn" href="UI-BRAND-001-名称与图形标志候选.md">设计说明与检查记录</a></div>
+</section>
+<section id="history" class="history">
+<h2>历史评审资料（冻结保留）</h2>
+<p>CR-001～014 的图片和原型只用于追溯，不继续演进、不表示当前正式应用仍是仿真，也不是 CR-016 的验证依据。</p>
+<div class="actions"><a id="prototype" class="btn" href="../prototype/index.html">CR-014 历史交互原型</a><a class="btn" href="../历史/风格方案.html">历史主题选型</a><a class="btn" href="../prototype/v2-index.html">v2 历史静态稿</a></div>
+<ul><li><a href="../prototype/index.html#project/gateway/design">历史需求页</a> / <a href="../prototype/index.html#project/gateway/architecture">历史设计与模型</a> / <a href="../prototype/index.html#project/gateway/code">历史编码与Git</a></li><li><a href="../prototype/index.html#knowledge">历史知识库</a> / <a href="../prototype/index.html#servers">历史服务器</a></li></ul>
+</section>
+<footer>普通访问不会自动跳转。本页仅资源目录；独立评审稿仅本机模拟，关闭页面停止仿真，评审快照不是daemon。真实任务实现和用户验收均需后续完成。</footer>
+</main>
+</div>
+<!-- 固定资源目录：旧 s 参数不再把访问者带到历史原型；历史稿只经明确链接打开。 -->
+</body>
+</html>
+
+
+
+
+

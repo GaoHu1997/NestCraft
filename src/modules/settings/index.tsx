@@ -1,0 +1,71 @@
+import { useEffect, useRef, useState } from "react";
+import { getSetting } from "@/api";
+import { SettingsGeneral } from "./SettingsGeneral";
+import { SettingsModels } from "./SettingsModels";
+import { SettingsSdk } from "./SettingsSdk";
+import { SettingsSkill } from "./SettingsSkill";
+import { SettingsMcp } from "./SettingsMcp";
+import { SettingsTool } from "./SettingsTool";
+import { SettingsIcon } from "./SettingsDialog";
+import "./settings.css";
+
+const TABS = [
+  { id: "general", label: "通用", icon: "settings", sub: "用户信息、代码样式与服务器默认值。" },
+  { id: "models", label: "模型管理", icon: "cpu", sub: "供应商、密钥、端点与模型配置。" },
+  { id: "sdk", label: "SDK 与 CLI", icon: "terminal", sub: "CLI 管理与 SDK 管理。" },
+  { id: "skill", label: "能力 · Skill", icon: "layers", sub: "技能是过程性指令；启用不等于授权执行。" },
+  { id: "mcp", label: "能力 · MCP", icon: "box", sub: "MCP 服务器发现工具与资源。" },
+  { id: "tool", label: "能力 · Tools", icon: "zap", sub: "内置工具与风险等级。" },
+];
+const normalizeTab = (tab: string) => ({ cli: "sdk", skills: "skill", tools: "tool" }[tab] || (TABS.some(t => t.id === tab) ? tab : "general"));
+
+export function SettingsCenter(props: { initialTab: string; onOpenTab: (tab: string) => void; onClose: () => void }) {
+  const [tab, setTab] = useState(normalizeTab(props.initialTab));
+  const [profile, setProfile] = useState({ name: "", email: "" });
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => setTab(normalizeTab(props.initialTab)), [props.initialTab]);
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    dialog?.showModal();
+    return () => { if (dialog?.open) dialog.close(); };
+  }, []);
+  useEffect(() => {
+    let alive = true;
+    Promise.all([getSetting("user.name"), getSetting("user.email")]).then(([name, email]) => {
+      if (alive) setProfile({ name: name || "", email: email || "" });
+    }).catch(() => {});
+    const changed = (event: Event) => {
+      const detail = (event as CustomEvent<{ profile?: { name: string; email: string } }>).detail;
+      if (detail?.profile) setProfile({ name: detail.profile.name, email: detail.profile.email });
+    };
+    window.addEventListener("app:settings-changed", changed);
+    return () => { alive = false; window.removeEventListener("app:settings-changed", changed); };
+  }, []);
+  const selected = TABS.find(t => t.id === tab)!;
+  const open = (id: string) => { setTab(id); props.onOpenTab(id); };
+  return <dialog ref={dialogRef} className="set-modal" aria-label="设置与账户" onCancel={(e) => { e.preventDefault(); props.onClose(); }} onMouseDown={(e) => {
+    if (e.target !== e.currentTarget) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) props.onClose();
+  }}>
+    <div className="set-shell">
+      <nav className="set-nav" aria-label="设置分类">
+        <div className="set-user"><span className="set-avatar">{profile.name.slice(0, 2) || "NC"}</span><div><b>{profile.name || "未设置名称"}</b><span>{profile.email || "未设置邮箱"}</span></div></div>
+        <div className="set-nav-list">{TABS.map(t => <button key={t.id} className={`set-nav-btn ${tab === t.id ? "active" : ""}`} aria-current={tab === t.id ? "page" : undefined} onClick={() => open(t.id)}><SettingsIcon name={t.icon} />{t.label}</button>)}</div>
+        <div className="set-nav-foot"><span className="set-caption">设置与账户</span><button className="btn sm" onClick={props.onClose}>关闭</button></div>
+      </nav>
+      <section className="set-body">
+        <div className="set-head"><div><h2>{selected.label}</h2><p className="set-caption">{selected.sub}</p></div><button className="set-mobile-close set-icon-btn" onClick={props.onClose} aria-label="关闭设置"><SettingsIcon name="close" /></button></div>
+        <select className="set-mobile-nav select" aria-label="设置分类" value={tab} onChange={e => open(e.target.value)}>{TABS.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}</select>
+        <div className="set-scroll">
+          <div hidden={tab !== "general"}><SettingsGeneral /></div>
+          <div hidden={tab !== "models"}><SettingsModels /></div>
+          <div hidden={tab !== "sdk"}><SettingsSdk /></div>
+          <div hidden={tab !== "skill"}><SettingsSkill /></div>
+          <div hidden={tab !== "mcp"}><SettingsMcp /></div>
+          <div hidden={tab !== "tool"}><SettingsTool /></div>
+        </div>
+      </section>
+    </div>
+  </dialog>;
+}

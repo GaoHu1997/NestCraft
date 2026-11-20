@@ -1,0 +1,35 @@
+[package]
+name = "agent-workbench"
+version = "0.1.0"
+description = "个人 Agent 工作台"
+authors = ["Agent Workbench"]
+edition = "2021"
+
+# 见 LLD-FEAT-002 / ADR-002：Tauri 2 桌面应用，SQLite + 子进程 CLI 适配 + SSH
+
+[lib]
+name = "agent_workbench_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5"
+walkdir = "2"
+russh = "0.45"
+russh-sftp = "2"
+base64 = "0.22"
+encoding_rs = "0.8"
+ureq = { version = "2", features = ["json"] }
+async-trait = "0.1"
+
+[profile.dev]
+incremental = true

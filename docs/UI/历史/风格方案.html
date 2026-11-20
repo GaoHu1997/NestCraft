@@ -1,0 +1,605 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Agent 工作台 · 视觉风格方案对比</title>
+<style>
+/* ============ 主题变量：默认 = 现状 v2.5 ============ */
+:root{
+  --bg:#f6f7f8; --panel:#fff; --panel-2:#fafbfb; --panel-3:#f0f2f3;
+  --line:#e2e6e8; --line-strong:#ccd8d5;
+  --ink:#1c272d; --ink-2:#55646d; --ink-3:#839398;
+  --accent:#096957; --accent-ink:#fff; --accent-soft:#e3f2ee; --accent-line:#cce0d8; --accent-hover:#075646;
+  --tag-bg:#edf0f2; --tag-ink:#465762;
+  --good-bg:#e3f2ee; --good-ink:#0b5e4d;
+  --warn-bg:#fff2dc; --warn-ink:#8a4a08;
+  --bad-bg:#fbe8e9; --bad-ink:#a62b32;
+  --violet-bg:#f0eafa; --violet-ink:#624690;
+  --blue-bg:#e7eff8; --blue-ink:#2b5788;
+  --radius:8px; --radius-sm:6px; --radius-pill:999px;
+  --shadow:0 1px 2px rgba(20,40,40,.05); --shadow-pop:0 8px 28px rgba(20,40,40,.16);
+  --border-w:1px; --fs:14px; --fs-sm:13px; --fs-xs:11px;
+  --font-title:inherit; --font-body:system-ui,'Microsoft YaHei',sans-serif;
+  --weight-title:750; --tracking-title:-.01em;
+  --sidebar-bg:var(--panel-3); --sidebar-ink:var(--ink-2);
+  --blur:none; --mono:ui-monospace,Consolas,monospace;
+  --focus:#079282;
+}
+/* ============ A 纸感暖白 ============ */
+body[data-theme=paper]{
+  --bg:#faf7f1; --panel:#fffdf9; --panel-2:#f7f2e9; --panel-3:#f4eee3;
+  --line:#e8dfd0; --line-strong:#d6c8b2;
+  --ink:#221f1a; --ink-2:#6b6456; --ink-3:#948b7a;
+  --accent:#a8471f; --accent-ink:#fffdf9; --accent-soft:#f8ebe2; --accent-line:#e8c7b4; --accent-hover:#8e3a17;
+  --tag-bg:#f1ebdf; --tag-ink:#5d5648;
+  --good-bg:#e9efe1; --good-ink:#4a6132;
+  --warn-bg:#fbeed6; --warn-ink:#7d5513;
+  --bad-bg:#f9e5e2; --bad-ink:#94302a;
+  --violet-bg:#efe8f2; --violet-ink:#5f4370;
+  --blue-bg:#e7edf3; --blue-ink:#3c5a74;
+  --radius:10px; --radius-sm:7px;
+  --shadow:0 1px 2px rgba(90,70,40,.06), 0 12px 32px rgba(90,70,40,.04);
+  --fs:14px; --fs-sm:13px;
+  --font-title:Georgia,'Songti SC','Noto Serif SC',serif; --font-body:'Inter',system-ui,'Microsoft YaHei',sans-serif;
+  --weight-title:600; --tracking-title:0em;
+  --focus:#a8471f;
+}
+/* ============ B 深色工作室 ============ */
+body[data-theme=studio]{
+  --bg:#0f1417; --panel:#171e22; --panel-2:#1c252a; --panel-3:#141b1f;
+  --line:#27333a; --line-strong:#3a4953;
+  --ink:#e9f0f3; --ink-2:#9babb5; --ink-3:#71838e;
+  --accent:#38cba8; --accent-ink:#052320; --accent-soft:#12332c; --accent-line:#1f574c; --accent-hover:#4ddcba;
+  --tag-bg:#232e34; --tag-ink:#b3c2cb;
+  --good-bg:#12332c; --good-ink:#66e0c2;
+  --warn-bg:#3a2c17; --warn-ink:#f0be74;
+  --bad-bg:#3b2023; --bad-ink:#f2a0a6;
+  --violet-bg:#2a2338; --violet-ink:#c3abec;
+  --blue-bg:#1d2c3c; --blue-ink:#93bef0;
+  --radius:8px; --radius-sm:6px;
+  --shadow:0 1px 0 rgba(255,255,255,.03), 0 10px 26px rgba(0,0,0,.38);
+  --font-body:'Inter',system-ui,'Microsoft YaHei',sans-serif;
+  --weight-title:700;
+  --sidebar-bg:#111a1e; --sidebar-ink:#9babb5;
+  --focus:#38cba8;
+}
+/* ============ C 玻璃渐变 ============ */
+body[data-theme=glass]{
+  --bg:#eef0fb; --panel:rgba(255,255,255,.76); --panel-2:rgba(255,255,255,.55); --panel-3:rgba(255,255,255,.5);
+  --line:rgba(84,88,190,.16); --line-strong:rgba(84,88,190,.28);
+  --ink:#1c2040; --ink-2:#5b6180; --ink-3:#838aa8;
+  --accent:#5145e5; --accent-ink:#fff; --accent-soft:rgba(81,69,229,.10); --accent-line:rgba(81,69,229,.26); --accent-hover:#4136c9;
+  --tag-bg:rgba(81,69,229,.07); --tag-ink:#4b5078;
+  --good-bg:rgba(16,158,124,.12); --good-ink:#0b6f57;
+  --warn-bg:rgba(199,123,37,.14); --warn-ink:#7d4d0f;
+  --bad-bg:rgba(196,55,70,.12); --bad-ink:#9c2433;
+  --violet-bg:rgba(124,58,237,.10); --violet-ink:#5d34a8;
+  --blue-bg:rgba(37,99,235,.10); --blue-ink:#2a4f96;
+  --radius:16px; --radius-sm:10px;
+  --shadow:0 1px 2px rgba(50,50,120,.06), 0 12px 34px rgba(50,50,120,.10);
+  --font-body:'Inter',system-ui,'Microsoft YaHei',sans-serif;
+  --weight-title:700; --tracking-title:-.02em;
+  --sidebar-bg:rgba(255,255,255,.62); --sidebar-ink:#5b6180;
+  --blur:blur(20px) saturate(150%);
+  --focus:#5145e5;
+}
+/* ============ D 企业高密度 ============ */
+body[data-theme=enterprise]{
+  --bg:#f1f4f9; --panel:#fff; --panel-2:#f7f9fc; --panel-3:#eef2f8;
+  --line:#dbe3ee; --line-strong:#c2cfdf;
+  --ink:#16202e; --ink-2:#5c6b7f; --ink-3:#8494a7;
+  --accent:#2361cf; --accent-ink:#fff; --accent-soft:#e8effc; --accent-line:#c3d5f2; --accent-hover:#1b51b0;
+  --tag-bg:#eef2f8; --tag-ink:#4d5d71;
+  --good-bg:#e6f2ec; --good-ink:#1f6a4d;
+  --warn-bg:#fdf0dd; --warn-ink:#8a5310;
+  --bad-bg:#fbe9eb; --bad-ink:#a02a36;
+  --violet-bg:#efeafa; --violet-ink:#5b3f96;
+  --blue-bg:#e8effc; --blue-ink:#24528f;
+  --radius:4px; --radius-sm:3px;
+  --shadow:none;
+  --fs:13px; --fs-sm:12px; --fs-xs:11px;
+  --font-body:'Inter',system-ui,'Microsoft YaHei',sans-serif;
+  --weight-title:700; --tracking-title:0em;
+  --sidebar-bg:var(--panel); --sidebar-ink:#4d5d71;
+  --focus:#2361cf;
+}
+/* ============ E 编辑风（硬边高对比） ============ */
+body[data-theme=editorial]{
+  --bg:#f3f2ee; --panel:#fff; --panel-2:#f7f6f1; --panel-3:#eeede7;
+  --line:#111; --line-strong:#111;
+  --ink:#0c0c0c; --ink-2:#4b4b46; --ink-3:#78786f;
+  --accent:#1b1bd6; --accent-ink:#fff; --accent-soft:#e9e9ff; --accent-line:#1b1bd6; --accent-hover:#0f0fae;
+  --tag-bg:#eeede7; --tag-ink:#33332e;
+  --good-bg:#dff3e4; --good-ink:#0c5a2e;
+  --warn-bg:#ffefc4; --warn-ink:#6b4a00;
+  --bad-bg:#ffe1e1; --bad-ink:#8a1414;
+  --violet-bg:#eee6ff; --violet-ink:#4a219b;
+  --blue-bg:#e3edff; --blue-ink:#123f96;
+  --radius:0px; --radius-sm:0px;
+  --shadow:3px 3px 0 var(--line-strong); --shadow-pop:6px 6px 0 var(--line-strong);
+  --border-w:2px;
+  --font-body:'Inter',system-ui,'Microsoft YaHei',sans-serif;
+  --weight-title:800; --tracking-title:-.02em;
+  --sidebar-bg:#fff; --sidebar-ink:#33332e;
+  --focus:#1b1bd6;
+}
+
+/* ============ 基础 ============ */
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);font:var(--fs)/1.55 var(--font-body);-webkit-font-smoothing:antialiased;transition:background .25s,color .25s}
+body[data-theme=glass]{background:
+  radial-gradient(1100px 720px at 8% -12%, rgba(196,190,255,.55) 0%, transparent 58%),
+  radial-gradient(1000px 700px at 98% -4%, rgba(186,222,255,.55) 0%, transparent 56%),
+  radial-gradient(1000px 760px at 62% 108%, rgba(255,206,236,.42) 0%, transparent 52%),
+  #eef0fb;background-attachment:fixed}
+body[data-theme=studio]{color-scheme:dark}
+h1,h2,h3,p,pre{margin:0}
+h1,h2,h3{font-family:var(--font-title);font-weight:var(--weight-title);letter-spacing:var(--tracking-title);line-height:1.3}
+p{line-height:1.66}
+a{color:var(--accent);text-decoration:none}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.icon{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.mono{font-family:var(--mono);font-size:.92em}
+
+/* ============ 选择器（固定中性） ============ */
+.picker{position:sticky;top:0;z-index:9;background:color-mix(in srgb,var(--bg) 82%,#fff 18%);backdrop-filter:blur(14px) saturate(140%);border-bottom:1px solid var(--line)}
+.picker-in{max-width:1500px;margin:auto;padding:16px 26px 14px;display:flex;align-items:flex-start;gap:22px;flex-wrap:wrap;justify-content:space-between}
+.picker h1{font-size:19px;letter-spacing:-.01em}
+.picker .sub{font-size:12px;color:var(--ink-2);margin-top:3px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap}
+.tab{padding:8px 13px;min-height:36px;border:1px solid var(--line);border-radius:var(--radius-pill);background:var(--panel);font-size:12.5px;font-weight:650;color:var(--ink-2);display:inline-flex;align-items:center;gap:7px}
+.tab i{width:11px;height:11px;border-radius:50%;display:block;border:1px solid rgba(0,0,0,.16)}
+.tab[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.tab[aria-pressed=true] i{outline:1px solid rgba(255,255,255,.7);outline-offset:1px}
+.tab .cur{font-size:10px;opacity:.75;font-weight:600}
+
+/* ============ 舞台 ============ */
+.stage{max-width:1500px;margin:auto;padding:26px 26px 60px}
+.note{border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);padding:16px 18px;margin-bottom:22px;display:grid;gap:12px;grid-template-columns:minmax(0,1fr) minmax(0,1.35fr);box-shadow:var(--shadow)}
+.note h2{font-size:16px;margin-bottom:5px}
+.note p{font-size:12.5px;color:var(--ink-2)}
+.swatches{display:flex;gap:0;border-radius:var(--radius-sm);overflow:hidden;border:1px solid var(--line);height:auto;min-height:68px}
+.swatches span{flex:1;display:flex;align-items:flex-end;justify-content:center;padding:7px 2px;font-size:9.5px;font-family:var(--mono);letter-spacing:-.03em}
+.meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}
+.pill{font-size:11px;padding:3px 8px;border-radius:var(--radius-pill);background:var(--panel-3);color:var(--ink-2);border:1px solid var(--line)}
+
+.scene{margin-bottom:30px}
+.scene-label{display:flex;align-items:center;gap:9px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3);margin:0 2px 9px}
+.scene-label b{font-family:var(--mono);font-weight:700;color:var(--accent)}
+.window{border:1px solid var(--line);border-radius:calc(var(--radius) + 4px);background:var(--panel);box-shadow:var(--shadow);overflow:hidden}
+
+/* ============ 应用外壳 ============ */
+.shell{display:grid;grid-template-columns:206px minmax(0,1fr);min-height:100%}
+body[data-theme=enterprise] .shell{grid-template-columns:186px minmax(0,1fr)}
+.sidebar{display:flex;flex-direction:column;gap:2px;padding:16px 11px 12px;background:var(--sidebar-bg);border-right:1px solid var(--line);backdrop-filter:var(--blur)}
+.brand{display:flex;align-items:center;gap:9px;padding:2px 6px 15px;font-weight:750;font-size:14px;color:var(--ink)}
+.brandmark{display:grid;place-items:center;width:32px;height:32px;border-radius:calc(var(--radius) - 2px);background:var(--accent);color:var(--accent-ink);flex:none}
+.brand small{display:block;font-size:10.5px;font-weight:500;color:var(--ink-3);margin-top:1px}
+.nav-label{padding:10px 8px 5px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+.nav a{display:flex;align-items:center;gap:9px;padding:8px 9px;border-radius:var(--radius-sm);color:var(--sidebar-ink);font-weight:600;font-size:13px;border:var(--border-w) solid transparent}
+.nav a:hover{background:var(--panel-2);color:var(--ink)}
+.nav a[aria-current]{background:var(--accent-soft);color:var(--accent);border-color:var(--accent-line)}
+.sidefoot{margin-top:auto;padding-top:12px;border-top:1px solid var(--line);display:grid;gap:9px}
+.profile{display:flex;align-items:center;gap:8px;padding:0 6px}
+.avatar{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent);font-size:11px;font-weight:700;flex:none}
+.profile b{display:block;font-size:12px}
+.profile small{display:block;font-size:10.5px;color:var(--ink-3)}
+
+.main{min-width:0;display:flex;flex-direction:column}
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 22px;min-height:50px;border-bottom:1px solid var(--line);background:var(--panel);backdrop-filter:var(--blur)}
+.crumb{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-2);flex-wrap:wrap}
+.crumb b{color:var(--ink);font-weight:650}
+.demo{font-size:10.5px;padding:3px 8px;border-radius:var(--radius-pill);background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);font-weight:650;white-space:nowrap}
+.page{padding:22px 22px 26px;min-width:0}
+
+.head{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:18px}
+.head h1{font-size:26px}
+.head p{font-size:12.5px;color:var(--ink-2);margin-top:5px}
+.actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+/* 按钮 */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:34px;padding:6px 12px;border:var(--border-w) solid var(--line-strong);border-radius:var(--radius-sm);background:var(--panel);color:var(--ink);font-weight:650;font-size:13px;line-height:1.3;box-shadow:var(--shadow)}
+.btn:hover{background:var(--panel-2);border-color:var(--ink-3)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.primary:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
+.btn.ghost{background:transparent;border-color:transparent;box-shadow:none;color:var(--ink-2)}
+.btn.ghost:hover{background:var(--panel-2);color:var(--ink)}
+.btn.sm{min-height:29px;padding:4px 9px;font-size:11.5px}
+.btn.icon{padding:6px;min-width:34px}
+
+/* 指标 */
+.metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin-bottom:16px;background:var(--panel-2)}
+.metric{display:flex;align-items:center;gap:10px;padding:12px 15px;border-left:1px solid var(--line);min-width:0}
+.metric:first-child{border-left:0}
+.metric b{display:block;font-size:20px;line-height:1.2;font-family:var(--font-title);font-weight:var(--weight-title)}
+.metric small{display:block;font-size:11px;color:var(--ink-2)}
+.metric .icon{color:var(--accent);width:18px;height:18px}
+body[data-theme=studio] .metric .icon{color:var(--accent)}
+
+/* 搜索与分段 */
+.toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.search{position:relative;flex:0 1 290px;min-width:0}
+.search .icon{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--ink-3)}
+.search input{width:100%;padding:8px 10px 8px 33px;border:var(--border-w) solid var(--line-strong);border-radius:var(--radius-sm);background:var(--panel);font-size:12.5px}
+.search input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.segment{display:inline-flex;gap:2px;padding:2px;background:var(--panel-3);border:1px solid var(--line);border-radius:var(--radius-sm);flex-wrap:wrap}
+.segment button{border:1px solid transparent;background:transparent;border-radius:calc(var(--radius-sm) - 1px);padding:4px 11px;font-size:12px;font-weight:600;color:var(--ink-2);min-height:28px;box-shadow:none}
+.segment button[aria-pressed=true]{background:var(--panel);color:var(--ink);border-color:var(--line-strong);box-shadow:var(--shadow)}
+
+/* 卡片 */
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.card{display:flex;flex-direction:column;gap:9px;padding:14px;border:var(--border-w) solid var(--line);border-radius:var(--radius);background:var(--panel);box-shadow:var(--shadow);min-width:0}
+.card:hover{border-color:var(--line-strong)}
+.cardtop{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.tileicon{display:grid;place-items:center;width:32px;height:32px;border-radius:calc(var(--radius) - 2px);background:var(--accent-soft);color:var(--accent);flex:none}
+.card h3{font-size:15px}
+.card p{font-size:12.5px;color:var(--ink-2)}
+.cardfoot{margin-top:auto;padding-top:9px;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--ink-2)}
+.data{display:flex;gap:4px 10px;flex-wrap:wrap;font-size:11.5px;color:var(--ink-3)}
+
+/* 标签 */
+.tag{display:inline-flex;align-items:center;gap:4px;padding:2.5px 7px;border-radius:calc(var(--radius-sm) - 2px);background:var(--tag-bg);color:var(--tag-ink);font-size:10.5px;font-weight:650;white-space:nowrap;border:1px solid transparent}
+body[data-theme=editorial] .tag{border-color:var(--line)}
+.tag.good{background:var(--good-bg);color:var(--good-ink)}
+.tag.warn{background:var(--warn-bg);color:var(--warn-ink)}
+.tag.bad{background:var(--bad-bg);color:var(--bad-ink)}
+.tag.violet{background:var(--violet-bg);color:var(--violet-ink)}
+.tag.blue{background:var(--blue-bg);color:var(--blue-ink)}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--ink-3);flex:none;display:inline-block}
+.dot.good{background:var(--good-ink)}.dot.warn{background:var(--warn-ink)}.dot.bad{background:var(--bad-ink)}.dot.blue{background:var(--blue-ink)}.dot.violet{background:var(--violet-ink)}
+
+/* 工作台三栏 */
+.workgrid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr) minmax(270px,.95fr);gap:0;border-top:1px solid var(--line);min-height:472px}
+.pane{display:flex;flex-direction:column;min-width:0}
+.pane+.pane{border-left:1px solid var(--line)}
+.panelhead{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px;min-height:40px;border-bottom:1px solid var(--line);background:var(--panel-2);font-size:12px;font-weight:700}
+.panelbody{padding:11px;min-width:0;overflow:auto}
+.panelhead .icon{color:var(--ink-3)}
+
+.iter{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:10px 12px;border:var(--border-w) solid var(--line);border-radius:var(--radius-sm);background:var(--panel);margin-bottom:10px}
+.iter b{font-size:12.5px}
+.progress{height:5px;border-radius:99px;background:var(--panel-3);overflow:hidden;margin-top:7px;width:150px}
+.progress i{display:block;height:100%;background:var(--accent);width:34%}
+
+.tree{display:grid;gap:4px}
+.node{display:flex;align-items:center;gap:7px;padding:6px 8px;border:var(--border-w) solid var(--line);border-radius:var(--radius-sm);background:var(--panel);flex-wrap:wrap;font-size:12.5px}
+.node.sel{border-color:var(--accent-line);background:var(--accent-soft)}
+.node .tw{width:22px;height:22px;display:grid;place-items:center;border:1px solid var(--line);border-radius:calc(var(--radius-sm) - 1px);background:var(--panel);font-size:10px;color:var(--ink-2);flex:none;box-shadow:none;padding:0;min-height:22px}
+.node .nm{flex:1 1 150px;min-width:0}
+.node .nm small{display:block;font-size:10.5px;color:var(--ink-3)}
+.node .nm b{font-weight:650}
+.children{padding-left:15px;margin-left:14px;border-left:1px solid var(--line);display:grid;gap:5px;margin-top:5px}
+
+.details{display:grid;gap:0;font-size:12.5px}
+.details section{padding:10px 0;border-bottom:1px solid var(--line)}
+.details section:first-child{padding-top:0}
+.details h3{font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin-bottom:6px;font-family:var(--font-body);font-weight:700}
+.checkrow{display:flex;gap:7px;align-items:flex-start;padding:4px 0;line-height:1.55}
+.checkrow input{accent-color:var(--accent);width:14px;height:14px;margin-top:2px;flex:none}
+.checkrow span{min-width:0}
+
+/* AI 侧栏 */
+.chatlog{display:flex;flex-direction:column;gap:8px;padding:11px;flex:1;min-height:0;overflow:auto}
+.msg{padding:8px 10px;border-radius:var(--radius-sm);background:var(--panel-2);font-size:12px;line-height:1.55;border:var(--border-w) solid var(--line)}
+.msg.user{background:var(--accent-soft);border-color:var(--accent-line);margin-left:20px}
+.msg b{display:block;font-size:11px;color:var(--ink-3);margin-bottom:2px;font-weight:700}
+.msg code{font-family:var(--mono);background:var(--panel-3);padding:1px 4px;border-radius:3px}
+.approval{padding:9px;border:1px solid var(--warn-bg);border-left:3px solid var(--warn-ink);background:var(--warn-bg);color:var(--warn-ink);font-size:11.5px;border-radius:var(--radius-sm)}
+.approval .actions{margin-top:7px}
+.composer{padding:9px;border-top:1px solid var(--line);display:grid;gap:6px;background:var(--panel)}
+.composerbar{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.composer textarea{width:100%;min-height:52px;resize:vertical;padding:7px 9px;border:var(--border-w) solid var(--line-strong);border-radius:var(--radius-sm);background:var(--panel);font-size:12px}
+.composer textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.chip{display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border-radius:var(--radius-pill);border:1px solid var(--accent-line);background:var(--accent-soft);color:var(--accent);font-size:10.5px;font-weight:600}
+.composer select{font-size:10.5px;padding:3px 6px;border:var(--border-w) solid var(--line-strong);border-radius:var(--radius-sm);background:var(--panel);max-width:100%}
+
+/* 组件集 */
+.bits{display:grid;gap:14px;grid-template-columns:repeat(2,minmax(0,1fr));padding:16px}
+.bit{border:1px solid var(--line);border-radius:var(--radius);padding:14px;background:var(--panel);box-shadow:var(--shadow);min-width:0}
+.bit h3{font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);font-family:var(--font-body);font-weight:700;margin-bottom:10px}
+.row{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+.sheet{width:100%;border-collapse:collapse;font-size:11.5px}
+.sheet th,.sheet td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
+.sheet th{background:var(--panel-2);color:var(--ink-2);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em}
+.sheet tr:last-child td{border-bottom:0}
+body[data-theme=enterprise] .sheet tbody tr:nth-child(odd){background:var(--panel-2)}
+.terminal{border-radius:var(--radius-sm);background:#14212a;color:#e6f1f4;padding:11px;font-family:var(--mono);font-size:11.5px;line-height:1.65;border:1px solid #14212a}
+body[data-theme=studio] .terminal{background:#0b1013;border-color:var(--line)}
+body[data-theme=editorial] .terminal{border:2px solid #111;border-radius:0}
+.terminal .ok{color:#54d6b4}.terminal .warn{color:#f0c06a}.terminal .dim{color:#7f97a2}
+.notice{padding:9px 11px;border-left:3px solid var(--accent);background:var(--accent-soft);color:var(--ink);font-size:12px;border-radius:0 var(--radius-sm) var(--radius-sm) 0;line-height:1.55}
+.notice.warn{border-color:var(--warn-ink);background:var(--warn-bg);color:var(--warn-ink)}
+.dialog{margin-top:10px;border:var(--border-w) solid var(--line-strong);border-radius:var(--radius);background:var(--panel);box-shadow:var(--shadow-pop);padding:14px;max-width:100%}
+.dialog h4{margin:0 0 8px;font-size:14px;font-family:var(--font-title);font-weight:var(--weight-title)}
+.dialog label{display:grid;gap:4px;font-size:11.5px;font-weight:650;margin-bottom:9px}
+.dialog input{padding:7px 9px;border:var(--border-w) solid var(--line-strong);border-radius:var(--radius-sm);background:var(--panel);font-size:12px}
+.dialog footer{display:flex;justify-content:flex-end;gap:7px}
+
+.foot{max-width:1500px;margin:auto;padding:0 26px 70px;color:var(--ink-2);font-size:12px;line-height:1.8}
+.foot b{color:var(--ink)}
+.foot ol{padding-left:18px;margin:6px 0}
+
+@media(max-width:1080px){
+  .note{grid-template-columns:1fr}
+  .workgrid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .workgrid .pane:last-child{grid-column:1/-1;border-left:0;border-top:1px solid var(--line)}
+  .bits{grid-template-columns:1fr}
+  .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:720px){
+  .picker-in,.stage,.foot{padding-left:13px;padding-right:13px}
+  .shell{grid-template-columns:1fr}
+  .sidebar{flex-direction:row;flex-wrap:wrap;align-items:center;border-right:0;border-bottom:1px solid var(--line);padding:8px}
+  .brand{padding:0 6px 0 0;width:100%}
+  .nav{display:flex;gap:4px;flex-wrap:wrap;width:100%}
+  .nav-label,.sidefoot{display:none}
+  .grid,.metrics,.workgrid{grid-template-columns:1fr}
+  .metric{border-left:0;border-top:1px solid var(--line)}
+  .metric:first-child{border-top:0}
+  .pane+.pane{border-left:0;border-top:1px solid var(--line)}
+  .head h1{font-size:22px}
+}
+</style>
+</head>
+<body data-theme="now">
+<div id="app"></div>
+<script>
+'use strict';
+const ic = (name, extra = '') => `<svg class="icon ${extra}" viewBox="0 0 24 24" aria-hidden="true">${PATHS[name] ?? PATHS.file}</svg>`;
+const PATHS = {
+  agent:'<path d="M12 3l2.4 6.1L21 11.5l-6.6 2.4L12 20l-2.4-6.1L3 11.5l6.6-2.4z"/><path d="M19 15v5m-2.5-2.5h5"/>',
+  folder:'<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  book:'<path d="M5 19V5a2 2 0 0 1 2-2h13v16H7a2 2 0 0 0 0 4h13M9 8h7m-7 4h5"/>',
+  server:'<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01m5-9h5m-5 9h5"/>',
+  settings:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M4.2 4.2l2.1 2.1m11.4 11.4 2.1 2.1M2 12h3m14 0h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  search:'<circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 4.5 4.5"/>',
+  arrow:'<path d="M4 12h15m-6-6 6 6-6 6"/>',
+  back:'<path d="M20 12H5m6-6-6 6 6 6"/>',
+  code:'<path d="m7 6-6 6 6 6m10-12 6 6-6 6"/>',
+  file:'<path d="M6 3h8l4 4v14H6zM14 3v5h4M9 13h6m-6 4h6"/>',
+  layers:'<path d="m12 3 9 5-9 5-9-5zM3 12l9 5 9-5m-18 4 9 5 9-5"/>',
+  shield:'<path d="M12 3 4 6v5c0 5 3 8 8 10 5-2 8-5 8-10V6z"/><path d="m9 12 2 2 4-4"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  check:'<path d="m5 12 4 4L19 6"/>',
+  send:'<path d="m3 3 19 9-19 9 4-9zM7 12h15"/>',
+  user:'<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',
+  eye:'<path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/>',
+  branch:'<circle cx="6" cy="5" r="2.5"/><circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="9" r="2.5"/><path d="M6 7.5v9M8.5 9h4a3 3 0 0 1 3 3v0"/>',
+  spark:'<path d="M12 2l1.9 5.3L19 9l-5.1 1.7L12 16l-1.9-5.3L5 9l5.1-1.7z"/><path d="M18.5 14.5 19 16l1.5.5-1.5.5-.5 1.5-.5-1.5L16.5 16l1.5-.5z"/>'
+};
+
+const THEMES = [
+  { id:'now', name:'现状 v2.5', dot:'#096957', tagline:'上一版评审稿：浅灰 + 青绿，1px 细线、8px 圆角，接近「标准后台」的克制感。', fit:['已替代','历史对照'], risk:'中性偏朴素，品牌感弱；标题字重偏重，长页面略显平板。',
+    colors:[['底','#f6f7f8'],['面板','#ffffff'],['线','#e2e6e8'],['主色','#096957'],['浅主色','#e3f2ee'],['正文','#1c272d']] },
+  { id:'paper', name:'A 纸感暖白', dot:'#a8471f', tagline:'暖米白纸面 + 衬线标题 + 赤陶主色。像一份认真排版的评审文档，长时间读需求不刺眼。', fit:['已选用为浅色主主题','阅读型界面','文档/需求为主'], risk:'偏暖，截图与演示时不如蓝紫系「科技感」；已通过深色模式覆盖夜间场景。', chosen:'浅色主主题',
+    colors:[['底','#faf7f1'],['面板','#fffdf9'],['线','#e8dfd0'],['主色','#a8471f'],['浅主色','#f8ebe2'],['正文','#221f1a']] },
+  { id:'studio', name:'B 深色工作室', dot:'#38cba8', tagline:'石墨黑分层 + 高亮青绿。终端、代码、AI 会话天然融合，适合长时间盯屏。', fit:['已并入可选深色','夜间使用','终端/代码'], risk:'与 A 合并为「暖石墨深色」可选模式：底/线沿用石墨，主色改用赤陶系以保持同一品牌。', chosen:'深色参考（已并入 A 的深色模式）',
+    colors:[['底','#14110e'],['面板','#1e1a16'],['线','#332b24'],['主色','#e0764a'],['浅主色','#3a2a22'],['正文','#f2ebe2']] },
+  { id:'glass', name:'C 玻璃渐变', dot:'#5145e5', tagline:'浅蓝紫柔光底 + 半透明磨砂卡片 + 16px 大圆角 + 靛蓝紫主色，现代 SaaS 观感。', fit:['未选用','品牌与演示'], risk:'对比度与可读性最弱的一档，需要逐项校验；模糊与阴影对低端机有渲染成本。',
+    colors:[['底','#eef0fb'],['面板','rgba(255,255,255,.76)'],['线','rgba(84,88,190,.16)'],['主色','#5145e5'],['浅主色','#ede9ff'],['正文','#1c2040']] },
+  { id:'enterprise', name:'D 企业高密度', dot:'#2361cf', tagline:'冷灰蓝底 + 企业蓝 + 4px 小圆角 + 13px 字号。同样面积放更多信息，像成熟的研发管理台。', fit:['未选用','需求/缺陷密集'], risk:'气质偏保守、偏「内部系统」；小圆角与无阴影会显得硬，品牌记忆点最弱。',
+    colors:[['底','#f1f4f9'],['面板','#ffffff'],['线','#dbe3ee'],['主色','#2361cf'],['浅主色','#e8effc'],['正文','#16202e']] },
+  { id:'editorial', name:'E 编辑风硬边', dot:'#1b1bd6', tagline:'2px 黑边框 + 零圆角 + 硬阴影 + 电光蓝点缀。个性最强，像设计工作室的内部工具。', fit:['未选用','强个性'], risk:'高对比硬边在密集界面里容易「吵」；2px 边框会吃掉信息密度，需谨慎用于复杂表格。',
+    colors:[['底','#f3f2ee'],['面板','#ffffff'],['线','#111111'],['主色','#1b1bd6'],['浅主色','#e9e9ff'],['正文','#0c0c0c']] }
+];
+
+const picker = () => {
+  const tabs = THEMES.map(t => {
+    const cur = t.id === 'now' ? '<span class="cur">已替代</span>' : (t.chosen ? `<span class="cur">${t.chosen === '浅色主主题' ? '已选用' : '已并入'}</span>` : '');
+    return `<button class="tab" data-theme-btn="${t.id}" aria-pressed="${t.id === 'paper'}"><i style="background:${t.dot}"></i>${t.name}${cur}</button>`;
+  }).join('');
+  return `<div class="picker"><div class="picker-in">
+    <div><h1>视觉风格方案 · 已选定 A</h1>
+      <p class="sub">用户已选定 <b>A 纸感暖白</b> 为浅色主主题，并采用深色作为可选模式；本页保留为选型对照记录。</p></div>
+    <div class="tabs" role="group" aria-label="风格方案">${tabs}</div>
+  </div></div>`;
+};
+
+const swatches = t => t.colors.map(([k, v]) => {
+  const light = isLight(v);
+  const ink = light ? '#2a2a26' : '#f4f4f0';
+  const shadow = light ? 'none' : '0 1px 1px rgba(0,0,0,.4)';
+  return `<span style="background:${v};color:${ink};text-shadow:${shadow}" title="${k} ${v}">${k}</span>`;
+}).join('');
+function isLight(v) {
+  const m = /^#([0-9a-f]{6})$/i.exec(v);
+  if (!m) return true; // rgba 类半透明浅色按浅底处理
+  const n = parseInt(m[1], 16), r = n >> 16 & 255, g = n >> 8 & 255, b = n & 255;
+  return (r * 299 + g * 587 + b * 114) / 1000 > 145;
+}
+
+const sidebar = () => `<aside class="sidebar">
+  <div class="brand"><span class="brandmark">${ic('agent')}</span><div>Agent 工作台<small>个人工作区</small></div></div>
+  <div class="nav-label">工作区</div>
+  <nav class="nav">
+    <a href="#" aria-current="page">${ic('folder')}项目管理</a>
+    <a href="#">${ic('book')}知识库</a>
+    <a href="#">${ic('server')}服务器管理</a>
+  </nav>
+  <div class="sidefoot">
+    <a class="btn ghost sm" href="#" style="justify-content:flex-start">${ic('settings')}设置</a>
+    <div class="profile"><span class="avatar">林</span><div><b>林澈</b><small>本地演示</small></div></div>
+  </div>
+</aside>`;
+
+const sceneList = () => `<div class="window">
+  <div class="shell">${sidebar()}
+    <div class="main">
+      <header class="top"><div class="crumb">${ic('user')}林澈 <span>/</span> <b>项目管理</b></div><span class="demo">v2.5 · 本地仿真</span></header>
+      <div class="page">
+        <div class="head">
+          <div><h1>项目管理</h1><p>管理代码与办公项目，继续最近的工作。</p></div>
+          <div class="actions"><button class="btn">${ic('search')}筛选</button><button class="btn primary">${ic('plus')}新建项目</button></div>
+        </div>
+        <div class="metrics">
+          <div class="metric">${ic('folder')}<div><b>4</b><small>全部项目</small></div></div>
+          <div class="metric">${ic('code')}<div><b>2</b><small>代码项目</small></div></div>
+          <div class="metric">${ic('layers')}<div><b>2</b><small>办公项目</small></div></div>
+        </div>
+        <div class="toolbar">
+          <label class="search">${ic('search')}<input placeholder="搜索项目或负责人" value=""></label>
+          <div class="segment" role="group"><button aria-pressed="true">全部</button><button>代码</button><button>办公</button></div>
+        </div>
+        <div class="grid">
+          <article class="card">
+            <div class="cardtop"><span class="tileicon">${ic('layers')}</span><span class="tag violet">work</span></div>
+            <h3>市场研究与产品规划</h3><p>汇总竞品定价与研究证据，交付评审材料。</p>
+            <div class="data"><span>陈雨</span><span>2026-10-28</span></div>
+            <div class="cardfoot"><span>5 份资料 · 0 个产物</span><button class="btn sm">${ic('arrow')}打开</button></div>
+          </article>
+          <article class="card">
+            <div class="cardtop"><span class="tileicon">${ic('code')}</span><span class="tag blue">code</span></div>
+            <h3>API 网关监控</h3><p>维护网关健康检查、状态接口与发布说明。</p>
+            <div class="data"><span>林澈</span><span>2026-10-19</span></div>
+            <div class="cardfoot"><span>迭代 04 · 3 条 Story</span><button class="btn sm">${ic('arrow')}打开</button></div>
+          </article>
+          <article class="card">
+            <div class="cardtop"><span class="tileicon">${ic('layers')}</span><span class="tag violet">work</span></div>
+            <h3>财务月报自动化</h3><p>归集月度数据，核对口径后生成汇报材料。</p>
+            <div class="data"><span>周宁</span><span>2026-11-04</span></div>
+            <div class="cardfoot"><span>1 份资料 · 0 个产物</span><button class="btn sm">${ic('arrow')}打开</button></div>
+          </article>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>`;
+
+const sceneWork = () => `<div class="window">
+  <div class="shell">${sidebar()}
+    <div class="main">
+      <header class="top"><div class="crumb">项目管理 <span>/</span> <b>API 网关监控</b></div><span class="demo">v2.5 · 本地仿真</span></header>
+      <div class="page" style="padding-bottom:0">
+        <div class="head" style="margin-bottom:12px">
+          <div><h1 style="font-size:21px">API 网关监控</h1>
+            <div class="actions" style="margin-top:6px"><span class="tag blue">code · 敏捷研发</span><span class="tag">迭代 04</span><span class="tag good"><span class="dot good"></span>1/3 已完成</span></div></div>
+          <div class="actions"><button class="btn">${ic('eye')}预览</button><button class="btn primary">${ic('plus')}新建 Story</button></div>
+        </div>
+      </div>
+      <div class="page" style="padding-top:0">
+        <div class="workgrid">
+          <section class="pane">
+            <header class="panelhead"><span>需求文档树</span><span style="font-weight:500;color:var(--ink-3)">展开与详情独立</span></header>
+            <div class="panelbody">
+              <div class="iter"><div><b>迭代 04</b> <small class="mono">11.11 – 11.24</small><div class="progress"><i></i></div></div><span class="tag good">1/3</span></div>
+              <div class="tree">
+                <div class="node"><button class="tw">▾</button><span class="nm"><small>VISION-gateway · 愿景</small><b>API 网关监控产品愿景</b></span><span class="tag">设计评审</span></div>
+                <div class="children">
+                  <div class="node"><button class="tw">▾</button><span class="nm"><small>EPIC-007 · Epic</small><b>项目交付</b></span><span class="tag blue">进行中</span></div>
+                  <div class="children">
+                    <div class="node"><button class="tw">▾</button><span class="nm"><small>FEAT-012 · Feature</small><b>迭代目标</b></span><span class="tag blue">进行中</span></div>
+                    <div class="children">
+                      <div class="node sel"><button class="tw">▾</button><span class="dot warn"></span><span class="nm"><small>STORY-021 · Story</small><b>健康检查返回服务标识</b></span><span class="tag warn">开发中</span></div>
+                      <div class="children" style="padding-left:10px">
+                        <p style="font-size:11.5px;color:var(--ink-2)">让调用方识别网关服务，同时兼容现有状态字段。</p>
+                        <div class="data" style="margin-top:3px"><span>2 条 AC</span><span class="mono">src/health.ts</span></div>
+                      </div>
+                      <div class="node"><button class="tw">▸</button><span class="dot violet"></span><span class="nm"><small>STORY-022 · Story</small><b>维护运行配置说明</b></span><span class="tag violet">设计中</span></div>
+                      <div class="node"><button class="tw">▸</button><span class="dot good"></span><span class="nm"><small>STORY-023 · Story</small><b>记录状态接口用法</b></span><span class="tag good">已完成</span></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+          <section class="pane">
+            <header class="panelhead"><span>STORY-021 详情</span><span class="mono" style="font-weight:500;color:var(--ink-3)">AC ×2</span></header>
+            <div class="panelbody details">
+              <section><h3>目标</h3><p>作为调用方，我希望健康检查返回稳定的服务标识，以便区分网关与上游实例。</p></section>
+              <section><h3>验收标准</h3>
+                <label class="checkrow"><input type="checkbox" checked><span><b>AC-021-01</b> 给定已启动网关，当请求 <span class="mono">/health</span>，则返回 <span class="mono">service</span> 与 <span class="mono">version</span>。</span></label>
+                <label class="checkrow"><input type="checkbox"><span><b>AC-021-02</b> 给定旧版客户端，当读取 <span class="mono">status</span>，则字段仍可用且不改变语义。</span></label>
+              </section>
+              <section><h3>验证记录</h3><p class="data"><span class="tag good">AC-021-01 通过</span><span class="tag warn">AC-021-02 未执行</span><span class="mono">2026-11-18</span></p></section>
+              <div class="actions" style="margin-top:10px"><button class="btn sm">${ic('spark')}AI 协助</button><button class="btn sm primary">推进到验证中</button></div>
+            </div>
+          </section>
+          <section class="pane">
+            <header class="panelhead"><span>AI 助手</span><span class="actions"><button class="btn ghost sm">${ic('plus')}新建会话</button></span></header>
+            <div class="chatlog">
+              <div class="msg user"><b>你</b>检查健康检查接口是否有回归风险</div>
+              <div class="msg"><b>AI · claude-code</b>读取了 <code>src/health.ts</code>，发现 2 处字段拼写风险，已生成一次修改提案。</div>
+              <div class="approval"><b>待确认 · 写入文件</b><p style="margin:3px 0 0">将修改 <span class="mono">src/health.ts</span> 3 行，不影响 <span class="mono">status</span> 字段。</p><div class="actions"><button class="btn sm">拒绝</button><button class="btn sm primary">应用</button></div></div>
+            </div>
+            <div class="composer">
+              <div class="composerbar"><span class="chip">${ic('branch')}feature/health-id</span><span class="chip">${ic('book')}研发手册</span></div>
+              <textarea placeholder="输入消息，@ 选择上下文，/ 选择 Skill"></textarea>
+              <div class="composerbar"><select><option>claude-code</option><option>codex-cli</option></select><button class="btn primary sm">${ic('send')}发送</button></div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>`;
+
+const sceneBits = () => `<div class="window"><div class="bits">
+  <div class="bit"><h3>按钮与标签</h3>
+    <div class="row"><button class="btn primary">主操作</button><button class="btn">次操作</button><button class="btn ghost">弱操作</button><button class="btn sm">小号</button></div>
+    <div class="row" style="margin-top:10px"><span class="tag">待澄清</span><span class="tag warn">开发中</span><span class="tag violet">设计中</span><span class="tag blue">进行中</span><span class="tag good">已完成</span><span class="tag bad">缺陷</span></div>
+  </div>
+  <div class="bit"><h3>表格</h3>
+    <table class="sheet"><thead><tr><th>工具</th><th>风险</th><th>调用</th><th>开关</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">fs.read</td><td><span class="tag good">低</span></td><td>41</td><td><span class="tag good">启用</span></td></tr>
+      <tr><td class="mono">local-exec</td><td><span class="tag bad">高</span></td><td>5</td><td><span class="tag warn">需确认</span></td></tr>
+      <tr><td class="mono">ssh-exec</td><td><span class="tag bad">高</span></td><td>3</td><td><span class="tag">停用</span></td></tr>
+    </tbody></table>
+  </div>
+  <div class="bit"><h3>提示与终端</h3>
+    <div class="notice">只读授权已生效：项目 AI 仅能看到当前项目获授的知识库。</div>
+    <div class="notice warn" style="margin-top:8px">高风险操作需人工确认后执行。</div>
+    <div class="terminal" style="margin-top:9px"><span class="dim">$</span> docker ps --format '{{.Names}}'<br><span class="ok">gateway-api</span><br><span class="ok">redis-cache</span><br><span class="dim">$</span> free -h<br><span class="warn">mem 3.1G / 7.8G</span></div>
+  </div>
+  <div class="bit"><h3>弹窗与表单</h3>
+    <div class="dialog"><h4>新建 Story</h4>
+      <label>标题<input value="健康检查返回服务标识"></label>
+      <label>所属 Feature<input value="FEAT-012 · 迭代目标"></label>
+      <footer><button class="btn sm">取消</button><button class="btn sm primary">创建</button></footer>
+    </div>
+  </div>
+</div></div>`;
+
+function render(id) {
+  const t = THEMES.find(x => x.id === id) ?? THEMES[0];
+  document.body.dataset.theme = t.id;
+  document.title = `Agent 工作台 · 视觉风格方案 · ${t.name}`;
+  document.querySelector('#app').innerHTML = `${picker()}
+  <main class="stage">
+    <div class="note">
+      <div>
+        <h2>${t.name}</h2>
+        <p>${t.tagline}</p>
+        <div class="meta">${t.fit.map(f => `<span class="pill">${f}</span>`).join('')}</div>
+      </div>
+      <div>
+        <div class="swatches">${swatches(t)}</div>
+        <p style="margin-top:8px"><b style="color:var(--ink)">取舍</b>　${t.risk}</p>
+      </div>
+    </div>
+    <section class="scene"><div class="scene-label"><b>01</b> 项目列表 · 日常入口</div>${sceneList()}</section>
+    <section class="scene"><div class="scene-label"><b>02</b> 需求与 AI 工作台 · 核心场景</div>${sceneWork()}</section>
+    <section class="scene"><div class="scene-label"><b>03</b> 组件与状态 · 一致性检查</div>${sceneBits()}</section>
+  </main>
+  <footer class="foot">
+    <p><b>已落地</b>：A 纸感暖白 已作为浅色主主题统一应用到原型全部页面，并在顶栏提供「深色 / 浅色」切换（复用同一套主题令牌）。落地实拍：<a href="../assets/主题-浅色-项目列表.png">浅色项目列表</a> · <a href="../assets/主题-深色-项目列表.png">深色项目列表</a> · <a href="../assets/主题-浅色-需求工作台.png">浅色需求工作台</a> · <a href="../assets/主题-深色-需求工作台.png">深色需求工作台</a> · <a href="../assets/主题-浅色-设置中心.png">浅色设置中心</a> · <a href="../assets/主题-深色-设置中心.png">深色设置中心</a> · <a href="../assets/主题-深色-编码工作区.png">深色编码工作区</a> · <a href="../assets/主题-深色-Office表格.png">深色 Office 表格</a>。</p>
+    <p style="margin-top:8px"><b>说明</b>：本页为选型对比件，按钮与表单不产生真实行为；除「打开已换肤的原型」外，其余链接仅为演示数据。</p>
+    <p style="margin-top:10px"><a class="btn" href="../prototype/index.html" style="display:inline-block;padding:9px 15px;border-radius:7px;background:#a8471f;color:#fffdf9;font-weight:600;text-decoration:none;border:1px solid #a8471f">打开已换肤的原型</a></p>
+  </footer>`;
+  document.querySelectorAll('[data-theme-btn]').forEach(b => b.addEventListener('click', () => {
+    const id2 = b.dataset.themeBtn;
+    history.replaceState(null, '', `?t=${id2}`);
+    render(id2);
+  }));
+}
+
+const initial = new URLSearchParams(location.search).get('t');
+render(THEMES.some(t => t.id === initial) ? initial : 'paper');
+</script>
+</body>
+</html>

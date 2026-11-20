@@ -1,0 +1,70 @@
+/* UI-CR017-v2 frozen DESIGN tokens. Source: CR-014 UI prototype, not live software CSS. */
+:root {
+
+ --base: #f5f6f7; --paper: #ffffff; --nav: #ffffff; --line: #e5e6eb; --line-soft: #eff0f3;
+ --ink: #1f2329; --muted: #646a73;
+ --accent: #2b6cf6; --accent-dark: #1c5ae0; --accent-ink: #ffffff; --accent-ink-soft: #2456c9; --accent-line: #c7d7fb; --soft: #eef3ff;
+ --purple: #6f5bd6; --purple-bg: #f0eefc;
+ --warn: #9a6700; --warn-bg: #fff8e6; --warn-line: #f0c27a; --warn-deep: #7f5500; --warn-dot: #e8a33d;
+ --danger: #d83931; --danger-bg: #fef0ef; --danger-line: #f3b6b2; --danger-deep: #b12720; --bad-dot: #e64545;
+ --good-ink: #1f7a3f; --good-dot: #2ea44f; --blue-dot: #2b6cf6; --violet-dot: #7b5cf0; --neutral-dot: #a8abb2;
+ --tag-bg: #f2f3f5; --tag-ink: #4e5969; --blue-bg: #eef3ff; --blue-ink: #2b6cf6;
+ --panel-2: #fafbfc; --inset: #f7f8fa; --segment-bg: #f2f3f5;
+ --hover-bg: #f2f3f5; --hover-line: #d9dbe0; --input-line: #dfe1e6; --empty-line: #e5e6eb;
+ --nav-active-bg: #eef3ff; --nav-active-ink: #2b6cf6;
+ --avatar-bg: #e8f0ff; --avatar-ink: #2b6cf6; --demo-ink: #86909c;
+ --notice-bg: #f7f8fa; --notice-ink: #4e5969; --notice-line: #c9cdd4;
+ --progress-bg: #e5e6eb;
+ --msg-bg: #f7f8fa; --approval-bg: #fff8e6; --approval-line: #f0c27a;
+ --code-bg: #fbfbfc; --gutter-ink: #a8abb2; --slide-bg: #f7f8fa; --slide-line: #e5e6eb; --th-bg: #f7f8fa;
+ --term-bg: #1e1f22; --term-ink: #e6e8ea; --term-input: #2b2d31; --term-line: #3a3d42;
+ --switch-off: #c9cdd4; --switch-knob: #ffffff;
+ --toast-bg: #1f2329; --toast-ink: #ffffff;
+ --backdrop: rgba(29, 33, 41, .45);
+ --shadow-sm: 0 1px 2px rgba(29, 33, 41, .06);
+ --shadow-md: 0 8px 24px rgba(29, 33, 41, .12);
+ --node-sel-line: #c7d7fb; --node-sel-bg: #f3f7ff; --summary-bg: #fafbfc; --attach-bg: #fafbfc;
+ --chip-line: #dfe1e6; --chip-bg: #f7f8fa; --suggest-sel-line: #c7d7fb;
+ --vtab-bg: #fafbfc; --vtab-sel-line: #c7d7fb; --branch-line: #e5e6eb; --branch-bg: #fafbfc;
+ --diff-bg: #fbfbfc; --pre-bg: #f7f8fa;
+ --focus: #2b6cf6;
+ --radius-card: 8px; --radius-ctl: 6px;
+ --font-title: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+ --cr014-top: 56px;
+
+  --topbar-h: var(--cr014-top); --sidebar-w: 208px; color-scheme: light;
+  --diff-add-bg: #e6f6ec; --diff-add-ink: #1f7a3f; --diff-del-bg: #fdeeee; --diff-del-ink: #b12720;
+}
+html[data-theme="dark"] {
+
+ color-scheme: dark; color: var(--ink); background: var(--base);
+ --base: #17181a; --paper: #1f2022; --nav: #1b1c1e; --line: #2e3033; --line-soft: #33363a;
+ --ink: #e6e8ea; --muted: #9aa0a6;
+ --accent: #4f8bff; --accent-dark: #6b9cff; --accent-ink: #0b1220; --accent-ink-soft: #a9c6ff; --accent-line: #2f4470; --soft: #232a36;
+ --purple: #b9a8ff; --purple-bg: #2a2740;
+ --warn: #f0c27a; --warn-bg: #2e2617; --warn-line: #5c4a24; --warn-deep: #f6d79b; --warn-dot: #e8a33d;
+ --danger: #ff8b84; --danger-bg: #35201f; --danger-line: #6b3a37; --danger-deep: #ffb3ad; --bad-dot: #ff6b63;
+ --good-ink: #7fd39a; --good-dot: #48b96b; --blue-dot: #6f9dff; --violet-dot: #b9a8ff; --neutral-dot: #7d838a;
+ --tag-bg: #26282b; --tag-ink: #b6bcc4; --blue-bg: #1e2837; --blue-ink: #8db3ff;
+ --panel-2: #232427; --inset: #212224; --segment-bg: #26282b;
+ --hover-bg: #26282b; --hover-line: #3a3d42; --input-line: #3a3d42; --empty-line: #2e3033;
+ --nav-active-bg: #232a36; --nav-active-ink: #8db3ff;
+ --avatar-bg: #232a36; --avatar-ink: #8db3ff; --demo-ink: #9aa0a6;
+ --notice-bg: #232426; --notice-ink: #c2c8cf; --notice-line: #3a3d42;
+ --progress-bg: #2e3033;
+ --msg-bg: #232426; --approval-bg: #2e2617; --approval-line: #5c4a24;
+ --code-bg: #1b1c1e; --gutter-ink: #6e747b; --slide-bg: #212224; --slide-line: #2e3033; --th-bg: #232426;
+ --term-bg: #121315; --term-ink: #e6e8ea; --term-input: #1e1f22; --term-line: #33363a;
+ --switch-off: #4a4d52; --switch-knob: #ffffff;
+ --toast-bg: #e6e8ea; --toast-ink: #17181a;
+ --backdrop: rgba(0, 0, 0, .6);
+ --shadow-sm: 0 1px 2px rgba(0, 0, 0, .4);
+ --shadow-md: 0 8px 24px rgba(0, 0, 0, .5);
+ --node-sel-line: #2f4470; --node-sel-bg: #20283a; --summary-bg: #232426; --attach-bg: #232426;
+ --chip-line: #3a3d42; --chip-bg: #232426; --suggest-sel-line: #2f4470;
+ --vtab-bg: #1b1c1e; --vtab-sel-line: #2f4470; --branch-line: #2e3033; --branch-bg: #232426;
+ --diff-bg: #1b1c1e; --pre-bg: #232426;
+ --focus: #4f8bff;
+
+  --diff-add-bg: #1e2f24; --diff-add-ink: #7fd39a; --diff-del-bg: #35201f; --diff-del-ink: #ffb3ad;
+}

@@ -1,0 +1,14 @@
+/* CR044 / UI-ICON-001-v1: shared glyphs only; surrounding module layout stays unchanged. */
+.ui-icon { display:inline-block; flex:0 0 auto; vertical-align:middle; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; overflow:visible; }
+.ui-icon.icon-missing { color:var(--danger); }
+.cli-logo.cli-brand, .set-cli-logo.cli-brand { display:inline-flex; flex:0 0 auto; align-items:center; justify-content:center; padding:0; background:transparent !important; border:0; border-radius:0; box-shadow:none; }
+.cli-brand img { display:block; width:100%; height:100%; object-fit:contain; filter:none; }
+.cli-brand.asset-unavailable { color:var(--danger); border:1px dashed var(--line-strong, var(--line)); border-radius:4px; }
+.office-glyph.platform-glyph { background:transparent; border-radius:0; color:var(--ink-2, var(--ink)); }
+.office-glyph.platform-glyph.g-md, .office-glyph.platform-glyph.g-docx { color:var(--blue-ink, var(--accent)); }
+.office-glyph.platform-glyph.g-xlsx { color:var(--success, var(--accent)); }
+.office-glyph.platform-glyph.g-pptx { color:var(--warn, var(--accent)); }
+.office-glyph.platform-glyph.g-pdf { color:var(--danger); }
+.ui-icon.icon-spin { animation:ui-icon-spin .8s linear infinite; }
+@keyframes ui-icon-spin { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion:reduce) { .ui-icon.icon-spin { animation:none; } }

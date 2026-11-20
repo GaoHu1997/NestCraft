@@ -1,0 +1,1439 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>个人 Agent 工作台 · 界面设计原型 v2</title>
+<style>
+/* ============ 设计变量 ============ */
+:root{
+  --bg:#F5F7FA; --surface:#FFFFFF; --border:#E2E8F0;
+  --text:#1E293B; --text2:#64748B; --text3:#94A3B8;
+  --accent:#4F46E5; --accent-weak:#EEF2FF; --accent-text:#3730A3;
+  --sidebar:#0F172A;
+  --green:#16A34A; --amber:#D97706; --red:#DC2626; --cyan:#0891B2;
+  --purple:#7C3AED; --orange:#EA580C; --teal:#0D9488; --blue:#0284C7;
+  --radius:12px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{font-family:"Segoe UI","Microsoft YaHei",system-ui,-apple-system,sans-serif;font-size:14px;color:var(--text);background:var(--bg)}
+svg.ic{width:16px;height:16px;flex-shrink:0}
+button{font-family:inherit;cursor:pointer}
+::placeholder{color:#94A3B8}
+
+/* ============ 屏幕与切换器 ============ */
+.screen{display:flex;height:100vh;overflow:hidden}
+#switcher{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);background:rgba(15,23,42,.94);color:#CBD5E1;border-radius:999px;padding:7px 12px;display:flex;gap:2px;z-index:99;box-shadow:0 10px 30px rgba(15,23,42,.4);font-size:12px;align-items:center}
+#switcher .sw-label{color:#64748B;padding:0 8px 0 6px;font-size:11px}
+#switcher a{padding:5px 10px;border-radius:999px;cursor:pointer;white-space:nowrap;color:#CBD5E1}
+#switcher a.on{background:#4F46E5;color:#fff}
+body.shot #switcher{display:none}
+
+/* ============ 侧边栏 ============ */
+.sidebar{width:220px;background:var(--sidebar);color:#94A3B8;display:flex;flex-direction:column;padding:14px 12px 12px;flex-shrink:0}
+.logo{display:flex;gap:10px;align-items:center;padding:4px 8px 18px}
+.logo-mark{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,#6366F1,#8B5CF6);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:17px}
+.logo-name{color:#F1F5F9;font-weight:600;font-size:14px;letter-spacing:.5px}
+.logo-sub{font-size:11px;color:#64748B;margin-top:1px}
+.nav-label{font-size:11px;letter-spacing:2px;color:#475569;padding:10px 10px 6px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;color:#94A3B8;cursor:pointer;font-size:13.5px;position:relative}
+.nav-item .ic{width:16px;height:16px}
+.nav-item:hover{color:#E2E8F0;background:rgba(148,163,184,.08)}
+.nav-item.active{background:rgba(99,102,241,.2);color:#E0E7FF;font-weight:600}
+.nav-item .nbadge{margin-left:auto;font-size:10.5px;background:rgba(148,163,184,.15);border-radius:999px;padding:1px 7px;color:#CBD5E1}
+.nav-item .nbadge.on{background:rgba(22,163,74,.25);color:#86EFAC}
+.sidebar-spacer{flex:1}
+.sidebar-div{height:1px;background:rgba(148,163,184,.14);margin:10px 6px}
+.user-card{display:flex;gap:10px;align-items:center;padding:10px 8px 2px}
+.avatar{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,#F59E0B,#F43F5E);color:#fff;font-size:12.5px;font-weight:600;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.avatar.sm{width:22px;height:22px;font-size:10px}
+.user-name{color:#E2E8F0;font-size:13px;font-weight:600}
+.user-plan{font-size:11px;color:#64748B}
+
+/* ============ 主区通用 ============ */
+.main{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg)}
+.page-head{padding:26px 28px 4px;display:flex;justify-content:space-between;align-items:flex-end;flex-shrink:0}
+.page-head h1{font-size:21px;font-weight:700}
+.page-head .sub{font-size:12.5px;color:var(--text2);margin-top:4px}
+.head-actions{display:flex;gap:10px;align-items:center}
+.page{padding:18px 28px 24px;overflow:auto;flex:1}
+.search{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:8px 12px;color:var(--text3);font-size:13px;width:220px}
+.btn{display:inline-flex;align-items:center;gap:7px;border:none;border-radius:9px;padding:9px 16px;font-size:13px;font-weight:600}
+.btn .ic{width:15px;height:15px}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-ghost{background:var(--surface);border:1px solid var(--border);color:var(--text2)}
+.btn-sm{padding:6px 12px;font-size:12px;border-radius:8px}
+
+/* ============ 卡片网格 ============ */
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:6px}
+.pcard{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px;display:flex;flex-direction:column;gap:10px;box-shadow:0 1px 2px rgba(15,23,42,.05);cursor:pointer;transition:box-shadow .15s}
+.pcard:hover{box-shadow:0 6px 18px rgba(15,23,42,.09)}
+.pcard-top{display:flex;align-items:center;justify-content:space-between}
+.picon{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center}
+.picon .ic{width:19px;height:19px}
+.picon.t-code{background:var(--accent-weak);color:var(--accent)}
+.picon.t-work{background:#FFF7ED;color:var(--orange)}
+.picon.t-kb{background:#F0FDF4;color:var(--green)}
+.picon.t-srv{background:#EFF6FF;color:var(--blue)}
+.pname{font-size:15.5px;font-weight:700}
+.pmeta{display:flex;align-items:center;gap:8px;color:var(--text2);font-size:12.5px;flex-wrap:wrap}
+.pcard-foot{display:flex;justify-content:space-between;align-items:center;border-top:1px dashed var(--border);padding-top:10px;color:var(--text3);font-size:12px}
+.pcard-foot .go{color:var(--accent);font-weight:600;display:flex;align-items:center;gap:4px}
+.chip{font-size:11px;padding:2.5px 9px;border-radius:999px;font-weight:700;letter-spacing:.5px}
+.chip-code{background:var(--accent-weak);color:var(--accent)}
+.chip-work{background:#FFF7ED;color:var(--orange)}
+.chip-prod{background:#FEF2F2;color:var(--red)}
+.chip-test{background:#FEF3C7;color:#B45309}
+.chip-dev{background:#F1F5F9;color:#64748B}
+.pcard.new{border:1.5px dashed #C7D2FE;background:#FAFAFF;align-items:center;justify-content:center;min-height:150px;color:var(--accent);gap:12px;display:flex;flex-direction:column}
+.pcard.new .plus-circle{width:40px;height:40px;border-radius:50%;background:var(--accent-weak);display:flex;align-items:center;justify-content:center}
+.pcard.new .t1{font-weight:700;font-size:14px}
+.pcard.new .t2{font-size:12px;color:var(--text3)}
+.res{display:flex;gap:14px;font-size:11px;color:var(--text3);align-items:center}
+.res .rlabel{width:30px}
+.rbar{width:64px;height:5px;background:#E9EDF3;border-radius:99px;overflow:hidden}
+.rfill{height:100%;background:var(--accent);border-radius:99px}
+.rfill.warn{background:var(--amber)}
+
+/* ============ 服务器卡 ============ */
+.smeta{display:flex;flex-direction:column;gap:4px;color:var(--text2);font-size:12.5px}
+.smeta .shost{font-family:Consolas,monospace;color:#334155;background:#F1F5F9;border-radius:5px;padding:1px 8px;align-self:flex-start;font-size:11.5px}
+
+/* ============ 设置页 ============ */
+.set-wrap{display:flex;flex:1;min-height:0}
+.set-menu{width:210px;border-right:1px solid var(--border);padding:16px 12px;background:var(--surface);flex-shrink:0;display:flex;flex-direction:column;gap:4px}
+.set-menu .m-label{font-size:11px;letter-spacing:2px;color:var(--text3);padding:0 12px 8px}
+.set-mi{display:flex;gap:10px;align-items:center;padding:10px 14px;border-radius:9px;font-size:13.5px;color:#475569;cursor:pointer;white-space:nowrap;overflow:hidden}
+.set-mi > svg{flex-shrink:0}
+.set-mi .ic{width:15px;height:15px}
+.set-mi:hover{background:#F1F5F9}
+.set-mi.active{background:var(--accent-weak);color:var(--accent);font-weight:600}
+.set-mi .mdesc{margin-left:auto;font-size:10.5px;color:var(--text3)}
+.set-body{flex:1;min-width:0;overflow:auto;padding:20px 28px 26px}
+.tabs{display:inline-flex;gap:4px;background:#E9EDF3;padding:4px;border-radius:11px}
+.tab{padding:7px 20px;border-radius:8px;font-size:13.5px;color:#475569;cursor:pointer;display:flex;align-items:center;gap:7px}
+.tab .ic{width:15px;height:15px}
+.tab.active{background:#fff;color:var(--text);font-weight:600;box-shadow:0 1px 2px rgba(15,23,42,.1)}
+.rows{display:flex;flex-direction:column;gap:12px;margin-top:16px}
+.row{display:flex;align-items:center;gap:14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px 18px;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+.row .ic-box{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.row-main{flex:1;min-width:0}
+.row-title{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px;flex-wrap:wrap}
+.row-desc{font-size:12.5px;color:var(--text2);margin-top:4px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.row-actions{display:flex;align-items:center;gap:14px;flex-shrink:0}
+.tag{font-size:11px;padding:2px 8px;border-radius:6px;background:#F1F5F9;color:#475569;font-weight:600}
+.tag.mono{font-family:Consolas,monospace;letter-spacing:0}
+.tag-v{background:var(--accent-weak);color:var(--accent)}
+.tag-built{background:#F0FDF4;color:var(--green)}
+.tag-warn{background:#FEF3C7;color:#B45309}
+.status-dot{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text2)}
+.status-dot i{width:7px;height:7px;border-radius:50%;display:inline-block}
+.i-on{background:var(--green)} .i-off{background:#CBD5E1} .i-err{background:var(--red)} .i-warn{background:var(--amber)}
+.act-link{color:var(--text3);font-size:12.5px;cursor:pointer;display:flex;gap:10px}
+.act-link .ic{width:15px;height:15px}
+.act-link .ic:hover{color:var(--text2)}
+.tg{width:38px;height:21px;border-radius:999px;background:#CBD5E1;position:relative;flex-shrink:0;cursor:pointer}
+.tg::after{content:"";position:absolute;width:17px;height:17px;border-radius:50%;background:#fff;top:2px;left:2px;box-shadow:0 1px 2px rgba(15,23,42,.3)}
+.tg.on{background:var(--accent)}
+.tg.on::after{left:19px}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;font-size:12px}
+.seg span{padding:4.5px 13px;color:var(--text2);border-right:1px solid var(--border);cursor:pointer;background:#fff}
+.seg span:last-child{border-right:none}
+.seg span.on{background:var(--accent-weak);color:var(--accent);font-weight:700}
+.seg.dim{opacity:.55}
+.banner{display:flex;gap:10px;align-items:flex-start;background:#EFF6FF;border:1px solid #BFDBFE;border-radius:10px;padding:11px 14px;font-size:12.5px;color:#1E40AF;margin-top:16px}
+.banner.warn{background:#FFFBEB;border-color:#FDE68A;color:#92400E}
+.banner .ic{width:15px;height:15px;margin-top:1px}
+.subtabs{display:inline-flex;gap:4px;background:#EEF1F6;padding:3px;border-radius:9px;margin-left:14px}
+.subtab{padding:5px 16px;border-radius:7px;font-size:12.5px;color:#5B6B80;cursor:pointer;font-weight:600}
+.subtab.active{background:#fff;color:var(--accent);box-shadow:0 1px 2px rgba(15,23,42,.1)}
+.hint-line{font-size:12px;color:var(--text3);margin-top:14px}
+.sec-t{font-size:12px;font-weight:700;color:#64748B;margin:20px 0 4px;letter-spacing:1px;display:flex;align-items:center;gap:8px}
+.sec-t:first-child{margin-top:0}
+.sec-t::before{content:"";width:3px;height:12px;border-radius:2px;background:var(--accent)}
+.risk{font-size:11px;padding:2.5px 9px;border-radius:6px;font-weight:700}
+.risk-low{background:#F0FDF4;color:#16A34A}
+.risk-mid{background:#FEF3C7;color:#B45309}
+.risk-high{background:#FEF2F2;color:#DC2626}
+
+/* ============ 工作区 ============ */
+.topbar{height:50px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 16px;gap:12px;flex-shrink:0}
+.back-btn{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--text2);cursor:pointer;background:transparent;border:none}
+.back-btn:hover{background:#F1F5F9}
+.tb-title{font-size:14.5px;font-weight:700}
+.tb-sub{font-size:12px;color:var(--text3)}
+.ptabs{display:inline-flex;gap:4px;background:#EEF1F6;padding:3px;border-radius:9px;margin-left:10px}
+.ptab{padding:5.5px 18px;border-radius:7px;font-size:13px;color:#5B6B80;cursor:pointer;font-weight:600}
+.ptab.on{background:#fff;color:var(--text);box-shadow:0 1px 2px rgba(15,23,42,.1);border:1px solid var(--border)}
+.tb-right{margin-left:auto;display:flex;gap:8px;align-items:center}
+.ws{flex:1;display:flex;min-height:0}
+.panel-tree{width:260px;background:var(--surface);border-right:1px solid var(--border);flex-shrink:0;display:flex;flex-direction:column}
+.panel-tree.w280{width:280px}
+.panel-tree.w300{width:300px}
+.panel-head{height:42px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;border-bottom:1px solid var(--border);font-size:12.5px;font-weight:700;color:#475569;flex-shrink:0}
+.panel-head .ph-actions{display:flex;gap:8px;color:var(--text3);align-items:center}
+.tree-body{padding:10px 8px;overflow:auto;flex:1}
+.folder-row{display:flex;align-items:center;gap:7px;padding:5.5px 8px;border-radius:7px;font-size:13px;color:#475569;cursor:pointer;white-space:nowrap}
+.folder-row:hover{background:#F1F5F9}
+.folder-row .ic{width:15px;height:15px}
+.folder-row .fname{overflow:hidden;text-overflow:ellipsis}
+.folder-row.active{background:var(--accent-weak);color:var(--accent);font-weight:600}
+.tree-indent-1{padding-left:22px}
+.tree-indent-2{padding-left:38px}
+.fsize{margin-left:auto;font-size:11px;color:var(--text3)}
+.srv-info{padding:12px 14px;border-top:1px solid var(--border);font-size:11.5px;color:var(--text2);display:flex;flex-direction:column;gap:6px}
+.srv-info .si{display:flex;justify-content:space-between}
+.srv-info .si b{color:#334155;font-weight:600}
+
+/* 需求树 */
+.tnode{display:flex;align-items:center;gap:7px;padding:6px 8px;border-radius:7px;font-size:13px;color:#334155;cursor:pointer;white-space:nowrap;overflow:hidden}
+.tnode:hover{background:#F1F5F9}
+.tnode.sel{background:var(--accent-weak);color:var(--accent);font-weight:600}
+.tnode .ic{width:13px;height:13px;color:#94A3B8}
+.tid{color:#94A3B8;font-size:11px;font-family:Consolas,monospace;flex-shrink:0}
+.tnode.sel .tid{color:#818CF8}
+.ttl{overflow:hidden;text-overflow:ellipsis}
+.sdot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.sdot.st-plan{background:#94A3B8}.sdot.st-confirm{background:#D97706}.sdot.st-ready{background:#0284C7}.sdot.st-design{background:#7C3AED}.sdot.st-dev{background:#EA580C}.sdot.st-verify{background:#0891B2}.sdot.st-accept{background:#0D9488}.sdot.st-done{background:#16A34A}.sdot.st-bug{background:#DC2626}
+.stx{margin-left:auto;font-size:10.5px;flex-shrink:0;font-weight:600}
+.stx.st-plan{color:#64748B}.stx.st-confirm{color:#D97706}.stx.st-ready{color:#0284C7}.stx.st-design{color:#7C3AED}.stx.st-dev{color:#EA580C}.stx.st-verify{color:#0891B2}.stx.st-accept{color:#0D9488}.stx.st-done{color:#16A34A}.stx.st-bug{color:#DC2626}
+.lv1{padding-left:26px}
+.lv2{padding-left:46px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 12px;padding:10px 14px;border-top:1px solid var(--border);font-size:10.5px;color:var(--text2);flex-shrink:0}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.legend .sdot{width:7px;height:7px}
+
+/* 迭代概览条 */
+.strip{height:48px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:16px;padding:0 18px;flex-shrink:0}
+.sprint-chip{display:inline-flex;align-items:center;gap:8px;background:var(--accent-weak);color:var(--accent-text);border-radius:8px;padding:6px 12px;font-size:12.5px;font-weight:700}
+.prog-wrap{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text2)}
+.prog{width:170px;height:6px;background:#E9EDF3;border-radius:99px;overflow:hidden}
+.prog i{display:block;height:100%;width:64%;background:var(--accent);border-radius:99px}
+.stat-chips{display:flex;gap:8px}
+.sc{font-size:11px;padding:3.5px 11px;border-radius:999px;background:#F1F5F9;color:#475569;display:inline-flex;gap:6px;align-items:center;font-weight:600}
+.sc i{width:7px;height:7px;border-radius:50%}
+.strip-right{margin-left:auto;display:flex;gap:8px;align-items:center}
+
+/* 需求详情 */
+.detail{flex:1;min-width:0;overflow:auto;padding:20px 26px;background:#FBFCFE}
+.crumb{font-size:12px;color:var(--text3);display:flex;gap:6px;align-items:center}
+.d-title{display:flex;align-items:center;gap:12px;margin-top:10px;font-size:19px;font-weight:700;flex-wrap:wrap}
+.badge{padding:3px 11px;border-radius:999px;font-size:11.5px;font-weight:700}
+.badge.st-plan{background:#F1F5F9;color:#64748B}.badge.st-confirm{background:#FEF3C7;color:#D97706}.badge.st-ready{background:#E0F2FE;color:#0284C7}.badge.st-design{background:#EDE9FE;color:#7C3AED}.badge.st-dev{background:#FFEDD5;color:#EA580C}.badge.st-verify{background:#CFFAFE;color:#0891B2}.badge.st-accept{background:#CCFBF1;color:#0D9488}.badge.st-done{background:#DCFCE7;color:#16A34A}.badge.st-bug{background:#FEF2F2;color:#DC2626}
+.pri-badge{background:#FEF2F2;color:#DC2626}
+.d-meta{font-size:12.5px;color:var(--text2);margin-top:8px;display:flex;gap:14px;flex-wrap:wrap}
+.d-meta b{color:var(--text);font-weight:600}
+.d-sec{font-size:13px;font-weight:700;color:#334155;margin:16px 0 8px;display:flex;align-items:center;gap:8px}
+.d-sec::before{content:"";width:3px;height:13px;border-radius:2px;background:var(--accent)}
+.d-text{font-size:13.5px;line-height:1.8;color:#475569;background:#fff;border:1px solid var(--border);border-radius:10px;padding:12px 16px}
+.ac-item{display:flex;gap:10px;align-items:flex-start;background:#fff;border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:8px;font-size:12.5px;line-height:1.7;color:#475569}
+.ac-id{font-family:Consolas,monospace;font-size:11px;color:var(--accent);background:var(--accent-weak);padding:2px 8px;border-radius:6px;flex-shrink:0;margin-top:2px}
+.ac-check{margin-left:auto;flex-shrink:0;width:16px;height:16px}
+.ac-check.done{color:var(--green)}
+.ac-check.todo{color:#CBD5E1}
+.link-chips{display:flex;gap:8px;flex-wrap:wrap}
+.link-chip{display:inline-flex;gap:6px;align-items:center;border:1px solid var(--border);background:#fff;border-radius:8px;padding:5px 11px;font-size:11.5px;color:#475569}
+.link-chip b{color:var(--accent);font-weight:600}
+.vr-row{display:flex;align-items:center;gap:10px;background:#fff;border:1px solid var(--border);border-radius:9px;padding:8px 12px;font-size:12px;color:#475569;margin-bottom:6px}
+.vr-row .vid{font-family:Consolas,monospace;font-size:11px;color:var(--text3)}
+.vr-res{margin-left:auto;font-weight:700;font-size:11.5px}
+.vr-res.ok{color:var(--green)} .vr-res.na{color:var(--text3)}
+.d-actions{display:flex;gap:10px;margin-top:20px;align-items:center}
+.btn-ai{background:linear-gradient(135deg,#6366F1,#8B5CF6);color:#fff;border:none;border-radius:9px;padding:9px 16px;font-size:13px;font-weight:600;display:inline-flex;gap:7px;align-items:center}
+.flow-next{margin-left:auto;background:#FFF7ED;color:#EA580C;border:1px solid #FED7AA}
+
+/* 终端（服务器工作区） */
+.term{flex:1;min-width:0;display:flex;flex-direction:column;background:#151A24}
+.term-head{height:42px;background:#10141D;border-bottom:1px solid rgba(148,163,184,.12);display:flex;align-items:center;padding:0 14px;gap:12px;color:#8A94A7;font-size:12px;flex-shrink:0}
+.term-head .tt{color:#CBD5E1;font-weight:600;display:flex;gap:8px;align-items:center}
+.metrics{margin-left:auto;display:flex;gap:14px}
+.metrics span b{color:#E2E8F0;font-weight:600}
+.metrics span b.warn{color:#FBBF24}
+.term-body{flex:1;overflow:auto;padding:14px 18px;font-family:Consolas,"Courier New",monospace;font-size:12.5px;line-height:1.8;color:#C3CBD9;white-space:pre}
+.t-prompt .u{color:#4ADE80}
+.t-prompt .p{color:#60A5FA}
+.t-cmd{color:#E8EDF4}
+.t-out{color:#8A94A7}
+.t-hl{color:#A5B4FC}
+.t-ok{color:#4ADE80}
+.t-warn{color:#FBBF24}
+.cursor{display:inline-block;width:8px;height:15px;background:#4ADE80;vertical-align:-3px}
+
+/* 文件预览 */
+.preview{flex:1;min-width:0;display:flex;flex-direction:column;background:#E9EDF3}
+.pv-bar{height:42px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 14px;gap:9px;font-size:12.5px;color:#475569;flex-shrink:0}
+.pv-bar .ic{width:15px;height:15px;color:var(--green)}
+.pv-size{font-size:11px;color:var(--text3)}
+.pv-right{margin-left:auto;display:flex;gap:12px;color:var(--text3);font-size:12px;align-items:center}
+.fx-bar{height:30px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;font-size:12px;color:#475569}
+.fx-cell{width:64px;text-align:center;border-right:1px solid var(--border);font-family:Consolas,monospace;font-weight:700;height:100%;display:flex;align-items:center;justify-content:center;background:#F8FAFC}
+.fx{padding:0 14px;font-family:Consolas,monospace;color:#334155}
+.pv-body{flex:1;overflow:auto;padding:16px 18px}
+.sheet{border-collapse:collapse;background:#fff;font-size:12.5px;color:#334155;box-shadow:0 1px 3px rgba(15,23,42,.1);width:100%}
+.sheet th{background:#F1F5F9;color:#64748B;font-weight:600;font-size:11.5px;border:1px solid #E2E8F0;padding:6px 10px}
+.sheet td{border:1px solid #E2E8F0;padding:7px 12px}
+.sheet td.h{background:#F8FAFC;font-weight:700}
+.sheet td.sel-cell{outline:2px solid var(--accent);outline-offset:-2px;background:#F5F7FF}
+.sheet-tabs{display:flex;gap:2px;margin-top:12px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:3px;width:fit-content}
+.sheet-tabs span{padding:4px 16px;font-size:12px;color:#64748B;border-radius:6px;cursor:pointer}
+.sheet-tabs span.on{background:var(--accent-weak);color:var(--accent);font-weight:700}
+.sheet-tabs span.plus{color:#94A3B8}
+
+/* 编辑器 */
+.editor{flex:1;min-width:0;display:flex;flex-direction:column;background:#1E2430}
+.etabs{height:38px;background:#151A24;display:flex;align-items:center;flex-shrink:0}
+.etab{padding:0 16px;height:100%;display:flex;align-items:center;gap:8px;color:#8A94A7;font-size:12.5px;border-right:1px solid rgba(148,163,184,.12);cursor:pointer}
+.etab .ic{width:14px;height:14px}
+.etab.active{background:#1E2430;color:#E2E8F0;box-shadow:inset 0 2px 0 #6366F1}
+.etab .mdot{width:7px;height:7px;border-radius:50%;background:#F59E0B}
+.ecode{flex:1;overflow:auto;padding:12px 0;font-family:Consolas,"Courier New",monospace;font-size:13px;line-height:1.7}
+.cline{display:flex;min-width:max-content;padding-right:20px}
+.lnum{width:46px;text-align:right;padding-right:16px;color:#4A5568;user-select:none;flex-shrink:0}
+.ccode{color:#ABB2BF;white-space:pre}
+.ccode .k{color:#C678DD}.ccode .s{color:#98C379}.ccode .f{color:#61AFEF}.ccode .t{color:#E06C75}.ccode .v{color:#E5C07B}.ccode .c{color:#7F848E;font-style:italic}
+.ebar{height:26px;background:#151A24;display:flex;align-items:center;padding:0 14px;gap:14px;color:#5B6577;font-size:11px;flex-shrink:0}
+
+/* ============ AI 助手面板 ============ */
+.ai{width:340px;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+.ai-head{height:48px;display:flex;align-items:center;padding:0 12px;gap:8px;border-bottom:1px solid var(--border);flex-shrink:0}
+.ai-logo{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,#6366F1,#8B5CF6);color:#fff;display:flex;align-items:center;justify-content:center}
+.ai-logo .ic{width:14px;height:14px}
+.ai-title{font-size:13.5px;font-weight:700;white-space:nowrap;flex-shrink:0}
+.model-chip{display:inline-flex;align-items:center;gap:5px;background:#F1F5F9;border:1px solid var(--border);border-radius:8px;padding:4px 9px;font-size:11.5px;color:#475569;margin-left:auto;cursor:pointer;min-width:0}
+.model-chip .ic{width:12px;height:12px;color:var(--accent)}
+.model-chip .chev{width:11px;height:11px;color:var(--text3)}
+.ai-plus{width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--text2);cursor:pointer}
+.ai-plus:hover{background:#F1F5F9}
+.ai-plus .ic{width:15px;height:15px}
+.ai-body{flex:1;overflow:auto;padding:16px 14px;display:flex;flex-direction:column;gap:14px;background:#FAFBFD}
+.msg-u{align-self:flex-end;background:var(--accent-weak);color:var(--accent-text);padding:10px 13px;border-radius:13px 13px 3px 13px;max-width:88%;font-size:13px;line-height:1.65}
+.msg-a{font-size:13px;line-height:1.75;color:#475569;max-width:100%}
+.msg-a .a-label{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--text3);margin-bottom:6px}
+.msg-a .a-label .ai-logo{width:20px;height:20px;border-radius:6px}
+.msg-a .a-label .ai-logo .ic{width:11px;height:11px}
+.msg-a ul{margin:6px 0 2px 18px;display:flex;flex-direction:column;gap:4px}
+.toolcard{border:1px solid var(--border);background:#fff;border-radius:9px;padding:9px 12px;font-size:12px;display:flex;gap:9px;align-items:center;margin:7px 0;color:#475569;min-width:0}
+.toolcard .ic{width:14px;height:14px;color:var(--cyan)}
+.toolcard .tname{color:#64748B;white-space:nowrap;flex-shrink:0}
+.toolcard .tpath{font-family:Consolas,monospace;color:#334155;background:#F1F5F9;padding:1px 7px;border-radius:5px;font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.toolcard .tok{margin-left:auto;color:var(--green);font-weight:700;font-size:11.5px;flex-shrink:0}
+.toolcard.risk .ic{color:var(--amber)}
+.toolcard .trisk{margin-left:auto;font-size:10.5px;font-weight:700;padding:1.5px 7px;border-radius:5px;background:#FEF2F2;color:#DC2626;flex-shrink:0}
+.diffcard{border:1px solid var(--border);border-radius:9px;overflow:hidden;margin:7px 0;font-family:Consolas,monospace;font-size:11.5px;line-height:1.8}
+.diffcard .diff-head{background:#F1F5F9;padding:6px 12px;color:#64748B;font-size:11px;display:flex;justify-content:space-between}
+.diffcard .dl{padding:2px 12px;white-space:pre;overflow:hidden;text-overflow:ellipsis}
+.diffcard .dl.del{background:#FEF2F2;color:#B91C1C}
+.diffcard .dl.add{background:#F0FDF4;color:#15803D}
+.kbcard{border:1px solid #C7D2FE;background:#F5F7FF;border-radius:9px;padding:9px 12px;font-size:12px;color:#475569;display:flex;gap:9px;align-items:center;margin:7px 0}
+.kbcard .ic{width:14px;height:14px;color:var(--accent)}
+.kbcard b{color:var(--accent)}
+.kbcard .khit{margin-left:auto;font-size:11px;color:var(--text3);flex-shrink:0}
+.chip-actions{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+.chip-actions span{border:1px solid var(--border);background:#fff;border-radius:999px;padding:4.5px 12px;font-size:11.5px;color:#475569;cursor:pointer}
+.chip-actions span.pri{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.chartcard{border:1px solid var(--border);background:#fff;border-radius:9px;padding:10px 12px;margin:7px 0}
+.chartcard .cc-title{font-size:11px;color:#64748B;margin-bottom:6px;display:flex;justify-content:space-between}
+.confirmcard{border:1px solid #FDE68A;background:#FFFBEB;border-radius:9px;padding:10px 12px;font-size:12px;color:#92400E;margin:7px 0}
+.confirmcard .cc-t{display:flex;gap:8px;align-items:center;font-weight:700;margin-bottom:4px;font-size:12.5px}
+.confirmcard .cc-t .ic{width:14px;height:14px}
+.ai-input{border-top:1px solid var(--border);padding:10px 12px 12px;flex-shrink:0;background:var(--surface)}
+.cap-row{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}
+.cap{display:inline-flex;align-items:center;gap:5px;background:#F1F5F9;border-radius:999px;padding:3.5px 10px;font-size:11px;color:#475569;cursor:pointer}
+.cap .ic{width:11px;height:11px;color:var(--accent)}
+.input-box{border:1px solid var(--border);border-radius:11px;padding:10px 12px;font-size:12.5px;color:var(--text3);background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+.input-box .ph{line-height:1.5;margin-bottom:14px}
+.input-actions{display:flex;align-items:center;gap:8px;color:var(--text3)}
+.input-actions .ia{width:26px;height:26px;border-radius:7px;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.input-actions .ia:hover{background:#F1F5F9}
+.input-actions .ia .ic{width:14px;height:14px}
+.perm-chip{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:#64748B;border:1px solid var(--border);border-radius:6px;padding:2px 7px}
+.ctx{font-size:10.5px;margin-left:auto;color:#94A3B8}
+.send-btn{width:28px;height:28px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;border:none}
+.send-btn .ic{width:14px;height:14px}
+.ai-foot{font-size:10.5px;color:#94A3B8;text-align:center;margin-top:8px}
+</style>
+</head>
+<body>
+
+<!-- ============ 图标库 ============ -->
+<svg style="display:none" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5h.1a1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+  <symbol id="i-chip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9.5" y="9.5" width="5" height="5"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></symbol>
+  <symbol id="i-box" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z"/><path d="M3.3 7l8.7 5 8.7-5"/><path d="M12 22V12"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></symbol>
+  <symbol id="i-server" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="7" rx="2"/><rect x="2" y="14" width="20" height="7" rx="2"/><path d="M6 6.5h.01M6 17.5h.01"/></symbol>
+  <symbol id="i-tool" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></symbol>
+  <symbol id="i-chev-d" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="i-chev-r" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21.4 11.1l-9 9a5 5 0 0 1-7.1-7.1l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-2.9-2.9l8.5-8.5"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></symbol>
+  <symbol id="i-code" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></symbol>
+  <symbol id="i-brief" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/></symbol>
+  <symbol id="i-plug" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2v6M15 2v6"/><path d="M6 8h12v3a6 6 0 0 1-6 6 6 6 0 0 1-6-6z"/><path d="M12 17v5"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></symbol>
+  <symbol id="i-table" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12"/></symbol>
+  <symbol id="i-zap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6M12 19h8"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
+</svg>
+
+<!-- ============ 页面切换器（仅浏览模式显示）============ -->
+<div id="switcher">
+  <span class="sw-label">设计稿</span>
+  <a data-s="1" class="on">项目管理</a><a data-s="2">知识库</a><a data-s="3">服务器</a><a data-s="4">服务器工作台</a><a data-s="5">模型管理</a><a data-s="6">SDK管理</a><a data-s="7">Skill</a><a data-s="8">MCP</a><a data-s="9">Tools</a><a data-s="10">code编码</a><a data-s="11">work设计</a><a data-s="12">work编码</a>
+</div>
+
+<!-- ================= S1 主界面 · 项目管理 ================= -->
+<section class="screen" id="s1">
+  <aside class="sidebar">
+    <div class="logo"><div class="logo-mark">A</div><div><div class="logo-name">Agent 工作台</div><div class="logo-sub">个人智能体</div></div></div>
+    <div class="nav-label">工作区</div>
+    <div class="nav-item active"><svg class="ic"><use href="#i-folder"/></svg>项目管理<span class="nbadge">5</span></div>
+    <div class="nav-item"><svg class="ic"><use href="#i-book"/></svg>知识库</div>
+    <div class="nav-item"><svg class="ic"><use href="#i-server"/></svg>服务器管理<span class="nbadge on">3 在线</span></div>
+    <div class="sidebar-spacer"></div>
+    <div class="sidebar-div"></div>
+    <div class="nav-item"><svg class="ic"><use href="#i-gear"/></svg>设置<svg class="ic" style="margin-left:auto;width:13px;color:#475569"><use href="#i-chev-r"/></svg></div>
+    <div class="user-card"><div class="avatar">高</div><div><div class="user-name">高</div><div class="user-plan">个人版 · Pro</div></div></div>
+  </aside>
+  <main class="main">
+    <div class="page-head">
+      <div><h1>项目管理</h1><div class="sub">共 5 个项目 · 2 个进行中 · 点击卡片进入项目工作区</div></div>
+      <div class="head-actions">
+        <div class="search"><svg class="ic" style="width:14px;height:14px"><use href="#i-search"/></svg>搜索项目…</div>
+        <button class="btn btn-primary"><svg class="ic"><use href="#i-plus"/></svg>新建项目</button>
+      </div>
+    </div>
+    <div class="page">
+      <div class="grid">
+        <div class="pcard">
+          <div class="pcard-top"><div class="picon t-code"><svg class="ic"><use href="#i-code"/></svg></div><span class="chip chip-code">code</span></div>
+          <div class="pname">智能客服平台</div>
+          <div class="pmeta"><span class="avatar sm">高</span>高 · 负责人<span>·</span>创建于 2026-11-02</div>
+          <div class="pcard-foot"><span>迭代 7 · 12 个 Story · 最近活动 11-17</span><span class="go">进入项目 →</span></div>
+        </div>
+        <div class="pcard">
+          <div class="pcard-top"><div class="picon t-work"><svg class="ic"><use href="#i-brief"/></svg></div><span class="chip chip-work">work</span></div>
+          <div class="pname">Q3 市场调研</div>
+          <div class="pmeta"><span class="avatar sm">高</span>高 · 负责人<span>·</span>创建于 2026-10-21</div>
+          <div class="pcard-foot"><span>迭代 7 · 6 个 Story · 最近活动 11-17</span><span class="go">进入项目 →</span></div>
+        </div>
+        <div class="pcard">
+          <div class="pcard-top"><div class="picon t-code"><svg class="ic"><use href="#i-code"/></svg></div><span class="chip chip-code">code</span></div>
+          <div class="pname">个人博客系统</div>
+          <div class="pmeta"><span class="avatar sm">林</span>林晓 · 负责人<span>·</span>创建于 2026-09-15</div>
+          <div class="pcard-foot"><span>迭代 4 · 6 个 Story · 最近活动 11-12</span><span class="go">进入项目 →</span></div>
+        </div>
+        <div class="pcard">
+          <div class="pcard-top"><div class="picon t-work"><svg class="ic"><use href="#i-brief"/></svg></div><span class="chip chip-work">work</span></div>
+          <div class="pname">产品发布方案</div>
+          <div class="pmeta"><span class="avatar sm">王</span>王倩 · 负责人<span>·</span>创建于 2026-11-10</div>
+          <div class="pcard-foot"><span>迭代 1 · 3 个 Story · 最近活动 11-16</span><span class="go">进入项目 →</span></div>
+        </div>
+        <div class="pcard">
+          <div class="pcard-top"><div class="picon t-code"><svg class="ic"><use href="#i-code"/></svg></div><span class="chip chip-code">code</span></div>
+          <div class="pname">数据 Pipeline 重构</div>
+          <div class="pmeta"><span class="avatar sm">高</span>高 · 负责人<span>·</span>创建于 2026-08-30</div>
+          <div class="pcard-foot"><span>迭代 3 · 9 个 Story · 最近活动 11-08</span><span class="go">进入项目 →</span></div>
+        </div>
+        <div class="pcard new">
+          <div class="plus-circle"><svg class="ic" style="width:18px;height:18px"><use href="#i-plus"/></svg></div>
+          <div class="t1">新建项目</div>
+          <div class="t2">选择类型：code（代码）或 work（办公）</div>
+        </div>
+      </div>
+    </div>
+  </main>
+</section>
+
+<!-- ================= S2 知识库 ================= -->
+<section class="screen" id="s2">
+  <aside class="sidebar">
+    <div class="logo"><div class="logo-mark">A</div><div><div class="logo-name">Agent 工作台</div><div class="logo-sub">个人智能体</div></div></div>
+    <div class="nav-label">工作区</div>
+    <div class="nav-item"><svg class="ic"><use href="#i-folder"/></svg>项目管理<span class="nbadge">5</span></div>
+    <div class="nav-item active"><svg class="ic"><use href="#i-book"/></svg>知识库</div>
+    <div class="nav-item"><svg class="ic"><use href="#i-server"/></svg>服务器管理<span class="nbadge on">3 在线</span></div>
+    <div class="sidebar-spacer"></div>
+    <div class="sidebar-div"></div>
+    <div class="nav-item"><svg class="ic"><use href="#i-gear"/></svg>设置<svg class="ic" style="margin-left:auto;width:13px;color:#475569"><use href="#i-chev-r"/></svg></div>
+    <div class="user-card"><div class="avatar">高</div><div><div class="user-name">高</div><div class="user-plan">个人版 · Pro</div></div></div>
+  </aside>
+  <main class="main">
+    <div class="page-head">
+      <div><h1>知识库</h1><div class="sub">4 个知识库 · 为 AI 助手提供检索与引用</div></div>
+      <div class="head-actions">
+        <div class="search"><svg class="ic" style="width:14px;height:14px"><use href="#i-search"/></svg>搜索知识库…</div>
+        <button class="btn btn-primary"><svg class="ic"><use href="#i-plus"/></svg>新建知识库</button>
+      </div>
+    </div>
+    <div class="page">
+      <div class="grid">
+        <div class="pcard">
+          <div class="pcard-top"><div class="picon t-kb"><svg class="ic"><use href="#i-book"/></svg></div><span class="tag">本地 + 网页</span></div>
+          <div class="pname">产品知识库</div>
+          <div class="pmeta">产品需求、发布说明与常见问题解答</div>
+          <div class="pcard-foot"><span>128 个文档 · 更新 2026-11-15</span><span class="go">查看 →</span></div>
+        </div>
+        <div class="pcard">
+          <div class="pcard-top"><div class="picon t-kb"><svg class="ic"><use href="#i-book"/></svg></div><span class="tag">本地</span></div>
+          <div class="pname">竞品情报</div>
+          <div class="pmeta">竞品动态、定价与功能追踪</div>
+          <div class="pcard-foot"><span>46 个文档 · 更新 2026-11-17</span><span class="go">查看 →</span></div>
+        </div>
+        <div class="pcard">
+          <div class="pcard-top"><div class="picon t-kb"><svg class="ic"><use href="#i-book"/></svg></div><span class="tag">本地</span></div>
+          <div class="pname">团队研发规范</div>
+          <div class="pmeta">编码规范、评审与协作流程</div>
+          <div class="pcard-foot"><span>32 个文档 · 更新 2026-10-28</span><span class="go">查看 →</span></div>
+        </div>
+        <div class="pcard">
+          <div class="pcard-top"><div class="picon t-kb"><svg class="ic"><use href="#i-book"/></svg></div><span class="tag">网页</span></div>
+          <div class="pname">行业报告</div>
+          <div class="pmeta">年度行业研究与白皮书合集</div>
+          <div class="pcard-foot"><span>18 个文档 · 更新 2026-09-30</span><span class="go">查看 →</span></div>
+        </div>
+        <div class="pcard new">
+          <div class="plus-circle"><svg class="ic" style="width:18px;height:18px"><use href="#i-plus"/></svg></div>
+          <div class="t1">新建知识库</div>
+          <div class="t2">上传文档或连接网页来源</div>
+        </div>
+      </div>
+    </div>
+  </main>
+</section>
+
+<!-- ================= S3 服务器管理 ================= -->
+<section class="screen" id="s3">
+  <aside class="sidebar">
+    <div class="logo"><div class="logo-mark">A</div><div><div class="logo-name">Agent 工作台</div><div class="logo-sub">个人智能体</div></div></div>
+    <div class="nav-label">工作区</div>
+    <div class="nav-item"><svg class="ic"><use href="#i-folder"/></svg>项目管理<span class="nbadge">5</span></div>
+    <div class="nav-item"><svg class="ic"><use href="#i-book"/></svg>知识库</div>
+    <div class="nav-item active"><svg class="ic"><use href="#i-server"/></svg>服务器管理<span class="nbadge on">3 在线</span></div>
+    <div class="sidebar-spacer"></div>
+    <div class="sidebar-div"></div>
+    <div class="nav-item"><svg class="ic"><use href="#i-gear"/></svg>设置<svg class="ic" style="margin-left:auto;width:13px;color:#475569"><use href="#i-chev-r"/></svg></div>
+    <div class="user-card"><div class="avatar">高</div><div><div class="user-name">高</div><div class="user-plan">个人版 · Pro</div></div></div>
+  </aside>
+  <main class="main">
+    <div class="page-head">
+      <div><h1>服务器管理</h1><div class="sub">3 台在线 · 1 台离线 · 手动连接或授权 AI 运维</div></div>
+      <div class="head-actions">
+        <div class="search"><svg class="ic" style="width:14px;height:14px"><use href="#i-search"/></svg>搜索服务器…</div>
+        <button class="btn btn-primary"><svg class="ic"><use href="#i-plus"/></svg>新增服务器</button>
+      </div>
+    </div>
+    <div class="page">
+      <div class="banner"><svg class="ic"><use href="#i-shield"/></svg><div>已启用「AI 可操作」的服务器将注册为 <b>ssh-exec</b> 工具，AI 助手可执行巡检、日志分析、部署等任务；高风险命令（重启 / 删除 / 变更配置）执行前必须人工确认。</div></div>
+      <div class="grid">
+        <div class="pcard">
+          <div class="pcard-top"><div class="picon t-srv"><svg class="ic"><use href="#i-server"/></svg></div><span class="chip chip-prod">生产</span></div>
+          <div class="pname">生产-应用服务器 A</div>
+          <div class="smeta"><span class="shost">root@47.92.129.10:22 · 密钥登录</span><span>Ubuntu 22.04 · 4C16G · 已运行 26 天</span></div>
+          <div class="res"><span class="rlabel">CPU</span><div class="rbar"><div class="rfill" style="width:32%"></div></div>32%<span class="rlabel" style="margin-left:6px">内存</span><div class="rbar"><div class="rfill warn" style="width:61%"></div></div>61%</div>
+          <div class="pmeta"><span class="status-dot"><i class="i-on"></i>AI 可操作</span><span class="tg on" style="transform:scale(.85)"></span><span style="color:var(--text3);font-size:11px">注册为 ssh-exec 工具</span></div>
+          <div class="pcard-foot"><span>最近连接 11-18 08:30</span><span class="go">进入工作台 →</span></div>
+        </div>
+        <div class="pcard">
+          <div class="pcard-top"><div class="picon t-srv"><svg class="ic"><use href="#i-server"/></svg></div><span class="chip chip-prod">生产</span></div>
+          <div class="pname">生产-数据库服务器</div>
+          <div class="smeta"><span class="shost">root@47.92.129.11:22 · 密钥登录</span><span>Ubuntu 22.04 · 2C8G · MySQL 8.0 主库</span></div>
+          <div class="res"><span class="rlabel">CPU</span><div class="rbar"><div class="rfill" style="width:18%"></div></div>18%<span class="rlabel" style="margin-left:6px">内存</span><div class="rbar"><div class="rfill warn" style="width:73%"></div></div>73%</div>
+          <div class="pmeta"><span class="status-dot"><i class="i-on"></i>AI 可操作</span><span class="tg on" style="transform:scale(.85)"></span><span style="color:var(--text3);font-size:11px">注册为 ssh-exec 工具</span></div>
+          <div class="pcard-foot"><span>最近连接 11-17 21:04</span><span class="go">进入工作台 →</span></div>
+        </div>
+        <div class="pcard">
+          <div class="pcard-top"><div class="picon t-srv"><svg class="ic"><use href="#i-server"/></svg></div><span class="chip chip-test">测试</span></div>
+          <div class="pname">预发-测试环境</div>
+          <div class="smeta"><span class="shost">deploy@10.0.8.21:22 · 密码登录</span><span>Debian 12 · 2C4G · CI 部署目标</span></div>
+          <div class="res"><span class="rlabel">CPU</span><div class="rbar"><div class="rfill" style="width:8%"></div></div>8%<span class="rlabel" style="margin-left:6px">内存</span><div class="rbar"><div class="rfill" style="width:34%"></div></div>34%</div>
+          <div class="pmeta"><span class="status-dot"><i class="i-off"></i>AI 可操作</span><span class="tg" style="transform:scale(.85)"></span><span style="color:var(--text3);font-size:11px">仅手动连接</span></div>
+          <div class="pcard-foot"><span>最近连接 11-17 15:40</span><span class="go">进入工作台 →</span></div>
+        </div>
+        <div class="pcard" style="opacity:.75">
+          <div class="pcard-top"><div class="picon t-srv"><svg class="ic"><use href="#i-server"/></svg></div><span class="chip chip-dev">开发</span></div>
+          <div class="pname">开发-本地虚拟机</div>
+          <div class="smeta"><span class="shost">dev@192.168.31.88:22 · 密码登录</span><span>Ubuntu 24.04 · 4C8G · Docker 实验环境</span></div>
+          <div class="pmeta"><span class="status-dot"><i class="i-off"></i>离线 · 最近连接 11-15 18:22</span></div>
+          <div class="pcard-foot"><span>上次巡检 11-15</span><span class="go" style="color:var(--text3)">连接后可用 →</span></div>
+        </div>
+        <div class="pcard new">
+          <div class="plus-circle"><svg class="ic" style="width:18px;height:18px"><use href="#i-plus"/></svg></div>
+          <div class="t1">新增服务器</div>
+          <div class="t2">主机 · 端口 · 认证方式（密钥 / 密码）</div>
+        </div>
+      </div>
+    </div>
+  </main>
+</section>
+
+<!-- ================= S4 服务器工作台 ================= -->
+<section class="screen" id="s4">
+  <aside class="sidebar">
+    <div class="logo"><div class="logo-mark">A</div><div><div class="logo-name">Agent 工作台</div><div class="logo-sub">个人智能体</div></div></div>
+    <div class="nav-label">工作区</div>
+    <div class="nav-item"><svg class="ic"><use href="#i-folder"/></svg>项目管理<span class="nbadge">5</span></div>
+    <div class="nav-item"><svg class="ic"><use href="#i-book"/></svg>知识库</div>
+    <div class="nav-item active"><svg class="ic"><use href="#i-server"/></svg>服务器管理<span class="nbadge on">3 在线</span></div>
+    <div class="sidebar-spacer"></div>
+    <div class="sidebar-div"></div>
+    <div class="nav-item"><svg class="ic"><use href="#i-gear"/></svg>设置<svg class="ic" style="margin-left:auto;width:13px;color:#475569"><use href="#i-chev-r"/></svg></div>
+    <div class="user-card"><div class="avatar">高</div><div><div class="user-name">高</div><div class="user-plan">个人版 · Pro</div></div></div>
+  </aside>
+  <main class="main">
+    <div class="topbar">
+      <button class="back-btn"><svg class="ic"><use href="#i-back"/></svg></button>
+      <span class="tb-title">生产-应用服务器 A</span>
+      <span class="chip chip-prod">生产</span>
+      <span class="status-dot"><i class="i-on"></i>在线</span>
+      <span class="tb-sub">root@47.92.129.10:22</span>
+      <div class="tb-right"><button class="btn btn-ghost btn-sm">SFTP</button><button class="btn btn-ghost btn-sm">断开</button><button class="back-btn"><svg class="ic"><use href="#i-more"/></svg></button></div>
+    </div>
+    <div class="ws">
+      <aside class="panel-tree w280">
+        <div class="panel-head"><span>文件 · /var</span><span class="ph-actions"><svg class="ic" style="width:14px;height:14px"><use href="#i-search"/></svg><svg class="ic" style="width:14px;height:14px"><use href="#i-plus"/></svg></span></div>
+        <div class="tree-body">
+          <div class="folder-row"><svg class="ic" style="color:#F59E0B"><use href="#i-chev-d"/></svg><svg class="ic" style="color:#F59E0B"><use href="#i-folder"/></svg><span class="fname">log</span></div>
+          <div class="folder-row tree-indent-1"><svg class="ic" style="color:#F59E0B"><use href="#i-folder"/></svg><span class="fname">nginx</span></div>
+          <div class="folder-row tree-indent-2 active"><svg class="ic" style="color:#DC2626"><use href="#i-file"/></svg><span class="fname">error.log</span><span class="fsize">2.4 MB</span></div>
+          <div class="folder-row tree-indent-1"><svg class="ic" style="color:#94A3B8"><use href="#i-file"/></svg><span class="fname">app.log</span><span class="fsize">18 MB</span></div>
+          <div class="folder-row"><svg class="ic" style="color:#F59E0B"><use href="#i-chev-d"/></svg><svg class="ic" style="color:#F59E0B"><use href="#i-folder"/></svg><span class="fname">www</span></div>
+          <div class="folder-row tree-indent-1"><svg class="ic" style="color:#F59E0B"><use href="#i-folder"/></svg><span class="fname">app</span></div>
+          <div class="folder-row tree-indent-2"><svg class="ic" style="color:#3B82F6"><use href="#i-file"/></svg><span class="fname">docker-compose.yml</span><span class="fsize">2 KB</span></div>
+          <div class="folder-row tree-indent-2"><svg class="ic" style="color:#64748B"><use href="#i-file"/></svg><span class="fname">.env.production</span><span class="fsize">1 KB</span></div>
+          <div class="folder-row"><svg class="ic" style="color:#F59E0B"><use href="#i-folder"/></svg><span class="fname">etc</span></div>
+          <div class="folder-row tree-indent-1"><svg class="ic" style="color:#94A3B8"><use href="#i-file"/></svg><span class="fname">nginx/nginx.conf</span><span class="fsize">4 KB</span></div>
+        </div>
+        <div class="srv-info">
+          <div class="si"><span>系统</span><b>Ubuntu 22.04.5 LTS</b></div>
+          <div class="si"><span>内核</span><b>5.15.0-125-generic</b></div>
+          <div class="si"><span>运行时间</span><b>26 天</b></div>
+          <div class="si"><span>AI 可操作</span><b style="color:var(--green)">已启用</b></div>
+        </div>
+      </aside>
+      <section class="term">
+        <div class="term-head">
+          <span class="tt"><svg class="ic" style="width:14px;height:14px"><use href="#i-terminal"/></svg>bash · root@ecs-prod-a</span>
+          <div class="metrics"><span>CPU <b>32%</b></span><span>内存 <b class="warn">61%</b></span><span>磁盘 <b>46%</b></span><span>负载 <b>0.82</b></span></div>
+        </div>
+        <div class="term-body"><span class="t-prompt"><span class="u">root@ecs-prod-a</span>:<span class="p">~</span>#</span> <span class="t-cmd">docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"</span>
+<span class="t-out">NAMES      IMAGE        STATUS       PORTS
+nginx      nginx:1.25   Up 26 days   0.0.0.0:80-&gt;80/tcp
+mysql8     mysql:8.0    Up 26 days   0.0.0.0:3306-&gt;3306/tcp
+redis      redis:7.2    Up 12 days   0.0.0.0:6379-&gt;6379/tcp</span>
+<span class="t-prompt"><span class="u">root@ecs-prod-a</span>:<span class="p">~</span>#</span> <span class="t-cmd">free -h</span>
+<span class="t-out">          total    used    free    available</span>
+<span class="t-out">Mem:       15Gi   9.6Gi   1.2Gi       5.4Gi</span>
+<span class="t-out">Swap:     4.0Gi   1.1Gi   2.9Gi</span>
+<span class="t-prompt"><span class="u">root@ecs-prod-a</span>:<span class="p">~</span>#</span> <span class="t-warn">tail -n 50 /var/log/nginx/error.log</span>
+<span class="t-out">2026/11/17 23:41:02 [warn] upstream responded prematurely …</span>
+<span class="t-prompt"><span class="u">root@ecs-prod-a</span>:<span class="p">~</span>#</span> <span class="cursor"></span></div>
+      </section>
+      <aside class="ai">
+        <div class="ai-head">
+          <div class="ai-logo"><svg class="ic"><use href="#i-spark"/></svg></div>
+          <span class="ai-title">运维助手</span>
+          <span class="model-chip"><svg class="ic"><use href="#i-chip"/></svg>DeepSeek-V3.2 · 思考:高<svg class="ic chev"><use href="#i-chev-d"/></svg></span>
+          <span class="ai-plus"><svg class="ic"><use href="#i-plus"/></svg></span>
+        </div>
+        <div class="ai-body">
+          <div class="msg-u">检查一下这台服务器的健康状态，重点看内存</div>
+          <div class="msg-a">
+            <div class="a-label"><span class="ai-logo"><svg class="ic"><use href="#i-spark"/></svg></span>DeepSeek-V3.2 · 思考等级 高</div>
+            <div class="toolcard"><svg class="ic"><use href="#i-terminal"/></svg><span class="tname">执行命令</span><span class="tpath">uptime</span><span class="tok">✓ 负载 0.82 · 26 天</span></div>
+            <div class="toolcard"><svg class="ic"><use href="#i-terminal"/></svg><span class="tname">执行命令</span><span class="tpath">free -h</span><span class="tok">✓ 9.6G / 15G</span></div>
+            <div class="toolcard risk"><svg class="ic"><use href="#i-terminal"/></svg><span class="tname">执行命令</span><span class="tpath">df -h /</span><span class="tok">✓ 磁盘 46%</span></div>
+            巡检结论：
+            <ul>
+              <li><b>整体健康</b>：负载 0.82 平稳，磁盘余量充足</li>
+              <li><b class="t-warn">关注</b>：内存 64%，Swap 已用 1.1G，建议排查 mysql8 缓冲池配置</li>
+              <li>nginx error.log 有 upstream 告警，建议平滑重载配置消除</li>
+            </ul>
+            <div class="confirmcard"><div class="cc-t"><svg class="ic"><use href="#i-warn"/></svg>等待你的确认</div>将执行 <b>nginx -s reload</b> 平滑重载配置（中风险 · 不中断服务）。</div>
+            <div class="chip-actions"><span class="pri">确认执行</span><span>生成巡检报告</span><span>继续排查 Swap</span></div>
+          </div>
+        </div>
+        <div class="ai-input">
+          <div class="cap-row"><span class="cap"><svg class="ic"><use href="#i-shield"/></svg>/巡检</span><span class="cap"><svg class="ic"><use href="#i-file"/></svg>/日志分析</span><span class="cap"><svg class="ic"><use href="#i-zap"/></svg>/部署发布</span><span class="cap"><svg class="ic"><use href="#i-plug"/></svg>ssh-exec</span><span class="cap"><svg class="ic"><use href="#i-box"/></svg>引擎 claude-code</span></div>
+          <div class="input-box">
+            <div class="ph">输入消息，Enter 发送，Shift+Enter 换行…</div>
+            <div class="input-actions"><span class="ia"><svg class="ic"><use href="#i-clip"/></svg></span><span class="perm-chip"><svg class="ic" style="width:11px;height:11px"><use href="#i-shield"/></svg>高风险命令需确认</span><span class="ctx">6K / 128K</span><button class="send-btn"><svg class="ic"><use href="#i-send"/></svg></button></div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </main>
+</section>
+
+<!-- ================= S5 设置 · 模型管理 ================= -->
+<section class="screen" id="s5">
+  <aside class="sidebar">
+    <div class="logo"><div class="logo-mark">A</div><div><div class="logo-name">Agent 工作台</div><div class="logo-sub">个人智能体</div></div></div>
+    <div class="nav-label">工作区</div>
+    <div class="nav-item"><svg class="ic"><use href="#i-folder"/></svg>项目管理<span class="nbadge">5</span></div>
+    <div class="nav-item"><svg class="ic"><use href="#i-book"/></svg>知识库</div>
+    <div class="nav-item"><svg class="ic"><use href="#i-server"/></svg>服务器管理<span class="nbadge on">3 在线</span></div>
+    <div class="sidebar-spacer"></div>
+    <div class="sidebar-div"></div>
+    <div class="nav-item active"><svg class="ic"><use href="#i-gear"/></svg>设置</div>
+    <div class="user-card"><div class="avatar">高</div><div><div class="user-name">高</div><div class="user-plan">个人版 · Pro</div></div></div>
+  </aside>
+  <main class="main">
+    <div class="page-head">
+      <div><h1>设置</h1><div class="sub">个人智能体的模型、引擎与能力配置</div></div>
+      <div class="head-actions"><button class="btn btn-primary btn-sm"><svg class="ic"><use href="#i-plus"/></svg>接入模型</button></div>
+    </div>
+    <div class="set-wrap">
+      <aside class="set-menu">
+        <div class="m-label">设置菜单</div>
+        <div class="set-mi"><svg class="ic"><use href="#i-gear"/></svg>通用</div>
+        <div class="set-mi active"><svg class="ic"><use href="#i-chip"/></svg>模型管理<span class="mdesc">5</span></div>
+        <div class="set-mi"><svg class="ic"><use href="#i-box"/></svg>SDK 管理<span class="mdesc">3</span></div>
+        <div class="set-mi"><svg class="ic"><use href="#i-layers"/></svg>能力管理<span class="mdesc">Skill·MCP·Tools</span></div>
+      </aside>
+      <div class="set-body">
+        <div class="banner"><svg class="ic"><use href="#i-info"/></svg><div>思考等级控制模型的推理深度：关闭 = 直接回答；低 / 中 / 高 = 逐步加深推理，Token 消耗随之增加。可在对话输入框中按会话临时切换。</div></div>
+        <div class="rows" style="margin-top:14px">
+          <div class="row">
+            <div class="ic-box" style="background:var(--accent-weak);color:var(--accent);font-weight:800;font-size:13px">GL</div>
+            <div class="row-main">
+              <div class="row-title">GLM-4.7 <span class="tag">智谱</span><span class="tag tag-v">默认模型</span></div>
+              <div class="row-desc">上下文 128K · 支持工具调用 · 流式输出</div>
+            </div>
+            <div class="row-actions">
+              <div class="seg"><span>关闭</span><span>低</span><span class="on">中</span><span>高</span></div>
+              <span class="status-dot"><i class="i-on"></i>Key 已配置</span>
+              <span class="act-link"><svg class="ic"><use href="#i-edit"/></svg><svg class="ic"><use href="#i-more"/></svg></span>
+            </div>
+          </div>
+          <div class="row">
+            <div class="ic-box" style="background:#F0FDFA;color:var(--teal);font-weight:800;font-size:13px">DS</div>
+            <div class="row-main">
+              <div class="row-title">DeepSeek-V3.2 <span class="tag">深度求索</span></div>
+              <div class="row-desc">上下文 128K · 推理模式增强 · 适合运维分析与复杂排查</div>
+            </div>
+            <div class="row-actions">
+              <div class="seg"><span>关闭</span><span>低</span><span>中</span><span class="on">高</span></div>
+              <span class="status-dot"><i class="i-on"></i>Key 已配置</span>
+              <span class="act-link"><svg class="ic"><use href="#i-edit"/></svg><svg class="ic"><use href="#i-more"/></svg></span>
+            </div>
+          </div>
+          <div class="row">
+            <div class="ic-box" style="background:#FDF2F8;color:#DB2777;font-weight:800;font-size:13px">CL</div>
+            <div class="row-main">
+              <div class="row-title">Claude Sonnet 4.5 <span class="tag">Anthropic</span></div>
+              <div class="row-desc">上下文 200K · 长文档与代码任务表现优秀</div>
+            </div>
+            <div class="row-actions">
+              <div class="seg"><span>关闭</span><span class="on">低</span><span>中</span><span>高</span></div>
+              <span class="status-dot"><i class="i-on"></i>Key 已配置</span>
+              <span class="act-link"><svg class="ic"><use href="#i-edit"/></svg><svg class="ic"><use href="#i-more"/></svg></span>
+            </div>
+          </div>
+          <div class="row">
+            <div class="ic-box" style="background:#EFF6FF;color:var(--blue);font-weight:800;font-size:13px">QW</div>
+            <div class="row-main">
+              <div class="row-title">Qwen3-Max <span class="tag">通义千问</span></div>
+              <div class="row-desc">上下文 128K · 中文办公文档生成效果好</div>
+            </div>
+            <div class="row-actions">
+              <div class="seg"><span class="on">关闭</span><span>低</span><span>中</span><span>高</span></div>
+              <span class="status-dot"><i class="i-on"></i>Key 已配置</span>
+              <span class="act-link"><svg class="ic"><use href="#i-edit"/></svg><svg class="ic"><use href="#i-more"/></svg></span>
+            </div>
+          </div>
+          <div class="row" style="opacity:.82">
+            <div class="ic-box" style="background:#F8FAFC;color:#64748B;font-weight:800;font-size:13px">G5</div>
+            <div class="row-main">
+              <div class="row-title">GPT-5.1 <span class="tag">OpenAI</span></div>
+              <div class="row-desc">上下文 128K · 支持工具调用</div>
+            </div>
+            <div class="row-actions">
+              <div class="seg dim"><span>关闭</span><span>低</span><span>中</span><span>高</span></div>
+              <span class="status-dot"><i class="i-warn"></i>未配置 API Key</span>
+              <span class="act-link"><svg class="ic"><use href="#i-edit"/></svg><svg class="ic"><use href="#i-more"/></svg></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</section>
+
+<!-- ================= S6 设置 · SDK 管理 ================= -->
+<section class="screen" id="s6">
+  <aside class="sidebar">
+    <div class="logo"><div class="logo-mark">A</div><div><div class="logo-name">Agent 工作台</div><div class="logo-sub">个人智能体</div></div></div>
+    <div class="nav-label">工作区</div>
+    <div class="nav-item"><svg class="ic"><use href="#i-folder"/></svg>项目管理<span class="nbadge">5</span></div>
+    <div class="nav-item"><svg class="ic"><use href="#i-book"/></svg>知识库</div>
+    <div class="nav-item"><svg class="ic"><use href="#i-server"/></svg>服务器管理<span class="nbadge on">3 在线</span></div>
+    <div class="sidebar-spacer"></div>
+    <div class="sidebar-div"></div>
+    <div class="nav-item active"><svg class="ic"><use href="#i-gear"/></svg>设置</div>
+    <div class="user-card"><div class="avatar">高</div><div><div class="user-name">高</div><div class="user-plan">个人版 · Pro</div></div></div>
+  </aside>
+  <main class="main">
+    <div class="page-head">
+      <div><h1>设置</h1><div class="sub">AI 引擎适配与能力 SDK 的安装、版本与渠道配置</div></div>
+      <div class="head-actions"><button class="btn btn-primary btn-sm"><svg class="ic"><use href="#i-plus"/></svg>安装 SDK</button></div>
+    </div>
+    <div class="set-wrap">
+      <aside class="set-menu">
+        <div class="m-label">设置菜单</div>
+        <div class="set-mi"><svg class="ic"><use href="#i-gear"/></svg>通用</div>
+        <div class="set-mi"><svg class="ic"><use href="#i-chip"/></svg>模型管理<span class="mdesc">5</span></div>
+        <div class="set-mi active"><svg class="ic"><use href="#i-box"/></svg>SDK 管理<span class="mdesc">6</span></div>
+        <div class="set-mi"><svg class="ic"><use href="#i-layers"/></svg>能力管理<span class="mdesc">Skill·MCP·Tools</span></div>
+      </aside>
+      <div class="set-body">
+        <div class="sec-t">AI 引擎适配（编码 / 运维智能体运行时）</div>
+        <div class="rows" style="margin-top:10px">
+          <div class="row">
+            <div class="ic-box" style="background:var(--accent-weak);color:var(--accent)"><svg class="ic" style="width:18px;height:18px"><use href="#i-code"/></svg></div>
+            <div class="row-main">
+              <div class="row-title">claude-code <span class="tag mono">v2.1.4</span><span class="tag tag-v">默认引擎</span></div>
+              <div class="row-desc">Agent 会话 · 工具调用 · Skill / MCP 支持</div>
+            </div>
+            <div class="row-actions"><span class="status-dot"><i class="i-on"></i>已安装 · 渠道已配置</span><span class="tg on"></span><span class="act-link"><svg class="ic"><use href="#i-more"/></svg></span></div>
+          </div>
+          <div class="row">
+            <div class="ic-box" style="background:#F0FDFA;color:var(--teal)"><svg class="ic" style="width:18px;height:18px"><use href="#i-code"/></svg></div>
+            <div class="row-main">
+              <div class="row-title">codex-cli <span class="tag mono">v0.42.1</span></div>
+              <div class="row-desc">OpenAI 编码引擎 · 流式输出 · 计划模式</div>
+            </div>
+            <div class="row-actions"><span class="status-dot"><i class="i-warn"></i>已安装 · 渠道未配置</span><span class="tg on"></span><span class="act-link"><svg class="ic"><use href="#i-more"/></svg></span></div>
+          </div>
+          <div class="row" style="opacity:.85">
+            <div class="ic-box" style="background:#F8FAFC;color:#64748B"><svg class="ic" style="width:18px;height:18px"><use href="#i-code"/></svg></div>
+            <div class="row-main">
+              <div class="row-title">dsh <span class="tag mono">v1.8.2</span><span class="tag">DeepSeek Harness</span></div>
+              <div class="row-desc">DeepSeek 官方命令行智能体 · 本地会话管理</div>
+            </div>
+            <div class="row-actions"><span class="status-dot"><i class="i-off"></i>未安装</span><button class="btn btn-ghost btn-sm">安装</button><span class="act-link"><svg class="ic"><use href="#i-more"/></svg></span></div>
+          </div>
+        </div>
+        <div class="sec-t">能力 SDK</div>
+        <div class="rows" style="margin-top:10px">
+          <div class="row">
+            <div class="ic-box" style="background:#FFF7ED;color:var(--orange)"><svg class="ic" style="width:18px;height:18px"><use href="#i-file"/></svg></div>
+            <div class="row-main">
+              <div class="row-title">office-sdk <span class="tag mono">v0.9.1</span><span class="tag">远程</span></div>
+              <div class="row-desc">Office 文件解析与生成：docx / xlsx / pptx / pdf</div>
+            </div>
+            <div class="row-actions"><span class="status-dot"><i class="i-on"></i>运行中</span><span class="tg on"></span><span class="act-link"><svg class="ic"><use href="#i-more"/></svg></span></div>
+          </div>
+          <div class="row">
+            <div class="ic-box" style="background:#EFF6FF;color:var(--blue)"><svg class="ic" style="width:18px;height:18px"><use href="#i-code"/></svg></div>
+            <div class="row-main">
+              <div class="row-title">code-sdk <span class="tag mono">v2.1.0</span><span class="tag">远程</span></div>
+              <div class="row-desc">代码解析、语法高亮、静态检查与补丁应用</div>
+            </div>
+            <div class="row-actions"><span class="status-dot"><i class="i-on"></i>运行中</span><span class="tg on"></span><span class="act-link"><svg class="ic"><use href="#i-more"/></svg></span></div>
+          </div>
+          <div class="row" style="opacity:.85">
+            <div class="ic-box" style="background:#F0FDF4;color:var(--green)"><svg class="ic" style="width:18px;height:18px"><use href="#i-layers"/></svg></div>
+            <div class="row-main">
+              <div class="row-title">embed-sdk <span class="tag mono">v0.3.5</span><span class="tag">远程</span></div>
+              <div class="row-desc">向量化与语义检索：支撑知识库问答与召回</div>
+            </div>
+            <div class="row-actions"><span class="status-dot"><i class="i-off"></i>未安装</span><button class="btn btn-ghost btn-sm">安装</button><span class="act-link"><svg class="ic"><use href="#i-more"/></svg></span></div>
+          </div>
+        </div>
+        <div class="hint-line">支持按包名从远程源安装，或指定本地路径导入；引擎渠道（API 地址 / Key）写入各引擎自身配置，不在本工作台重复保存。</div>
+      </div>
+    </div>
+  </main>
+</section>
+
+<!-- ================= S7 能力管理 · Skill ================= -->
+<section class="screen" id="s7">
+  <aside class="sidebar">
+    <div class="logo"><div class="logo-mark">A</div><div><div class="logo-name">Agent 工作台</div><div class="logo-sub">个人智能体</div></div></div>
+    <div class="nav-label">工作区</div>
+    <div class="nav-item"><svg class="ic"><use href="#i-folder"/></svg>项目管理<span class="nbadge">5</span></div>
+    <div class="nav-item"><svg class="ic"><use href="#i-book"/></svg>知识库</div>
+    <div class="nav-item"><svg class="ic"><use href="#i-server"/></svg>服务器管理<span class="nbadge on">3 在线</span></div>
+    <div class="sidebar-spacer"></div>
+    <div class="sidebar-div"></div>
+    <div class="nav-item active"><svg class="ic"><use href="#i-gear"/></svg>设置</div>
+    <div class="user-card"><div class="avatar">高</div><div><div class="user-name">高</div><div class="user-plan">个人版 · Pro</div></div></div>
+  </aside>
+  <main class="main">
+    <div class="page-head">
+      <div><h1>设置 · 能力管理</h1><div class="sub">扩展智能体可用的 Skill、MCP 与内置工具</div></div>
+      <div class="head-actions"><button class="btn btn-ghost btn-sm"><svg class="ic"><use href="#i-plus"/></svg>导入</button><button class="btn btn-primary btn-sm"><svg class="ic"><use href="#i-plus"/></svg>新建 Skill</button></div>
+    </div>
+    <div class="set-wrap">
+      <aside class="set-menu">
+        <div class="m-label">设置菜单</div>
+        <div class="set-mi"><svg class="ic"><use href="#i-gear"/></svg>通用</div>
+        <div class="set-mi"><svg class="ic"><use href="#i-chip"/></svg>模型管理<span class="mdesc">5</span></div>
+        <div class="set-mi"><svg class="ic"><use href="#i-box"/></svg>SDK 管理<span class="mdesc">6</span></div>
+        <div class="set-mi active"><svg class="ic"><use href="#i-layers"/></svg>能力管理<span class="mdesc">Skill·MCP·Tools</span></div>
+      </aside>
+      <div class="set-body">
+        <div class="tabs">
+          <div class="subtabs" style="margin-left:0"><div class="subtab active">Skill</div><div class="subtab">MCP</div><div class="subtab">Tools</div></div>
+        </div>
+        <div class="rows" style="margin-top:14px">
+          <div class="row">
+            <div class="ic-box" style="background:var(--accent-weak);color:var(--accent)"><svg class="ic" style="width:18px;height:18px"><use href="#i-spark"/></svg></div>
+            <div class="row-main">
+              <div class="row-title">文档撰写 <span class="tag mono">/doc</span><span class="tag mono">v1.2</span><span class="tag tag-built">内置</span></div>
+              <div class="row-desc">按大纲生成结构化 docx 报告，可引用知识库内容</div>
+            </div>
+            <div class="row-actions"><span class="status-dot"><i class="i-on"></i>本周调用 14 次</span><span class="tg on"></span><span class="act-link"><svg class="ic"><use href="#i-edit"/></svg><svg class="ic"><use href="#i-more"/></svg></span></div>
+          </div>
+          <div class="row">
+            <div class="ic-box" style="background:#EFF6FF;color:var(--blue)"><svg class="ic" style="width:18px;height:18px"><use href="#i-code"/></svg></div>
+            <div class="row-main">
+              <div class="row-title">代码审查 <span class="tag mono">/review</span><span class="tag mono">v2.0</span><span class="tag tag-built">内置</span></div>
+              <div class="row-desc">按团队研发规范检查代码变更并给出修复建议</div>
+            </div>
+            <div class="row-actions"><span class="status-dot"><i class="i-on"></i>本周调用 8 次</span><span class="tg on"></span><span class="act-link"><svg class="ic"><use href="#i-edit"/></svg><svg class="ic"><use href="#i-more"/></svg></span></div>
+          </div>
+          <div class="row">
+            <div class="ic-box" style="background:#F0FDFA;color:var(--teal)"><svg class="ic" style="width:18px;height:18px"><use href="#i-shield"/></svg></div>
+            <div class="row-main">
+              <div class="row-title">服务器巡检 <span class="tag mono">/巡检</span><span class="tag mono">v1.3</span><span class="tag">自定义</span></div>
+              <div class="row-desc">对已授权服务器做健康度巡检并生成报告（CPU / 内存 / 磁盘 / 服务状态）</div>
+            </div>
+            <div class="row-actions"><span class="status-dot"><i class="i-on"></i>本周调用 6 次</span><span class="tg on"></span><span class="act-link"><svg class="ic"><use href="#i-edit"/></svg><svg class="ic"><use href="#i-more"/></svg></span></div>
+          </div>
+          <div class="row">
+            <div class="ic-box" style="background:#FFF7ED;color:var(--orange)"><svg class="ic" style="width:18px;height:18px"><use href="#i-file"/></svg></div>
+            <div class="row-main">
+              <div class="row-title">日志分析 <span class="tag mono">/日志分析</span><span class="tag mono">v1.0</span><span class="tag">自定义</span></div>
+              <div class="row-desc">拉取服务器日志做错误聚类与根因定位</div>
+            </div>
+            <div class="row-actions"><span class="status-dot"><i class="i-on"></i>本周调用 3 次</span><span class="tg on"></span><span class="act-link"><svg class="ic"><use href="#i-edit"/></svg><svg class="ic"><use href="#i-more"/></svg></span></div>
+          </div>
+          <div class="row" style="opacity:.85">
+            <div class="ic-box" style="background:#F0FDF4;color:var(--green)"><svg class="ic" style="width:18px;height:18px"><use href="#i-zap"/></svg></div>
+            <div class="row-main">
+              <div class="row-title">PPT 生成 <span class="tag mono">/ppt</span><span class="tag mono">v1.1</span><span class="tag">自定义</span></div>
+              <div class="row-desc">从 Markdown 大纲生成演示文稿初稿</div>
+            </div>
+            <div class="row-actions"><span class="tg"></span><span class="act-link"><svg class="ic"><use href="#i-edit"/></svg><svg class="ic"><use href="#i-more"/></svg></span></div>
+          </div>
+        </div>
+        <div class="hint-line">Skill 在对话中以 /命令 触发，也可由智能体按任务自动调用；启用状态影响其是否参与会话。</div>
+      </div>
+    </div>
+  </main>
+</section>
+
+<!-- ================= S8 能力管理 · MCP ================= -->
+<section class="screen" id="s8">
+  <aside class="sidebar">
+    <div class="logo"><div class="logo-mark">A</div><div><div class="logo-name">Agent 工作台</div><div class="logo-sub">个人智能体</div></div></div>
+    <div class="nav-label">工作区</div>
+    <div class="nav-item"><svg class="ic"><use href="#i-folder"/></svg>项目管理<span class="nbadge">5</span></div>
+    <div class="nav-item"><svg class="ic"><use href="#i-book"/></svg>知识库</div>
+    <div class="nav-item"><svg class="ic"><use href="#i-server"/></svg>服务器管理<span class="nbadge on">3 在线</span></div>
+    <div class="sidebar-spacer"></div>
+    <div class="sidebar-div"></div>
+    <div class="nav-item active"><svg class="ic"><use href="#i-gear"/></svg>设置</div>
+    <div class="user-card"><div class="avatar">高</div><div><div class="user-name">高</div><div class="user-plan">个人版 · Pro</div></div></div>
+  </aside>
+  <main class="main">
+    <div class="page-head">
+      <div><h1>设置 · 能力管理</h1><div class="sub">扩展智能体可用的 Skill、MCP 与内置工具</div></div>
+      <div class="head-actions"><button class="btn btn-primary btn-sm"><svg class="ic"><use href="#i-plus"/></svg>添加 MCP 服务器</button></div>
+    </div>
+    <div class="set-wrap">
+      <aside class="set-menu">
+        <div class="m-label">设置菜单</div>
+        <div class="set-mi"><svg class="ic"><use href="#i-gear"/></svg>通用</div>
+        <div class="set-mi"><svg class="ic"><use href="#i-chip"/></svg>模型管理<span class="mdesc">5</span></div>
+        <div class="set-mi"><svg class="ic"><use href="#i-box"/></svg>SDK 管理<span class="mdesc">6</span></div>
+        <div class="set-mi active"><svg class="ic"><use href="#i-layers"/></svg>能力管理<span class="mdesc">Skill·MCP·Tools</span></div>
+      </aside>
+      <div class="set-body">
+        <div class="tabs">
+          <div class="subtabs" style="margin-left:0"><div class="subtab">Skill</div><div class="subtab active">MCP</div><div class="subtab">Tools</div></div>
+        </div>
+        <div class="rows" style="margin-top:14px">
+          <div class="row">
+            <div class="ic-box" style="background:#F0FDF4;color:var(--green)"><svg class="ic" style="width:18px;height:18px"><use href="#i-plug"/></svg></div>
+            <div class="row-main">
+              <div class="row-title">filesystem <span class="tag">stdio</span></div>
+              <div class="row-desc">本地文件读写：项目文件、知识库文档的读取与写入</div>
+            </div>
+            <div class="row-actions"><span class="status-dot"><i class="i-on"></i>已连接 · 8 个工具</span><span class="tg on"></span><span class="act-link"><svg class="ic"><use href="#i-more"/></svg></span></div>
+          </div>
+          <div class="row">
+            <div class="ic-box" style="background:#F0FDFA;color:var(--teal)"><svg class="ic" style="width:18px;height:18px"><use href="#i-server"/></svg></div>
+            <div class="row-main">
+              <div class="row-title">ssh-ops <span class="tag">stdio</span></div>
+              <div class="row-desc">服务器运维：连接管理、命令执行、SFTP 传输（关联「服务器管理」中的授权主机）</div>
+            </div>
+            <div class="row-actions"><span class="status-dot"><i class="i-on"></i>已连接 · 6 个工具 · 关联 3 台服务器</span><span class="tg on"></span><span class="act-link"><svg class="ic"><use href="#i-more"/></svg></span></div>
+          </div>
+          <div class="row">
+            <div class="ic-box" style="background:#EFF6FF;color:var(--blue)"><svg class="ic" style="width:18px;height:18px"><use href="#i-search"/></svg></div>
+            <div class="row-main">
+              <div class="row-title">web-search <span class="tag">http</span></div>
+              <div class="row-desc">联网检索：网页搜索与内容抓取</div>
+            </div>
+            <div class="row-actions"><span class="status-dot"><i class="i-on"></i>已连接 · 3 个工具</span><span class="tg on"></span><span class="act-link"><svg class="ic"><use href="#i-more"/></svg></span></div>
+          </div>
+          <div class="row">
+            <div class="ic-box" style="background:#FDF2F8;color:#DB2777"><svg class="ic" style="width:18px;height:18px"><use href="#i-table"/></svg></div>
+            <div class="row-main">
+              <div class="row-title">sqlite <span class="tag">stdio</span></div>
+              <div class="row-desc">本地数据库查询：项目数据统计与导出</div>
+            </div>
+            <div class="row-actions"><span class="status-dot"><i class="i-on"></i>已连接 · 5 个工具</span><span class="tg on"></span><span class="act-link"><svg class="ic"><use href="#i-more"/></svg></span></div>
+          </div>
+          <div class="row" style="opacity:.85">
+            <div class="ic-box" style="background:#F8FAFC;color:#64748B"><svg class="ic" style="width:18px;height:18px"><use href="#i-plug"/></svg></div>
+            <div class="row-main">
+              <div class="row-title">github <span class="tag">http</span></div>
+              <div class="row-desc">仓库与 PR 管理：Issue、代码评审、CI 状态</div>
+            </div>
+            <div class="row-actions"><span class="status-dot"><i class="i-err"></i>未连接 · 12 个工具</span><span class="tg"></span><span class="act-link"><svg class="ic"><use href="#i-more"/></svg></span></div>
+          </div>
+        </div>
+        <div class="hint-line">MCP 服务器提供外部工具；未连接的服务器可在「更多」中查看日志并重新连接或重新授权。</div>
+      </div>
+    </div>
+  </main>
+</section>
+
+<!-- ================= S9 能力管理 · Tools ================= -->
+<section class="screen" id="s9">
+  <aside class="sidebar">
+    <div class="logo"><div class="logo-mark">A</div><div><div class="logo-name">Agent 工作台</div><div class="logo-sub">个人智能体</div></div></div>
+    <div class="nav-label">工作区</div>
+    <div class="nav-item"><svg class="ic"><use href="#i-folder"/></svg>项目管理<span class="nbadge">5</span></div>
+    <div class="nav-item"><svg class="ic"><use href="#i-book"/></svg>知识库</div>
+    <div class="nav-item"><svg class="ic"><use href="#i-server"/></svg>服务器管理<span class="nbadge on">3 在线</span></div>
+    <div class="sidebar-spacer"></div>
+    <div class="sidebar-div"></div>
+    <div class="nav-item active"><svg class="ic"><use href="#i-gear"/></svg>设置</div>
+    <div class="user-card"><div class="avatar">高</div><div><div class="user-name">高</div><div class="user-plan">个人版 · Pro</div></div></div>
+  </aside>
+  <main class="main">
+    <div class="page-head">
+      <div><h1>设置 · 能力管理</h1><div class="sub">扩展智能体可用的 Skill、MCP 与内置工具</div></div>
+      <div class="head-actions"><span class="status-dot"><i class="i-on"></i>今日工具调用 195 次</span></div>
+    </div>
+    <div class="set-wrap">
+      <aside class="set-menu">
+        <div class="m-label">设置菜单</div>
+        <div class="set-mi"><svg class="ic"><use href="#i-gear"/></svg>通用</div>
+        <div class="set-mi"><svg class="ic"><use href="#i-chip"/></svg>模型管理<span class="mdesc">5</span></div>
+        <div class="set-mi"><svg class="ic"><use href="#i-box"/></svg>SDK 管理<span class="mdesc">6</span></div>
+        <div class="set-mi active"><svg class="ic"><use href="#i-layers"/></svg>能力管理<span class="mdesc">Skill·MCP·Tools</span></div>
+      </aside>
+      <div class="set-body">
+        <div class="tabs">
+          <div class="subtabs" style="margin-left:0"><div class="subtab">Skill</div><div class="subtab">MCP</div><div class="subtab active">Tools</div></div>
+        </div>
+        <div class="rows" style="margin-top:14px">
+          <div class="row">
+            <div class="ic-box" style="background:#F0FDF4;color:var(--green)"><svg class="ic" style="width:18px;height:18px"><use href="#i-file"/></svg></div>
+            <div class="row-main">
+              <div class="row-title">fs.read / fs.write <span class="tag mono">内置</span></div>
+              <div class="row-desc">项目文件与知识库文档的读取、写入与编辑（工作区范围内自动放行）</div>
+            </div>
+            <div class="row-actions"><span class="risk risk-low">低风险</span><span class="status-dot">今日 86 次</span><span class="tg on"></span><span class="act-link"><svg class="ic"><use href="#i-more"/></svg></span></div>
+          </div>
+          <div class="row">
+            <div class="ic-box" style="background:#EFF6FF;color:var(--blue)"><svg class="ic" style="width:18px;height:18px"><use href="#i-search"/></svg></div>
+            <div class="row-main">
+              <div class="row-title">code-search <span class="tag mono">内置</span></div>
+              <div class="row-desc">项目内代码与文档检索（.gitignore 感知索引）</div>
+            </div>
+            <div class="row-actions"><span class="risk risk-low">低风险</span><span class="status-dot">今日 41 次</span><span class="tg on"></span><span class="act-link"><svg class="ic"><use href="#i-more"/></svg></span></div>
+          </div>
+          <div class="row">
+            <div class="ic-box" style="background:#FEF2F2;color:var(--red)"><svg class="ic" style="width:18px;height:18px"><use href="#i-terminal"/></svg></div>
+            <div class="row-main">
+              <div class="row-title">local-exec <span class="tag mono">内置</span></div>
+              <div class="row-desc">本地命令执行（构建、脚本、包管理）</div>
+            </div>
+            <div class="row-actions"><span class="risk risk-high">高风险 · 需确认</span><span class="status-dot">今日 12 次</span><span class="tg on"></span><span class="act-link"><svg class="ic"><use href="#i-more"/></svg></span></div>
+          </div>
+          <div class="row">
+            <div class="ic-box" style="background:#FEF2F2;color:var(--red)"><svg class="ic" style="width:18px;height:18px"><use href="#i-server"/></svg></div>
+            <div class="row-main">
+              <div class="row-title">ssh-exec <span class="tag mono">内置</span><span class="tag">关联服务器管理</span></div>
+              <div class="row-desc">远程服务器命令执行与文件传输（仅限「AI 可操作」的已授权主机）</div>
+            </div>
+            <div class="row-actions"><span class="risk risk-high">高风险 · 需确认</span><span class="status-dot">今日 9 次</span><span class="tg on"></span><span class="act-link"><svg class="ic"><use href="#i-more"/></svg></span></div>
+          </div>
+          <div class="row">
+            <div class="ic-box" style="background:#FEF3C7;color:#B45309"><svg class="ic" style="width:18px;height:18px"><use href="#i-zap"/></svg></div>
+            <div class="row-main">
+              <div class="row-title">build-validate <span class="tag mono">内置</span></div>
+              <div class="row-desc">构建与测试验证（编译、单测、lint）</div>
+            </div>
+            <div class="row-actions"><span class="risk risk-mid">中风险</span><span class="status-dot">今日 31 次</span><span class="tg on"></span><span class="act-link"><svg class="ic"><use href="#i-more"/></svg></span></div>
+          </div>
+          <div class="row">
+            <div class="ic-box" style="background:#F0FDF4;color:var(--green)"><svg class="ic" style="width:18px;height:18px"><use href="#i-search"/></svg></div>
+            <div class="row-main">
+              <div class="row-title">web-fetch <span class="tag mono">内置</span></div>
+              <div class="row-desc">网页抓取与 URL 内容读取</div>
+            </div>
+            <div class="row-actions"><span class="risk risk-low">低风险</span><span class="status-dot">今日 16 次</span><span class="tg on"></span><span class="act-link"><svg class="ic"><use href="#i-more"/></svg></span></div>
+          </div>
+        </div>
+        <div class="hint-line">风险等级决定执行前是否需要人工确认：低 = 自动执行；中 = 工作区内自动；高 = 每次需确认。可在「通用」设置调整确认策略。</div>
+      </div>
+    </div>
+  </main>
+</section>
+
+<!-- ================= S10 code 项目 · 编码 ================= -->
+<section class="screen" id="s10">
+  <aside class="sidebar">
+    <div class="logo"><div class="logo-mark">A</div><div><div class="logo-name">Agent 工作台</div><div class="logo-sub">个人智能体</div></div></div>
+    <div class="nav-label">工作区</div>
+    <div class="nav-item active"><svg class="ic"><use href="#i-folder"/></svg>项目管理<span class="nbadge">5</span></div>
+    <div class="nav-item"><svg class="ic"><use href="#i-book"/></svg>知识库</div>
+    <div class="nav-item"><svg class="ic"><use href="#i-server"/></svg>服务器管理<span class="nbadge on">3 在线</span></div>
+    <div class="sidebar-spacer"></div>
+    <div class="sidebar-div"></div>
+    <div class="nav-item"><svg class="ic"><use href="#i-gear"/></svg>设置<svg class="ic" style="margin-left:auto;width:13px;color:#475569"><use href="#i-chev-r"/></svg></div>
+    <div class="user-card"><div class="avatar">高</div><div><div class="user-name">高</div><div class="user-plan">个人版 · Pro</div></div></div>
+  </aside>
+  <main class="main">
+    <div class="topbar">
+      <button class="back-btn"><svg class="ic"><use href="#i-back"/></svg></button>
+      <span class="tb-title">智能客服平台</span>
+      <span class="chip chip-code">code</span>
+      <span class="tb-sub">最近保存 2026-11-17 18:24</span>
+      <div class="tb-right">
+        <button class="btn btn-ghost btn-sm">分享</button>
+        <button class="back-btn"><svg class="ic"><use href="#i-more"/></svg></button>
+      </div>
+    </div>
+    <div class="ws">
+      <aside class="panel-tree">
+        <div class="panel-head"><span>文件</span><span class="ph-actions"><svg class="ic" style="width:14px;height:14px"><use href="#i-search"/></svg><svg class="ic" style="width:14px;height:14px"><use href="#i-plus"/></svg></span></div>
+        <div class="tree-body">
+          <div class="folder-row"><svg class="ic" style="color:#F59E0B"><use href="#i-chev-d"/></svg><svg class="ic" style="color:#F59E0B"><use href="#i-folder"/></svg><span class="fname">src</span></div>
+          <div class="folder-row tree-indent-1"><svg class="ic" style="color:#F59E0B"><use href="#i-chev-d"/></svg><svg class="ic" style="color:#F59E0B"><use href="#i-folder"/></svg><span class="fname">components</span></div>
+          <div class="folder-row tree-indent-2"><svg class="ic" style="color:#3B82F6"><use href="#i-file"/></svg><span class="fname">ChatWindow.tsx</span><span class="fsize">6 KB</span></div>
+          <div class="folder-row tree-indent-2"><svg class="ic" style="color:#3B82F6"><use href="#i-file"/></svg><span class="fname">MessageList.tsx</span><span class="fsize">3 KB</span></div>
+          <div class="folder-row tree-indent-1"><svg class="ic" style="color:#F59E0B"><use href="#i-folder"/></svg><span class="fname">api</span></div>
+          <div class="folder-row tree-indent-2"><svg class="ic" style="color:#3B82F6"><use href="#i-file"/></svg><span class="fname">client.ts</span><span class="fsize">2 KB</span></div>
+          <div class="folder-row tree-indent-1 active"><svg class="ic"><use href="#i-file"/></svg><span class="fname">App.tsx</span></div>
+          <div class="folder-row tree-indent-1"><svg class="ic" style="color:#3B82F6"><use href="#i-file"/></svg><span class="fname">main.tsx</span><span class="fsize">1 KB</span></div>
+          <div class="folder-row"><svg class="ic" style="color:#64748B"><use href="#i-file"/></svg><span class="fname">package.json</span><span class="fsize">1 KB</span></div>
+          <div class="folder-row"><svg class="ic" style="color:#94A3B8"><use href="#i-file"/></svg><span class="fname">README.md</span><span class="fsize">4 KB</span></div>
+        </div>
+      </aside>
+      <section class="editor">
+        <div class="etabs">
+          <div class="etab active"><svg class="ic"><use href="#i-file"/></svg>App.tsx</div>
+          <div class="etab"><svg class="ic"><use href="#i-file"/></svg>client.ts<span class="mdot"></span></div>
+          <div class="etab" style="border:none"><svg class="ic" style="width:13px;height:13px"><use href="#i-plus"/></svg></div>
+        </div>
+        <div class="ecode">
+          <div class="cline"><span class="lnum">1</span><code class="ccode"><span class="k">import</span> { useState } <span class="k">from</span> <span class="s">'react'</span>;</code></div>
+          <div class="cline"><span class="lnum">2</span><code class="ccode"><span class="k">import</span> { ChatWindow } <span class="k">from</span> <span class="s">'./components/ChatWindow'</span>;</code></div>
+          <div class="cline"><span class="lnum">3</span><code class="ccode"> </code></div>
+          <div class="cline"><span class="lnum">4</span><code class="ccode"><span class="k">export default function</span> <span class="f">App</span>() {</code></div>
+          <div class="cline"><span class="lnum">5</span><code class="ccode">  <span class="k">const</span> [sessionId, setSessionId] = <span class="f">useState</span>&lt;<span class="t">string</span> | <span class="t">null</span>&gt;(<span class="k">null</span>);</code></div>
+          <div class="cline"><span class="lnum">6</span><code class="ccode"> </code></div>
+          <div class="cline"><span class="lnum">7</span><code class="ccode">  <span class="k">return</span> (</code></div>
+          <div class="cline"><span class="lnum">8</span><code class="ccode">    &lt;<span class="t">main</span> <span class="v">className</span>=<span class="s">"app-shell"</span>&gt;</code></div>
+          <div class="cline"><span class="lnum">9</span><code class="ccode">      &lt;<span class="t">ChatWindow</span></code></div>
+          <div class="cline"><span class="lnum">10</span><code class="ccode">        <span class="v">sessionId</span>={sessionId}</code></div>
+          <div class="cline"><span class="lnum">11</span><code class="ccode">        <span class="v">onCreated</span>={setSessionId}</code></div>
+          <div class="cline"><span class="lnum">12</span><code class="ccode">        <span class="v">placeholder</span>=<span class="s">"向智能体描述你的任务…"</span></code></div>
+          <div class="cline"><span class="lnum">13</span><code class="ccode">      /&gt;</code></div>
+          <div class="cline"><span class="lnum">14</span><code class="ccode">    &lt;/<span class="t">main</span>&gt;</code></div>
+          <div class="cline"><span class="lnum">15</span><code class="ccode">  );</code></div>
+          <div class="cline"><span class="lnum">16</span><code class="ccode">}</code></div>
+        </div>
+        <div class="ebar"><span>TypeScript · UTF-8 · LF</span><span>1 处未保存修改</span></div>
+      </section>
+      <aside class="ai">
+        <div class="ai-head">
+          <div class="ai-logo"><svg class="ic"><use href="#i-spark"/></svg></div>
+          <span class="ai-title">AI 助手</span>
+          <span class="model-chip"><svg class="ic"><use href="#i-chip"/></svg>GLM-4.7 · 思考:中<svg class="ic chev"><use href="#i-chev-d"/></svg></span>
+          <span class="ai-plus"><svg class="ic"><use href="#i-plus"/></svg></span>
+        </div>
+        <div class="ai-body">
+          <div class="msg-u">把 ChatWindow 里的消息渲染逻辑抽成独立的 MessageList 组件，保持 props 兼容</div>
+          <div class="msg-a">
+            <div class="a-label"><span class="ai-logo"><svg class="ic"><use href="#i-spark"/></svg></span>GLM-4.7 · 思考等级 中</div>
+            我先读取现有实现，再生成组件拆分方案：
+            <div class="toolcard"><svg class="ic"><use href="#i-file"/></svg><span class="tname">读取文件</span><span class="tpath">ChatWindow.tsx</span><span class="tok">✓ 128 行</span></div>
+            已完成分析，拆分方案如下（保持原有 props 兼容）：
+            <div class="diffcard">
+              <div class="diff-head"><span>MessageList.tsx（新增）</span><span>+18 / -0</span></div>
+              <div class="dl add">+ export function MessageList({ messages }: Props) {</div>
+              <div class="dl add">+   return messages.map(m =&gt; &lt;MessageItem key={m.id} /&gt;);</div>
+              <div class="dl add">+ }</div>
+            </div>
+            <div class="chip-actions"><span class="pri">应用到文件</span><span>查看完整 diff</span><span>调整方案</span></div>
+          </div>
+        </div>
+        <div class="ai-input">
+          <div class="cap-row"><span class="cap"><svg class="ic"><use href="#i-code"/></svg>/review</span><span class="cap"><svg class="ic"><use href="#i-spark"/></svg>/doc</span><span class="cap"><svg class="ic"><use href="#i-plug"/></svg>MCP · filesystem</span><span class="cap"><svg class="ic"><use href="#i-box"/></svg>引擎 claude-code</span></div>
+          <div class="input-box">
+            <div class="ph">输入消息，Enter 发送，Shift+Enter 换行…</div>
+            <div class="input-actions"><span class="ia"><svg class="ic"><use href="#i-clip"/></svg></span><span class="perm-chip"><svg class="ic" style="width:11px;height:11px"><use href="#i-shield"/></svg>权限 自动</span><span class="ctx">18K / 128K</span><button class="send-btn"><svg class="ic"><use href="#i-send"/></svg></button></div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </main>
+</section>
+
+<!-- ================= S11 work 项目 · 设计（敏捷闭环） ================= -->
+<section class="screen" id="s11">
+  <aside class="sidebar">
+    <div class="logo"><div class="logo-mark">A</div><div><div class="logo-name">Agent 工作台</div><div class="logo-sub">个人智能体</div></div></div>
+    <div class="nav-label">工作区</div>
+    <div class="nav-item active"><svg class="ic"><use href="#i-folder"/></svg>项目管理<span class="nbadge">5</span></div>
+    <div class="nav-item"><svg class="ic"><use href="#i-book"/></svg>知识库</div>
+    <div class="nav-item"><svg class="ic"><use href="#i-server"/></svg>服务器管理<span class="nbadge on">3 在线</span></div>
+    <div class="sidebar-spacer"></div>
+    <div class="sidebar-div"></div>
+    <div class="nav-item"><svg class="ic"><use href="#i-gear"/></svg>设置<svg class="ic" style="margin-left:auto;width:13px;color:#475569"><use href="#i-chev-r"/></svg></div>
+    <div class="user-card"><div class="avatar">高</div><div><div class="user-name">高</div><div class="user-plan">个人版 · Pro</div></div></div>
+  </aside>
+  <main class="main">
+    <div class="topbar">
+      <button class="back-btn"><svg class="ic"><use href="#i-back"/></svg></button>
+      <span class="tb-title">Q3 市场调研</span>
+      <span class="chip chip-work">work</span>
+      <div class="ptabs"><span class="ptab on">设计</span><span class="ptab">编码</span></div>
+      <div class="tb-right"><button class="btn btn-ghost btn-sm">导出</button><button class="back-btn"><svg class="ic"><use href="#i-more"/></svg></button></div>
+    </div>
+    <div class="strip">
+      <span class="sprint-chip"><svg class="ic" style="width:13px;height:13px"><use href="#i-zap"/></svg>迭代 7 · 11-09 ~ 11-22</span>
+      <div class="prog-wrap"><div class="prog"><i style="width:40%"></i></div>进度 40% · 2/5</div>
+      <div class="stat-chips">
+        <span class="sc"><i class="sdot st-done"></i>已完成 2</span>
+        <span class="sc"><i class="sdot st-dev"></i>开发中 1</span>
+        <span class="sc"><i class="sdot st-verify"></i>验证中 1</span>
+        <span class="sc"><i class="sdot st-confirm"></i>待确认 1</span>
+        <span class="sc"><i class="sdot st-plan"></i>待澄清 1</span>
+        <span class="sc"><i class="sdot st-bug"></i>缺陷 1</span>
+      </div>
+      <div class="strip-right"><button class="btn btn-primary btn-sm"><svg class="ic"><use href="#i-plus"/></svg>新建 Story</button></div>
+    </div>
+    <div class="ws">
+      <aside class="panel-tree w300">
+        <div class="panel-head"><span>需求结构</span><span class="ph-actions"><svg class="ic" style="width:14px;height:14px"><use href="#i-plus"/></svg></span></div>
+        <div class="tree-body">
+          <div class="tnode lv0"><svg class="ic"><use href="#i-chev-d"/></svg><span class="sdot st-dev"></span><span class="tid">EPIC-001</span><span class="ttl">市场洞察与竞争分析</span><span class="stx st-dev">开发中</span></div>
+          <div class="tnode lv1"><svg class="ic"><use href="#i-chev-d"/></svg><span class="sdot st-dev"></span><span class="tid">FEAT-001</span><span class="ttl">竞品数据收集与分析</span><span class="stx st-dev">开发中</span></div>
+          <div class="tnode lv2"><span class="sdot st-done"></span><span class="tid">STORY-001</span><span class="ttl">竞品信息抓取与汇总</span><span class="stx st-done">已完成</span></div>
+          <div class="tnode lv2 sel"><span class="sdot st-dev"></span><span class="tid">STORY-002</span><span class="ttl">竞品对比矩阵</span><span class="stx st-dev">开发中</span></div>
+          <div class="tnode lv2"><span class="sdot st-bug"></span><span class="tid">BUG-001</span><span class="ttl">矩阵数据源失效</span><span class="stx st-bug">验证中</span></div>
+          <div class="tnode lv2"><span class="sdot st-confirm"></span><span class="tid">STORY-003</span><span class="ttl">分析报告初稿</span><span class="stx st-confirm">待确认</span></div>
+          <div class="tnode lv2"><span class="sdot st-done"></span><span class="tid">STORY-005</span><span class="ttl">竞品数据入库与清洗</span><span class="stx st-done">已完成</span></div>
+          <div class="tnode lv1"><svg class="ic"><use href="#i-chev-r"/></svg><span class="sdot st-design"></span><span class="tid">FEAT-002</span><span class="ttl">用户调研</span><span class="stx st-design">设计中</span></div>
+          <div class="tnode lv0"><svg class="ic"><use href="#i-chev-r"/></svg><span class="sdot st-confirm"></span><span class="tid">EPIC-002</span><span class="ttl">报告产出与发布</span><span class="stx st-confirm">待确认</span></div>
+        </div>
+        <div class="legend">
+          <span><i class="sdot st-plan"></i>待澄清</span><span><i class="sdot st-confirm"></i>待确认</span><span><i class="sdot st-ready"></i>已就绪</span><span><i class="sdot st-design"></i>设计中</span><span><i class="sdot st-dev"></i>开发中</span><span><i class="sdot st-verify"></i>验证中</span><span><i class="sdot st-accept"></i>待验收</span><span><i class="sdot st-done"></i>已完成</span><span><i class="sdot st-bug"></i>缺陷</span>
+        </div>
+      </aside>
+      <section class="detail">
+        <div class="crumb">EPIC-001 市场洞察与竞争分析 <svg class="ic" style="width:11px;height:11px"><use href="#i-chev-r"/></svg> FEAT-001 竞品数据收集与分析</div>
+        <div class="d-title">STORY-002 竞品对比矩阵 <span class="badge st-dev">开发中</span><span class="badge pri-badge">优先级 高</span><span class="badge st-ready">迭代 7</span></div>
+        <div class="d-meta"><span>负责人 <b>高</b></span><span>更新 <b>2026-11-17</b></span><span>来源 <b>PRD-001</b></span><span>依赖 <b>STORY-001</b></span></div>
+        <div class="d-sec">目标</div>
+        <div class="d-text">作为产品经理，我希望得到一份结构化的竞品对比矩阵，以便为定价策略与功能路线决策提供可追溯的数据依据。</div>
+        <div class="d-sec">验收标准（3）</div>
+        <div class="ac-item"><span class="ac-id">AC-01</span><span>给定 5 个主要竞品的基础数据，当生成交互式对比矩阵时，则维度完整覆盖定价、功能、市场份额，且数据来源可追溯。</span><svg class="ic ac-check done"><use href="#i-check"/></svg></div>
+        <div class="ac-item"><span class="ac-id">AC-02</span><span>给定矩阵数据更新，当任一竞品价格变化时，则矩阵可在 1 分钟内同步刷新并高亮差异项。</span><svg class="ic ac-check todo"><use href="#i-check"/></svg></div>
+        <div class="ac-item"><span class="ac-id">AC-03</span><span>给定离线环境，当打开矩阵页面时，则展示最近一次缓存数据并标注数据时间。</span><svg class="ic ac-check todo"><use href="#i-check"/></svg></div>
+        <div class="d-sec">关联与交付</div>
+        <div class="link-chips">
+          <span class="link-chip">需求 <b>PRD-001</b></span>
+          <span class="link-chip">参考 <b>REF-001</b></span>
+          <span class="link-chip">知识库 <b>竞品情报</b></span>
+          <span class="link-chip">交付物 <b>竞品对比矩阵_v0.3.xlsx</b></span>
+        </div>
+        <div class="d-sec">验证记录</div>
+        <div class="vr-row"><span class="vid">AC-01</span>人工检查 · 矩阵生成与来源核对<span class="vr-res ok">通过 · 11-16</span></div>
+        <div class="vr-row"><span class="vid">AC-02</span>数据刷新演练<span class="vr-res na">未执行 · 阻塞于 BUG-001</span></div>
+        <div class="d-sec">变更记录</div>
+        <div class="vr-row"><span class="vid">CR-002</span>新增离线缓存要求（对应 AC-03）<span class="vr-res na">11-15 · 产品提出</span></div>
+        <div class="d-actions">
+          <button class="btn-ai"><svg class="ic" style="width:15px;height:15px"><use href="#i-spark"/></svg>AI 协助</button>
+          <button class="btn btn-ghost"><svg class="ic"><use href="#i-edit"/></svg>编辑</button>
+          <button class="btn flow-next">推进 → 验证中</button>
+        </div>
+      </section>
+      <aside class="ai">
+        <div class="ai-head">
+          <div class="ai-logo"><svg class="ic"><use href="#i-spark"/></svg></div>
+          <span class="ai-title">AI 助手</span>
+          <span class="model-chip"><svg class="ic"><use href="#i-chip"/></svg>GLM-4.7 · 思考:中<svg class="ic chev"><use href="#i-chev-d"/></svg></span>
+          <span class="ai-plus"><svg class="ic"><use href="#i-plus"/></svg></span>
+        </div>
+        <div class="ai-body">
+          <div class="msg-u">根据 STORY-002 和知识库，生成竞品对比矩阵初稿</div>
+          <div class="msg-a">
+            <div class="a-label"><span class="ai-logo"><svg class="ic"><use href="#i-spark"/></svg></span>GLM-4.7 · 已关联当前 Story</div>
+            <div class="kbcard"><svg class="ic"><use href="#i-book"/></svg><span>引用知识库 <b>竞品情报</b></span><span class="khit">命中 3 段 · 可溯源</span></div>
+            <div class="toolcard"><svg class="ic"><use href="#i-table"/></svg><span class="tname">生成文件</span><span class="tpath">竞品对比矩阵_v0.3.xlsx</span><span class="tok">✓ 5 竞品 × 4 维度</span></div>
+            已按 STORY-002 的验收标准生成初稿：定价、功能覆盖、市场份额、风险 4 个维度，每项数据附来源链接。注意：AC-02 的自动刷新尚未实现，已标注在文件备注页。
+            <div class="chip-actions"><span class="pri">更新 Story 状态</span><span>写入编码页</span><span>继续完善</span></div>
+          </div>
+        </div>
+        <div class="ai-input">
+          <div class="cap-row"><span class="cap"><svg class="ic"><use href="#i-spark"/></svg>/doc</span><span class="cap"><svg class="ic"><use href="#i-zap"/></svg>/ppt</span><span class="cap"><svg class="ic"><use href="#i-plug"/></svg>MCP · web-search</span><span class="cap"><svg class="ic"><use href="#i-box"/></svg>引擎 claude-code</span></div>
+          <div class="input-box">
+            <div class="ph">输入消息，Enter 发送，Shift+Enter 换行…</div>
+            <div class="input-actions"><span class="ia"><svg class="ic"><use href="#i-clip"/></svg></span><span class="perm-chip"><svg class="ic" style="width:11px;height:11px"><use href="#i-shield"/></svg>权限 自动</span><span class="ctx">9K / 128K</span><button class="send-btn"><svg class="ic"><use href="#i-send"/></svg></button></div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </main>
+</section>
+
+<!-- ================= S12 work 项目 · 编码（办公文件） ================= -->
+<section class="screen" id="s12">
+  <aside class="sidebar">
+    <div class="logo"><div class="logo-mark">A</div><div><div class="logo-name">Agent 工作台</div><div class="logo-sub">个人智能体</div></div></div>
+    <div class="nav-label">工作区</div>
+    <div class="nav-item active"><svg class="ic"><use href="#i-folder"/></svg>项目管理<span class="nbadge">5</span></div>
+    <div class="nav-item"><svg class="ic"><use href="#i-book"/></svg>知识库</div>
+    <div class="nav-item"><svg class="ic"><use href="#i-server"/></svg>服务器管理<span class="nbadge on">3 在线</span></div>
+    <div class="sidebar-spacer"></div>
+    <div class="sidebar-div"></div>
+    <div class="nav-item"><svg class="ic"><use href="#i-gear"/></svg>设置<svg class="ic" style="margin-left:auto;width:13px;color:#475569"><use href="#i-chev-r"/></svg></div>
+    <div class="user-card"><div class="avatar">高</div><div><div class="user-name">高</div><div class="user-plan">个人版 · Pro</div></div></div>
+  </aside>
+  <main class="main">
+    <div class="topbar">
+      <button class="back-btn"><svg class="ic"><use href="#i-back"/></svg></button>
+      <span class="tb-title">Q3 市场调研</span>
+      <span class="chip chip-work">work</span>
+      <div class="ptabs"><span class="ptab">设计</span><span class="ptab on">编码</span></div>
+      <div class="tb-right"><button class="btn btn-ghost btn-sm">导出</button><button class="back-btn"><svg class="ic"><use href="#i-more"/></svg></button></div>
+    </div>
+    <div class="ws">
+      <aside class="panel-tree">
+        <div class="panel-head"><span>文件</span><span class="ph-actions"><svg class="ic" style="width:14px;height:14px"><use href="#i-search"/></svg><svg class="ic" style="width:14px;height:14px"><use href="#i-plus"/></svg></span></div>
+        <div class="tree-body">
+          <div class="folder-row"><svg class="ic" style="color:#94A3B8"><use href="#i-chev-d"/></svg><svg class="ic" style="color:#F59E0B"><use href="#i-folder"/></svg><span class="fname">docs</span></div>
+          <div class="folder-row tree-indent-1"><svg class="ic" style="color:#64748B"><use href="#i-file"/></svg><span class="fname">01-竞品分析.md</span><span class="fsize">24 KB</span></div>
+          <div class="folder-row tree-indent-1"><svg class="ic" style="color:#3B82F6"><use href="#i-file"/></svg><span class="fname">02-用户调研计划.docx</span><span class="fsize">96 KB</span></div>
+          <div class="folder-row tree-indent-1 active"><svg class="ic" style="color:#16A34A"><use href="#i-table"/></svg><span class="fname">竞品对比矩阵_v0.3.xlsx</span><span class="fsize">88 KB</span></div>
+          <div class="folder-row tree-indent-1"><svg class="ic" style="color:#EA580C"><use href="#i-file"/></svg><span class="fname">汇报材料.pptx</span><span class="fsize">2.1 MB</span></div>
+          <div class="folder-row"><svg class="ic" style="color:#DC2626"><use href="#i-file"/></svg><span class="fname">行业白皮书.pdf</span><span class="fsize">4.6 MB</span></div>
+          <div class="folder-row"><svg class="ic" style="color:#3B82F6"><use href="#i-file"/></svg><span class="fname">会议纪要 1117.docx</span><span class="fsize">38 KB</span></div>
+        </div>
+      </aside>
+      <section class="preview">
+        <div class="pv-bar"><svg class="ic"><use href="#i-table"/></svg>竞品对比矩阵_v0.3.xlsx<span class="pv-size">88 KB · 由 office-sdk 渲染</span><div class="pv-right"><span>缩放 100%</span><span>|</span><svg class="ic" style="width:14px;height:14px"><use href="#i-more"/></svg></div></div>
+        <div class="fx-bar"><span class="fx-cell">B2</span><span class="fx">¥ 3,299</span></div>
+        <div class="pv-body">
+          <table class="sheet">
+            <thead><tr><th style="width:36px"></th><th>A</th><th>B</th><th>C</th><th>D</th><th>E</th></tr></thead>
+            <tbody>
+              <tr><th>1</th><td class="h">竞品</td><td class="h">定价（¥/年）</td><td class="h">市场份额</td><td class="h">核心优势</td><td class="h">风险</td></tr>
+              <tr><th>2</th><td>竞品 A</td><td class="sel-cell">¥ 3,299</td><td>31%</td><td>生态完善</td><td>价格偏高</td></tr>
+              <tr><th>3</th><td>竞品 B</td><td>¥ 2,499</td><td>24%</td><td>性价比</td><td>功能单一</td></tr>
+              <tr><th>4</th><td>竞品 C</td><td>¥ 1,999</td><td>18%</td><td>本地化服务</td><td>稳定性</td></tr>
+              <tr><th>5</th><td>竞品 D</td><td>¥ 999</td><td>12%</td><td>免费增值模式</td><td>服务响应弱</td></tr>
+            </tbody>
+          </table>
+          <div class="sheet-tabs"><span class="on">对比矩阵</span><span>定价追踪</span><span>备注（AC-02）</span><span class="plus">+</span></div>
+        </div>
+      </section>
+      <aside class="ai">
+        <div class="ai-head">
+          <div class="ai-logo"><svg class="ic"><use href="#i-spark"/></svg></div>
+          <span class="ai-title">AI 助手</span>
+          <span class="model-chip"><svg class="ic"><use href="#i-chip"/></svg>Qwen3-Max · 思考:关<svg class="ic chev"><use href="#i-chev-d"/></svg></span>
+          <span class="ai-plus"><svg class="ic"><use href="#i-plus"/></svg></span>
+        </div>
+        <div class="ai-body">
+          <div class="msg-u">把「竞品对比矩阵_v0.3.xlsx」的定价列画成柱状对比图，插入汇报材料.pptx</div>
+          <div class="msg-a">
+            <div class="a-label"><span class="ai-logo"><svg class="ic"><use href="#i-spark"/></svg></span>Qwen3-Max</div>
+            <div class="toolcard"><svg class="ic"><use href="#i-table"/></svg><span class="tname">读取文件</span><span class="tpath">竞品对比矩阵_v0.3.xlsx</span><span class="tok">✓ 5×6</span></div>
+            已提取 4 个竞品的定价数据，生成柱状对比图如下：
+            <div class="chartcard">
+              <div class="cc-title"><span>竞品定价对比（¥/年）</span><span>自动生成</span></div>
+              <svg viewBox="0 0 300 120" style="width:100%;height:auto">
+                <line x1="30" y1="100" x2="290" y2="100" stroke="#E2E8F0" stroke-width="1"/>
+                <line x1="30" y1="70" x2="290" y2="70" stroke="#F1F5F9" stroke-width="1"/>
+                <line x1="30" y1="40" x2="290" y2="40" stroke="#F1F5F9" stroke-width="1"/>
+                <rect x="55" y="18" width="34" height="82" rx="3" fill="#4F46E5"/>
+                <rect x="115" y="39" width="34" height="61" rx="3" fill="#818CF8"/>
+                <rect x="175" y="51" width="34" height="49" rx="3" fill="#A5B4FC"/>
+                <rect x="235" y="76" width="34" height="24" rx="3" fill="#C7D2FE"/>
+                <text x="72" y="14" font-size="9" fill="#475569" text-anchor="middle">3299</text>
+                <text x="132" y="35" font-size="9" fill="#475569" text-anchor="middle">2499</text>
+                <text x="192" y="47" font-size="9" fill="#475569" text-anchor="middle">1999</text>
+                <text x="252" y="72" font-size="9" fill="#475569" text-anchor="middle">999</text>
+                <text x="72" y="112" font-size="9" fill="#94A3B8" text-anchor="middle">A</text>
+                <text x="132" y="112" font-size="9" fill="#94A3B8" text-anchor="middle">B</text>
+                <text x="192" y="112" font-size="9" fill="#94A3B8" text-anchor="middle">C</text>
+                <text x="252" y="112" font-size="9" fill="#94A3B8" text-anchor="middle">D</text>
+              </svg>
+            </div>
+            <div class="confirmcard"><div class="cc-t"><svg class="ic"><use href="#i-warn"/></svg>等待你的确认</div>将把图表写入「汇报材料.pptx」第 4 页（“竞争格局”章节之后）。</div>
+            <div class="chip-actions"><span class="pri">确认执行</span><span>换一种图表</span><span>取消</span></div>
+          </div>
+        </div>
+        <div class="ai-input">
+          <div class="cap-row"><span class="cap"><svg class="ic"><use href="#i-spark"/></svg>/doc</span><span class="cap"><svg class="ic"><use href="#i-zap"/></svg>/ppt</span><span class="cap"><svg class="ic"><use href="#i-table"/></svg>/data</span><span class="cap"><svg class="ic"><use href="#i-box"/></svg>引擎 claude-code</span></div>
+          <div class="input-box">
+            <div class="ph">输入消息，Enter 发送，Shift+Enter 换行…</div>
+            <div class="input-actions"><span class="ia"><svg class="ic"><use href="#i-clip"/></svg></span><span class="perm-chip"><svg class="ic" style="width:11px;height:11px"><use href="#i-shield"/></svg>权限 自动</span><span class="ctx">12K / 128K</span><button class="send-btn"><svg class="ic"><use href="#i-send"/></svg></button></div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </main>
+</section>
+
+<script>
+(function(){
+  var screens = ['1','2','3','4','5','6','7','8','9','10','11','12'];
+  function show(id){
+    screens.forEach(function(s){
+      document.getElementById('s'+s).style.display = (s===id) ? 'flex' : 'none';
+    });
+    document.querySelectorAll('#switcher a').forEach(function(a){
+      a.classList.toggle('on', a.getAttribute('data-s')===id);
+    });
+  }
+  var param = new URLSearchParams(location.search).get('s');
+  if(param && screens.indexOf(param)>=0){
+    show(param);
+    document.body.classList.add('shot');
+  } else {
+    show('1');
+    document.querySelectorAll('#switcher a').forEach(function(a){
+      a.addEventListener('click', function(){ show(a.getAttribute('data-s')); });
+    });
+  }
+})();
+</script>
+</body>
+</html>

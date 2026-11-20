@@ -1,0 +1,102 @@
+/* CR-039：任务页派发树。一次派发一棵树，根为协调者，子为各 CLI 工作代理。
+   只新增树的结构与层级表达，不改既有 tokens、色彩、字号与既有页面外观。
+   节点类使用 task-node，避免与需求树的 .tree-row 规则互相污染。 */
+
+/* ---- 恢复表格列宽 ---- */
+.task-table.task-tree-table tbody tr.task-node { display: table-row; }
+.task-table.task-tree-table tbody tr.task-node > td { display: table-cell; vertical-align: middle; }
+
+/* ---- 子行：整行浅底，形成「本次派发」块 ---- */
+.task-table.task-tree-table { --tree-line: #c3cad3; --tree-child-bg: #eef1f6; --tree-child-hover: #e4e9f1; }
+html[data-theme="dark"] .task-table.task-tree-table { --tree-line: #4a525e; --tree-child-bg: #1e2229; --tree-child-hover: #262b33; }
+
+.task-table.task-tree-table tbody tr.task-node.depth-1 > td { background: var(--tree-child-bg); }
+.task-table.task-tree-table tbody tr.task-node.depth-1:hover > td { background: var(--tree-child-hover); }
+.task-table.task-tree-table tbody tr.task-node.is-selected > td { background: var(--primary-soft); }
+
+/* ---- 根行：字重与底部界线更实 ---- */
+.task-table.task-tree-table tbody tr.task-node.depth-0 .cell-title b { font-weight: 600; }
+.task-table.task-tree-table tbody tr.task-node.depth-1 .cell-title b { font-weight: 500; }
+.task-table.task-tree-table tbody tr.task-node.depth-1 .cell-title > span { color: var(--muted); }
+.task-table.task-tree-table tbody tr.task-node.depth-1 > td { border-bottom-color: transparent; }
+.task-table.task-tree-table tbody tr.task-node.depth-1:last-of-type > td { border-bottom-color: var(--line-soft); }
+
+/* ---- 折叠键 ---- */
+.tree-toggle {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; padding: 0; margin-right: 2px;
+  border: 0; border-radius: 4px; background: transparent; color: var(--muted);
+  cursor: pointer; transition: transform .15s ease, background .15s ease;
+}
+.tree-toggle:hover { background: var(--line); color: var(--ink); }
+.tree-toggle.is-collapsed { transform: rotate(-90deg); }
+.tree-toggle.placeholder { cursor: default; }
+.tree-toggle.placeholder:hover { background: transparent; }
+
+/* ---- 树槽：明确的缩进与 L 形连接线 ---- */
+.tree-gutter {
+  position: relative; flex: 0 0 auto; align-self: stretch;
+  width: 54px; min-height: 40px; margin-right: 2px;
+}
+.tree-elbow {
+  position: absolute; left: 26px; top: 0; width: 20px; height: 50%;
+  border-left: 1px solid var(--tree-line);
+  border-bottom: 1px solid var(--tree-line);
+  border-bottom-left-radius: 9px;
+}
+/* 同一根下紧邻的下一个子行，补一段贯穿竖线，形成连续分支 */
+.task-table.task-tree-table tbody tr.task-node.depth-1 + tr.task-node.depth-1 .tree-elbow { height: 100%; border-bottom-left-radius: 0; border-bottom-color: transparent; }
+.task-table.task-tree-table tbody tr.task-node.depth-1 + tr.task-node.depth-1 .tree-elbow::after {
+  content: ""; position: absolute; left: -1px; top: 50%; width: 20px; height: 1px; background: var(--tree-line);
+}
+
+/* ---- 树内状态与进度 ---- */
+.task-table.task-tree-table .task-pct { margin-left: 6px; font-weight: 500; }
+
+/* ---- 任务详情：职责与所属派发 ---- */
+.breadcrumb-back {
+  display: inline-flex; align-items: center; gap: 6px; align-self: flex-start;
+  padding: 4px 8px 4px 6px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--surface-2); color: var(--ink-2, var(--ink));
+  font-size: 11.5px; cursor: pointer; max-width: 100%;
+}
+.breadcrumb-back .ico-14 { transform: rotate(90deg); color: var(--muted); }
+.breadcrumb-back:hover { border-color: var(--blue); color: var(--blue); }
+
+.mission-box {
+  display: flex; align-items: flex-start; gap: 7px;
+  padding: 9px 11px; border-left: 3px solid var(--blue);
+  background: var(--surface-2); border-radius: 0 6px 6px 0;
+  font-size: 12px; line-height: 1.55; color: var(--ink-2, var(--ink));
+}
+.mission-box > span { min-width: 0; overflow-wrap: anywhere; }
+.mission-box .ico-14 { flex: 0 0 auto; margin-top: 2px; color: var(--blue); }
+
+/* ---- 本次派发的子任务 ---- */
+.dispatch-block { border: 1px solid var(--line); border-radius: 8px; padding: 10px 11px; background: var(--surface); }
+.dispatch-table { display: flex; flex-direction: column; gap: 2px; }
+.dispatch-row {
+  display: grid; grid-template-columns: 24px minmax(0, 1fr) auto auto;
+  align-items: center; gap: 8px; width: 100%;
+  padding: 7px 6px; border: 0; border-radius: 6px;
+  background: transparent; text-align: left; cursor: pointer;
+}
+.dispatch-row:hover { background: var(--surface-2); }
+.dispatch-row + .dispatch-row { border-top: 1px solid var(--line-soft); }
+.dispatch-row .dr-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.dispatch-row .dr-main b { font-size: 12px; font-weight: 550; }
+.dispatch-row .dr-main .caption { font-size: 11px; color: var(--muted); }
+.dispatch-row .dr-meta { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.dispatch-row .tag { white-space: nowrap; }
+
+/* ---- 窄屏：树与子任务表降级为整宽，不做横向挤压 ---- */
+@media (max-width: 900px) {
+  .dispatch-row { grid-template-columns: 24px minmax(0, 1fr) auto; }
+  .dispatch-row .dr-meta { display: none; }
+}
+@media (max-width: 600px) {
+  .tree-gutter { width: 28px; }
+  .tree-elbow { left: 12px; width: 12px; }
+  .dispatch-block { padding: 8px; }
+  .mission-box { font-size: 11.5px; }
+}

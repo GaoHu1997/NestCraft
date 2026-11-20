@@ -1,0 +1,61 @@
+/* 编码区（CR-014 AC-09）：左文件树 240px + 右页签与 CodeMirror 6 编辑器。 */
+
+.cda { display: flex; height: 100%; min-height: 0; background: var(--paper); overflow: hidden; }
+
+/* ---------- 左侧文件树 ---------- */
+
+.cda-aside { width: 260px; flex: 0 0 260px; min-width: 0; display: flex; flex-direction: column; min-height: 0; position: relative; background: var(--paper); border-right: 1px solid var(--line-soft); }
+.cda-aside[hidden] { display: none; }
+.cda-tree-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px 6px 12px; height: 40px; border-bottom: 1px solid var(--line-soft); flex: 0 0 auto; }
+.cda-tree-title { font-weight: 600; font-size: 13px; }
+.cda-tree-head .btn.icon { width: 26px; min-height: 26px; }
+.cda-tree-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 2px 6px 12px; }
+
+.cda-tree-row { display: flex; align-items: center; gap: 5px; min-height: 26px; padding-right: 6px; border-radius: 5px; font-size: 13px; user-select: none; }
+.cda-tree-row:hover { background: var(--hover-bg); }
+.cda-chevron { width: 12px; flex: 0 0 12px; color: var(--muted); font-size: 10px; text-align: center; user-select: none; }
+.cda-chevron.leaf { visibility: hidden; }
+.cda-tree-row svg { width: 14px; height: 14px; flex: 0 0 auto; color: var(--muted); }
+.cda-tree-row.dir svg { color: var(--accent); }
+.cda-tree-name { flex: 1 1 auto; min-width: 0; }
+.cda-loading { color: var(--muted); font-size: 12px; }
+
+/* 搜索浮层 */
+.cda-search { position: absolute; top: 38px; left: 8px; right: 8px; z-index: 30; display: flex; flex-direction: column; gap: 8px; padding: 8px; max-height: calc(100% - 50px); background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-card); box-shadow: var(--shadow-md); }
+.cda-search-list { overflow: auto; min-height: 40px; display: flex; flex-direction: column; gap: 2px; }
+.cda-search-note { padding: 6px 4px; }
+.cda-hit { padding: 5px 6px; border-radius: 5px; }
+.cda-hit:hover { background: var(--hover-bg); }
+.cda-hit-path { font-size: 12px; color: var(--blue-ink); }
+.cda-hit-text { font-size: 12px; color: var(--muted); }
+
+/* ---------- 右侧编辑区 ---------- */
+
+.cda-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+
+.cda-tabs { display: flex; align-items: center; gap: 2px; padding: 0 8px; height: 36px; flex: 0 0 36px; overflow-x: auto; border-bottom: 1px solid var(--line-soft); background: var(--panel-2); }
+.cda-tabs-empty { align-self: center; padding: 0 4px; }
+.cda-tab { display: inline-flex; align-items: center; gap: 6px; padding: 0 6px 0 10px; max-width: 200px; height: 28px; border: 1px solid transparent; border-radius: 5px; font-size: 11.5px; user-select: none; }
+.cda-tab:hover { background: var(--hover-bg); }
+.cda-tab.active { background: var(--code-bg); border-color: var(--line-soft); font-weight: 500; }
+.cda-tab-name { max-width: 150px; }
+.cda-dirty { width: 7px; height: 7px; border-radius: 50%; background: var(--blue-dot); flex: 0 0 auto; }
+.cda-tab-close { border: none; background: transparent; color: var(--muted); width: 18px; height: 18px; border-radius: 4px; font-size: 13px; line-height: 1; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; flex: 0 0 auto; }
+.cda-tab-close:hover { background: var(--hover-line); color: var(--ink); }
+
+.cda-editor-bar { display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 12px; flex: 0 0 38px; border-bottom: 1px solid var(--line-soft); font-size: 11.5px; }
+.cda-editor-bar .ellipsis { min-width: 0; max-width: 70%; }
+.cda-stage { position: relative; flex: 1 1 auto; min-height: 0; }
+.cda-editor { position: absolute; inset: 0; }
+.cda-editor.hide { display: none; }
+.cda-editor .cm-editor { height: 100%; background: var(--code-bg); }
+.cda-editor .cm-gutters { background: var(--code-bg); color: var(--gutter-ink); border-right: 1px solid var(--line-soft); }
+.cda-editor .cm-scroller { font-family: Consolas, "Cascadia Mono", "JetBrains Mono", monospace; }
+
+.cda-empty-fill { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--code-bg); }
+
+/* 定位高亮行（STORY-062 AC-08） */
+.cda-line-hl { background: var(--soft); }
+.cda-line-hl .cm-gutters { color: var(--accent); }
+@media (max-width: 1180px) { .cda-aside { width: 220px; flex-basis: 220px; } }
+@media (max-width: 960px) { .cda-aside { display: none; } }

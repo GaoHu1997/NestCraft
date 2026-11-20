@@ -1,0 +1,34 @@
+/* CR044锁定设计覆盖：最后加载，不影响内部业务状态。 */
+.nc-home-window { width: 100%; height: 100%; min-width: 0; min-height: 0; display: flex; }
+.nc-home-window > section { width: 100%; height: 100%; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.nc-topbar { height: 56px; min-height: 56px; gap: 12px; background: var(--surface); }
+.nc-topbar .brand { gap: 8px; }
+.nc-app .brand-mark, html[data-theme='dark'] .nc-app .brand-mark { width: 24px; height: 24px; background: transparent; border: 0; box-shadow: none; border-radius: 0; }
+.nc-window-drag { flex: 1 1 auto; min-width: 24px; height: 32px; user-select: none; cursor: grab; }
+.nc-window-drag:hover { outline: 1px dashed var(--line-strong); border-radius: 4px; }
+.nc-window-controls { display: flex; flex: 0 0 auto; align-items: center; }
+.nc-window-control { width: 46px; height: 32px; display: grid; place-items: center; padding: 0; background: transparent; border: 0; border-radius: 4px; color: var(--ink-2); cursor: pointer; }
+.nc-window-control:hover { background: var(--surface-3); color: var(--ink); }
+.nc-window-control.window-close:hover { background: var(--danger); color: white; }
+.nc-window-sep { width: 1px; height: 20px; flex-shrink: 0; background: var(--line); }
+.nc-app.window-unfocused .nc-topbar { color: var(--muted); }
+.nc-app.object-detail .nc-sidebar { display: none !important; }
+.nc-app > .nc-window-tabs { width: 100%; height: 40px; min-height: 40px; padding: 0; align-items: stretch; gap: 0; background: var(--surface-2); }
+.nc-window-tab { height: 39px; margin: 0; padding: 0; border: 0; border-right: 1px solid var(--line); border-radius: 0; display: flex; gap: 0; max-width: 230px; }
+.nc-window-tab.active { background: var(--surface); color: var(--primary); box-shadow: inset 0 -2px var(--primary); }
+.nc-window-tab.home-tab { min-width: 88px; position: sticky; left: 0; z-index: 2; }
+.nc-window-tab .nc-tab-focus { display: flex; flex: 1; align-items: center; justify-content: center; gap: 6px; min-width: 0; height: 100%; padding: 0 12px; }
+.nc-window-tab .nc-tab-close { width: 28px; height: 28px; padding: 0; margin: auto 4px auto 0; display: grid; place-items: center; border-radius: 4px; color: var(--muted); }
+.nc-window-tab .nc-tab-close:hover { background: var(--danger-soft); color: var(--danger); }
+.nc-app .btn { min-height: 32px; gap: 6px; }
+.nc-app .btn.sm { min-height: 28px; }
+.nc-window-error { position: fixed; top: 60px; right: 16px; max-width: min(460px,calc(100vw - 24px)); padding: 10px 12px; border: 1px solid var(--danger-line); border-radius: 6px; background: var(--danger-soft); color: var(--danger); z-index: 90; display: flex; gap: 8px; }
+.nc-window-error button { border: 0; background: transparent; color: inherit; cursor: pointer; }
+@media (max-width: 1120px) { .nc-topbar .nc-context, .nc-topbar .nc-searchbox { display: none; } }
+@media (max-width: 720px) {
+  .nc-topbar { padding: 0 12px; gap: 6px; }
+  .nc-topbar .brand-copy { display: flex; }
+  .nc-topbar .nc-avatar, .nc-topbar [aria-label='通知'], .nc-window-sep { display: none; }
+  .nc-window-drag { min-width: 4px; }
+  .nc-chat-host { top: 96px; }
+}

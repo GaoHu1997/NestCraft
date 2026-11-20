@@ -1,0 +1,48 @@
+/* UI-CR033-v1：固定管理首页 + 独立窗口导航设计样式；不接系统窗口。 */
+:root { --window-strip-h: 0px; }
+.window-strip { position: sticky; top: var(--topbar-h); z-index: 28; display: flex; align-items: center; gap: 6px; padding: 5px 12px; min-height: 40px; overflow-x: auto; overflow-y: hidden; background: var(--nav); border-bottom: 1px solid var(--line); scrollbar-width: thin; }
+.window-strip[hidden] { display: none; }
+.window-strip-caption { flex: 0 0 auto; color: var(--muted); font-size: 11px; padding: 0 2px; }
+.window-chip { display: inline-flex; align-items: stretch; flex: 0 0 auto; max-width: 260px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--paper); overflow: hidden; }
+.window-chip.is-active { border-color: var(--accent); background: var(--nav-active-bg); }
+.window-chip > button { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 4px 10px; border: 0; background: transparent; color: var(--ink); white-space: nowrap; min-width: 0; }
+.window-chip > button:hover { background: var(--hover-bg); }
+.window-chip .window-chip-kind { flex: 0 0 auto; color: var(--muted); font-size: 10px; }
+.window-chip strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; font-weight: 600; }
+.window-chip.is-active strong { color: var(--accent); }
+.window-chip .window-chip-close { flex: 0 0 auto; padding: 0 9px; border-left: 1px solid var(--line); color: var(--muted); font-size: 14px; }
+.window-chip .window-chip-close:hover { color: var(--danger); background: var(--danger-bg); }
+.window-bar { display: flex; align-items: center; gap: 10px; padding: 8px 16px; min-height: 42px; background: var(--panel-2); border-bottom: 1px solid var(--line); border-radius: var(--radius-card) var(--radius-card) 0 0; }
+.window-bar[hidden] { display: none; }
+.window-bar .window-kind { flex: 0 0 auto; padding: 1px 7px; border-radius: 4px; background: var(--tag-bg); color: var(--tag-ink); font-size: 10px; }
+.window-bar h2 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 650; }
+.window-bar .window-id { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.window-bar #window-close { margin-left: auto; flex: 0 0 auto; }
+html[data-workspace-mode="window"] { --window-strip-h: 40px; }
+html[data-workspace-mode="window"] .shell { grid-template-columns: minmax(0, 1fr); }
+html[data-workspace-mode="window"] .sidebar,
+html[data-workspace-mode="window"] .mobile-nav { display: none !important; }
+html[data-workspace-mode="window"] .pw-top { min-height: auto; padding: 8px 16px; row-gap: 6px; }
+html[data-workspace-mode="window"] .pw-top #current-title,
+html[data-workspace-mode="window"] .pw-top > .tag { display: none; }
+html[data-workspace-mode="window"] .workspace { margin: 12px 14px 16px; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-card); box-shadow: var(--shadow-sm); }
+html[data-workspace-mode="window"] #view { padding-top: 14px; }
+.window-close-list { margin: 10px 0; padding-left: 20px; }
+.window-close-list li { margin: 6px 0; }
+@media (max-width: 900px) {
+  .mobile-nav { top: calc(var(--topbar-h) + var(--window-strip-h, 0px)); }
+  .pw-top { top: calc(var(--topbar-h) + var(--window-strip-h, 0px)); }
+  .simulation-notice { top: calc(var(--topbar-h) + var(--window-strip-h, 0px) + var(--module-nav-h, 0px)); }
+}
+@media (min-width: 901px) {
+  .pw-top { top: calc(var(--topbar-h) + var(--window-strip-h, 0px)); }
+  .simulation-notice { top: calc(var(--topbar-h) + var(--window-strip-h, 0px) + var(--workspace-tabs-height)); }
+}
+@media (max-width: 680px) {
+  .window-strip { padding: 5px 8px; }
+  .window-chip { max-width: 210px; }
+  .window-bar { padding: 7px 10px; flex-wrap: wrap; }
+  .window-bar .window-id { width: 100%; order: 3; }
+  .window-bar #window-close { margin-left: auto; }
+  html[data-workspace-mode="window"] .workspace { margin: 8px; }
+}

@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>栖造 NestCraft · 统一工作台</title>
+  <script>
+    /* REVIEW-2026-11-19：默认视图即软件界面，设计注记不进入画面；?review=1 或 Ctrl+Alt+Shift+R 打开评审模式。 */
+    (function () {
+      var root = document.documentElement;
+      if (/[?&]review=1(&|#|$)/.test(location.search)) root.setAttribute('data-review-mode', '');
+      addEventListener('keydown', function (e) {
+        if (e.ctrlKey && e.altKey && e.shiftKey && (e.key === 'R' || e.key === 'r')) {
+          e.preventDefault();
+          root.toggleAttribute('data-review-mode');
+        }
+      });
+    })();
+  </script>
+  <link rel="icon" type="image/png" href="../brand-assets-v2/favicon.png">
+  <link rel="stylesheet" href="theme-tokens.css">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="window-navigation.css">
+  <link rel="stylesheet" href="ai-sidebar.css">
+  <link rel="stylesheet" href="../brand-assets-v2/brand.css">
+  <script defer src="scheduler.js"></script>
+  <script defer src="cli-icons.js"></script>
+  <script defer src="baseline-scenes.js"></script>
+  <link rel="stylesheet" href="stock-design.css">
+  <script defer src="sample-fixtures.js"></script>
+  <script defer src="stock-design.js"></script>
+  <script defer src="knowledge-local-model.js"></script>
+  <script defer src="knowledge-local-design.js"></script>
+  <link rel="stylesheet" href="knowledge-local-design.css">
+  <link rel="stylesheet" href="project-design-resources.css">
+  <script defer src="project-design-resources.js"></script>
+  <link rel="stylesheet" href="requirements-reading.css">
+  <script defer src="requirements-reading.js"></script>
+  <script defer src="window-navigation.js"></script>
+  <script defer src="app.js"></script>
+  <script defer src="ai-session-model.js"></script>
+  <script defer src="background-task-model.js"></script>
+  <script defer src="ai-sidebar.js"></script>
+  <link rel="stylesheet" href="agent-management.css">
+  <script defer src="agent-management.js"></script>
+  <script defer src="execution-plan-model.js"></script>
+  <script defer src="task-execution-catalog.js"></script>
+  <script defer src="task-execution-design.js"></script>
+  <link rel="stylesheet" href="task-execution-design.css">
+</head>
+<body>
+  <a href="#view" class="skip-link">跳到项目内容</a>
+  <header class="topbar">
+    <div class="brand" data-brand-version="UI-BRAND-001-v2"><span class="brand-mark" aria-hidden="true"><img src="../brand-assets-v2/logo-sail.png" alt="" width="28" height="28"></span><span class="brand-copy"><strong>栖造</strong><small lang="en">NestCraft</small></span><span class="tag" data-review-only>设计评审</span></div>
+    <div class="top-tools"><span id="clock-label" data-review-only>仿真时钟 0</span><button type="button" class="btn sm" id="theme-button" data-action="theme">深色</button><a class="doc-link" href="../文档/原型使用说明.md" data-review-only>评审说明</a><button class="btn sm" type="button" data-action="ui-baselines" id="baseline-entry" data-review-only>完整设计基线</button><a class="doc-link" href="../brand-candidates-v1/index.html" target="_blank" rel="noopener noreferrer" data-review-only>品牌资料</a></div>
+  </header>
+  <nav class="window-strip" id="window-strip" aria-label="已打开的窗口" hidden></nav>
+  <div class="shell">
+    <aside class="sidebar" aria-label="工作台导航">
+      <span class="nav-caption">工作空间</span>
+      <button type="button" class="nav-item current" data-action="ui-navigate" data-page="projects">▦ 项目管理</button>
+      <button type="button" class="nav-item" data-action="ui-navigate" data-page="knowledge">▤ 知识库</button>
+      <button type="button" class="nav-item" data-action="ui-navigate" data-page="servers">▣ 服务器管理</button>
+      <div class="side-project"><span class="nav-caption">当前项目</span><strong id="side-project-name">预约服务</strong></div>
+      <button type="button" class="nav-item profile-entry" id="settings-entry" data-action="ui-settings">⚙ 设置与账户</button>
+      <p class="sidebar-note" data-review-only>需求与运行共享同一DEMO状态。<br>无真实CLI、Git、网络或发布。</p>
+    </aside>
+    <main class="workspace">
+      <div class="mobile-nav" aria-label="模块导航"><button class="btn sm" data-action="ui-navigate" data-page="projects">项目</button><button class="btn sm" data-action="ui-navigate" data-page="knowledge">知识库</button><button class="btn sm" data-action="ui-navigate" data-page="servers">服务器</button><button class="btn sm" data-action="ui-settings">设置与账户</button></div>
+      <section class="window-bar" id="window-bar" aria-label="当前窗口" hidden>
+        <span class="window-kind" id="window-kind"></span>
+        <h2 id="window-title"></h2>
+        <span class="window-id" id="window-id"></span>
+        <button type="button" class="btn sm" id="window-close" data-action="ui-window-close">关闭窗口</button>
+      </section>
+      <div class="pw-top"><h1 id="current-title">预约服务 · 项目工作区</h1><nav class="tabs" id="project-tabs" role="tablist" aria-label="项目页签">
+        <button id="tab-requirements" type="button" role="tab" aria-selected="true" aria-controls="view" tabindex="0" data-action="tab" data-tab="requirements">需求</button>
+        <button id="tab-design" type="button" role="tab" aria-selected="false" aria-controls="view" tabindex="-1" data-action="tab" data-tab="design">设计</button>
+        <button id="tab-tasks" type="button" role="tab" aria-selected="false" aria-controls="view" tabindex="-1" data-action="tab" data-tab="tasks">任务</button>
+        <button id="tab-code" type="button" role="tab" aria-selected="false" aria-controls="view" tabindex="-1" data-action="tab" data-tab="code">编码</button>
+      </nav><button type="button" class="btn sm ai-toggle" id="ai-sidebar-toggle" aria-expanded="true" aria-controls="ai-sidebar">AI侧栏</button></div>
+      <div class="simulation-notice" data-review-only><span class="notice-dot" aria-hidden="true"></span><strong>设计评审仿真，不调用真实CLI/Git/网络，正式引擎未实现</strong><span>仅 DEMO · 无生产发布</span></div>
+      <div class="ai-workbench-body" id="ai-workbench-body">
+      <div class="ai-primary">
+      <div id="storage-notice" class="storage-notice" role="status" data-review-only>正在读取本机评审快照…</div>
+      <section id="view" role="tabpanel" aria-labelledby="tab-requirements" tabindex="-1"><div class="empty" role="status">正在加载独立评审样例…</div></section>
+      <details class="review-controls" id="review-controls" data-review-only>
+        <summary>评审演示控件 <span class="muted">仅改变仿真，载入场景会重置评审历史</span></summary>
+        <div class="review-body">
+          <div class="control-line"><label for="scenario-select">演示场景</label><select id="scenario-select" aria-label="演示场景">
+            <option value="normal">正常派发 · 产物依赖与资源互斥</option>
+            <option value="network-retry">暂时网络故障 · 一次自动重试</option>
+            <option value="retry-exhausted">暂时故障持续 · 重试到限</option>
+            <option value="verify-rework">AC 验证失败 · 一次自动返工</option>
+            <option value="verify-exhausted">AC 验证失败 · 返工到限</option>
+            <option value="parent-failure">前置永久失败 · 独立分支继续</option>
+            <option value="parent-cancel">前置取消 · 后代阻塞</option>
+            <option value="config-invalid">配置无效 · 预检拒绝</option>
+            <option value="model-invalid">运行中模型失效 · 相关分支停止</option>
+            <option value="permission-invalid">运行中权限失效 · 相关分支停止</option>
+            <option value="requirement-change">运行中需求修订 · 受影响分支失效</option>
+            <option value="cycle">循环依赖 · 预检拒绝</option>
+            <option value="budget">预算止损 · 有限仿真单位</option>
+            <option value="auto-accept">显式客观自动验收演示 · 仅 DEMO</option>
+          </select><button class="btn sm" type="button" data-action="load-scenario">载入评审场景</button><button class="btn sm" type="button" data-action="reset">重置为空</button></div>
+          <p id="scenario-description" class="muted">当前为正常场景；请在需求页选择派发范围。</p>
+          <div class="control-line"><label for="injection-select">运行中事件</label><select id="injection-select">
+            <option value="network-failure">一次暂时故障</option><option value="verification-failure">一次验证失败</option><option value="requirement-change">需求 hash 变更</option><option value="design-change">设计 hash 变更</option><option value="cancel-parent">取消指定前置</option><option value="model-disabled">禁用 Codex 样例模型</option><option value="permission-disabled">撤销 Codex 样例写权限</option><option value="code-head">无关代码 HEAD 推进</option>
+          </select><label class="sr-only" for="injection-story">事件作用的 DEMO Story</label><select id="injection-story"></select><button class="btn sm" type="button" data-action="inject">注入评审事件</button></div>
+          <div class="control-line"><button class="btn sm" type="button" data-action="debug-step">暂停后确定性单步</button><button class="btn sm" type="button" data-action="save">保存评审快照</button><span class="muted">单步仅用于调试；派发后自动推进，不需逐步批准。</span></div>
+        </div>
+      </details>
+      <footer class="workspace-footer" data-review-only><span>CR-017 · 统一工作台 · 待评审</span><span>用量 / 费用：真实值未知，所有执行证据为样例</span></footer>
+      </div>
+      </div>
+    </main>
+  </div>
+  <dialog id="review-dialog" aria-labelledby="dialog-title"><div id="dialog-content"></div></dialog>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+  <noscript>本评审稿需要浏览器启用 JavaScript；启用后仅在本机运行确定性仿真。</noscript>
+</body>
+</html>

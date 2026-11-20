@@ -1,0 +1,24 @@
+{
+  "claude": {
+    "source": "https://claude.com/product/claude-code",
+    "classification": "Claude family asterisk used for Claude Code",
+    "derivation": "原组合SVG星芒path完整提取，path/色值未改；使用其原125px图形范围，不重绘",
+    "file": "claude.svg",
+    "sha256": "2bf6d5873dd1ea36a337d0fcc5bcc242aa0adbcff69bb98cfed858de2f15eadd"
+  },
+  "codex": {
+    "source": "https://learn.chatgpt.com/docs",
+    "classification": "OpenAI official manufacturer mark used for Codex",
+    "derivation": "完整SVG原样复制",
+    "file": "codex.svg",
+    "sha256": "468ebe03b0504e3e40be53e6c1f4b5b80c00d94ea4ad07b913ae41073638ae90"
+  },
+  "grok": {
+    "source": "https://grok.com",
+    "classification": "Grok official product mark, not CLI-exclusive",
+    "derivation": "官网mark原path，保留原0 0 88 33视口",
+    "file": "grok.svg",
+    "sha256": "76c077dd8ca83ed696cf9c75bb66b80faf74323e11b6308579902b2e0f415fc3"
+  },
+  "terms": "仅准确标识各已支持CLI产品或厂商，不表示第三方认可；官方品牌资产不是项目线图标，也不按MIT授权推定。"
+}
