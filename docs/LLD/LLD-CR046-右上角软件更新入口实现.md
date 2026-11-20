@@ -159,7 +159,7 @@ https://github.com/GaoHu1997/NestCraft/releases/latest/download/nestcraft-win64.
    - 本机 feed 夹具 + 本地 HTTP 服务：检查、下载、进度、校验失败、`ready` 恢复；
    - 免安装落位：用临时副本 exe 与 marker 夹具验证换名／回滚（不替换正在运行的应用）；安装版落位只验证安装包启动路径与参数，不实际完成升级；
    - 设计／软件同视口五态对照截图。
-6. 未验证项如实登记：真实 GitHub Release、安装版完整升级、免安装版构建产物、代码签名、UAC 行为。
+6. 未验证项如实登记：安装版完整升级、代码签名、UAC 行为。真实 GitHub Release 与免安装版构建产物已由 0.0.1 发布流水线产出并核对清单（见 §6 变更记录）。
 
 ## 5. 风险、取舍与未决项
 
@@ -180,3 +180,4 @@ https://github.com/GaoHu1997/NestCraft/releases/latest/download/nestcraft-win64.
 | --- | --- | --- |
 | 2026-11-20 | 建立 LLD-CR046：自研清单＋SHA-256 更新、安装版／免安装版分叉、五态前端与命令契约 | 用户直接指令先需求设计后代码；UI-CR046-v1 已登记 |
 | 2026-11-20 | 交付 0.0.1 发布流水线：`.github/workflows/ci.yml` 做前端构建、`cargo check --all-targets`、`cargo test --lib`；`.github/workflows/release-windows.yml` 以 `--no-bundle` 构建 Windows x64 单文件免安装 exe，写入 `portable.marker`、生成 `nestcraft-win64.json` 并创建 Release，暂不构建安装包 | 用户要求版本调整为 0.0.1、发布到 GitHub、经 CI 检测并手动触发构建，现阶段只触发 win amd64 免安装 exe |
+| 2026-11-20 | 0.0.1 发布验证：CI 全绿；发布构建全步骤成功，Release `v0.0.1` 含 exe／zip／`.sha256`／清单；`releases/latest/download/nestcraft-win64.json` 可读，按清单下载 exe 校验 SHA-256 与清单一致，exe 版本 0.0.1 且可启动（窗口「栖造 NestCraft」） | 用户要求通过 CI 检测并触发 win amd64 免安装构建 |

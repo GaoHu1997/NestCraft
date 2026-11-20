@@ -2,7 +2,9 @@
 
 ## 0.0.1 发布：Windows x64 免安装 exe（GitHub Actions）
 
-2026-11-20 用户要求版本调整为 0.0.1、发布到 GitHub、经 CI 检测并触发构建，现阶段只触发 win amd64 免安装 exe。三处版本号（`package.json`／`tauri.conf.json`／`Cargo.toml`）统一为 0.0.1；新增 [CI](../.github/workflows/ci.yml)（push／PR：前端类型检查与构建、`cargo check --all-targets`、`cargo test --lib`）与 [Windows 免安装发布](../.github/workflows/release-windows.yml)（手动或 `v*` 标签：`npx tauri build --no-bundle --target x86_64-pc-windows-msvc` 构建单文件 exe，发布包写入 `portable.marker`，生成 `nestcraft-win64.json` 更新清单并创建 Release；当前不构建安装包）。更新清单格式沿用 [LLD-CR046](LLD/LLD-CR046-右上角软件更新入口实现.md#22-更新源与清单)。实际运行结果见 GitHub Actions 运行记录，未通过项如实记录。
+2026-11-20 用户要求版本调整为 0.0.1、发布到 GitHub、经 CI 检测并触发构建，现阶段只触发 win amd64 免安装 exe。三处版本号（`package.json`／`tauri.conf.json`／`Cargo.toml`）统一为 0.0.1；新增 [CI](../.github/workflows/ci.yml)（push／PR：前端类型检查与构建、`cargo check --all-targets`、`cargo test --lib`）与 [Windows 免安装发布](../.github/workflows/release-windows.yml)（手动或 `v*` 标签：`npx tauri build --no-bundle --target x86_64-pc-windows-msvc` 构建单文件 exe，发布包写入 `portable.marker`，生成 `nestcraft-win64.json` 更新清单并创建 Release；当前不构建安装包）。更新清单格式沿用 [LLD-CR046](LLD/LLD-CR046-右上角软件更新入口实现.md#22-更新源与清单)。
+
+**实际结果（2026-11-20）**：CI [run 44762962645](https://github.com/GaoHu1997/NestCraft/actions/runs/44762962645) 全绿；免安装构建 [run 44764098008](https://github.com/GaoHu1997/NestCraft/actions/runs/44764098008) 全步骤成功并发布 [Release v0.0.1](https://github.com/GaoHu1997/NestCraft/releases/tag/v0.0.1)：`NestCraft_0.0.1_x64_portable.exe`（19,922,944 字节）、含 `NestCraft.exe`／`portable.marker` 的 zip、`.sha256`、`nestcraft-win64.json`。已实测 `releases/latest/download/nestcraft-win64.json` 可读，按清单下载 exe 的 SHA-256 与清单一致（`25f48998…`），exe 版本信息 0.0.1，启动后窗口「栖造 NestCraft」正常。首轮 CI 曾因 `package-lock.json` 的 tauri 平台包空条目（`adebbf3`）与 runner `%TEMP%` 短名导致的夹具路径校验（`b6a1ce6`）两次失败，已修复。安装包、代码签名与真实自更新链路仍未验证。
 
 ## CR-048：文档自动保存与所见即所得（仅设计）
 
@@ -19,7 +21,7 @@
 
 ## CR-046：右上角软件更新入口（源码已实现、待验收）
 
-2026-11-20用户要求有更新时出现「更新」、下载完成后出现「重启」，参考已有桌面自更新实践，注意安装版与免安装版，当前只要右上角入口，并明确先需求／设计再改代码。复用 [STORY-064](Plan/Story/STORY-064-主界面按评审意见重构.md#cr-046右上角软件更新入口)／唯一父项 FEAT-001，新增AC-35～39、5条AC，不新建Story／Feature／Epic。**需求、UI-CR046-v1五态设计（含浅深、1440／1100／390截图）与LLD已建立，软件随后实现**：后端 `src-tauri/src/updater.rs` 与 5 个命令，前端 `src/modules/update/`；`cargo test --offline --lib` 59 passed、`npm run build` 通过，五态、深色、1100 与 390 软件截图已与设计对照（色值令牌一致）。**真实升级链路（更新源联调、下载与 SHA-256 失败回退、免安装替换、安装版 `/S`／UAC）未验证**，故为待验收，不记AC通过；Q-046-02（安装器界面接受度）与Q-046-03（免安装构建脚本本轮不做）仍开放。[范围与边界](PRD/CR-046-右上角软件更新入口.md)／[UI与资源登记](UI/文档/UI-CR046-右上角更新入口.md)／[方案与命令契约](LLD/LLD-CR046-右上角软件更新入口实现.md)／[设计资源索引](UI/文档/设计资源索引.html#cr046)／[验证记录](Test/REPORT-CR046-右上角更新入口验证.md)。
+2026-11-20用户要求有更新时出现「更新」、下载完成后出现「重启」，参考已有桌面自更新实践，注意安装版与免安装版，当前只要右上角入口，并明确先需求／设计再改代码。复用 [STORY-064](Plan/Story/STORY-064-主界面按评审意见重构.md#cr-046右上角软件更新入口)／唯一父项 FEAT-001，新增AC-35～39、5条AC，不新建Story／Feature／Epic。**需求、UI-CR046-v1.2 五态设计（含浅深、1440／1100／390截图）与LLD已建立，软件随后实现**：2026-11-20 追加调整——删除顶栏搜索框（保留 Ctrl+K）、更新入口移至主题按钮左侧：后端 `src-tauri/src/updater.rs` 与 5 个命令，前端 `src/modules/update/`；`cargo test --offline --lib` 59 passed、`npm run build` 通过，五态、深色、1100 与 390 软件截图已与设计对照（色值令牌一致）。**真实升级链路（更新源联调、下载与 SHA-256 失败回退、免安装替换、安装版 `/S`／UAC）未验证**，故为待验收，不记AC通过；Q-046-02（安装器界面接受度）与Q-046-03（免安装构建脚本本轮不做）仍开放。[范围与边界](PRD/CR-046-右上角软件更新入口.md)／[UI与资源登记](UI/文档/UI-CR046-右上角更新入口.md)／[方案与命令契约](LLD/LLD-CR046-右上角软件更新入口实现.md)／[设计资源索引](UI/文档/设计资源索引.html#cr046)／[验证记录](Test/REPORT-CR046-右上角更新入口验证.md)。
 
 ## CR-045：文档工作区与可调侧栏（源码已实现、验证中）
 
