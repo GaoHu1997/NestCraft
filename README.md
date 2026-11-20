@@ -9,7 +9,12 @@ npm install
 npm run tauri dev    # 开发运行（首次编译 Rust 需数分钟）
 ```
 
-打包：`npm run tauri build`（NSIS，未含签名配置）。
+## 构建与发布
+
+- 本地安装包：`npm run tauri build`（NSIS，未含签名配置）。
+- 本地免安装 exe：`npx tauri build --no-bundle --target x86_64-pc-windows-msvc`，产物在 `src-tauri/target/x86_64-pc-windows-msvc/release/`。
+- GitHub 发布：`.github/workflows/release-windows.yml` 通过手动触发或推送 `v*` 标签构建 Windows x64 免安装 exe，生成 `nestcraft-win64.json` 更新清单并创建 Release；当前只发布免安装 exe，不发布安装包。
+- 持续集成：`.github/workflows/ci.yml` 在 push / PR 到 main 时执行前端类型检查与构建、`cargo check`、`cargo test --lib`。
 
 环境要求：Node 24+、Rust 1.99+（MSVC 工具链）、git、Windows WebView2。
 
@@ -44,4 +49,4 @@ docs/                研发文档（正式）+ tmp/（过程）+ 参考/（本�
 
 ## 状态
 
-v0.1：全部模块开发完成，构建链全绿（cargo build / tsc / vite build），应用级冒烟通过；运行时逐项验收与打包发布未完成。当前状态：**待用户验收**。
+当前版本 **0.0.1**：全部模块开发完成，构建链全绿（cargo build / tsc / vite build），应用级冒烟通过；Windows x64 免安装 exe 由 GitHub Actions 构建并发布，运行时逐项验收与安装包发布未完成。当前状态：**待用户验收**。

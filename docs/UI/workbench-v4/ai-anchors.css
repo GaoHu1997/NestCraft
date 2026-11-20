@@ -1,0 +1,27 @@
+/* CR-045 · 仅 AI 锚定设计；加载于现行 CSS 后，不覆盖 palette/CR-042 统计与步骤。 */
+.ai-panel .ai-anchor-slot { position: relative; display: inline-flex; flex: 0 0 auto; min-width: 0; }
+.ai-panel .ai-anchor-model { flex: 1 1 auto; max-width: 150px; }
+.ai-panel .ai-anchor-model > .ai-chip { width: 100%; max-width: none; }
+.ai-panel [data-ai-anchor]:disabled { opacity: .45; cursor: not-allowed; }
+.ai-panel [data-ai-anchor]:disabled:hover { background: transparent; }
+.ai-panel [data-ai-popup] {
+  position: fixed; inset: auto; z-index: 65; margin: 0; box-sizing: border-box;
+  max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); min-width: 0; min-height: 0;
+  overflow: auto; overscroll-behavior: contain; animation: none; transform: none;
+}
+.ai-panel [data-ai-popup]:not([data-ai-positioned]) { visibility: hidden; }
+.ai-panel [data-ai-popup="cli"] { width: 300px; }
+.ai-panel [data-ai-popup="perm"] { width: 340px; }
+.ai-panel [data-ai-popup="model"] { width: 380px; height: 440px; display: flex; flex-direction: column; }
+.ai-panel [data-ai-popup] .pop-h { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.ai-panel [data-ai-popup] .pop-h .caption { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-panel [data-ai-popup] .pop-h .icon-btn { margin-left: auto; width: 24px; height: 24px; flex: 0 0 auto; }
+.ai-panel [data-ai-popup] button:disabled { cursor: not-allowed; opacity: .45; }
+.ai-panel [data-ai-popup] :focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.ai-panel [data-ai-popup="model"] .model-grid { display: flex; gap: 6px; flex: 1 1 auto; min-height: 60px; min-width: 0; max-height: none; overflow: auto; }
+.ai-panel [data-ai-popup="model"] .model-providers { flex: 0 0 auto; width: 112px; min-width: 96px; max-width: 180px; overflow: auto; }
+.ai-panel [data-ai-popup="model"] .model-list { flex: 1 1 auto; min-width: 160px; overflow: auto; }
+.ai-panel [data-ai-overlay="history"] { width: 296px; max-width: calc(100vw - 16px); }
+@media (max-width: 960px) {
+  .ai-panel [data-ai-overlay="history"] { left: 8px; right: auto; width: 296px; }
+}

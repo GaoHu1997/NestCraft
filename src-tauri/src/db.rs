@@ -235,6 +235,8 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
 
+    migrate_session_feature_binding(conn)?;
+
     let now = chrono::Utc::now().timestamp_millis();
     conn.execute(
         "INSERT OR IGNORE INTO schema_version (version, appliedAt) VALUES (1, ?1)",
@@ -243,6 +245,31 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
     seed_default_provider(conn, now)?;
     Ok(())
+}
+
+fn migrate_session_feature_binding(conn: &Connection) -> Result<(), String> {    let columns: Vec<String> = {
+        let mut statement = conn.prepare("PRAGMA table_info(session)").map_err(|e| e.to_string())?;
+        let names = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .collect();
+        names
+    };
+    if !columns.iter().any(|name| name == "featureId") {
+        conn.execute_batch(
+            "ALTER TABLE session ADD COLUMN featureId TEXT;
+             ALTER TABLE session ADD COLUMN featureTitle TEXT;
+             ALTER TABLE session ADD COLUMN featureSourceHash TEXT;
+             ALTER TABLE session ADD COLUMN sessionRole TEXT NOT NULL DEFAULT 'ordinary';",
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    conn.execute_batch(
+        "UPDATE session SET sessionRole='ordinary' WHERE sessionRole IS NULL OR sessionRole NOT IN ('ordinary','executor');
+         CREATE INDEX IF NOT EXISTS idx_session_feature ON session(projectId, featureId, updatedAt);",
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// 预置一份可用的供应商模板（仅当库中没有任何供应商时创建）。
@@ -283,4 +310,34 @@ fn seed_default_provider(conn: &Connection, now: i64) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_feature_migration_is_additive_and_preserves_old_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE session (
+                id TEXT PRIMARY KEY, projectId TEXT, serverId TEXT,
+                title TEXT NOT NULL DEFAULT '新会话', cliId TEXT, providerId TEXT,
+                modelId TEXT, effort TEXT, draft TEXT NOT NULL DEFAULT '',
+                unread TEXT, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL
+             );
+             INSERT INTO session (id, projectId, title, draft, createdAt, updatedAt)
+             VALUES ('old','p1','旧会话','',1,1);",
+        ).unwrap();
+        migrate_session_feature_binding(&conn).unwrap();
+        let (role, feature): (String, Option<String>) = conn.query_row(
+            "SELECT sessionRole, featureId FROM session WHERE id='old'", [], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap();
+        assert_eq!(role, "ordinary");
+        assert_eq!(feature, None);
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM session", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+        // Re-running the migration must be idempotent.
+        migrate_session_feature_binding(&conn).unwrap();
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM session", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+    }
 }

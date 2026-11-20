@@ -1,16 +1,18 @@
 # LLD-CR045：文档工作区与侧栏实现
 
-- 关联：[CR-045](../PRD/CR-045-文档工作区与可调侧栏.md)及各Story本次AC；[UI-CR045](../UI/文档/UI-CR045-文档工作区与可调栏.md)是唯一视觉基准，当前制作中不可编码。
+- 关联：[CR-045](../PRD/CR-045-文档工作区与可调侧栏.md)及各Story本次AC；[UI-CR045](../UI/文档/UI-CR045-文档工作区与可调栏.md)是唯一视觉基准，17项资源已登记；已核独立场景准入见§5，未核/失败部分不编码。
 - 当前事实：React18/TS/Vite6/Tauri2；CodeMirror6；marked/DOMPurify；SQLite。仅项目AI已有鼠标拖宽，其他内容栏固定；需求详情为模态，正式无导图；编码MD只有源码；知识接口只索引MD，无创建/上传/保存。工作区main大量既有未提交工作保护，不提交推送。
 
 ## 1. 方案与模块分工
 
-1. 需求阅读独立组件：真实RequirementNode递归flatten，projectId＋kind＋id内部Tab，实体源路径通过fsReadFile(rootUri,path)受限读取。愿景默认，预览读完整全集，异步请求代次/身份/卸载保护；逐项error/retry。正文安全renderMarkdown，TOC由最终HTML唯一id提取且限定当前容器。导图纯派生布局，无新依赖；模型缺接口明确状态，不造模型或关系。原编辑/状态/删除/派发预检功能保留。
+1. 需求阅读独立组件：真实RequirementNode递归flatten，projectId＋kind＋id内部Tab，实体源路径通过fsReadFile(rootUri,path)受限读取。增加受限项目源清单（docs/Plan递归Markdown）：无front matter/不可读/重复ID/循环孤立条目逐项报告并可从文件阅读，不让扫描树静默漏文。愿景默认，预览读完整全集，异步请求代次/身份/卸载保护；逐项error/retry。正文安全renderMarkdown，TOC由最终HTML唯一id提取且限定当前容器。导图纯派生布局，无新依赖；模型缺接口明确状态，不造模型或关系。原编辑/状态/删除/派发预检功能保留。
 2. MD阅读从当前EditorState生成，每file mode/readScroll独立；编辑器保活，切换不重读、不清undo；行定位切编辑。异步render不能覆盖新file，CtrlS既有真实保存与脏Tab确认保留。
 3. 三配置控件独立button ref，浮层fixed/portal或不裁剪的受控容器，使用button rect＋浮层rect计算left/top/maxHeight；6pxgap，8pxviewportmargin，优先上方，有限空间翻转/内部滚动。ResizeObserver、scroll/resize与栏宽变化刷新；outside识别overlay所属，不吞原目标。菜单调用显式button ref，焦点恢复按真实trigger。权限协议与模型能力不改。
 4. 共用usePaneWidth/ResizeHandle：显式scope＋pane；preferred保存用户值，effective按容器和中区限幅。pointer capture/primarybutton/RAF/pointercancel/lostcapture/隐藏及卸载清理，键盘10px、Shift20px、Home/End、双击默认。模块独占本模块文件，共用组件/API/App由主代理集成；不在各模块复制windowmousemove。
 
-## 2. 知识用户文件操作契约（拟议，未实现）
+## 2. 知识用户文件操作契约（已固定，实施中）
+
+实际统一camelCase契约：NoteContent兼容四字段＋optional `hash/indexError`；hash为实际字节FNV-1a64（`fnv1a64:16hex`），仅变更基线非密码学完整性证明。file_info为 `noteId/title/relativeUri/sizeBytes/modifiedAt?/kind/mime/previewSupported/editable/hash?`；kind=markdown/text/image/pdf/attachment，PDF/主动格式/Office只元信息。read_file={info,text?,base64?}；upload={cancelled,items:[{name,success,noteId?,relativeUri?,error?,indexError?}]}；export={cancelled,exported}。全部位于knowledge.rs，前端专用API七函数同名CamelCase，不做未知IPC回落。索引失败NoteContent或item返回indexError，明确已保存待索引。
 
 所有调用按libraryId从DB查已启用库根，不接受任意目标绝对路径；单文件名验证、父相对路径组件校验、canonicalize根及父并检查symlink/reparse不越界。用户本次明确要求库内文件管理，但项目AI grant不授予写，网关仍只读。
 
@@ -27,6 +29,18 @@
 复用[DB-FEAT-001](../DB/DB-FEAT-001-知识授权与工作台数据设计.md)库/索引/grant和文件权威；本轮不迁移表，不存原件BLOB。文件hash由实际字节生成；正文保存与索引失败分开说明；原件身份/修订/解析状态完整持久化另循[DB-FEAT-008](../DB/DB-FEAT-008-知识原件切片与全文索引.md)，不提前宣称其AC通过。宽度/阅读Tab仅内存偏好，不改变应用identifier、数据目录或真实凭据。
 
 禁止外联Markdown图片自动泄露知识正文路径、主动SVG/HTML/PDF脚本执行、通过下载暴露无权文件；环境内嵌PDF不可隔离主动内容时只元信息/本机导出，不硬嵌iframe。下载和上传均明确本机操作，不调用外部解析服务。
+
+## 5. 分场景软件准入记录（2026-11-20）
+
+三票3:0接受，17资源SHA-256基线在 `docs/Test/cr045-design-baseline.json`。先原型后代码：SC01已实际CLI/model按钮及几何核对，SC06已实际新MD无模态+首保存入树，SC08共享分隔把手已实际管理/设置键盘核对。采用这些已展示场景派发：chat独占ModelPicker/Composer/overlay/chat.css，knowledge前端独占Reader/knowledge.css、新helpers；knowledge后端独占knowledge.rs/知识字段；公共primitive仅新pane-resize组件。主代理共享API/App/注册/集成。所有均明示采用UI-CR045-v1、无权限升级、视觉未验证；源码完成后必须重新逐场景软件验证。需求/Code独立GUI已通过默认愿景/内部Tab/全文/导图与MD草稿保活关键集，采用requirements/code-reading登记资源派独占Workspace/RequirementsReading和editor实现；任务SC05轨道挂载失败部分不先派，设计修复后重验。
+
+本次准入不是视觉验收；完整对照缺失不得将Story标完成。新的设计修改先更新资源/基线再通知软件采用。
+
+Windows保存提交改为独占目标READ/DELETE句柄（share_mode(0)）贯穿末次hash/目标身份检查及handle rename；旧稿移动到唯一create-only备份，temp提交及异常恢复均不覆盖新目标。提交失败保留可恢复备份并明确路径/错误，不以恢复覆盖外部竞争结果；补末次检查后原子替换/占位竞态注入测试。先前路径rename的外部竞争窗口记录为BUG-CR045-01，修复复测前不放行其安全AC。
+
+## 6. 当前实施结果与限制
+
+对应软件源码已实现并经主代理集成：最新类型/前端构建、Rust53单测、Tauri开发编译通过（均保既有告警）；其中新增三个保存竞争用例及正常保存通过。Windows独占打开同时声明read/write和所需access_mode，不放宽share_mode(0)；非Windows保存目前安全拒绝，不能宣称跨平台全能力。软件有限AI/需求/宽度GUI实测见REPORT，不外推所有按钮。知识七操作与root/排它/hash冲突/深树/元信息安全落地，原生文件选择器未打开测试。UI-CR045-v1.1只修任务挂载，其他v1继承；成对AI截图已保存，图像provider不支持导致完整视觉未判读，待验收。无提交/推送/发布/真实SSH或模型调用。
 
 ## 4. 实施与验证
 

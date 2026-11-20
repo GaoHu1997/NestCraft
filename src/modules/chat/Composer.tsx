@@ -93,8 +93,8 @@ export function Composer(props: {
         <button className="chat-menu-row" onClick={() => fileRef.current?.click()}>本地附件<span className="chat-cap">仅记录元信息，不读取正文</span></button>
         <Unavailable name="目标" reason="长期任务目标尚未接入" /><Unavailable name="计划" reason="真实计划模式尚未接入" /><Unavailable name="反馈" reason="会话反馈提交接口尚未接入" />
       </> : <>
-        <button className="chat-menu-row" onClick={() => overlay.open("perm", taRef.current)}>权限<span className="chat-cap">查看已验证模式</span></button>
-        <button className="chat-menu-row" onClick={() => overlay.open("model", taRef.current)}>模型<span className="chat-cap">模型与思考档位</span></button>
+        <button className="chat-menu-row" disabled={overlay.getTrigger("perm")?.disabled} onClick={() => overlay.open("perm")}>权限<span className="chat-cap">查看已验证模式</span></button>
+        <button className="chat-menu-row" disabled={overlay.getTrigger("model")?.disabled} onClick={() => overlay.open("model")}>模型<span className="chat-cap">模型与思考档位</span></button>
         <button className="chat-menu-row" onClick={() => { setQuery(""); overlay.open("/", taRef.current); }}>能力<span className="chat-cap">Skill / MCP / Tool</span></button>
         <Unavailable name="下载日志" reason="ZIP 导出引擎尚未提供" />
       </>}

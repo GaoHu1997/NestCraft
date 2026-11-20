@@ -1,0 +1,25 @@
+/* UI-CR045-v1 / SC-045-08; only content panes use these classes, never fixed rails. */
+.pane-container { position: relative; min-width: 0; min-height: 0; }
+.resizable-pane { position: relative; flex-shrink: 0; min-width: 0; min-height: 0; }
+.pane-handle { position: absolute; top: 0; bottom: 0; width: 6px; z-index: 30; cursor: col-resize; touch-action: none; outline: none; user-select: none; }
+.pane-handle.left { right: -3px; }
+.pane-handle.right { left: -3px; }
+.pane-handle::after { content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 2px; background: transparent; }
+.pane-handle:hover::after, .pane-handle:focus-visible::after, .pane-handle.is-resizing::after { background: var(--primary); }
+.pane-handle[aria-disabled="true"] { cursor: default; pointer-events: none; }
+.pane-handle[aria-disabled="true"]::after { background: transparent; }
+.pane-dragging, .pane-dragging * { cursor: col-resize !important; user-select: none !important; }
+.pane-controls { position: absolute; bottom: 4px; right: 8px; z-index: 40; display: flex; gap: 3px; max-width: calc(100% - 16px); }
+.pane-toggle { border: 1px solid var(--line-soft); border-radius: 4px; background: var(--surface); color: var(--muted); height: 24px; padding: 0 6px; font: 10px var(--font-title, var(--font)); cursor: pointer; }
+.pane-toggle[aria-expanded="false"] { border-color: var(--primary-line); color: var(--primary); background: var(--primary-soft); }
+.pane-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.pane-toggle:disabled { cursor: default; opacity: .5; }
+.pane-close { flex-shrink: 0; font-size: 16px; min-width: 24px; }
+.resizable-pane.pane-collapsed, .resizable-pane[hidden] { display: none !important; }
+.resizable-pane.pane-overlay { position: absolute !important; top: 0; bottom: 0; z-index: 35; box-shadow: var(--shadow-pop); background: var(--surface); max-width: calc(100% - 16px) !important; }
+.resizable-pane.pane-overlay[data-pane-side="left"] { left: 0; }
+.resizable-pane.pane-overlay[data-pane-side="right"] { right: 0; }
+@media (max-width: 600px) {
+  .pane-handle { display: none; }
+  .pane-controls { gap: 2px; }
+}

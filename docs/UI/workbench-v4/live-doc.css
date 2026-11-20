@@ -1,0 +1,27 @@
+/* UI-CR048-v2：正文即编辑，无外围输入框。只使用现行主题令牌。 */
+.live-doc-host { display:flex; flex-direction:column; flex:1; min-height:240px; min-width:0; background:var(--surface); }
+.code-main > .live-doc-host,.design-main > .live-doc-host { min-height:0; }
+.live-doc-bar { display:flex; align-items:center; flex-wrap:wrap; gap:8px; min-height:40px; padding:6px 16px; border-bottom:1px solid var(--line-soft); flex-shrink:0; }
+.live-doc-tools { display:flex; align-items:center; gap:3px; flex-wrap:wrap; }
+.live-doc-tools button { min-width:28px; height:28px; padding:0 6px; border:0; border-radius:var(--r-sm,4px); color:var(--ink-2); background:transparent; font-size:12px; }
+.live-doc-tools button:hover { background:var(--surface-2); }
+.live-doc-host button:focus-visible,.live-doc:focus-visible { outline:2px solid var(--primary); outline-offset:-2px; }
+[data-live-status] { margin-left:auto; color:var(--muted); font-size:11px; white-space:nowrap; }
+.live-doc-error { color:var(--danger); padding:0 16px; font-size:12px; }
+.live-doc-error:not(:empty) { padding:10px 16px; }
+.live-doc.doc-body { flex:1; min-height:220px; min-width:0; overflow:auto; width:100%; max-width:none; margin:0; padding:28px clamp(16px,3vw,40px) 72px; outline:none; border:0; line-height:1.8; cursor:text; }
+.live-doc[contenteditable=false] { cursor:auto; }
+.live-doc p,.live-doc li { overflow-wrap:anywhere; }
+.live-doc table { max-width:100%; }
+.live-doc pre { white-space:pre-wrap; overflow-wrap:anywhere; }
+.live-code { flex:1; width:100%; min-height:300px; padding:20px; resize:none; border:0; border-radius:0; outline:none; background:var(--surface); color:var(--ink); font:13px/1.75 var(--mono); tab-size:2; white-space:pre; }
+.knowledge-workspace .kw-editor { min-height:0; padding:16px 24px; }
+.knowledge-workspace .kw-scroll > .live-doc-host { min-height:400px; }
+.req-reader > .live-doc-host { min-height:100%; }
+.office-slide [contenteditable] { outline:none; border:0; cursor:text; }
+.office-slide [contenteditable]:focus-visible { outline:1px solid var(--primary); }
+.live-link-dialog { width:min(420px,calc(100vw - 32px)); padding:24px; border:1px solid var(--line); border-radius:6px; color:var(--ink); background:var(--surface); }
+.live-link-dialog::backdrop { background:rgba(0,0,0,.25); }
+.live-link-dialog input { display:block; width:100%; padding:8px; margin:12px 0; border:1px solid var(--line); background:var(--surface-2); }
+.live-link-dialog button { padding:6px 12px; border:1px solid var(--line); margin-right:8px; }
+@media(max-width:600px) { .live-doc-bar { padding:6px 10px; } .live-doc.doc-body { padding:20px 16px 48px; } .live-code { padding:14px; } }

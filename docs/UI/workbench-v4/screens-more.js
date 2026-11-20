@@ -42,68 +42,11 @@
   }
 
   function libraryPage(id) {
+    // CR-045: knowledge-workspace.js is loaded after main.js. The library owner
+    // can manage local material independently of project AI read-only grants.
+    if (window.KnowledgeWorkspace) return window.KnowledgeWorkspace.render(id);
     const lib = libById(id);
-    if (!isGranted(lib)) {
-      return `<div class="page"><div class="crumb"><a data-act="nav" data-page="knowledge">知识库</a><span class="sep">/</span><span>${esc(lib.name)}</span></div>
-        <div class="card kb-lock" style="margin-top:20px"><span class="kb-icon violet" style="margin:0 auto 12px">${icon("lock", "ico-20")}</span>
-          <h2 style="font-size:16px">未授权访问</h2><p class="caption" style="max-width:440px;margin:6px auto 16px">「${esc(lib.name)}」来自 ${esc(lib.owner)} 的本地目录。授权后 AI 才能检索与读取有界片段。</p>
-          <button class="btn primary" data-act="kb-grant-open" data-id="${lib.id}">授权到项目</button></div></div>`;
-    }
-    const docs = D.knowledge.docs[lib.id] || [];
-    const doc = docById(lib.id, store.kbDoc) || docs[0];
-    if (!doc) return `<div class="page"><div class="empty"><b>知识库为空</b><p>扫描结果为 0 篇，不是读取失败。</p></div></div>`;
-    return `<div class="kb-reader">
-      <aside class="kb-nav">
-        <div class="kb-nav-h"><b>${icon("book", "ico-14")}${esc(lib.name)}</b><div class="meta">${docs.length} 个文件 · ${lib.allProjects ? "所有项目" : lib.grantedTo.length + " 个项目授权"}</div></div>
-        <label class="search">${icon("search", "ico-14")}<input class="input" id="kb-search" data-act="kb-search" placeholder="搜索文件或正文" value="${esc(store.kbQuery)}"></label>
-        <div class="kb-docs">${kbTree(lib, docs, doc.id)}</div>
-        <div style="padding:10px 12px;border-top:1px solid var(--line-soft)"><button class="btn sm" style="width:100%" data-act="kb-grant-open" data-id="${lib.id}">${icon("shield", "ico-14")}授权管理</button></div>
-      </aside>
-      <article class="kb-article">
-        <div class="kb-article-h"><div class="crumb"><a data-act="nav" data-page="knowledge">知识库</a><span class="sep">/</span><span>${esc(lib.name)}</span><span class="sep">/</span><span>${esc(doc.title)}</span></div>
-          <span class="spacer" style="flex:1"></span><span class="tag gray">${esc(doc.type.toUpperCase())}</span><button class="btn sm" data-act="toast" data-msg="演示：把该文件引用到 AI 会话">${icon("link", "ico-14")}引用</button></div>
-        <div class="kb-article-body">${previewDoc(doc, lib)}</div>
-      </article>
-      <aside class="kb-toc"><div class="label">${doc.type === "md" || doc.type === "pdf" ? "本页目录" : "文件信息"}</div>
-        ${doc.type === "md" || doc.type === "pdf" ? toc(D.knowledge.content[doc.id] || "").map(h => `<a class="${h.level === 3 ? "lv3" : ""}" data-act="toast" data-msg="演示：跳转到章节">${esc(h.title)}</a>`).join("") : `<div class="meta-list"><div><span>类型</span><b>${esc(doc.type.toUpperCase())}</b></div><div><span>大小</span><b>${esc(doc.size)}</b></div><div><span>更新</span><b>${esc(doc.updated)}</b></div><div><span>路径</span><b class="mono">${esc(doc.path)}</b></div></div>`}
-        <div class="divider" style="margin:14px 0"></div><div class="label">来源</div><div class="caption" style="line-height:1.7">本地文件只读引用<br><span class="mono">${esc(lib.name)}</span></div>
-      </aside>
-    </div>`;
-  }
-
-  function kbTree(lib, docs, activeId) {
-    const q = (store.kbQuery || "").trim().toLowerCase();
-    if (q) {
-      const hits = docs.filter(d => (d.title + d.path).toLowerCase().includes(q) || (D.knowledge.content[d.id] || "").toLowerCase().includes(q));
-      return hits.length ? `<div class="kb-hits">${hits.map(d => `<button class="kb-hit" data-act="kb-doc" data-id="${d.id}"><b>${esc(d.title)}</b><span>${esc(d.path)}</span></button>`).join("")}</div>` : `<div class="empty" style="padding:20px 8px"><b>没有命中</b><p>换一个关键词。</p></div>`;
-    }
-    const root = {};
-    docs.forEach(d => { const parts = d.path.split("/"); let node = root; parts.slice(0, -1).forEach(p => { node[p] = node[p] || {}; node = node[p]; }); node[parts[parts.length - 1]] = d; });
-    const walk = (obj, depth) => Object.keys(obj).sort().map(k => {
-      const v = obj[k];
-      if (v && v.id) return `<button class="kb-doc ${v.id === activeId ? "active" : ""}" style="padding-left:${10 + depth * 12}px" data-act="kb-doc" data-id="${v.id}">${fileIcon(v.type)}<span class="kb-doc-t"><b class="ellipsis">${esc(v.title)}</b><span>${esc(v.path)} · ${esc(v.size)}</span></span></button>`;
-      return `<div class="kb-folder" style="padding-left:${6 + depth * 12}px">${icon("folder", "ico-14")}<span>${esc(k)}</span></div>` + walk(v, depth + 1);
-    }).join("");
-    return walk(root, 0);
-  }
-
-  function previewDoc(doc, lib) {
-    if (doc.type === "md" || doc.type === "pdf") {
-      const body = D.knowledge.content[doc.id] || "";
-      return (doc.type === "pdf" ? `<div class="pdf-badge">${icon("filePdf", "ico-14")} PDF 预览 · ${esc(doc.size)}</div>` : "") + md(body || "# " + doc.title);
-    }
-    if (doc.type === "csv") {
-      const rows = (D.knowledge.content[doc.id] || "").split("\n").filter(Boolean).map(r => r.split(","));
-      return `<div class="csv-preview"><table class="table"><thead><tr>${rows[0].map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows.slice(1).map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div><p class="caption">CSV 文本预览 · 共 ${rows.length - 1} 行。</p>`;
-    }
-    if (doc.type === "xlsx") {
-      const rows = (D.knowledge.content[doc.id] || "").split("\n").filter(Boolean).map(r => r.split(","));
-      return rows.length && rows[0].length > 1 ? `<div class="csv-preview"><table class="table"><thead><tr>${rows[0].map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows.slice(1).map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>` : `<div class="file-preview"><span class="e-icon">${icon("fileSheet", "ico-20")}</span><b>${esc(doc.title)}</b><p>Excel 样例未嵌入真实文件；正式实现会渲染表格预览并保留原件下载。</p><button class="btn sm" data-act="toast" data-msg="演示：下载原件">${icon("download", "ico-14")}下载原件</button></div>`;
-    }
-    if (doc.type === "png") {
-      return `<div class="image-preview"><span class="e-icon">${icon("image", "ico-20")}</span><b>${esc(doc.title)}</b><p>图片样例未嵌入真实文件（${esc(doc.size)}）。正式实现按原比例预览并提供放大。</p></div>`;
-    }
-    return `<div class="file-preview"><span class="e-icon">${icon("file", "ico-20")}</span><b>${esc(doc.title)}</b><p>该格式暂不支持内嵌预览。</p></div>`;
+    return `<div class="page"><div class="empty"><b>知识工作区设计资源尚未加载</b><p>请在 main.js 后加载 knowledge-workspace.js；项目 AI 授权不限制本人管理。</p><button class="btn" data-act="kb-grant-open" data-id="${esc(lib.id)}">AI 授权管理</button></div></div>`;
   }
 
   /* ================= 服务器 ================= */

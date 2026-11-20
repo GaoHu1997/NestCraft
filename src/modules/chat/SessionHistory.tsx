@@ -2,6 +2,7 @@ import { Icon } from "@/components/icons";
 import { useEffect, useRef, useState } from "react";
 import type { SessionMeta } from "@/api";
 import { Confirm } from "@/components/ui";
+import { ResizeHandle, usePaneWidth } from "@/components/pane-resize";
 import { formatDur, getRuntime } from "./sessionRuntime";
 import type { SessionStatus } from "./sessionRuntime";
 
@@ -51,16 +52,19 @@ export function SessionHistory(props: {
   onNew: () => void;
   onDelete: (id: string) => void;
   onClose: () => void;
+  scopeId?: string;
 }) {
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const boxRef = useRef<HTMLDivElement | null>(null);
+  const history = usePaneWidth(props.scopeId ?? "chat", "history", { default: 296, min: 240, max: 420, side: "left", overlay: true, minCenter: 0, maxAvailable: () => Math.max(0, window.innerWidth - 16) });
 
   // 外点与 Escape 由同 scope 的唯一 overlay 控制器处理。
 
   const target = props.sessions.find(s => s.id === confirmId);
 
   return (
-    <div className="chat-history" data-chat-overlay="history" ref={boxRef} role="dialog" aria-label="会话历史">
+    <div className="chat-history resizable-pane" style={{ width: history.width, minWidth: 0, maxWidth: "calc(100vw - 16px)" }} data-chat-overlay="history" ref={boxRef} role="dialog" aria-label="会话历史">
+      <ResizeHandle pane={history} label="会话历史" />
       <div className="chat-history-head">
         <span className="chat-history-title">
           <HistoryIcon size={14} />
@@ -97,6 +101,7 @@ export function SessionHistory(props: {
               <div className="chat-hist-main">
                 <div className="chat-hist-title ellipsis">{s.title || "未命名会话"}</div>
                 <div className="chat-hist-meta">{meta}</div>
+                {s.sessionRole === "executor" && s.featureId && <div className="chat-hist-scope" title={`执行特性：${s.featureTitle ?? s.featureId}`}>单特性 · {s.featureId}</div>}
               </div>
               <span className={`chat-hist-state st-${st.cls}`}>{st.text}</span>
               <button

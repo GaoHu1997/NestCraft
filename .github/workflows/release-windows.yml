@@ -1,0 +1,187 @@
+name: Release Windows Portable
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（不含 v，必须与 tauri.conf.json / Cargo.toml 一致）"
+        required: true
+        default: "0.0.1"
+      publish_release:
+        description: "构建成功后创建或更新 GitHub Release"
+        type: boolean
+        default: true
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: 构建 Windows x64 免安装 exe
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve and verify version
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          $raw = if ($env:EVENT_NAME -eq 'workflow_dispatch') { $env:DISPATCH_VERSION } else { $env:REF_NAME }
+          $version = ($raw ?? '').Trim() -replace '^[vV]', ''
+          if ($version -notmatch '^\d+\.\d+\.\d+([.-][0-9A-Za-z.-]+)?$') {
+            throw "版本号格式无效：'$version'（应为 0.0.1 这类语义化版本）"
+          }
+          $tauriVersion = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $pkgVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $cargoVersion = ((Select-String -Path src-tauri/Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value)
+          if ($tauriVersion -ne $version -or $pkgVersion -ne $version -or $cargoVersion -ne $version) {
+            throw "版本不一致：ref/input=$version, tauri.conf.json=$tauriVersion, package.json=$pkgVersion, Cargo.toml=$cargoVersion。请先把三处版本统一后再发布。"
+          }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "锁定版本：$version"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: release-windows-x64
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Frontend typecheck and build
+        run: npm run build
+
+      - name: Build Tauri app without installer
+        run: npx tauri build --no-bundle --ci --target x86_64-pc-windows-msvc
+
+      - name: Package portable assets
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $releaseDir = 'src-tauri/target/x86_64-pc-windows-msvc/release'
+          Get-ChildItem $releaseDir -Filter *.exe -ErrorAction SilentlyContinue |
+            Select-Object Name, Length | Format-Table | Out-String | Write-Host
+
+          $productName = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).productName
+          $candidates = @(
+            (Join-Path $releaseDir "$productName.exe"),
+            (Join-Path $releaseDir 'agent-workbench.exe')
+          )
+          $source = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $source) {
+            $source = Get-ChildItem $releaseDir -Filter *.exe |
+              Where-Object { $_.Name -notmatch '^(uninstall|build)' } |
+              Sort-Object Length -Descending | Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $source -or -not (Test-Path $source)) {
+            throw "未在 $releaseDir 找到构建产物 exe"
+          }
+          Write-Host "构建产物：$source"
+
+          $outDir = 'dist-release'
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+          $exeName = "NestCraft_${env:VERSION}_x64_portable.exe"
+          $exePath = Join-Path $outDir $exeName
+          Copy-Item $source $exePath -Force
+
+          $hash = (Get-FileHash $exePath -Algorithm SHA256).Hash.ToLower()
+          $size = (Get-Item $exePath).Length
+          "$hash *$exeName" | Set-Content -Path (Join-Path $outDir "$exeName.sha256") -Encoding ascii
+
+          $manifest = [ordered]@{
+            version   = $env:VERSION
+            notes     = "Windows x64 免安装版；安装包暂不提供。"
+            pub_date  = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+            installer = $null
+            portable  = [ordered]@{
+              url     = "https://github.com/$($env:REPO)/releases/download/v$($env:VERSION)/$exeName"
+              mirrors = @()
+              sha256  = $hash
+              size    = $size
+            }
+          }
+          $manifest | ConvertTo-Json -Depth 6 |
+            Set-Content -Path (Join-Path $outDir 'nestcraft-win64.json') -Encoding utf8NoBOM
+
+          # 免安装包：exe + portable.marker（应用内更新按该标记识别免安装形态）
+          $zipRoot = Join-Path $env:RUNNER_TEMP "portable-$($env:VERSION)"
+          New-Item -ItemType Directory -Force -Path $zipRoot | Out-Null
+          Copy-Item $exePath (Join-Path $zipRoot 'NestCraft.exe') -Force
+          'portable' | Set-Content -Path (Join-Path $zipRoot 'portable.marker') -Encoding ascii
+          @(
+            'NestCraft 免安装版（Windows x64）',
+            '',
+            '1. 解压后直接运行 NestCraft.exe，无需安装。',
+            '2. 请保持 portable.marker 与 NestCraft.exe 在同一目录，应用内更新依赖该标记识别免安装形态。',
+            '3. 单文件 exe 也可单独下载；首次使用时请自行在同目录创建 portable.marker（内容为 portable）。'
+          ) | Set-Content -Path (Join-Path $zipRoot 'README.txt') -Encoding utf8
+          $zipPath = Join-Path $outDir "NestCraft_${env:VERSION}_x64_portable.zip"
+          Compress-Archive -Path (Join-Path $zipRoot '*') -DestinationPath $zipPath -Force
+
+          Get-ChildItem $outDir | Select-Object Name, Length | Format-Table | Out-String | Write-Host
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nestcraft-win-x64-portable-${{ steps.version.outputs.version }}
+          path: dist-release/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        if: ${{ github.event_name == 'push' || inputs.publish_release }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }} · Windows x64 免安装
+          body: |
+            Windows x64 免安装版（当前阶段只提供免安装 exe，不含安装包）。
+
+            - `NestCraft_${{ steps.version.outputs.version }}_x64_portable.exe`：单文件免安装程序，下载后直接运行。
+            - `NestCraft_${{ steps.version.outputs.version }}_x64_portable.zip`：含 `NestCraft.exe` 与 `portable.marker`，解压即用。
+            - `nestcraft-win64.json`：应用内更新清单（版本、SHA-256、下载地址）。
+            - `NestCraft_${{ steps.version.outputs.version }}_x64_portable.exe.sha256`：校验文件。
+
+            说明：应用内更新把 `portable.marker` 作为免安装形态标记，请保持它与 exe 同目录。
+          files: |
+            dist-release/NestCraft_${{ steps.version.outputs.version }}_x64_portable.exe
+            dist-release/NestCraft_${{ steps.version.outputs.version }}_x64_portable.zip
+            dist-release/NestCraft_${{ steps.version.outputs.version }}_x64_portable.exe.sha256
+            dist-release/nestcraft-win64.json
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true

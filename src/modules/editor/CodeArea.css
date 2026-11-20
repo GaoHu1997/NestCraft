@@ -1,11 +1,13 @@
-/* 编码区（CR-014 AC-09）：左文件树 240px + 右页签与 CodeMirror 6 编辑器。 */
+/* 编码区：UI-CR045-v1 / SC-045-04、08，文件栏260px（180–480）＋保活编辑器/阅读区。 */
 
-.cda { display: flex; height: 100%; min-height: 0; background: var(--paper); overflow: hidden; }
+.cda { position: relative; display: flex; height: 100%; min-height: 0; background: var(--paper); overflow: hidden; }
 
 /* ---------- 左侧文件树 ---------- */
 
-.cda-aside { width: 260px; flex: 0 0 260px; min-width: 0; display: flex; flex-direction: column; min-height: 0; position: relative; background: var(--paper); border-right: 1px solid var(--line-soft); }
+.cda-aside { width: 260px; flex: 0 0 auto; min-width: 0; display: flex; flex-direction: column; min-height: 0; position: relative; background: var(--paper); border-right: 1px solid var(--line-soft); }
 .cda-aside[hidden] { display: none; }
+.cda-aside.pane-overlay { position: absolute; inset: 0 auto 0 0; z-index: 35; }
+.cda-tree-close { position: absolute; top: 42px; right: 8px; z-index: 2; }
 .cda-tree-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px 6px 12px; height: 40px; border-bottom: 1px solid var(--line-soft); flex: 0 0 auto; }
 .cda-tree-title { font-weight: 600; font-size: 13px; }
 .cda-tree-head .btn.icon { width: 26px; min-height: 26px; }
@@ -33,7 +35,7 @@
 
 .cda-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
 
-.cda-tabs { display: flex; align-items: center; gap: 2px; padding: 0 8px; height: 36px; flex: 0 0 36px; overflow-x: auto; border-bottom: 1px solid var(--line-soft); background: var(--panel-2); }
+.cda-tabs { display: flex; align-items: center; gap: 2px; padding: 0 8px; height: 40px; flex: 0 0 40px; overflow-x: auto; border-bottom: 1px solid var(--line-soft); background: var(--panel-2); }
 .cda-tabs-empty { align-self: center; padding: 0 4px; }
 .cda-tab { display: inline-flex; align-items: center; gap: 6px; padding: 0 6px 0 10px; max-width: 200px; height: 28px; border: 1px solid transparent; border-radius: 5px; font-size: 11.5px; user-select: none; }
 .cda-tab:hover { background: var(--hover-bg); }
@@ -43,9 +45,11 @@
 .cda-tab-close { border: none; background: transparent; color: var(--muted); width: 18px; height: 18px; border-radius: 4px; font-size: 13px; line-height: 1; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; flex: 0 0 auto; }
 .cda-tab-close:hover { background: var(--hover-line); color: var(--ink); }
 
-.cda-editor-bar { display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 12px; flex: 0 0 38px; border-bottom: 1px solid var(--line-soft); font-size: 11.5px; }
-.cda-editor-bar .ellipsis { min-width: 0; max-width: 70%; }
-.cda-stage { position: relative; flex: 1 1 auto; min-height: 0; }
+.cda-editor-bar { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px; flex: 0 0 40px; min-width: 0; overflow: auto hidden; border-bottom: 1px solid var(--line-soft); font-size: 11.5px; }
+.cda-editor-bar .ellipsis { min-width: 70px; max-width: 70%; flex-shrink: 1; }
+.cda-editor-bar .btn, .cda-editor-bar .cda-mode, .cda-editor-bar .small { flex: 0 0 auto; white-space: nowrap; }
+.cda-reading-note { padding: 6px 12px; background: var(--panel-2); border-bottom: 1px solid var(--line-soft); color: var(--muted); font-size: 10px; flex: 0 0 auto; line-height: 1.5; }
+.cda-stage { position: relative; flex: 1 1 auto; min-height: 0; min-width: 0; overflow: hidden; }
 .cda-editor { position: absolute; inset: 0; }
 .cda-editor.hide { display: none; }
 .cda-editor .cm-editor { height: 100%; background: var(--code-bg); }
@@ -54,8 +58,25 @@
 
 .cda-empty-fill { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--code-bg); }
 
+/* 阅读排版采用code-reading.css及其继承的doc-body基线，不与原型共享可变样式。 */
+.cda-md-reader { position: absolute; inset: 0; min-height: 0; min-width: 0; margin: 0; overflow: auto; padding: 28px clamp(18px, 3vw, 44px) 60px; font-size: 13px; background: var(--paper); }
+.cda-md-reader h1 { font-size: 24px; font-weight: 650; margin: 0 0 20px; letter-spacing: -.01em; }
+.cda-md-reader h2 { font-size: 18px; font-weight: 650; margin: 28px 0 14px; padding-bottom: 7px; border-bottom: 1px solid var(--line-soft); }
+.cda-md-reader h3 { font-size: 15px; font-weight: 600; margin: 20px 0 8px; }
+.cda-md-reader p { font-size: 13.5px; line-height: 1.85; color: var(--ink-2); margin: 10px 0; overflow-wrap: anywhere; }
+.cda-md-reader ul, .cda-md-reader ol { margin: 10px 0; padding-left: 22px; color: var(--ink-2); font-size: 13.5px; }
+.cda-md-reader li { margin: 2px 0; line-height: 1.85; overflow-wrap: anywhere; }
+.cda-md-reader code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; background: var(--hover-bg); padding: 1px 5px; border-radius: 4px; color: var(--ink); }
+.cda-md-reader pre { margin: 12px 0; padding: 14px 16px; background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: var(--radius-ctl); overflow: auto; }
+.cda-md-reader pre code { background: none; padding: 0; font-size: 12px; line-height: 1.7; }
+.cda-md-reader table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 12.5px; }
+.cda-md-reader th, .cda-md-reader td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; }
+.cda-md-reader th { background: var(--panel-2); font-weight: 600; color: var(--ink-2); }
+.cda-md-reader blockquote { margin: 12px 0; padding: 8px 14px; border-left: 3px solid var(--accent); background: var(--soft); color: var(--ink-2); font-size: 13px; }
+.cda-md-reader a { color: var(--accent); }
+.cda-reading-source { white-space: pre-wrap; overflow-wrap: anywhere; }
+.cda-reading-error { color: var(--danger); }
+
 /* 定位高亮行（STORY-062 AC-08） */
 .cda-line-hl { background: var(--soft); }
 .cda-line-hl .cm-gutters { color: var(--accent); }
-@media (max-width: 1180px) { .cda-aside { width: 220px; flex-basis: 220px; } }
-@media (max-width: 960px) { .cda-aside { display: none; } }

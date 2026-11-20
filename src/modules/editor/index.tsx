@@ -5,9 +5,10 @@
  * - 非文本扩展名（png/jpg/pdf/zip/exe…）显示只读提示 Empty。
  * - 主题跟随 html[data-theme]（MutationObserver）：深色 oneDark，浅色默认。
  * - 字号读取 setting editor.fontSize（默认 13）。
- * - 多页签：切换时保存各自 EditorState 与滚动位置，切回恢复。
+ * - 多页签：切换时保存各自 EditorState、模式与阅读/编辑滚动位置，切回恢复。
+ * - UI-CR045-v1 / SC-045-04：Markdown 默认阅读，阅读只投影当前缓冲，CodeMirror 保活。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { EditorView, keymap } from "@codemirror/view";
 import type { ViewUpdate } from "@codemirror/view";
 import { Compartment, EditorState, Prec, StateEffect, StateField } from "@codemirror/state";
@@ -23,7 +24,8 @@ import { javascript } from "@codemirror/lang-javascript";
 import { python } from "@codemirror/lang-python";
 import { json } from "@codemirror/lang-json";
 import * as api from "@/api";
-import { Confirm, Empty, useToast } from "@/components/ui";
+import { Confirm, Empty, renderMarkdown, useToast } from "@/components/ui";
+import { PaneClose, PaneToggle, ResizeHandle, usePaneWidth } from "@/components/pane-resize";
 import { FileTree } from "./FileTree";
 import { EditorTabs, baseName } from "./EditorTabs";
 import "./CodeArea.css";
@@ -58,6 +60,7 @@ const BINARY_EXT = new Set([
   "exe", "dll", "so", "dylib", "bin", "dat", "msi", "obj", "o", "a", "lib", "pdb",
   "woff", "woff2", "ttf", "otf", "eot", "mp3", "wav", "flac", "ogg", "mp4", "avi",
   "mov", "mkv", "webm", "db", "sqlite", "sqlite3", "jar", "class", "pyc", "pyo", "wasm",
+  "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "rtf",
 ]);
 
 function extOf(path: string): string {
@@ -67,6 +70,7 @@ function extOf(path: string): string {
 }
 
 const isBinaryPath = (path: string) => BINARY_EXT.has(extOf(path));
+const isMarkdownPath = (path: string) => ["md", "markdown"].includes(extOf(path));
 
 /** 语言按扩展名选择（未识别的返回空数组 = 纯文本）。 */
 function languageFor(path: string): Extension | Extension[] {
@@ -107,7 +111,7 @@ function useHtmlTheme(): "light" | "dark" {
   return theme;
 }
 
-/** 页签模型：state/scroll 保存非活动页签的编辑器状态与滚动位置。 */
+/** EditorState carries undo/selection; scroll and mode are independent per file. */
 interface Tab {
   path: string;
   saved: string; // 已保存内容（脏标记基准）
@@ -115,12 +119,55 @@ interface Tab {
   binary: boolean;
   state: EditorState | null;
   scroll: number;
+  scrollLeft: number;
+  readScroll: number;
+  mode: "reading" | "editing";
+}
+
+function MarkdownReading({ tab, source }: { tab: Tab; source: string }) {
+  const readerRef = useRef<HTMLElement | null>(null);
+  const [result, setResult] = useState<{ source: string; html: string; error?: string } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    renderMarkdown(source, { restrictResources: true })
+      .then(html => { if (alive) setResult({ source, html }); })
+      .catch(error => { if (alive) setResult({ source, html: "", error: errMsg(error) }); });
+    return () => { alive = false; };
+  }, [source]);
+  const current = result?.source === source ? result : null;
+  useLayoutEffect(() => {
+    if (readerRef.current && current) readerRef.current.scrollTop = tab.readScroll;
+  }, [current, tab]);
+  return <article ref={readerRef} className="cda-md-reader" tabIndex={0} aria-label={`${baseName(tab.path)} 阅读正文`} aria-busy={!current}
+    onScroll={event => { if (current) tab.readScroll = event.currentTarget.scrollTop; }}
+    onClick={event => {
+      const anchor = (event.target as Element).closest<HTMLAnchorElement>("a[href]");
+      if (!anchor) return;
+      // Heading navigation stays in this document; never resolves another app panel's IDs.
+      event.preventDefault();
+      const href = anchor.getAttribute("href");
+      if (!href?.startsWith("#")) return;
+      let id: string;
+      try { id = decodeURIComponent(href.slice(1)); } catch { return; }
+      const heading = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("h1,h2,h3,h4,h5,h6"))
+        .find(element => element.id === id);
+      if (heading) event.currentTarget.scrollTop += heading.getBoundingClientRect().top - event.currentTarget.getBoundingClientRect().top;
+    }}>
+    {current?.error && <p className="cda-reading-error" role="alert">阅读渲染失败：{current.error}。当前草稿仍完整保留，可切回编辑。</p>}
+    {current && !current.error ? <div dangerouslySetInnerHTML={{ __html: current.html }} /> : <pre className="cda-reading-source">{source}</pre>}
+  </article>;
 }
 
 /* ---------- CodeArea ---------- */
 
 export function CodeArea({ rootUri, projectId, className, hideTree = false, visible = true }: { rootUri: string; projectId?: string; className?: string; hideTree?: boolean; visible?: boolean }) {
   const toast = useToast();
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const treeId = useId();
+  const treePane = usePaneWidth(`code:${projectId ?? rootUri}:${rootUri}`, "files", {
+    default: 260, min: 180, max: 480, side: "left", containerRef, minCenter: 320,
+    visible: hideTree ? false : undefined, disabled: !visible || hideTree,
+  });
   const [closeTarget, setCloseTarget] = useState<string | null>(null);
   const [discardTarget, setDiscardTarget] = useState<string | null>(null);
   const visibleRef = useRef(visible);
@@ -151,17 +198,36 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
     const view = viewRef.current;
     const tab = path ? tabsRef.current.find(t => t.path === path) : null;
     if (!path || !view || !tab || tab.binary) return;
+    const root = rootUriRef.current;
     const content = view.state.doc.toString();
     try {
-      await api.fsWriteFile(rootUriRef.current, path, content);
+      await api.fsWriteFile(root, path, content);
+      // A save completing after a root change/close must not mutate a different file session.
+      if (rootUriRef.current !== root || !tabsRef.current.includes(tab)) return;
       tab.saved = content;
       tab.dirty = (activeRef.current === path && viewRef.current === view ? view.state : tab.state)?.doc.toString() !== content;
       rerender();
       toast(`已保存 ${path}`);
     } catch (e) {
-      toast(errMsg(e), "err");
+      if (rootUriRef.current === root && tabsRef.current.includes(tab)) toast(errMsg(e), "err");
     }
   }, [toast, rerender]);
+
+  // Reading has no focused CodeMirror; keep Ctrl+S scoped to the visible active buffer.
+  useEffect(() => {
+    const onSave = (event: KeyboardEvent) => {
+      if (!visibleRef.current || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== "s") return;
+      const tab = tabsRef.current.find(t => t.path === activeRef.current);
+      if (!tab || tab.binary || tab.mode !== "reading") return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest("input,textarea,[contenteditable='true'],[role='dialog']")) return;
+      if (document.querySelector("dialog[open],[role='dialog']")) return;
+      event.preventDefault();
+      void saveActive();
+    };
+    window.addEventListener("keydown", onSave);
+    return () => window.removeEventListener("keydown", onSave);
+  }, [saveActive]);
 
   const onUpdate = useCallback(
     (u: ViewUpdate) => {
@@ -169,8 +235,9 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
       const path = activeRef.current;
       const tab = path ? tabsRef.current.find(t => t.path === path) : null;
       if (!tab || tab.binary) return;
+      tab.state = u.state;
       const dirty = u.state.doc.toString() !== tab.saved;
-      if (dirty !== tab.dirty) {
+      if (dirty !== tab.dirty || (isMarkdownPath(tab.path) && tab.mode === "reading")) {
         tab.dirty = dirty;
         rerender();
       }
@@ -214,7 +281,15 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
     if (!host) return;
     const view = new EditorView({ state: EditorState.create({ doc: "", extensions }), parent: host });
     viewRef.current = view;
+    const rememberScroll = () => {
+      const tab = tabsRef.current.find(t => t.path === activeRef.current);
+      if (!tab || tab.binary || tab.mode !== "editing") return;
+      tab.scroll = view.scrollDOM.scrollTop;
+      tab.scrollLeft = view.scrollDOM.scrollLeft;
+    };
+    view.scrollDOM.addEventListener("scroll", rememberScroll, { passive: true });
     return () => {
+      view.scrollDOM.removeEventListener("scroll", rememberScroll);
       view.destroy();
       if (viewRef.current === view) viewRef.current = null;
     };
@@ -251,6 +326,7 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
     fileRequestRef.current++;
     openingRef.current.clear();
     setCloseTarget(null);
+    setDiscardTarget(null);
     tabsRef.current = [];
     activeRef.current = null;
     const view = viewRef.current;
@@ -273,7 +349,10 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
         const curTab = tabsRef.current.find(t => t.path === cur);
         if (curTab && !curTab.binary) {
           curTab.state = view.state;
-          curTab.scroll = view.scrollDOM.scrollTop;
+          if (curTab.mode === "editing") {
+            curTab.scroll = view.scrollDOM.scrollTop;
+            curTab.scrollLeft = view.scrollDOM.scrollLeft;
+          }
         }
       }
       activeRef.current = path;
@@ -283,11 +362,14 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
           view.setState(tab.state ?? EditorState.create({ doc: tab.saved, extensions }));
           applyCompartments(view, path);
           const top = tab.scroll;
-          if (top > 0) {
-            requestAnimationFrame(() => {
-              if (viewRef.current === view) view.scrollDOM.scrollTop = top;
-            });
-          }
+          const left = tab.scrollLeft;
+          requestAnimationFrame(() => {
+            if (viewRef.current === view && activeRef.current === path && tab.mode === "editing") {
+              view.scrollDOM.scrollTop = top;
+              view.scrollDOM.scrollLeft = left;
+              view.requestMeasure();
+            }
+          });
         } else {
           // 无页签或二进制页签：编辑器清空并隐藏
           view.setState(EditorState.create({ doc: "", extensions }));
@@ -304,14 +386,14 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
     const root = rootUriRef.current;
     if (tabsRef.current.some(t => t.path === path)) { activate(path); return; }
     if (isBinaryPath(path)) {
-      tabsRef.current = [...tabsRef.current, { path, saved: "", dirty: false, binary: true, state: null, scroll: 0 }];
+      tabsRef.current = [...tabsRef.current, { path, saved: "", dirty: false, binary: true, state: null, scroll: 0, scrollLeft: 0, readScroll: 0, mode: "editing" }];
       activate(path); return;
     }
     let pending = openingRef.current.get(path);
     if (!pending) {
       pending = api.fsReadFile(root, path).then(content => {
         if (rootUriRef.current !== root || !viewRef.current) return;
-        if (!tabsRef.current.some(t => t.path === path)) tabsRef.current = [...tabsRef.current, { path, saved: content, dirty: false, binary: false, state: null, scroll: 0 }];
+        if (!tabsRef.current.some(t => t.path === path)) tabsRef.current = [...tabsRef.current, { path, saved: content, dirty: false, binary: false, state: null, scroll: 0, scrollLeft: 0, readScroll: 0, mode: isMarkdownPath(path) ? "reading" : "editing" }];
         rerender();
       }).finally(() => { if (openingRef.current.get(path) === pending) openingRef.current.delete(path); });
       openingRef.current.set(path, pending);
@@ -319,6 +401,20 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
     try { await pending; if (rootUriRef.current === root && fileRequestRef.current === seq && tabsRef.current.some(t => t.path === path)) activate(path); }
     catch (e) { if (rootUriRef.current === root) toast(errMsg(e), "err"); }
   }, [activate, toast, rerender]);
+
+  const changeMode = useCallback((mode: Tab["mode"]) => {
+    const path = activeRef.current;
+    const tab = tabsRef.current.find(t => t.path === path);
+    const view = viewRef.current;
+    if (!tab || !view || !isMarkdownPath(tab.path) || tab.mode === mode) return;
+    tab.state = view.state;
+    if (tab.mode === "editing") {
+      tab.scroll = view.scrollDOM.scrollTop;
+      tab.scrollLeft = view.scrollDOM.scrollLeft;
+    }
+    tab.mode = mode;
+    rerender();
+  }, [rerender]);
 
   const removeTab = useCallback(
     (path: string) => {
@@ -351,7 +447,8 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
         return;
       }
       await openFile(path); // 读取失败已在 openFile 内提示，且不改变当前已打开文件
-      if (line == null) return;
+      if (line == null || activeRef.current !== path) return;
+      changeMode("editing");
       requestAnimationFrame(() => {
         const view = viewRef.current;
         if (!view || activeRef.current !== path) return;
@@ -368,7 +465,7 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
         if (visibleRef.current) view.focus();
       });
     },
-    [openFile, toast]
+    [openFile, changeMode, toast]
   );
 
   const matchesScope = useCallback((d: LocateDetail) => {
@@ -397,12 +494,27 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
   const tabs = tabsRef.current;
   const active = activeRef.current;
   const activeTab = active ? tabs.find(t => t.path === active) ?? null : null;
-  const showEditor = activeTab != null && !activeTab.binary;
+  const canEdit = activeTab != null && !activeTab.binary;
+  const isMarkdown = !!activeTab && canEdit && isMarkdownPath(activeTab.path);
+  const showReading = isMarkdown && activeTab?.mode === "reading";
+  const showEditor = canEdit && !showReading;
+  const readingSource = showReading ? viewRef.current?.state.doc.toString() ?? activeTab?.state?.doc.toString() ?? activeTab?.saved ?? "" : "";
+
+  useLayoutEffect(() => {
+    if (!visible || !showEditor || !activeTab) return;
+    const view = viewRef.current;
+    if (!view) return;
+    view.scrollDOM.scrollTop = activeTab.scroll;
+    view.scrollDOM.scrollLeft = activeTab.scrollLeft;
+    view.requestMeasure();
+  }, [visible, showEditor, activeTab]);
 
   return (
-    <div className={`cda ${className ?? ""}`}>
-      <aside className="cda-aside" aria-label="文件树" hidden={hideTree}>
+    <div ref={containerRef} className={`cda ${className ?? ""}`} data-ui-version="UI-CR045-v1">
+      <aside {...treePane.paneProps} id={treeId} className={`cda-aside ${treePane.paneProps.className}`} aria-label="文件树">
+        {treePane.overlay && <PaneClose pane={treePane} label="文件树" className="cda-tree-close btn sm" />}
         <FileTree rootUri={rootUri} onOpenFile={p => void openFile(p)} />
+        <ResizeHandle pane={treePane} label="编码文件栏" controls={treeId} />
       </aside>
       <section className="cda-main">
         <EditorTabs
@@ -412,13 +524,20 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
           onClose={closeTab}
         />
         <div className="cda-editor-bar">
+          {!hideTree && !treePane.visible && <PaneToggle pane={treePane} label="文件树" controls={treeId} className="btn sm" />}
           <span className="mono ellipsis" title={active ?? ""}>{active ?? "未打开文件"}</span><span className="spacer" />
+          {isMarkdown && <div className="segment cda-mode" role="group" aria-label="Markdown模式">
+            <button type="button" aria-pressed={showReading} onClick={() => changeMode("reading")}>阅读</button>
+            <button type="button" aria-pressed={showEditor} onClick={() => changeMode("editing")}>编辑</button>
+          </div>}
           {activeTab?.dirty && <span className="small muted">未保存</span>}
-          <button className="btn sm" disabled={!showEditor} onClick={() => void saveActive()}>保存</button>
+          <button className="btn sm" disabled={!canEdit} onClick={() => void saveActive()}>保存</button>
           <button className="btn sm" disabled={!activeTab?.dirty} onClick={() => { if (active) setDiscardTarget(active); }}>取消修改</button>
         </div>
+        {isMarkdown && <div className="cda-reading-note">当前编辑缓冲 · 不执行HTML／脚本，不自动读取本地或外联资源</div>}
         <div className="cda-stage">
-          <div className={`cda-editor ${showEditor ? "" : "hide"}`} ref={hostRef} />
+          <div className={`cda-editor ${showEditor ? "" : "hide"}`} ref={hostRef} aria-hidden={!showEditor} />
+          {showReading && activeTab && <MarkdownReading key={activeTab.path} tab={activeTab} source={readingSource} />}
           {!active && (
             <div className="cda-empty-fill">
               <Empty title="未打开文件" desc="从左侧文件树选择一个文件开始编辑，Ctrl+S 保存" />

@@ -17,7 +17,9 @@
     }
     const key = DESIGN_TABS.some(([k]) => k === store.designTab) ? store.designTab : "prd";
     const doc = D.design[key];
-    const heads = toc(doc.body);
+    const liveId=JSON.stringify(['design',p.id,key]);
+    const liveText=LiveDoc.get(liveId)?.text??doc.body;
+    const heads = toc(liveText);
     return `<div class="design-shell">
       <nav class="design-rail" aria-label="设计资料">
         ${DESIGN_TABS.map(([k, label, ic, tip]) => `<button class="rail-btn ${key === k ? "on" : ""}" data-act="design-tab" data-tab="${k}" aria-label="${esc(tip)}" data-tip="${esc(tip)}">${icon(ic)}<span>${label}</span></button>`).join("")}
@@ -31,15 +33,14 @@
           <span class="tag gray">${esc(doc.version)}</span>
           <span class="spacer"></span>
           <span class="caption hide-narrow">更新于 ${esc(doc.updated)}</span>
-          <button class="btn sm" data-act="design-edit">${icon("edit", "ico-14")}${store.designEdit ? "预览" : "编辑"}</button>
+          <span class="caption">所见即所得 · 自动保存</span>
           <button class="btn sm hide-narrow" data-act="design-export">${icon("download", "ico-14")}导出</button>
         </div>
-        ${store.designEdit ? `<div class="design-edit"><textarea class="textarea mono" id="design-editor">${esc(doc.body)}</textarea><div class="row" style="margin-top:12px"><button class="btn primary" data-act="design-save">保存草稿</button><button class="btn" data-act="design-edit">取消</button><span class="caption">草稿未同步时，新派发会被预检拒绝。</span></div></div>`
-          : `<article class="doc-body">${md(doc.body)}</article>`}
+        ${LiveDoc.render(liveId,liveText,{write:(text,expected)=>{if(doc.body!==expected)return {ok:false,conflict:true,error:'设计来源版本已改变，内容保留。'};doc.body=text;doc.updated='刚刚 · 仿真';doc.pendingSync=true;return {ok:true};},onChange:text=>{ const root=document.querySelector('.design-shell'); if(!root)return;if(root.querySelector('.toc-list'))root.querySelector('.toc-list').innerHTML='<div class="toc-label">本页目录</div>'+toc(text).map((h,n)=>'<button class="toc-item" data-act="live-design-anchor" data-index="'+n+'">'+esc(h.title)+'</button>').join('');const badge=root.querySelector('.toc-info .tag');if(badge)badge.textContent='待同步';}})}
       </section>
       ${store.designToc ? `<aside class="design-toc">
         <div class="toc-info">
-          <div class="row between"><b>文档信息</b><span class="tag green">已同步</span></div>
+          <div class="row between"><b>文档信息</b><span class="tag ${doc.pendingSync?"amber":"green"}">${doc.pendingSync?"待同步":"已同步"}</span></div>
           <div class="meta-row"><span>版本</span><b>${esc(doc.version)}</b></div>
           <div class="meta-row"><span>更新</span><b>${esc(doc.updated)}</b></div>
           <div class="meta-row"><span>关联 Story</span><b>3 条</b></div>
@@ -72,6 +73,11 @@
   }
 
   function tasksTab(p) {
+    const content = tasksContent(p);
+    return typeof Screens.taskWorkspace === "function" ? Screens.taskWorkspace(p, content) : content;
+  }
+
+  function tasksContent(p) {
     const list = Screens.tasksOf(p.id);
     if (!list.length) return `<div class="card"><div class="empty" style="padding:64px 24px"><span class="e-icon">${icon("play", "ico-20")}</span><b>该项目还没有运行</b><p>在需求页派发后，运行会出现在这里。</p><button class="btn primary" data-act="project-tab" data-tab="requirements">去派发需求</button></div></div>`;
     const dispatchRoots = list.filter(t => !t.parentId);
@@ -256,7 +262,7 @@
   }
 
   Screens.designTab = designTab;
-  Screens.tasksTab = tasksTab;
+  Screens.tasksTab = tasksTab; // rail由后加载requirements-workspace的唯一包装器提供，任务正文不复制。
   Screens.codeTab = codeTab;
   Screens.codeDiffModal = codeDiffModal;
 })();

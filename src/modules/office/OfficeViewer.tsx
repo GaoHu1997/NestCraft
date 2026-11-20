@@ -1,5 +1,6 @@
 import { Icon } from "@/components/icons";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { usePaneWidth, ResizeHandle, PaneToggle } from "@/components/pane-resize";
 import { Empty, Modal, renderMarkdown, useToast } from "@/components/ui";
 import {
   cancelOfficeClose, closeOfficeFile, copyOfficeFile, currentOfficeContent, filePath,
@@ -128,7 +129,7 @@ function Rendered({ file, content, editing }: { file: OfficeFile; content: Offic
   }
   const edit = (value: OfficeContent) => saveDraft(file.projectId, file.id, value);
   if (ext === "xlsx" && Array.isArray(content)) return <SheetPane blocks={content} editing={editing} onEdit={edit} />;
-  if (ext === "pptx" && Array.isArray(content)) return <SlidesPane blocks={content} editing={editing} onEdit={edit} />;
+  if (ext === "pptx" && Array.isArray(content)) return <SlidesPane scopeId={`${file.projectId}:${file.id}`} blocks={content} editing={editing} onEdit={edit} />;
   if (ext === "pdf" && Array.isArray(content)) return <PdfPane blocks={content} />;
   if (editing && ext === "docx") {
     const parts = officeContentText(content).split(/\n\s*\n/);
@@ -209,7 +210,9 @@ function SheetPane({ blocks, editing, onEdit }: { blocks: DocBlock[]; editing: b
   </div>;
 }
 
-function SlidesPane({ blocks, editing, onEdit }: { blocks: DocBlock[]; editing: boolean; onEdit: (content: OfficeContent) => void }) {
+function SlidesPane({ scopeId, blocks, editing, onEdit }: { scopeId: string; blocks: DocBlock[]; editing: boolean; onEdit: (content: OfficeContent) => void }) {
+  const layoutRef = useRef<HTMLDivElement>(null);
+  const thumbnails = usePaneWidth(`office:${scopeId}`, "thumbnails", { default: 124, min: 96, max: 220, side: "left", containerRef: layoutRef, minCenter: 240 });
   const blockIndex = blocks.findIndex(block => block.t === "slides");
   const slides = blocks[blockIndex] as Extract<DocBlock, { t: "slides" }> | undefined;
   const [cur, setCur] = useState(0);
@@ -220,8 +223,9 @@ function SlidesPane({ blocks, editing, onEdit }: { blocks: DocBlock[]; editing: 
     if (key === "title") block.pages[index].title = value; else block.pages[index].bullets = value.split("\n");
     onEdit(next);
   };
-  return <div className="office-presentation"><nav className="office-thumbnails" aria-label="幻灯片缩略图">{slides.pages.map((p, i) => <button key={i} className={`office-thumbnail ${i === index ? "selected" : ""}`} aria-label={`第${i + 1}页 ${p.title}`} aria-pressed={i === index} onClick={() => setCur(i)}><small>{i + 1}</small><b>{p.title}</b><span>{p.bullets.join("\n").slice(0, 48)}</span></button>)}</nav>
+  return <div className="office-presentation pane-container" ref={layoutRef} style={{ gridTemplateColumns: `${thumbnails.overlay ? 0 : thumbnails.width}px minmax(0,1fr)` }}><nav {...thumbnails.paneProps} className={`${thumbnails.paneProps.className} office-thumbnails`} style={thumbnails.style} aria-label="幻灯片缩略图"><ResizeHandle pane={thumbnails} label="幻灯片缩略图" />{slides.pages.map((p, i) => <button key={i} className={`office-thumbnail ${i === index ? "selected" : ""}`} aria-label={`第${i + 1}页 ${p.title}`} aria-pressed={i === index} onClick={() => setCur(i)}><small>{i + 1}</small><b>{p.title}</b><span>{p.bullets.join("\n").slice(0, 48)}</span></button>)}</nav>
     <div className="office-slide-area"><article className="office-slide office-paper" aria-label={`第 ${index + 1} 页`}>{editing ? <><label className="office-field"><span>本页标题</span><input className="input" value={page.title} onChange={event => update("title", event.target.value)} /></label><label className="office-field"><span>本页正文</span><textarea className="textarea" rows={8} value={page.bullets.join("\n")} onChange={event => update("bullets", event.target.value)} /></label></> : <><div className="office-slide-kicker">{index + 1} / {slides.pages.length} · 合成演示内容</div><h1>{page.title}</h1><p>{page.bullets.join("\n")}</p></>}</article><p className="office-format-note">逐页标题／正文可编辑；不承诺动画、母版或复杂布局保真。</p></div>
+    <div className="pane-controls"><PaneToggle pane={thumbnails} label="幻灯片缩略图" /></div>
   </div>;
 }
 

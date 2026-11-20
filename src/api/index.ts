@@ -47,6 +47,59 @@ export const setSetting = (key: string, value: string | null) => invoke<void>("s
 export const getTheme = () => invoke<string>("get_theme");
 export const setThemeCmd = (theme: string) => invoke<void>("set_theme", { theme });
 
+// ---------- 软件更新（CR-046） ----------
+
+export interface UpdateAsset {
+  url: string;
+  mirrors: string[];
+  sha256: string;
+  size: number;
+}
+
+export interface UpdateManifest {
+  version: string;
+  notes: string;
+  pub_date: string;
+  installer?: UpdateAsset | null;
+  portable?: UpdateAsset | null;
+}
+
+export type UpdateKind = "installed" | "portable" | "unsupported";
+
+export interface UpdateEnvironment {
+  kind: UpdateKind;
+  current_version: string;
+  exe_path: string;
+  updatable: boolean;
+}
+
+export interface UpdateCheckResult {
+  current_version: string;
+  update_available: boolean;
+  manifest: UpdateManifest | null;
+  asset: UpdateAsset | null;
+  message: string;
+}
+
+export interface UpdateStatus {
+  phase: "idle" | "downloading" | "verifying" | "ready" | "applying" | "unsupported" | string;
+  done: number;
+  total: number;
+  speed: number;
+  message: string;
+  staged_file: string | null;
+  kind: UpdateKind | string;
+  version: string | null;
+}
+
+export const updateEnvironment = () => invoke<UpdateEnvironment>("update_environment");
+export const updateCheck = () => invoke<UpdateCheckResult>("update_check");
+export const updateDownload = (expectedVersion: string, expectedSha256: string) =>
+  invoke<string>("update_download", { expectedVersion, expectedSha256 });
+export const updateStatus = () => invoke<UpdateStatus>("update_status");
+export const updateApply = (expectedSha256: string | null) =>
+  invoke<void>("update_apply", { expectedSha256 });
+
 // ---------- 项目 ----------
 
 export interface Project {
@@ -78,6 +131,19 @@ export const updateProject = (id: string, name: string, rootUri?: string) =>
 export const pickProjectDirectory = () => invoke<string | null>("pick_project_directory");
 export const readRequirements = (projectId: string) =>
   invoke<RequirementNode[]>("read_requirements", { projectId });
+export interface RequirementSource {
+  sourceUri: string;
+  node: RequirementNode | null;
+  error: string | null;
+  warning: string | null;
+}
+export interface RequirementSources {
+  rootUri: string;
+  sources: RequirementSource[];
+  warnings: string[];
+}
+export const readRequirementSources = (projectId: string) => invoke<RequirementSources>("read_requirement_sources", { projectId });
+
 export const readDoc = (sourceUri: string) => invoke<string>("read_doc", { sourceUri });
 export const writeDoc = (sourceUri: string, content: string) => invoke<void>("write_doc", { sourceUri, content });
 /** 在 app_data 下确保子目录存在并返回规范绝对路径（办公演示项目容器目录用） */
@@ -384,6 +450,12 @@ export interface SessionMeta {
   createdAt: number;
   updatedAt: number;
   messageCount: number;
+  /** CR-047：执行会话绑定唯一特性；普通会话为空。 */
+  featureId?: string | null;
+  featureTitle?: string | null;
+  featureSourceHash?: string | null;
+  /** ordinary（普通聊天）| executor（单特性执行会话）。 */
+  sessionRole?: "ordinary" | "executor";
 }
 
 export interface ChatMessage {
@@ -432,6 +504,8 @@ export const chatSessionCreate = (args: {
   providerId?: string;
   modelId?: string;
   effort?: string;
+  /** CR-047：显式绑定执行特性；绑定后不可更改。 */
+  featureId?: string;
 }) => invoke<SessionMeta>("chat_session_create", args);
 export const chatSessionGet = (id: string) => invoke<SessionMeta>("chat_session_get", { id });
 export const chatSessionUpdate = (args: {
@@ -560,6 +634,32 @@ export interface NoteContent {
   title: string;
   relativeUri: string;
   content: string;
+  hash?: string;
+  indexError?: string;
+}
+
+export interface KnowledgeFileInfo {
+  noteId: string;
+  title: string;
+  relativeUri: string;
+  sizeBytes: number;
+  modifiedAt?: number;
+  kind: "markdown" | "text" | "image" | "pdf" | "attachment";
+  mime: string;
+  previewSupported: boolean;
+  editable: boolean;
+  hash?: string;
+}
+
+export interface KnowledgeFileData {
+  info: KnowledgeFileInfo;
+  text?: string;
+  base64?: string;
+}
+
+export interface KnowledgeUploadResult {
+  cancelled: boolean;
+  items: { name: string; success: boolean; noteId?: string; relativeUri?: string; error?: string; indexError?: string }[];
 }
 
 export interface KnowledgeHit {
@@ -584,6 +684,18 @@ export const kbDelete = (id: string) => invoke<void>("kb_delete", { id });
 export const kbScan = (id: string) => invoke<number>("kb_scan", { id });
 export const kbTree = (id: string) => invoke<NoteNode[]>("kb_tree", { id });
 export const kbRead = (libId: string, noteId: string) => invoke<NoteContent>("kb_read", { libId, noteId });
+export const kbCreateFolder = (id: string, parentRelativeUri: string, name: string) =>
+  invoke<NoteNode>("kb_create_folder", { id, parentRelativeUri, name });
+export const kbCreateMarkdown = (id: string, parentRelativeUri: string, name: string, content: string) =>
+  invoke<NoteContent>("kb_create_markdown", { id, parentRelativeUri, name, content });
+export const kbSaveMarkdown = (id: string, noteId: string, expectedHash: string, content: string) =>
+  invoke<NoteContent>("kb_save_markdown", { id, noteId, expectedHash, content });
+export const kbUploadFiles = (id: string, parentRelativeUri: string) =>
+  invoke<KnowledgeUploadResult>("kb_upload_files", { id, parentRelativeUri });
+export const kbFileInfo = (id: string, noteId: string) => invoke<KnowledgeFileInfo>("kb_file_info", { id, noteId });
+export const kbReadFile = (id: string, noteId: string) => invoke<KnowledgeFileData>("kb_read_file", { id, noteId });
+export const kbExportFile = (id: string, noteId: string) =>
+  invoke<{ cancelled: boolean; exported: boolean }>("kb_export_file", { id, noteId });
 export const kbSearch = (libIds: string[], query: string) => invoke<KnowledgeHit[]>("kb_search", { libIds, query });
 export const kbGrants = (projectId?: string) => invoke<LibraryGrant[]>("kb_grants", { projectId: projectId ?? null });
 export const kbGrantSet = (projectId: string, libraryId: string, readAllowed: boolean) =>

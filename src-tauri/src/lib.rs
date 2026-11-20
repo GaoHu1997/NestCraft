@@ -9,6 +9,7 @@ pub mod commands;
 pub mod db;
 pub mod models;
 pub mod ssh;
+pub mod updater;
 pub mod util;
 
 use tauri::Manager;
@@ -39,6 +40,8 @@ pub fn run() {
                 let _ = std::fs::remove_file(dir.join("workbench-smoke.db-wal"));
             }
             db::init(&dir.join(db_file))?;
+            // CR-046：清理上次更新留下的旧版程序与未完成下载；保留已就绪的暂存包。
+            updater::cleanup(app.handle());
             commands::sdk::seed_sdk_rows_pub()?;
             if smoke {
                 use tauri::Manager;
@@ -95,6 +98,7 @@ pub fn run() {
             commands::projects::update_project,
             commands::projects::delete_project,
             commands::projects::read_requirements,
+            commands::projects::read_requirement_sources,
             commands::projects::read_doc,
             commands::projects::write_doc,
             // 文件系统（编码区）
@@ -185,10 +189,24 @@ pub fn run() {
             commands::knowledge::kb_scan,
             commands::knowledge::kb_tree,
             commands::knowledge::kb_read,
+            // CR-045：本人知识文件管理；不加入 AI 写入网关
+            commands::knowledge::kb_create_folder,
+            commands::knowledge::kb_create_markdown,
+            commands::knowledge::kb_save_markdown,
+            commands::knowledge::kb_upload_files,
+            commands::knowledge::kb_file_info,
+            commands::knowledge::kb_read_file,
+            commands::knowledge::kb_export_file,
             commands::knowledge::kb_search,
             commands::knowledge::kb_grants,
             commands::knowledge::kb_grant_set,
             commands::knowledge::kb_gateway,
+            // CR-046：右上角软件更新入口
+            commands::updater::update_environment,
+            commands::updater::update_check,
+            commands::updater::update_download,
+            commands::updater::update_status,
+            commands::updater::update_apply,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

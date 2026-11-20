@@ -1,0 +1,130 @@
+/* CR-046：标题栏右上角软件更新徽标。
+   状态：available 绿色「更新」→ downloading 沿边框生长进度 → ready 橙色「重启」→ applying 橙色加载。
+   hidden 时按钮不渲染、不占位。原型只演示状态，不联网、不替换程序。 */
+
+.topbar .update-badge {
+  width: 54px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+
+.topbar .update-badge:hover { background: transparent; }
+
+.topbar .update-badge:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.update-badge .ub {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 54px;
+  height: 22px;
+  border-radius: 6px;
+  box-sizing: border-box;
+  transition: background-color .18s var(--ease);
+}
+
+.update-badge .ub-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.update-badge .ub-track,
+.update-badge .ub-bar {
+  fill: none;
+  stroke-width: 1;
+}
+
+.update-badge .ub-bar { display: none; }
+
+.update-badge .ub-lb {
+  position: relative;
+  z-index: 1;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: .25px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 有可用更新：绿色文字 + 细描边。 */
+.update-badge[data-phase="available"] .ub { background: rgba(26, 157, 90, .10); }
+.update-badge[data-phase="available"] .ub-track { stroke: rgba(26, 157, 90, .34); }
+.update-badge[data-phase="available"] .ub-lb { color: var(--success); }
+
+/* 下载中：边框加粗，进度自顶部中点顺时针生长。 */
+.update-badge[data-phase="downloading"] .ub { background: rgba(26, 157, 90, .055); }
+.update-badge[data-phase="downloading"] .ub-track { stroke: rgba(26, 157, 90, .16); stroke-width: 2.5; }
+.update-badge[data-phase="downloading"] .ub-bar {
+  display: block;
+  stroke: var(--success);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+.update-badge[data-phase="downloading"] .ub-lb { color: var(--success); }
+
+/* 就绪与安装中：橙色「重启」。 */
+.update-badge[data-phase="ready"] .ub,
+.update-badge[data-phase="applying"] .ub { background: rgba(183, 106, 0, .11); }
+.update-badge[data-phase="ready"] .ub-track,
+.update-badge[data-phase="applying"] .ub-track { stroke: rgba(183, 106, 0, .46); stroke-width: 1.2; }
+.update-badge[data-phase="ready"] .ub-lb { color: var(--warning); }
+
+/* 下载与安装期间的按钮内部遮罩：不改变胶囊尺寸，也不盖住边框进度。 */
+.update-badge .ub-loading {
+  position: absolute;
+  inset: 3px;
+  z-index: 2;
+  display: none;
+  place-items: center;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  pointer-events: none;
+}
+
+.update-badge[aria-busy="true"] .ub-loading { display: grid; }
+.update-badge[aria-busy="true"] .ub-lb { opacity: 0; }
+
+.update-badge .ub-spinner {
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: ub-spin .8s linear infinite;
+}
+
+.update-badge[data-phase="downloading"] .ub-loading { color: var(--success); }
+.update-badge[data-phase="applying"] .ub-loading { color: var(--warning); }
+
+.update-badge:active .ub { transform: translateY(.5px); }
+.update-badge:disabled { cursor: wait; opacity: 1; }
+
+/* 深色主题：保持同一语义，仅提高底色对比。 */
+html[data-theme="dark"] .update-badge[data-phase="available"] .ub { background: rgba(76, 203, 131, .14); }
+html[data-theme="dark"] .update-badge[data-phase="available"] .ub-track { stroke: rgba(76, 203, 131, .42); }
+html[data-theme="dark"] .update-badge[data-phase="downloading"] .ub { background: rgba(76, 203, 131, .08); }
+html[data-theme="dark"] .update-badge[data-phase="downloading"] .ub-track { stroke: rgba(76, 203, 131, .22); }
+html[data-theme="dark"] .update-badge[data-phase="ready"] .ub,
+html[data-theme="dark"] .update-badge[data-phase="applying"] .ub { background: rgba(224, 160, 74, .15); }
+html[data-theme="dark"] .update-badge[data-phase="ready"] .ub-track,
+html[data-theme="dark"] .update-badge[data-phase="applying"] .ub-track { stroke: rgba(224, 160, 74, .5); }
+
+@media (prefers-reduced-motion: reduce) {
+  .update-badge .ub-spinner { animation: none; }
+}
+
+@keyframes ub-spin { to { transform: rotate(360deg); } }

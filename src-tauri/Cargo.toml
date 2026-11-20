@@ -1,6 +1,6 @@
 [package]
 name = "agent-workbench"
-version = "0.1.0"
+version = "0.0.1"
 description = "个人 Agent 工作台"
 authors = ["Agent Workbench"]
 edition = "2021"
@@ -29,6 +29,7 @@ russh-sftp = "2"
 base64 = "0.22"
 encoding_rs = "0.8"
 ureq = { version = "2", features = ["json"] }
+sha2 = "0.10"
 async-trait = "0.1"
 
 [profile.dev]

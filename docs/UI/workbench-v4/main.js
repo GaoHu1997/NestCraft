@@ -44,6 +44,35 @@
     theme: () => setTheme(store.theme === "dark" ? "light" : "dark"),
     "set-theme": el => setTheme(el.dataset.theme),
     notify: () => toast("2 条通知：RUN-2084 验证失败 · STORY-0201 阻塞", "bell"),
+    // CR-046：更新徽标演示。available → 下载进度 → ready → applying；只改内存状态，不联网、不重启浏览器。
+    update: () => {
+      if (store.updatePhase === "available") {
+        store.updatePhase = "downloading";
+        store.updateProgress = 0;
+        if (store.updateTimer) clearInterval(store.updateTimer);
+        store.updateTimer = setInterval(() => {
+          store.updateProgress = Math.min(100, (store.updateProgress || 0) + 7);
+          if (store.updateProgress >= 100) {
+            clearInterval(store.updateTimer);
+            store.updateTimer = null;
+            store.updatePhase = "ready";
+            store.updateProgress = 100;
+            toast("更新包已下载并通过 SHA-256 校验（仿真）", "download");
+          }
+          render();
+        }, 180);
+        render();
+        toast("开始下载更新 v" + store.updateVersion + "（仿真）", "download");
+      } else if (store.updatePhase === "ready") {
+        store.updatePhase = "applying";
+        render();
+        setTimeout(() => {
+          store.updatePhase = "ready";
+          render();
+          toast("已模拟重启并安装更新；安装版运行安装包，免安装版替换程序后重新启动（原型不重启浏览器）", "info");
+        }, 1200);
+      }
+    },
     "search-focus": () => openSearch(),
     "user-menu": () => openSettings("general"),
 
@@ -586,6 +615,7 @@
   /* ---------------- 拖动 AI 宽度 ---------------- */
   let resizing = false;
   document.addEventListener("mousedown", e => {
+    if (window.PaneResize) return;
     const handle = e.target.closest("[data-act=ai-resize]");
     if (!handle) return;
     resizing = true; e.preventDefault();

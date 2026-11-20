@@ -1,4 +1,5 @@
 import { Icon } from "@/components/icons";
+import { usePaneWidth, ResizeHandle, PaneToggle } from "@/components/pane-resize";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { serverList, serverConnect, serverTree, serverReadFile, serverExec, serverExecApproved, serverExecReject, type FileNode, type ServerHost, type ExecResult } from "@/api";
 import { useToast, Empty, Modal, Confirm } from "@/components/ui";
@@ -294,13 +295,9 @@ export function Workbench({ hostId, visible = true }: { hostId: string; visible?
   visibleRef.current = visible;
   const loadSeq = useRef(0);
   const connectBusy = useRef(false);
-  const [width, setWidth] = useState(() => window.innerWidth);
-  useEffect(() => {
-    if (!visible) return;
-    const resize = () => setWidth(window.innerWidth);
-    resize(); window.addEventListener("resize", resize);
-    return () => window.removeEventListener("resize", resize);
-  }, [visible]);
+  const layoutRef = useRef<HTMLDivElement>(null);
+  const files = usePaneWidth(`server:${hostId}`, "files", { default: 248, min: 180, max: 480, side: "left", containerRef: layoutRef, minCenter: 320, disabled: !visible });
+  const monitor = usePaneWidth(`server:${hostId}`, "monitor", { default: 300, min: 220, max: 440, side: "right", containerRef: layoutRef, reserve: files.overlay ? 0 : files.width, minCenter: 320, disabled: !visible });
 
   const reload = useCallback(async () => {
     if (!visibleRef.current) return;
@@ -372,8 +369,11 @@ export function Workbench({ hostId, visible = true }: { hostId: string; visible?
   const connected = host.connected;
 
   return (
-    <div className="wb-root">
-      <FileTree hostId={hostId} connected={connected} visible={visible && width > 720} />
+    <div className="wb-root pane-container" ref={layoutRef} style={{ gridTemplateColumns: `${files.overlay ? 0 : files.width}px minmax(0,1fr) ${monitor.overlay ? 0 : monitor.width}px` }}>
+      <aside {...files.paneProps} className={`${files.paneProps.className} wb-file-pane`} style={files.style}>
+        <FileTree hostId={hostId} connected={connected} visible={visible && files.visible} />
+        <ResizeHandle pane={files} label="服务器文件" />
+      </aside>
 
       <div className="wb-center">
         <div className="wb-term-strip">
@@ -399,7 +399,11 @@ export function Workbench({ hostId, visible = true }: { hostId: string; visible?
         <ControlledCommandPanel key={hostId} hostId={hostId} connected={connected} visible={visible} />
       </div>
 
-      <MonitorPane hostId={hostId} hostName={host.name} address={`${host.host}:${host.port}`} connected={connected} visible={visible && width > 1180} />
+      <aside {...monitor.paneProps} className={`${monitor.paneProps.className} wb-monitor-pane`} style={monitor.style}>
+        <MonitorPane hostId={hostId} hostName={host.name} address={`${host.host}:${host.port}`} connected={connected} visible={visible && monitor.visible} />
+        <ResizeHandle pane={monitor} label="服务器监控" />
+      </aside>
+      <div className="pane-controls"><PaneToggle pane={files} label="服务器文件" /><PaneToggle pane={monitor} label="服务器监控" /></div>
     </div>
   );
 }

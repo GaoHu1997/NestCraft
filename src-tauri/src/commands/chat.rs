@@ -79,6 +79,58 @@ fn spawn_cmd(cmd: &mut Command) {
     }
 }
 
+#[derive(Default, Debug)]
+struct FeatureBinding {
+    feature_id: Option<String>,
+    feature_title: Option<String>,
+    feature_source_hash: Option<String>,
+}
+
+/// CR-047：执行会话必须绑定本项目中可解析的唯一Feature；普通会话保持无Feature。
+fn resolve_execution_feature(conn: &rusqlite::Connection, project_id: Option<&str>, feature_id: Option<&str>) -> Result<FeatureBinding, String> {
+    let feature_id = feature_id.map(str::trim).filter(|value| !value.is_empty());
+    let Some(feature_id) = feature_id else { return Ok(FeatureBinding::default()); };
+    let project_id = project_id.ok_or("执行会话必须指定所属项目")?;
+    let (kind, parent, title, hash): (String, Option<String>, String, String) = conn.query_row(
+        "SELECT type, parentId, title, contentHash FROM requirement_index WHERE projectId=?1 AND entityId=?2",
+        rusqlite::params![project_id, feature_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    ).map_err(|_| format!("执行特性 {feature_id} 不存在或不属于该项目"))?;
+    if kind != "feature" { return Err(format!("{feature_id} 不是特性（Feature），不能创建执行会话")); }
+    let parent = parent.ok_or_else(|| format!("特性 {feature_id} 缺少所属Epic；源关系不完整，不能创建执行会话"))?;
+    let parent_kind: String = conn.query_row(
+        "SELECT type FROM requirement_index WHERE projectId=?1 AND entityId=?2",
+        rusqlite::params![project_id, parent],
+        |row| row.get(0),
+    ).map_err(|_| format!("特性 {feature_id} 的父项 {parent} 不在本项目源索引中"))?;
+    if parent_kind != "epic" { return Err(format!("特性 {feature_id} 的父项 {parent} 不是Epic；源关系异常，不能创建执行会话")); }
+    Ok(FeatureBinding { feature_id: Some(feature_id.to_string()), feature_title: Some(title), feature_source_hash: Some(hash) })
+}
+
+fn session_row(row: &rusqlite::Row) -> rusqlite::Result<SessionMeta> {
+    Ok(SessionMeta {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        server_id: row.get(2)?,
+        title: row.get(3)?,
+        cli_id: row.get(4)?,
+        provider_id: row.get(5)?,
+        model_id: row.get(6)?,
+        effort: row.get(7)?,
+        draft: row.get(8)?,
+        unread: row.get(9)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
+        message_count: row.get(12)?,
+        feature_id: row.get(13)?,
+        feature_title: row.get(14)?,
+        feature_source_hash: row.get(15)?,
+        session_role: row.get::<_, Option<String>>(16)?.unwrap_or_else(|| "ordinary".into()),
+    })
+}
+
+const SESSION_COLUMNS: &str = "s.id, s.projectId, s.serverId, s.title, s.cliId, s.providerId, s.modelId, s.effort, s.draft, s.unread, s.createdAt, s.updatedAt, (SELECT COUNT(*) FROM message m WHERE m.sessionId = s.id) AS cnt, s.featureId, s.featureTitle, s.featureSourceHash, s.sessionRole";
+
 // ---------- 会话 CRUD ----------
 
 #[tauri::command]
@@ -86,36 +138,15 @@ pub fn chat_sessions(project_id: Option<String>) -> Result<Vec<SessionMeta>, Str
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
     let sql = format!(
-        "SELECT s.id, s.projectId, s.serverId, s.title, s.cliId, s.providerId, s.modelId, s.effort, s.draft, s.unread, s.createdAt, s.updatedAt,
-                (SELECT COUNT(*) FROM message m WHERE m.sessionId = s.id) AS cnt
-         FROM session s {} ORDER BY s.updatedAt DESC",
-        match &project_id {
-            Some(_) => "WHERE s.projectId = ?1",
-            None => "",
-        }
+        "SELECT {} FROM session s {} ORDER BY s.updatedAt DESC",
+        SESSION_COLUMNS,
+        match &project_id { Some(_) => "WHERE s.projectId = ?1", None => "" }
     );
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-    let map = |r: &rusqlite::Row| -> rusqlite::Result<SessionMeta> {
-        Ok(SessionMeta {
-            cli_id: r.get(4)?,
-            created_at: r.get(10)?,
-            draft: r.get(8)?,
-            effort: r.get(7)?,
-            id: r.get(0)?,
-            message_count: r.get(12)?,
-            model_id: r.get(6)?,
-            project_id: r.get(1)?,
-            provider_id: r.get(5)?,
-            server_id: r.get(2)?,
-            title: r.get(3)?,
-            unread: r.get(9)?,
-            updated_at: r.get(11)?,
-        })
-    };
     let rows = if let Some(pid) = &project_id {
-        stmt.query_map([pid], map).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect()
+        stmt.query_map([pid], session_row).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect()
     } else {
-        stmt.query_map([], map).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect()
+        stmt.query_map([], session_row).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect()
     };
     Ok(rows)
 }
@@ -128,16 +159,23 @@ pub fn chat_session_create(
     provider_id: Option<String>,
     model_id: Option<String>,
     effort: Option<String>,
+    feature_id: Option<String>,
 ) -> Result<SessionMeta, String> {
     let id = new_id("sess");
     let now = now_ms();
     {
         let guard = db::conn()?;
         let conn = guard.as_ref().ok_or("db not initialized")?;
+        let binding = resolve_execution_feature(conn, project_id.as_deref(), feature_id.as_deref())?;
+        let role = if binding.feature_id.is_some() { "executor" } else { "ordinary" };
+        let title = binding.feature_id.as_ref().map(|id| match &binding.feature_title {
+            Some(name) => format!("执行 {id} · {name}"),
+            None => format!("执行 {id}"),
+        }).unwrap_or_else(|| "新会话".into());
         conn.execute(
-            "INSERT INTO session (id, projectId, serverId, title, cliId, providerId, modelId, effort, draft, createdAt, updatedAt)
-             VALUES (?1,?2,?3,'新会话',?4,?5,?6,?7,'',?8,?8)",
-            rusqlite::params![id, project_id, server_id, cli_id, provider_id, model_id, effort, now],
+            "INSERT INTO session (id, projectId, serverId, title, cliId, providerId, modelId, effort, draft, createdAt, updatedAt, featureId, featureTitle, featureSourceHash, sessionRole)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'',?9,?9,?10,?11,?12,?13)",
+            rusqlite::params![id, project_id, server_id, title, cli_id, provider_id, model_id, effort, now, binding.feature_id, binding.feature_title, binding.feature_source_hash, role],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -149,27 +187,9 @@ pub fn chat_session_get(id: String) -> Result<SessionMeta, String> {
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
     conn.query_row(
-        "SELECT s.id, s.projectId, s.serverId, s.title, s.cliId, s.providerId, s.modelId, s.effort, s.draft, s.unread, s.createdAt, s.updatedAt,
-                (SELECT COUNT(*) FROM message m WHERE m.sessionId = s.id) AS cnt
-         FROM session s WHERE s.id=?1",
+        &format!("SELECT {} FROM session s WHERE s.id=?1", SESSION_COLUMNS),
         [&id],
-        |r| {
-            Ok(SessionMeta {
-                cli_id: r.get(4)?,
-                created_at: r.get(10)?,
-                draft: r.get(8)?,
-                effort: r.get(7)?,
-                id: r.get(0)?,
-                message_count: r.get(12)?,
-                model_id: r.get(6)?,
-                project_id: r.get(1)?,
-                provider_id: r.get(5)?,
-                server_id: r.get(2)?,
-                title: r.get(3)?,
-                unread: r.get(9)?,
-                updated_at: r.get(11)?,
-            })
-        },
+        session_row,
     )
     .map_err(|e| e.to_string())
 }
@@ -195,6 +215,7 @@ pub fn chat_session_update(
         return Err("会话运行中或有待审操作，禁止修改执行配置".into());
     }
     // COALESCE：None 表示保持原值；draft 传空串即清空
+    // CR-047：featureId/featureTitle/featureSourceHash/sessionRole 不在更新白名单内，绑定不可改。
     conn.execute(
         "UPDATE session SET
             updatedAt = ?2,
@@ -289,6 +310,19 @@ pub async fn chat_send(
         }
         None => None,
     };
+
+    // CR-047：执行会话发送前复检Feature仍属于本项目且绑定未被篡改；源变更只提示，不静默换归属。
+    if let Some(feature_id) = session.feature_id.as_deref() {
+        let guard = db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        let current = resolve_execution_feature(conn, session.project_id.as_deref(), Some(feature_id))?;
+        if current.feature_id.as_deref() != Some(feature_id) {
+            return Err("执行会话的Feature绑定不一致，拒绝发送".into());
+        }
+        if current.feature_source_hash != session.feature_source_hash {
+            return Err(format!("特性 {feature_id} 的源已变化；请重新预检后再创建或绑定执行会话，未按旧范围发送"));
+        }
+    }
 
     // CLI 已安装校验
     let installed: Option<String> = {
@@ -1064,6 +1098,40 @@ mod tests {
     fn entry(id: &str) -> RunningEntry {
         let (abort, _) = watch::channel(false);
         RunningEntry { turn_id: id.into(), abort }
+    }
+
+    /// CR-047：执行会话只接受本项目、父项为Epic的Feature；普通会话不绑定。
+    fn feature_fixture() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE requirement_index(projectId TEXT, entityId TEXT, type TEXT, parentId TEXT, title TEXT, contentHash TEXT);
+             INSERT INTO requirement_index VALUES
+               ('p1','EPIC-01','epic',NULL,'史诗','h-e'),
+               ('p1','FEAT-011','feature','EPIC-01','预约主流程','h-f'),
+               ('p1','STORY-0101','story','FEAT-011','故事','h-s'),
+               ('p1','FEAT-ORPHAN','feature',NULL,'孤立特性','h-o')
+             ;",
+        ).unwrap();
+        conn
+    }
+
+    #[test]
+    fn execution_feature_accepts_only_project_feature_with_epic_parent() {
+        let conn = feature_fixture();
+        assert!(resolve_execution_feature(&conn, None, None).unwrap().feature_id.is_none());
+        let ok = resolve_execution_feature(&conn, Some("p1"), Some("FEAT-011")).unwrap();
+        assert_eq!(ok.feature_id.as_deref(), Some("FEAT-011"));
+        assert_eq!(ok.feature_title.as_deref(), Some("预约主流程"));
+        assert_eq!(ok.feature_source_hash.as_deref(), Some("h-f"));
+    }
+
+    #[test]
+    fn execution_feature_rejects_non_feature_missing_project_and_broken_parent() {        let conn = feature_fixture();
+        assert!(resolve_execution_feature(&conn, Some("p1"), Some("STORY-0101")).unwrap_err().contains("不是特性"));
+        assert!(resolve_execution_feature(&conn, Some("p1"), Some("EPIC-01")).unwrap_err().contains("不是特性"));
+        assert!(resolve_execution_feature(&conn, None, Some("FEAT-011")).unwrap_err().contains("必须指定所属项目"));
+        assert!(resolve_execution_feature(&conn, Some("p2"), Some("FEAT-011")).unwrap_err().contains("不属于该项目"));
+        assert!(resolve_execution_feature(&conn, Some("p1"), Some("FEAT-ORPHAN")).unwrap_err().contains("缺少所属Epic"));
     }
 
     #[test]

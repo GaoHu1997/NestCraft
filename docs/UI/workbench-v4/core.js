@@ -181,8 +181,18 @@ window.UI = (function () {
   }
 
   /* ---------------- 状态 ---------------- */
+  // CR-046：更新徽标的设计演示状态。URL 参数 update=hidden|available|downloading|ready|applying 便于逐状态截图；
+  // 缺省 available 让打开唯一入口即可看到「更新」入口并点按演示；显式 update=hidden 表示无可用更新、不占位。
+  // 原型只仿真状态变化，不联网、不替换程序。
+  const updateParam = new URLSearchParams(window.location.search).get("update");
+  const themeParam = new URLSearchParams(window.location.search).get("theme");
+  const updatePhaseList = ["available", "downloading", "ready", "applying"];
   const store = {
-    theme: localStorage.getItem("wb4-theme") || "light",
+    theme: ["light", "dark"].includes(themeParam) ? themeParam : (localStorage.getItem("wb4-theme") || "light"),
+    updatePhase: updateParam === "hidden" ? "hidden" : updatePhaseList.includes(updateParam) ? updateParam : "available",
+    updateProgress: updateParam === "downloading" ? 42 : updateParam === "ready" ? 100 : 0,
+    updateVersion: "0.2.0",
+    updateTimer: null,
     windows: [{ id: "home", kind: "home", viewStates: {} }],
     windowState: "normal",
     active: "home",
@@ -390,6 +400,40 @@ window.UI = (function () {
     const active = store.active === "home" && store.homePage === page;
     return `<button class="nav-item ${active ? "active" : ""}" data-act="nav" data-page="${page}">${icon(iconName)}<span class="label">${label}</span>${count != null && count !== "" ? `<span class="count">${count}</span>` : ""}</button>`;
   }
+  /* ---------------- 更新徽标（CR-046） ---------------- */
+  // 纯文字胶囊：更新 = 绿色，重启 = 橙色；下载中沿圆角边框生长进度，进度值来自 store.updateProgress。
+  const UB = { w: 54, h: 22, pad: 1.4, radius: 5 };
+  function updateRingPath() {
+    const { w, h, pad, radius: r } = UB;
+    const x0 = pad, y0 = pad, x1 = w - pad, y1 = h - pad, mid = (x0 + x1) / 2;
+    return `M ${mid} ${y0} H ${x1 - r} A ${r} ${r} 0 0 1 ${x1} ${y0 + r} V ${y1 - r} A ${r} ${r} 0 0 1 ${x1 - r} ${y1} H ${x0 + r} A ${r} ${r} 0 0 1 ${x0} ${y1 - r} V ${y0 + r} A ${r} ${r} 0 0 1 ${x0 + r} ${y0} H ${mid}`;
+  }
+  function updateRingPerimeter() {
+    const { w, h, pad, radius: r } = UB;
+    return 2 * (w - 2 * pad - 2 * r) + 2 * (h - 2 * pad - 2 * r) + 2 * Math.PI * r;
+  }
+  function updateBadge() {
+    const phase = store.updatePhase;
+    if (phase === "hidden") return "";
+    const restart = phase === "ready" || phase === "applying";
+    const busy = phase === "downloading" || phase === "applying";
+    const pct = Math.max(0, Math.min(100, store.updateProgress || 0));
+    const perimeter = updateRingPerimeter();
+    const label = restart ? "重启" : "更新";
+    const title = phase === "available" ? `发现新版本 v${store.updateVersion}，点击下载`
+      : phase === "downloading" ? `正在下载更新 ${Math.round(pct)}%`
+      : phase === "ready" ? "更新已下载并通过校验，点击重启并安装"
+      : "正在重启并安装更新…";
+    const aria = phase === "available" ? `发现新版本 v${store.updateVersion}，点击下载更新`
+      : phase === "downloading" ? "正在下载更新"
+      : phase === "ready" ? "更新已就绪，点击重启并安装"
+      : "正在重启并安装更新";
+    return `<button class="update-badge" data-act="update" data-phase="${phase}" title="${esc(title)}" aria-label="${esc(aria)}"${busy ? ' disabled aria-busy="true"' : ""}>
+      <span class="ub"><svg class="ub-frame" viewBox="0 0 ${UB.w} ${UB.h}" aria-hidden="true"><path class="ub-track" d="${updateRingPath()}"/><path class="ub-bar" d="${updateRingPath()}" style="stroke-dasharray:${perimeter.toFixed(2)};stroke-dashoffset:${(perimeter * (1 - pct / 100)).toFixed(2)}"/></svg>
+      <span class="ub-lb">${label}</span><span class="ub-loading" aria-hidden="true"><span class="ub-spinner"></span></span></span>
+    </button>`;
+  }
+
   function topbar() {
     const dark = store.theme === "dark";
     return `<header class="topbar" data-window-state="${esc(store.windowState)}">
@@ -400,7 +444,7 @@ window.UI = (function () {
       <div class="top-context"><span class="chip-workspace">${icon("grid", "ico-14")} 个人工作台</span><span class="muted">/</span><span>${esc(topContext())}</span></div>
       <div class="top-spacer window-drag-guide" data-act="window-drag-guide" title="窗口拖动热区（浏览器原型只展示引导；双击模拟最大化／还原）" aria-label="窗口拖动热区"><span>拖动窗口 · 仿真</span></div>
       <div class="top-actions">
-        <button class="searchbox" data-act="search-focus">${icon("search", "ico-14")}<span>搜索项目、需求、文档</span><kbd>Ctrl K</kbd></button>
+        ${updateBadge()}
         <button class="icon-btn" data-act="theme" title="切换主题">${icon(dark ? "sun" : "moon")}</button>
         <button class="icon-btn" data-act="notify" title="通知">${icon("bell")}</button>
         <button class="avatar" data-act="open-settings" title="${esc(D.user.name)}">${esc(D.user.initials)}</button>
@@ -465,6 +509,7 @@ window.UI = (function () {
     dlg.className = (cls && cls.trim()) || (marker && marker[1]) || "";
     dlg.innerHTML = html;
     if (typeof dlg.showModal === "function") { if (!dlg.open) dlg.showModal(); } else dlg.setAttribute("open", "");
+    if (window.PaneResize) window.PaneResize.afterRender();
   }
   function closeDialog() { const dlg = $("#dialog"); if (dlg.open) dlg.close(); else dlg.removeAttribute("open"); dlg.innerHTML = ""; store.reqMenu = null; }
   function openSubDialog(html, cls) {
@@ -511,6 +556,7 @@ window.UI = (function () {
     renderedWindowId = win.id; restoreView = false;
     captureView(win, false);
     if (focusId) { const el = document.getElementById(focusId); if (el) { el.focus(); try { if (selStart != null) el.setSelectionRange(selStart, selStart); } catch (e) { /* noop */ } } }
+    if (window.PaneResize) window.PaneResize.afterRender();
     if (window.AIPanel && window.AIPanel.afterRender) window.AIPanel.afterRender();
     const oldMenu = document.getElementById("req-menu");
     if (oldMenu) oldMenu.remove();

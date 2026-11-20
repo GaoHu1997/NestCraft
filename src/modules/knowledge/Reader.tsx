@@ -1,35 +1,22 @@
 import { Icon } from "@/components/icons";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import * as api from "@/api";
-import type { KnowledgeHit, KnowledgeLibrary, NoteContent, NoteNode, Project } from "@/api";
-import { Empty, Modal, renderMarkdown, useToast } from "@/components/ui";
+import type { KnowledgeFileData, KnowledgeFileInfo, KnowledgeHit, KnowledgeLibrary, NoteNode, Project } from "@/api";
+import { Empty, Modal } from "@/components/ui";
+import { PaneClose, PaneToggle, ResizeHandle, usePaneWidth } from "@/components/pane-resize";
 import { useApp } from "@/store/app";
 import { GrantDialog } from "./KnowledgeHome";
 import { TocPanel, type TocEntry } from "./TocPanel";
+import { acceptSavedMarkdown, checkFileIdentity, dirty, errorText, expandParents, fileType, findNode, flattenTree, isConflict, isMarkdown, knowledgeSession, markdownName, nameError, nextDraftKey, parentOf, pathTaken, readableKind, renderKnowledgeMarkdown, safeImageSource, type KnowledgeDraft } from "./knowledgeWorkspace";
 import "./knowledge.css";
+import "./knowledge-cr045.css";
 
-const lastNoteByLib = new Map<string, string>();
-function errText(e: unknown): string { return e instanceof Error ? e.message : String(e); }
-function firstFile(nodes: NoteNode[]): NoteNode | null {
-  for (const n of nodes) { if (!n.isDir) return n; const hit = firstFile(n.children); if (hit) return hit; }
-  return null;
-}
-function findFile(nodes: NoteNode[], id: string): NoteNode | null {
-  for (const n of nodes) { if (!n.isDir && n.noteId === id) return n; const hit = findFile(n.children, id); if (hit) return hit; }
-  return null;
-}
-function dirTrailTo(nodes: NoteNode[], id: string, trail: string[] = []): string[] | null {
-  for (const n of nodes) { if (n.noteId === id) return trail; const found = dirTrailTo(n.children, id, n.isDir ? [...trail, n.noteId] : trail); if (found) return found; }
-  return null;
-}
-/** 不从字符串内容猜测格式；现行 kb_read 只提供 Markdown 原文。 */
-export function fileType(uri: string): string {
-  return /\.([a-z0-9]+)$/i.exec(uri.replace(/\\/g, "/"))?.[1].toLowerCase() ?? "unknown";
-}
-const FILE_ICONS: Record<string, string> = { md: "fileText", markdown: "fileText", txt: "fileText", doc: "fileWord", docx: "fileWord", xls: "fileSheet", xlsx: "fileSheet", csv: "csv", ppt: "fileSlides", pptx: "fileSlides", pdf: "filePdf", png: "image", jpg: "image", jpeg: "image", svg: "image", zip: "fileArchive" };
+export { fileType } from "./knowledgeWorkspace";
+const FILE_ICONS: Record<string, string> = { md: "fileText", markdown: "fileText", txt: "fileText", doc: "fileWord", docx: "fileWord", xls: "fileSheet", xlsx: "fileSheet", csv: "csv", ppt: "fileSlides", pptx: "fileSlides", pdf: "filePdf", png: "image", jpg: "image", jpeg: "image", gif: "image", webp: "image", svg: "image", zip: "fileArchive" };
 function FileGlyph({ type, folder = false }: { type: string; folder?: boolean }) {
   return <span className={`kb-tree-file type-${type}`} aria-hidden><Icon name={folder ? "folder" : FILE_ICONS[type] ?? "file"} size={15} /></span>;
 }
+const depthStyle = (depth: number) => ({ "--kw-depth": depth }) as CSSProperties;
 
 export function Reader(props: { libId: string; noteId?: string; visible?: boolean }) {
   return <ReaderView key={props.libId} libId={props.libId} initialNoteId={props.noteId} visible={props.visible ?? true} />;
@@ -37,157 +24,318 @@ export function Reader(props: { libId: string; noteId?: string; visible?: boolea
 
 function ReaderView({ libId, initialNoteId, visible }: { libId: string; initialNoteId?: string; visible: boolean }) {
   const { go } = useApp();
-  const toast = useToast();
+  const session = useMemo(() => knowledgeSession(libId), [libId]);
+  const [revision, setRevision] = useState(0);
   const [library, setLibrary] = useState<KnowledgeLibrary | null>(null);
   const [tree, setTree] = useState<NoteNode[] | null>(null);
   const [treeError, setTreeError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<NoteNode | null>(null);
-  const [note, setNote] = useState<NoteContent | null>(null);
-  const [html, setHtml] = useState<string | null>(null);
   const [noteLoading, setNoteLoading] = useState(false);
   const [noteError, setNoteError] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [html, setHtml] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<KnowledgeHit[] | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [grantOpen, setGrantOpen] = useState(false);
   const [refOpen, setRefOpen] = useState(false);
-  const [navOpen, setNavOpen] = useState(false);
+  const [folderMenu, setFolderMenu] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<"discard" | "latest" | null>(null);
+  const [imageZoom, setImageZoom] = useState(false);
+  const [imageError, setImageError] = useState(false);
+  const mounted = useRef(false);
+  const visibleRef = useRef(visible); visibleRef.current = visible;
   const requestSeq = useRef(0);
   const treeSeq = useRef(0);
   const scanBusy = useRef(false);
-  const selectedRef = useRef<NoteNode | null>(null);
-  const mainRef = useRef<HTMLElement | null>(null);
-  const visibleRef = useRef(visible);
-  visibleRef.current = visible;
-  const type = fileType(note?.relativeUri ?? selected?.relativeUri ?? "");
+  const uploadBusy = useRef(false);
+  const exportBusy = useRef(false);
+  const mainRef = useRef<HTMLDivElement | null>(null);
+  const workspaceRef = useRef<HTMLDivElement | null>(null);
+  const treeRef = useRef<HTMLElement | null>(null);
+  const tocRef = useRef<HTMLElement | null>(null);
+  const inlineWidth = (element: HTMLElement | null) => element && !element.hidden && !element.classList.contains("pane-overlay") ? element.offsetWidth : 0;
+  // Give the tree first claim; only TOC reserves the measured inline tree width.
+  // Mutual neighbour reserves oscillate when both panes approach their minimums.
+  const treePane = usePaneWidth(`knowledge:${libId}`, "tree", { default: 260, min: 180, max: 480, side: "left", containerRef: workspaceRef, reserve: 0, minCenter: 320, disabled: !visible });
+  const tocPane = usePaneWidth(`knowledge:${libId}`, "toc", { default: 220, min: 160, max: 360, side: "right", containerRef: workspaceRef, reserve: () => inlineWidth(treeRef.current), minCenter: 320, disabled: !visible });
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuTrigger = useRef<HTMLButtonElement | null>(null);
+  const refresh = useCallback(() => { if (mounted.current) setRevision(value => value + 1); }, []);
+  const current = session.current;
+  const draft = current ? session.drafts.get(current) : undefined;
+  const data = current ? session.files.get(draft?.noteId ?? current) : undefined;
+  const info = data?.info;
+  const selected = current ? findNode(tree ?? [], draft?.noteId ?? current) : null;
+  const title = draft?.title || info?.title || selected?.title || session.selectedFolder || "知识工作区";
+  const uri = info?.relativeUri ?? selected?.relativeUri;
+  const type = fileType(uri ?? (draft ? markdownName(draft.title) : ""));
+  const body = draft?.body ?? data?.text;
+  const md = !!draft || (!!info && info.kind === "markdown" && isMarkdown(info.relativeUri) && typeof body === "string");
+  const ownerDisabled = library !== null && !library.enabled;
 
-  const loadNote = useCallback(async (node: NoteNode) => {
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; requestSeq.current += 1; treeSeq.current += 1; };
+  }, []);
+
+  const loadFile = useCallback(async (node: NoteNode) => {
     if (!visibleRef.current) return;
     const seq = ++requestSeq.current;
-    selectedRef.current = node;
-    setSelected(node);
-    lastNoteByLib.set(libId, node.noteId);
-    setNote(null);
-    setHtml(null);
-    setNoteError(null);
-    // 多格式原件与解析 API 未实现时，显示 unsupported，不把 PDF/Office 字符串交给 Markdown。
-    if (fileType(node.relativeUri) !== "md") { setNoteLoading(false); return; }
-    setNoteLoading(true);
+    setNoteError(null); setNoteLoading(true);
     try {
-      const nc = await api.kbRead(libId, node.noteId);
-      if (requestSeq.current !== seq) return;
-      if (nc.noteId !== node.noteId) throw new Error("返回的文件身份与选择不一致");
-      setNote(nc);
-      if (fileType(nc.relativeUri) !== "md") return;
-      const rendered = await renderMarkdown(nc.content);
-      if (requestSeq.current === seq) setHtml(rendered);
-    } catch (e) {
-      if (requestSeq.current === seq) setNoteError("读取或渲染失败：" + errText(e));
+      const metadata = await api.kbFileInfo(libId, node.noteId);
+      if (seq !== requestSeq.current || !mounted.current || !visibleRef.current) return;
+      checkFileIdentity(metadata, node);
+      let result: KnowledgeFileData = { info: metadata };
+      if (readableKind(metadata)) {
+        result = await api.kbReadFile(libId, node.noteId);
+        checkFileIdentity(result.info, node);
+        if (result.info.kind !== metadata.kind || !readableKind(result.info)) throw new Error("读取期间文件类型已改变，请重试");
+        if (["markdown", "text"].includes(result.info.kind) && typeof result.text !== "string") throw new Error("接口未返回文本正文，不使用空字符串替代");
+        if (result.info.kind === "image") safeImageSource(result.info, result.base64);
+      }
+      if (seq !== requestSeq.current || !mounted.current || !visibleRef.current) return;
+      session.files.set(node.noteId, result); refresh();
+    } catch (error) {
+      if (seq === requestSeq.current && mounted.current && visibleRef.current) setNoteError(`读取失败：${errorText(error)}`);
     } finally {
-      if (requestSeq.current === seq) setNoteLoading(false);
+      if (seq === requestSeq.current && mounted.current && visibleRef.current) setNoteLoading(false);
     }
-  }, [libId]);
+  }, [libId, refresh, session]);
 
   const loadTree = useCallback(async () => {
     if (!visibleRef.current) return;
     const seq = ++treeSeq.current;
     try {
       const nodes = await api.kbTree(libId);
-      if (treeSeq.current !== seq) return;
-      setTree(nodes);
-      setTreeError(null);
-      const preferred = selectedRef.current?.noteId ?? initialNoteId ?? lastNoteByLib.get(libId);
-      const target = (preferred ? findFile(nodes, preferred) : null) ?? firstFile(nodes);
-      if (target) {
-        const trail = dirTrailTo(nodes, target.noteId) ?? [];
-        setCollapsed((prev) => { const next = new Set(prev); trail.forEach((id) => next.delete(id)); return next; });
-        void loadNote(target);
-      } else {
-        requestSeq.current += 1;
-        selectedRef.current = null;
-        setSelected(null); setNote(null); setHtml(null); setNoteError(null); setNoteLoading(false);
-      }
-    } catch (e) {
-      if (treeSeq.current === seq) { setTree([]); setTreeError(errText(e)); }
+      if (seq !== treeSeq.current || !mounted.current || !visibleRef.current) return;
+      setTree(nodes); setTreeError(null);
+      if (!session.current) session.current = (initialNoteId && findNode(nodes, initialNoteId)?.noteId) || flattenTree(nodes).find(node => !node.isDir)?.noteId || null;
+      const node = session.current ? findNode(nodes, session.current) : null;
+      if (node && !node.isDir) expandParents(session, nodes, node.noteId);
+      refresh();
+    } catch (error) {
+      if (seq === treeSeq.current && mounted.current && visibleRef.current) setTreeError(errorText(error));
     }
-  }, [libId, initialNoteId, loadNote]);
+  }, [libId, initialNoteId, refresh, session]);
 
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) { requestSeq.current += 1; setNoteLoading(false); setFolderMenu(null); setConfirm(null); return; }
     let alive = true;
-    api.kbList().then((ls) => { if (alive) setLibrary(ls.find((l) => l.id === libId) ?? null); }).catch((e) => { if (alive) toast("知识库名称加载失败：" + errText(e), "err"); });
+    api.kbList().then(libraries => { if (alive && mounted.current && visibleRef.current) setLibrary(libraries.find(item => item.id === libId) ?? null); }).catch(error => { if (alive && mounted.current && visibleRef.current) { session.notice = `知识库元信息加载失败：${errorText(error)}`; refresh(); } });
     void loadTree();
     return () => { alive = false; treeSeq.current += 1; requestSeq.current += 1; };
-  }, [libId, loadTree, toast, visible]);
+  }, [libId, visible, loadTree, refresh, session]);
 
-  useEffect(() => { if (mainRef.current) mainRef.current.scrollTop = 0; }, [selected?.noteId]);
+  // Identity dependencies reload a newly saved file once it enters the tree,
+  // without rereading an unchanged source on every scan or replacing a draft.
+  useEffect(() => {
+    if (!visible || !current || session.drafts.has(current)) return;
+    if (selected && !selected.isDir) void loadFile(selected);
+    else if (tree !== null && !treeError) { setNoteLoading(false); setNoteError("所选文件已不存在；不会跳到其它文件或清除草稿。"); }
+    return () => { requestSeq.current += 1; };
+  }, [current, visible, loadFile, tree === null, treeError, selected?.noteId, selected?.relativeUri, selected?.isDir]);
+
+  useLayoutEffect(() => {
+    if (mainRef.current) mainRef.current.scrollTop = current ? session.scroll.get(current) ?? 0 : 0;
+    setImageZoom(false); setImageError(false); setConfirm(null);
+  }, [current, session]);
+
+  useEffect(() => {
+    let alive = true;
+    setHtml(null);
+    if (!md || typeof body !== "string") return;
+    renderKnowledgeMarkdown(body).then(rendered => { if (alive) setHtml(rendered); }).catch(error => { if (alive) setNoteError(`渲染失败：${errorText(error)}`); });
+    return () => { alive = false; };
+  }, [md, body, current]);
+
   useEffect(() => {
     let alive = true;
     setHits(null); setSearchError(null);
-    const q = query.trim();
-    if (!q || !visible) return;
-    const timer = window.setTimeout(() => {
-      api.kbSearch([libId], q).then((res) => { if (alive) setHits(res); }).catch((e) => { if (alive) { setHits([]); setSearchError(errText(e)); } });
-    }, 300);
+    if (!query.trim() || !visible) return;
+    const timer = window.setTimeout(() => { api.kbSearch([libId], query.trim()).then(result => { if (alive) setHits(result.filter(hit => hit.libraryId === libId)); }).catch(error => { if (alive) setSearchError(errorText(error)); }); }, 300);
     return () => { alive = false; window.clearTimeout(timer); };
   }, [libId, query, visible]);
 
-  const openHit = (hit: KnowledgeHit) => {
-    setQuery("");
-    const node = findFile(tree ?? [], hit.noteId) ?? { noteId: hit.noteId, title: hit.title, relativeUri: hit.relativeUri, isDir: false, children: [] };
-    const trail = dirTrailTo(tree ?? [], hit.noteId) ?? [];
-    setCollapsed((prev) => { const next = new Set(prev); trail.forEach((id) => next.delete(id)); return next; });
-    void loadNote(node);
+  useEffect(() => {
+    if (folderMenu === null || !visible) return;
+    const outside = (event: PointerEvent) => { if (!menuRef.current?.contains(event.target as Node)) setFolderMenu(null); };
+    document.addEventListener("pointerdown", outside);
+    menuRef.current?.querySelector<HTMLButtonElement>("[role=menuitem]")?.focus();
+    return () => document.removeEventListener("pointerdown", outside);
+  }, [folderMenu, visible]);
+
+  const select = (key: string) => {
+    if (key === session.current) {
+      setFolderMenu(null);
+      if (treePane.overlay) treePane.setVisible(false);
+      if (tocPane.overlay) tocPane.setVisible(false);
+      return;
+    }
+    if (mainRef.current && current) session.scroll.set(current, mainRef.current.scrollTop);
+    requestSeq.current += 1; setNoteError(null); setNoteLoading(false);
+    session.current = key;
+    const node = findNode(tree ?? [], session.drafts.get(key)?.noteId ?? key);
+    if (node) { session.selectedFolder = parentOf(node.relativeUri); expandParents(session, tree ?? [], node.noteId); }
+    if (treePane.overlay) treePane.setVisible(false);
+    if (tocPane.overlay) tocPane.setVisible(false);
+    setFolderMenu(null); refresh();
+  };
+  const newMarkdown = (parent: string) => {
+    if (ownerDisabled) return;
+    const key = nextDraftKey();
+    session.drafts.set(key, { key, noteId: null, parent, title: "", body: "", baseTitle: "", baseBody: "", expectedHash: null, mode: "edit", saving: false, error: "", conflict: false });
+    session.notice = "新文档仅在主区与草稿栏，首次保存成功才进入文件树；切换库或文件会保留当前草稿。";
+    select(key);
+  };
+  const setMode = (mode: "read" | "edit") => {
+    if (draft) { draft.mode = mode; refresh(); return; }
+    if (mode !== "edit" || !current || !info || !info.editable || !isMarkdown(info.relativeUri) || typeof data?.text !== "string" || !info.hash || noteLoading || noteError) return;
+    session.drafts.set(current, { key: current, noteId: current, parent: parentOf(info.relativeUri), title: info.title, body: data.text, baseTitle: info.title, baseBody: data.text, expectedHash: info.hash, mode: "edit", saving: false, error: "", conflict: false });
+    refresh();
+  };
+  const saveDraft = async () => {
+    const editing = session.current ? session.drafts.get(session.current) : undefined;
+    if (!editing || editing.saving || ownerDisabled || !visibleRef.current) return;
+    const name = markdownName(editing.title);
+    editing.error = !editing.noteId ? nameError(editing.title) || nameError(name) : "";
+    if (!editing.error && !editing.noteId && pathTaken(tree ?? [], editing.parent, name)) editing.error = "同一目录已有这个名称；不会覆盖，当前输入已保留。";
+    if (!editing.error && editing.noteId && !editing.expectedHash) editing.error = "未取得可校验的原件 hash，不能覆盖保存；当前草稿已保留。";
+    if (!editing.error && editing.conflict) editing.error = "版本冲突尚未解决，不能静默覆盖；当前草稿已保留。";
+    if (editing.error) { refresh(); return; }
+    const submitted = { key: editing.key, noteId: editing.noteId, title: editing.title, body: editing.body, hash: editing.expectedHash, parent: editing.parent };
+    editing.saving = true; refresh();
+    try {
+      const result = submitted.noteId ? await api.kbSaveMarkdown(libId, submitted.noteId, submitted.hash!, submitted.body) : await api.kbCreateMarkdown(libId, submitted.parent, name, submitted.body);
+      const expectedUri = submitted.noteId ? session.files.get(submitted.noteId)?.info.relativeUri : submitted.parent ? `${submitted.parent}/${name}` : name;
+      if (!result.noteId || !isMarkdown(result.relativeUri) || typeof result.content !== "string" || (submitted.noteId && result.noteId !== submitted.noteId) || (expectedUri && result.relativeUri.replace(/\\/g, "/") !== expectedUri.replace(/\\/g, "/"))) throw new Error("保存返回的文件身份不一致，请核对原件；草稿保留");
+      const oldInfo = session.files.get(result.noteId)?.info;
+      const savedInfo: KnowledgeFileInfo = { ...oldInfo, noteId: result.noteId, title: result.title, relativeUri: result.relativeUri, sizeBytes: new TextEncoder().encode(result.content).length, kind: "markdown", mime: "text/markdown", previewSupported: true, editable: true, hash: result.hash };
+      session.files.set(result.noteId, { info: savedInfo, text: result.content });
+      const changedDuringSave = acceptSavedMarkdown(editing, submitted, result);
+      session.drafts.delete(submitted.key);
+      if (changedDuringSave || !result.hash) {
+        session.drafts.set(result.noteId, editing);
+        if (!result.hash) editing.error = "正文已保存，但接口未返回 hash。增量草稿仍保留；取得最新版本前不能再次覆盖。";
+      }
+      if (session.current === submitted.key) session.current = result.noteId;
+      session.notice = result.indexError ? `原件已保存，但索引失败：${result.indexError}。不重试创建、不覆盖原件；请重新扫描索引。` : changedDuringSave ? "提交时的正文已保存；保存过程中继续输入的内容保留为未保存草稿。" : "已保存本机 Markdown 原件。";
+      refresh();
+      if (visibleRef.current && mounted.current) void loadTree();
+    } catch (error) {
+      editing.error = `保存失败：${errorText(error)}。原文不被本界面替换，当前草稿已保留。`;
+      if (submitted.noteId && isConflict(error)) {
+        editing.conflict = true; editing.latest = undefined; editing.latestError = undefined;
+        if (mounted.current && visibleRef.current) {
+          try {
+            const latest = await api.kbReadFile(libId, submitted.noteId);
+            if (latest.info.noteId !== submitted.noteId || latest.info.kind !== "markdown" || typeof latest.text !== "string") throw new Error("最新版本身份或正文不一致");
+            editing.latest = latest;
+          } catch (latestError) { editing.latestError = errorText(latestError); }
+        } else editing.latestError = "页面已隐藏；草稿及冲突保留，未继续读取最新原文。";
+      }
+    } finally { editing.saving = false; refresh(); }
+  };
+  const discardDraft = async (latest: boolean) => {
+    if (!draft || draft.saving || !visibleRef.current) return;
+    const discarded = { key: draft.key, title: draft.title, body: draft.body };
+    if (latest && draft.noteId) {
+      const seq = ++requestSeq.current;
+      try {
+        const result = await api.kbReadFile(libId, draft.noteId);
+        if (result.info.noteId !== draft.noteId || result.info.kind !== "markdown" || typeof result.text !== "string") throw new Error("最新原文不可读或身份不一致");
+        if (seq !== requestSeq.current || !mounted.current || !visibleRef.current || session.current !== discarded.key || session.drafts.get(discarded.key) !== draft) return;
+        if (draft.body !== discarded.body || draft.title !== discarded.title) { draft.error = "读取最新原文期间又有输入，未放弃新增草稿；请重新确认。"; setConfirm(null); refresh(); return; }
+        session.files.set(draft.noteId, result);
+      } catch (error) { draft.error = `最新原文读取失败，草稿仍保留：${errorText(error)}`; if (mounted.current && visibleRef.current && session.current === discarded.key) setConfirm(null); refresh(); return; }
+    }
+    session.drafts.delete(draft.key);
+    session.current = draft.noteId ?? flattenTree(tree ?? []).find(node => !node.isDir)?.noteId ?? null;
+    session.notice = "已取消编辑，未修改已保存原文和文件树。";
+    setConfirm(null); setNoteError(null); refresh();
+  };
+  const createFolder = (parent: string) => {
+    if (ownerDisabled || session.folderInput?.saving) return;
+    session.folderInput = { key: nextDraftKey(), parent, name: "", error: "", saving: false };
+    const node = flattenTree(tree ?? []).find(node => node.isDir && node.relativeUri === parent);
+    if (node) session.collapsed.delete(node.noteId);
+    setQuery(""); setFolderMenu(null); refresh();
+  };
+  const submitFolder = async () => {
+    const input = session.folderInput;
+    if (!input || input.saving || ownerDisabled) return;
+    input.error = nameError(input.name) || (pathTaken(tree ?? [], input.parent, input.name) ? "同一目录已有这个名称，输入已保留。" : "");
+    if (input.error) { refresh(); return; }
+    input.saving = true; refresh();
+    try {
+      const node = await api.kbCreateFolder(libId, input.parent, input.name);
+      if (!node.isDir) throw new Error("接口没有返回真实目录节点");
+      if (session.folderInput === input) session.folderInput = null;
+      session.selectedFolder = node.relativeUri;
+      session.collapsed.delete(node.noteId);
+      session.notice = `已创建文件夹：${node.relativeUri}`; refresh();
+      if (mounted.current && visibleRef.current) void loadTree();
+    } catch (error) { input.error = `创建失败：${errorText(error)}；输入已保留。`; }
+    finally { input.saving = false; refresh(); }
+  };
+  const upload = async () => {
+    if (uploadBusy.current || ownerDisabled || !visibleRef.current) return;
+    uploadBusy.current = true; setUploading(true);
+    try {
+      const result = await api.kbUploadFiles(libId, session.selectedFolder);
+      session.notice = result.cancelled ? "已取消本机文件选择，没有上传文件。" : result.items.map(item => item.success ? `${item.name}：已上传${item.indexError ? `，索引失败：${item.indexError}` : ""}` : `${item.name}：上传失败，${item.error ?? "未提供原因"}`).join("；") || "没有上传文件。";
+      if (!result.cancelled && result.items.some(item => item.success) && mounted.current && visibleRef.current) void loadTree();
+    } catch (error) { session.notice = `上传失败：${errorText(error)}；没有使用演示文件替代真实文件选择。`; }
+    finally { uploadBusy.current = false; if (mounted.current) setUploading(false); refresh(); }
+  };
+  const exportFile = async () => {
+    const noteId = draft?.noteId ?? selected?.noteId ?? info?.noteId;
+    if (!noteId || exportBusy.current || ownerDisabled) return;
+    exportBusy.current = true; setExporting(true);
+    try { const result = await api.kbExportFile(libId, noteId); session.notice = result.cancelled ? "已取消导出，未写入目标文件。" : result.exported ? "已通过本机保存对话框导出原件。未保存的编辑草稿不在导出内容中。" : "接口未确认原件导出成功。"; }
+    catch (error) { session.notice = `导出失败：${errorText(error)}`; }
+    finally { exportBusy.current = false; if (mounted.current) setExporting(false); refresh(); }
   };
   const rescan = async () => {
-    if (scanBusy.current || !visibleRef.current) return;
+    if (scanBusy.current || ownerDisabled || !visibleRef.current) return;
     scanBusy.current = true; setScanning(true);
-    try { const n = await api.kbScan(libId); toast(`已索引 ${n} 篇 Markdown`); await loadTree(); }
-    catch (e) { toast("扫描失败：" + errText(e), "err"); }
-    finally { scanBusy.current = false; setScanning(false); }
+    try { const count = await api.kbScan(libId); session.notice = `已索引 ${count} 篇 Markdown；其它格式原件不代表已解析或已提供 AI 文本索引。`; void loadTree(); }
+    catch (error) { session.notice = `扫描失败：${errorText(error)}`; }
+    finally { scanBusy.current = false; if (mounted.current) setScanning(false); refresh(); }
   };
 
-  // 从安全渲染结果提取真实标题锚点，避免 Markdown 内联标记与目录 id 不一致。
-  const toc = useMemo<TocEntry[]>(() => {
-    if (!html) return [];
-    const doc = new DOMParser().parseFromString(html, "text/html");
-    return Array.from(doc.querySelectorAll("h1[id],h2[id],h3[id],h4[id],h5[id],h6[id]")).map((h) => ({ level: Number(h.tagName.slice(1)), text: h.textContent ?? "", id: h.id }));
-  }, [html]);
-  const jumpToHeading = (id: string) => {
-    const h = Array.from(mainRef.current?.querySelectorAll<HTMLElement>("[id]") ?? []).find((el) => el.id === id);
-    h?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const toc = useMemo<TocEntry[]>(() => !html ? [] : Array.from(new DOMParser().parseFromString(html, "text/html").querySelectorAll("h1[id],h2[id],h3[id],h4[id],h5[id],h6[id]")).map(heading => ({ level: Number(heading.tagName.slice(1)), text: heading.textContent ?? "", id: heading.id })), [html]);
+  const jumpToHeading = (id: string) => { if (draft) { draft.mode = "read"; refresh(); } requestAnimationFrame(() => { Array.from(mainRef.current?.querySelectorAll<HTMLElement>("[id]") ?? []).find(element => element.id === id)?.scrollIntoView({ behavior: "smooth", block: "start" }); }); if (tocPane.overlay) tocPane.setVisible(false); };
+  const folderEditor = (parent: string, depth: number) => {
+    const input = session.folderInput;
+    if (!input || input.parent !== parent) return null;
+    return <div className="kw-folder-editor" style={depthStyle(depth)}><FileGlyph type="" folder /><div><input key={input.key} autoFocus className="input" aria-label="新文件夹名称" aria-invalid={!!input.error} aria-describedby="kw-folder-help" placeholder="文件夹名" disabled={input.saving} value={input.name} onChange={event => { input.name = event.target.value; refresh(); }} onKeyDown={event => { if (event.nativeEvent.isComposing) return; if (event.key === "Enter") { event.preventDefault(); void submitFolder(); } if (event.key === "Escape" && !input.saving) { event.stopPropagation(); session.folderInput = null; refresh(); } }} /><small id="kw-folder-help" className={input.error ? "kw-error-text" : ""}>{input.error || (input.saving ? "创建中…" : "Enter 确认 · Escape 取消")}</small></div><button className="icon-btn" disabled={input.saving} aria-label="取消新建文件夹" onClick={() => { session.folderInput = null; refresh(); }}><Icon name="x" size={14} /></button></div>;
   };
-  const renderTree = (nodes: NoteNode[], depth: number): ReactNode => nodes.map((n) => {
-    const open = !collapsed.has(n.noteId);
-    return <div key={n.noteId}><button className={`kb-doc ${n.isDir ? "kb-folder" : ""} ${selected?.noteId === n.noteId ? "active" : ""}`} style={{ paddingLeft: 10 + depth * 12 }} title={n.relativeUri} aria-expanded={n.isDir ? open : undefined} onClick={() => { if (n.isDir) setCollapsed((prev) => { const next = new Set(prev); if (next.has(n.noteId)) next.delete(n.noteId); else next.add(n.noteId); return next; }); else { void loadNote(n); setNavOpen(false); } }}><span className="kb-caret">{n.isDir ? <Icon name={open ? "chevronDown" : "chevronRight"} size={12} /> : ""}</span><FileGlyph type={fileType(n.relativeUri)} folder={n.isDir} /><span className="kb-doc-t"><b className="ellipsis">{n.title}</b>{!n.isDir && <span className="ellipsis">{n.relativeUri} · {fileType(n.relativeUri).toUpperCase()}</span>}</span></button>{n.isDir && open && renderTree(n.children, depth + 1)}</div>;
+  const renderTree = (nodes: NoteNode[], depth: number): ReactNode => nodes.map(node => {
+    if (!node.isDir) return <button key={node.noteId} className={`kw-file ${current === node.noteId ? "active" : ""}`} style={depthStyle(depth)} title={node.relativeUri} aria-current={current === node.noteId ? "page" : undefined} onClick={() => select(node.noteId)}><FileGlyph type={fileType(node.relativeUri)} /><span className="kw-file-label"><b>{node.title}</b><small>{fileType(node.relativeUri).toUpperCase()}{session.drafts.has(node.noteId) && dirty(session.drafts.get(node.noteId)!) ? " · 未保存草稿" : ""}</small></span></button>;
+    const open = !session.collapsed.has(node.noteId);
+    const menuOpen = folderMenu === node.noteId;
+    return <div key={node.noteId}><div className={`kw-folder-row ${session.selectedFolder === node.relativeUri ? "selected" : ""}`} style={depthStyle(depth)} ref={menuOpen ? menuRef : undefined}><button className="kw-folder-toggle" title={node.relativeUri} aria-expanded={open} onClick={() => { session.selectedFolder = node.relativeUri; open ? session.collapsed.add(node.noteId) : session.collapsed.delete(node.noteId); setFolderMenu(null); refresh(); }}><Icon name={open ? "chevronDown" : "chevronRight"} size={12} /><FileGlyph type="" folder /><span className="ellipsis">{node.title}</span></button><span className={`kw-row-actions ${menuOpen ? "visible" : ""}`}><button className="icon-btn" disabled={ownerDisabled} aria-label={`在 ${node.relativeUri} 新建`} aria-haspopup="menu" aria-expanded={menuOpen} onClick={event => { menuTrigger.current = event.currentTarget; setFolderMenu(menuOpen ? null : node.noteId); }}><Icon name="plus" size={14} /></button><button className="icon-btn" disabled={ownerDisabled} aria-label={`${node.relativeUri} 更多操作`} aria-haspopup="menu" onClick={event => { menuTrigger.current = event.currentTarget; setFolderMenu(menuOpen ? null : node.noteId); }}><Icon name="more" size={14} /></button></span>{menuOpen && <div className="kw-folder-menu" role="menu" onKeyDown={event => { const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button")); if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) { event.preventDefault(); const index = buttons.indexOf(document.activeElement as HTMLButtonElement); buttons[event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (index + (event.key === "ArrowUp" ? -1 : 1) + buttons.length) % buttons.length]?.focus(); } }}><button role="menuitem" onClick={() => newMarkdown(node.relativeUri)}><Icon name="filePlus" size={14} />新建下级 MD</button><button role="menuitem" onClick={() => createFolder(node.relativeUri)}><Icon name="folderPlus" size={14} />新建下级文件夹</button></div>}</div>{open && <div className="kw-tree-children">{folderEditor(node.relativeUri, depth + 1)}{renderTree(node.children, depth + 1)}{!node.children.length && session.folderInput?.parent !== node.relativeUri && <div className="kw-empty-folder" style={depthStyle(depth + 1)}>空目录 · 行尾＋添加内容</div>}</div>}</div>;
   });
-  const title = note?.title ?? selected?.title;
-  const uri = note?.relativeUri ?? selected?.relativeUri;
+  let imageSource: string | undefined;
+  let imageValidationError: string | undefined;
+  if (info?.kind === "image" && data?.base64) { try { imageSource = safeImageSource(info, data.base64); } catch (error) { imageValidationError = errorText(error); } }
+  const fileInfo = info ? <dl className="kw-info"><dt>类型 / MIME</dt><dd>{fileType(info.relativeUri).toUpperCase()} / {info.mime}</dd><dt>路径</dt><dd className="mono">{info.relativeUri}</dd><dt>大小</dt><dd>{info.sizeBytes.toLocaleString()} B</dd><dt>更新</dt><dd>{info.modifiedAt ? new Date(info.modifiedAt).toLocaleString() : "接口未提供"}</dd><dt>原件版本</dt><dd className="mono">{info.hash ?? "接口未提供"}</dd></dl> : <p className="caption">选择文件后读取真实元信息。</p>;
+  const preview = noteLoading && !draft ? <div className="kw-empty">读取原件中…</div> : noteError && !draft ? <Empty title="无法显示原件" desc={noteError} action={selected ? <button className="btn" onClick={() => void loadFile(selected)}>重试</button> : undefined} /> : md ? <article className="kb-content kw-markdown" dangerouslySetInnerHTML={{ __html: html ?? "" }} /> : info?.kind === "text" && typeof data?.text === "string" ? <><div className="kw-type-note">UTF-8 {type.toUpperCase()} · 安全源码阅读；不执行 HTML、公式或脚本，CSV 不是电子表格引擎。</div><pre className="kw-source"><code>{data.text}</code></pre></> : info?.kind === "image" && imageSource && !imageError ? <figure className={`kw-image ${imageZoom ? "zoomed" : ""}`}><img src={imageSource} alt={info.title} onError={() => setImageError(true)} /><figcaption>{info.relativeUri} · {info.mime}</figcaption><button className="btn sm" onClick={() => setImageZoom(value => !value)}>{imageZoom ? "恢复适应" : "放大图片"}</button></figure> : info ? <div className="kw-original"><FileGlyph type={type} /><h2>{info.title}</h2><p>{imageValidationError || (imageError ? "图片解码失败，不能伪造预览成功。" : info.kind === "pdf" ? "PDF 原件已保留；当前桌面未接入安全 PDF 查看器，仅支持元信息和导出，不把 Markdown 摘要当作 PDF。" : "原件附件 / 元信息：Office、压缩包或其它格式没有正文解析和原生编辑。不内嵌执行 HTML / SVG、宏或脚本，不提供假正文预览。")}</p>{fileInfo}<button className="btn" disabled={exporting || ownerDisabled} onClick={() => void exportFile()}><Icon name="download" size={14} />导出原件</button></div> : <div className="kw-empty kw-welcome"><Icon name="bookOpen" size={24} /><h2>{session.selectedFolder || "开始整理知识资料"}</h2><p>从左侧选择文件；新 MD 直接在这里编辑，首次保存成功才出现在目录树。</p><button className="btn primary" disabled={ownerDisabled} onClick={() => newMarkdown(session.selectedFolder)}><Icon name="filePlus" size={14} />新建 MD</button></div>;
 
-  return (
-    <div className={`kb-reader ${navOpen ? "show-nav" : ""}`}>
-      <aside className="kb-side">
-        <div className="kb-side-top"><b className="row"><FileGlyph type="md" />{library?.name ?? "知识库名称加载中…"}</b><div className="muted small">{library ? `${library.noteCount} 篇 Markdown · 索引版本 ${library.revision}` : "元信息未知"}</div></div>
-        <div className="kb-search"><input className="input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索文件或正文" aria-label="搜索文件或正文" /></div>
-        <div className="kb-side-body">{query.trim() ? searchError ? <p className="kb-side-note" role="alert">搜索失败：{searchError}</p> : hits === null ? <div className="kb-side-note">搜索中…</div> : hits.length ? <div className="kb-hits">{hits.map((h) => <button key={h.noteId} className="kb-hit" onClick={() => openHit(h)}><b>{h.title}</b><span>{h.relativeUri}</span><span>{h.snippet}</span></button>)}</div> : <div className="kb-side-note">没有命中，换一个关键词。</div> : tree === null ? <div className="kb-side-note">目录加载中…</div> : treeError ? <div className="kb-side-note">目录加载失败</div> : tree.length ? renderTree(tree, 0) : <div className="kb-side-note">暂无文件</div>}</div>
-        <div className="kb-nav-foot"><button className="btn sm" disabled={!library} onClick={() => setGrantOpen(true)}>授权管理</button></div>
-      </aside>
-      <section className="kb-main" ref={mainRef} aria-label="正文阅读区">
-        <div className="kb-article-h"><button className="btn sm kb-nav-toggle" onClick={() => setNavOpen((v) => !v)}>文件</button><div className="kb-crumb"><button className="backlink" onClick={() => go({ page: "knowledge" })}>知识库</button><span>/</span><span>{library?.name ?? libId}</span>{title && <><span>/</span><span className="ellipsis" title={title}>{title}</span></>}</div><span className="spacer" />{selected && <span className="tag">{type === "unknown" ? "未知格式" : type.toUpperCase()}</span>}<button className="btn sm" disabled={!selected || type !== "md" || !html || noteLoading || !!noteError} onClick={() => setRefOpen(true)}>引用</button></div>
-        <div className="kb-article">
-          {tree === null || noteLoading ? <div aria-label="正文加载中"><div className="kb-skel kb-skel-title" /><div className="kb-skel" /><div className="kb-skel" /></div> : treeError ? <Empty title="目录加载失败" desc={treeError} action={<button className="btn" onClick={() => void loadTree()}>重试</button>} /> : !tree.length ? <Empty title="知识库为空" desc="当前扫描仅索引 .md 文件；不代表其它格式已解析。" action={<button className="btn primary" disabled={scanning} onClick={() => void rescan()}>{scanning ? "扫描中…" : "重新扫描"}</button>} /> : noteError ? <Empty title="无法显示正文" desc={noteError} action={selected ? <button className="btn" onClick={() => void loadNote(selected)}>重试</button> : undefined} /> : selected && type !== "md" ? <div className="kb-file-preview" data-state="unsupported"><FileGlyph type={type} /><b>{title}</b><p>{type === "unknown" ? "未知文件格式，无法内嵌预览。" : `${type.toUpperCase()} 预览暂不支持。`}当前接口没有该格式的原件／解析结果，不会当作 Markdown 或表格假解析。</p></div> : note ? <article className="kb-content" dangerouslySetInnerHTML={{ __html: html ?? "" }} /> : <Empty title="未选择文件" desc="从左侧目录树选择文件开始阅读。" />}
-        </div>
-      </section>
-      <aside className="kb-toc" aria-label="正文目录或文件信息">
-        {html ? <TocPanel toc={toc} onJump={jumpToHeading} /> : <div className="kb-toc-panel"><div className="kb-toc-head">文件信息</div><div className="kb-info"><div><span>类型</span><b>{selected ? type.toUpperCase() : "未知"}</b></div><div><span>大小</span><b>未知（接口未提供）</b></div><div><span>更新</span><b>未知（接口未提供）</b></div><div><span>路径</span><b className="mono">{uri ?? "未选择"}</b></div></div></div>}
-        <div className="kb-source"><div className="kb-toc-head">来源</div><p className="muted small">本地文件只读引用</p><p className="mono small">{library?.name ?? libId}</p></div>
-      </aside>
-      {grantOpen && library && <GrantDialog library={library} visible={visible} onClose={() => setGrantOpen(false)} />}
-      {refOpen && selected && visible && <ReferenceDialog libId={libId} noteId={selected.noteId} title={title ?? selected.title} onClose={() => setRefOpen(false)} />}
-    </div>
-  );
+  return <div ref={workspaceRef} className="kb-reader knowledge-workspace" data-library={libId} data-design-version="UI-CR045-v1" onKeyDown={event => {
+    if (!visible) return;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s" && draft) { event.preventDefault(); void saveDraft(); }
+    if (event.key === "Escape") { setFolderMenu(null); setConfirm(null); if (treePane.overlay) treePane.setVisible(false); if (tocPane.overlay) tocPane.setVisible(false); if (folderMenu !== null) { event.stopPropagation(); menuTrigger.current?.focus(); } }
+  }}>
+    <aside {...treePane.paneProps} ref={treeRef} className={`kb-side kw-tree ${treePane.paneProps.className}`} data-pane="kb-tree" id={`kb-tree-${libId}`}><div className="kb-side-top"><b className="row"><Icon name="book" size={14} />{library?.name ?? "知识库"}</b><div className="muted small">{tree ? `${flattenTree(tree).filter(node => !node.isDir).length} 个文件` : "目录加载中…"} · 本机原件</div><PaneClose pane={treePane} label="知识文件树" className="icon-btn"><Icon name="x" size={14} /></PaneClose></div><div className="kw-create-actions"><button className="btn sm" disabled={uploading || ownerDisabled} onClick={() => void upload()}><Icon name="upload" size={14} />{uploading ? "选择 / 上传中…" : "上传"}</button><button className="btn sm primary" disabled={ownerDisabled} onClick={() => newMarkdown("")}><Icon name="filePlus" size={14} />新建 MD</button></div><div className="kb-search"><input className="input" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索文件或 Markdown 正文" aria-label="搜索文件或正文" /></div><div className="kb-side-body kb-docs"><div className="kw-root-row"><button onClick={() => { session.selectedFolder = ""; refresh(); }}><Icon name="folderOpen" size={14} />库根目录</button><button className="icon-btn" disabled={ownerDisabled} aria-label="在库根目录新建文件夹" onClick={() => createFolder("")}><Icon name="folderPlus" size={14} /></button><button className="icon-btn" aria-label="收起全部目录" onClick={() => { session.collapsed = new Set(flattenTree(tree ?? []).filter(node => node.isDir).map(node => node.noteId)); refresh(); }}><Icon name="collapse" size={14} /></button></div>{folderEditor("", 0)}{treeError ? <div className="kw-empty" role="alert"><b>目录加载失败</b><p>{treeError}</p><button className="btn sm" onClick={() => void loadTree()}>重试</button></div> : query.trim() ? <><div className="kw-search-summary">文件名 / 路径与已索引 Markdown 正文<button onClick={() => setQuery("")}>清除</button></div>{renderTree(flattenTree(tree ?? []).filter(node => !node.isDir && `${node.title} ${node.relativeUri}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())), 0)}{searchError ? <p className="kw-error-text">正文搜索失败：{searchError}</p> : hits === null ? <p className="caption">正文搜索中…</p> : hits.map(hit => <button key={hit.noteId} className="kb-hit" onClick={() => { setQuery(""); select(hit.noteId); }}><b>{hit.title}</b><span>{hit.relativeUri}</span><span>{hit.snippet}</span></button>)}</> : tree === null ? <p className="kw-empty">目录加载中…</p> : tree.length ? renderTree(tree, 0) : <div className="kw-empty"><b>知识库为空</b><p>可以直接新建或上传本机原件。AI 项目尚未获授权不影响本人管理。</p></div>}</div><div className="kw-tree-footer"><button className="btn sm" disabled={!library} onClick={() => setGrantOpen(true)}><Icon name="shield" size={14} />AI 授权管理</button><small>本人可管理 · AI 权限另行授权</small></div><ResizeHandle pane={treePane} label="知识文件树" controls={`kb-tree-${libId}`} /></aside>
+    <section className="kb-main kw-document" data-pane="kb-document" aria-label="正文阅读与编辑区">{!!session.drafts.size && <nav className="kw-draft-tabs" aria-label="保留的编辑草稿">{Array.from(session.drafts.values()).map(item => <button key={item.key} aria-selected={current === item.key} onClick={() => select(item.key)}><Icon name="edit" size={14} />{item.title || "未命名 MD"}{dirty(item) ? " *" : ""}{item.noteId ? "" : "（未落盘）"}</button>)}</nav>}{session.notice && <div className="kw-notice" role="status"><span>{session.notice}</span><button className="icon-btn" aria-label="关闭消息" onClick={() => { session.notice = ""; refresh(); }}><Icon name="x" size={14} /></button></div>}<div className="kw-document-head"><PaneToggle pane={treePane} label="知识文件树" className="icon-btn" controls={`kb-tree-${libId}`}><Icon name="panelLeft" size={14} /></PaneToggle><div className="kb-crumb"><button className="backlink" onClick={() => go({ page: "knowledge" })}>知识库</button><span>/</span><span className="ellipsis">{title}</span>{draft && !draft.noteId ? <span className="tag">未落盘草稿</span> : (info || selected) && <span className="tag">{type.toUpperCase()}</span>}</div><span className="spacer" /><PaneToggle pane={tocPane} label="目录与文件信息" className="icon-btn" controls={`kb-toc-${libId}`}><Icon name="panelRight" size={14} /></PaneToggle>{md && <div className="seg"><button aria-selected={draft?.mode !== "edit"} onClick={() => setMode("read")}>阅读</button><button aria-selected={draft?.mode === "edit"} disabled={!draft && (!info?.editable || !info.hash || noteLoading || !!noteError)} onClick={() => setMode("edit")}>编辑</button></div>}</div><div className="kw-toolbar"><span className="ellipsis" title={uri ?? draft?.parent}>{draft && !draft.noteId ? `保存位置：${draft.parent || "库根目录"}` : uri ?? "选择文件或创建内容"}</span><span className="spacer" />{draft ? <><span className="caption">{draft.saving ? "保存中…" : dirty(draft) ? "未保存" : "与原文一致"}</span><button className="btn sm primary" disabled={draft.saving || ownerDisabled || draft.conflict} onClick={() => void saveDraft()}><Icon name="save" size={14} />保存</button><button className="btn sm" disabled={draft.saving} onClick={() => dirty(draft) ? setConfirm("discard") : void discardDraft(false)}>取消编辑</button></> : <><button className="btn sm" disabled={!info || exporting || ownerDisabled} onClick={() => void exportFile()}><Icon name="download" size={14} />导出原件</button><button className="btn sm" disabled={!info || info.kind !== "markdown" || !html || noteLoading || !!noteError} onClick={() => setRefOpen(true)}>引用</button></>}</div><div className="kw-memory-note">草稿按库与文档保留在当前会话内存，退出应用后丢失；仅点击保存才写入本机原件。{ownerDisabled ? "当前知识库已禁用，文件操作不可用。" : ""}</div>{draft?.error && <div id="kw-save-error" className="kw-save-error" role="alert">{draft.error}</div>}{confirm && <div className="kw-confirm" role="alert"><b>{confirm === "latest" ? "放弃当前草稿并读取最新原文？" : "放弃未保存草稿？"}</b><span>不修改已保存原文，此操作不可撤销。</span><div className="row"><button className="btn sm danger" onClick={() => void discardDraft(confirm === "latest")}>确认放弃</button><button className="btn sm" onClick={() => setConfirm(null)}>保留草稿</button></div></div>}<div className="kw-scroll" ref={mainRef} onScroll={event => { if (current) session.scroll.set(current, event.currentTarget.scrollTop); }}>
+      {Array.from(session.drafts.values()).map(item => <div className="kw-editor" key={item.key} hidden={item.key !== current || item.mode !== "edit"}><label htmlFor={`kw-title-${item.key}`}>{item.noteId ? "文件名（原路径只读；标题可在正文 H1 修改）" : "文件名（未带扩展名时补 .md）"}</label><input autoFocus={!item.noteId} id={`kw-title-${item.key}`} className="kw-title input" readOnly={!!item.noteId} aria-invalid={!!item.error} aria-describedby={item.error ? "kw-save-error" : undefined} value={item.title} placeholder="未命名.md" onChange={event => { item.title = event.target.value; refresh(); }} /><label htmlFor={`kw-body-${item.key}`}>Markdown 正文</label><textarea id={`kw-body-${item.key}`} className="textarea mono" spellCheck={false} value={item.body} placeholder={"# 标题\n\n开始编写 Markdown…"} onChange={event => { item.body = event.target.value; refresh(); }} /></div>)}{draft?.mode !== "edit" && preview}{draft?.conflict && <section className="kw-conflict"><h3>保存冲突 · 原件基线已改变</h3><p>编辑基线、当前草稿及可读取的最新版本均保留，不会静默覆盖。</p><details><summary>查看编辑基线与最新版本</summary><b>编辑基线</b><pre>{draft.baseBody}</pre><b>最新原文</b><pre>{draft.latest?.text ?? draft.latestError ?? "最新原文未提供"}</pre></details><button className="btn sm danger" onClick={() => setConfirm("latest")}>放弃草稿并载入最新原文…</button></section>}</div></section>
+    <aside {...tocPane.paneProps} ref={tocRef} className={`kb-toc kw-toc ${tocPane.paneProps.className}`} data-pane="kb-toc" id={`kb-toc-${libId}`} aria-label="正文目录或文件信息"><ResizeHandle pane={tocPane} label="目录与文件信息" controls={`kb-toc-${libId}`} /><div className="kw-toc-head"><b>{md ? "本页目录" : "文件信息"}</b><PaneClose pane={tocPane} label="目录与文件信息" className="icon-btn"><Icon name="x" size={14} /></PaneClose></div>{md ? <TocPanel toc={toc} onJump={jumpToHeading} /> : fileInfo}<div className="kw-side-section"><b>本人资料管理</b><p>不受 AI 项目授权有无限制；授权只控制 AI 只读检索，不授予写入或执行。</p><button className="btn sm" disabled={!library} onClick={() => setGrantOpen(true)}><Icon name="shield" size={14} />AI 授权管理</button><button className="btn sm" disabled={scanning || ownerDisabled} onClick={() => void rescan()}>{scanning ? "扫描中…" : "重新扫描索引"}</button></div><p className="kw-safety-note">正文不自动加载外链图片或本地资源；Office / PDF 仅元信息与原件导出。AI 全格式解析 / FTS5 未接入。</p></aside>
+    {grantOpen && library && <GrantDialog library={library} visible={visible} onClose={() => setGrantOpen(false)} />}{refOpen && info && visible && <ReferenceDialog libId={libId} noteId={info.noteId} title={info.title} onClose={() => setRefOpen(false)} />}
+  </div>;
 }
 
 /** 不凭空注入其它会话，也不调用模型：只进入现有获授权项目，由其 @ 引用入口复检权限。 */
@@ -197,8 +345,8 @@ function ReferenceDialog({ libId, noteId, title, onClose }: { libId: string; not
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
-    Promise.all([api.listProjects(), api.kbGrants()]).then(([ps, gs]) => { if (alive) setProjects(ps.filter((p) => gs.some((g) => g.projectId === p.id && g.libraryId === libId && g.readAllowed))); }).catch((e) => { if (alive) setError(errText(e)); });
+    Promise.all([api.listProjects(), api.kbGrants()]).then(([ps, gs]) => { if (alive) setProjects(ps.filter(p => gs.some(g => g.projectId === p.id && g.libraryId === libId && g.readAllowed))); }).catch(e => { if (alive) setError(errorText(e)); });
     return () => { alive = false; };
   }, [libId]);
-  return <div className="kb-dialog"><Modal title="引用到项目会话" width={620} onClose={onClose}><div className="kb-grant-box"><b>{title}</b><p className="mono small">{libId} / {noteId}</p><p className="muted small">仅列已授权项目。进入后，在 AI 输入框的 @ 知识入口选择该文件；本按钮不自动发送消息、不将正文注入会话。</p>{error ? <p role="alert">授权读取失败：{error}</p> : projects === null ? <p>授权加载中…</p> : projects.length === 0 ? <Empty title="没有可引用的项目" desc="先在授权管理中授予项目只读访问权。" /> : projects.map((p) => <button className="btn" key={p.id} onClick={() => { onClose(); go({ page: "project", projectId: p.id, tab: "code" }); }}>前往「{p.name}」引用</button>)}</div></Modal></div>;
+  return <div className="kb-dialog"><Modal title="引用到项目会话" width={620} onClose={onClose}><div className="kb-grant-box"><b>{title}</b><p className="mono small">{libId} / {noteId}</p><p className="muted small">仅列已授权项目。进入后，在 AI 输入框的 @ 知识入口选择该文件；本按钮不自动发送消息、不将正文注入会话。</p>{error ? <p role="alert">授权读取失败：{error}</p> : projects === null ? <p>授权加载中…</p> : projects.length === 0 ? <Empty title="没有可引用的项目" desc="先在授权管理中授予项目只读访问权。" /> : projects.map(p => <button className="btn" key={p.id} onClick={() => { onClose(); go({ page: "project", projectId: p.id, tab: "code" }); }}>前往「{p.name}」引用</button>)}</div></Modal></div>;
 }

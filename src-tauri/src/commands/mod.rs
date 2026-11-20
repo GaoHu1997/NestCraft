@@ -13,4 +13,5 @@ pub mod sdk;
 pub mod servers;
 pub mod smoke;
 pub mod smoke_seed;
+pub mod updater;
 pub mod window;

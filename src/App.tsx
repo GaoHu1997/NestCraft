@@ -4,6 +4,7 @@ import { useApp, routeKey } from "@/store/app";
 import type { Route } from "@/store/app";
 import { Modal } from "@/components/ui";
 import { Icon } from "@/components/icons";
+import { usePaneWidth, ResizeHandle, PaneToggle } from "@/components/pane-resize";
 import { useWindowChrome } from "@/store/window-chrome";
 import { WorkbenchHome } from "@/modules/WorkbenchHome";
 import { ChatPanel } from "@/modules/chat/ChatPanel";
@@ -14,6 +15,7 @@ import * as ProjectsModule from "@/modules/projects";
 import * as KnowledgeModule from "@/modules/knowledge";
 import * as ServersModule from "@/modules/servers";
 import { SettingsCenter } from "@/modules/settings";
+import { UpdateBadge } from "@/modules/update/UpdateBadge";
 
 const NAV_ITEMS = [
   { page: "workbench", label: "工作台", icon: "grid" },
@@ -35,6 +37,8 @@ export default function App() {
   const [search, setSearch] = useState("");
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [closingTab, setClosingTab] = useState<string | null>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const navigation = usePaneWidth("home", "navigation", { default: 224, min: 176, max: 320, side: "left", containerRef: bodyRef, minCenter: 480, disabled: routeKey(route) !== "home" });
 
   const refresh = useCallback(() => {
     api.listProjects().then(setProjects).catch(() => {});
@@ -102,7 +106,7 @@ export default function App() {
         <span className="nc-top-sep" />
         <span className="nc-context">个人工作台<span>/</span>{route.page === "project" || route.page === "server" || route.page === "knowledge-lib" ? windowTitle(route) : NAV_ITEMS.find(item => item.page === activePage)?.label}</span>
         <div className="nc-window-drag" title={chrome.native ? "拖动窗口；双击最大化或还原" : "窗口拖动热区（预览）"} onPointerDown={event => { if (event.button === 0 && event.detail < 2) void chrome.act("drag"); }} onDoubleClick={() => void chrome.act("maximize")} />
-        <button className="nc-searchbox" onClick={() => setSearchOpen(true)}><Icon name="search" />搜索项目、需求、文档<kbd>Ctrl K</kbd></button>
+        <UpdateBadge />
         <button className="chat-iconbtn" aria-label="切换主题" title="切换主题" onClick={toggleTheme}><Icon name={theme === "dark" ? "sun" : "moon"} /></button>
         <button className="chat-iconbtn" aria-label="通知" title="通知" onClick={() => setNotificationsOpen(true)}><Icon name="bell" /></button>
         <button className="nc-avatar" aria-label="设置与账户" onClick={() => setSettingsOpen(true)}>{initials}</button>
@@ -119,8 +123,8 @@ export default function App() {
           {window.key !== "home" && <button className="nc-tab-close" aria-label={`关闭 ${windowTitle(window.route)}`} title="关闭此Tab，保留内存状态" onClick={() => setClosingTab(window.key)}><Icon name="close" size={13} /></button>}
         </div>)}
       </nav>
-      <div className="nc-body">
-        <aside className="sidebar nc-sidebar" hidden={detail}>
+      <div className="nc-body pane-container" ref={bodyRef}>
+        <aside {...navigation.paneProps} className={`${navigation.paneProps.className} sidebar nc-sidebar`} hidden={detail || !navigation.visible} style={{ ...navigation.style, flexBasis: navigation.width }}>
           <div className="nav-label">工作空间</div>
           {NAV_ITEMS.map(item => (
             <button key={item.page} className={`nav-item ${activePage === item.page ? "active" : ""}`} onClick={() => go({ page: item.page })}>
@@ -139,6 +143,7 @@ export default function App() {
           <button className="nc-side-user" onClick={() => setSettingsOpen(true)} aria-label="设置与账户">
             <span className="nc-avatar">{initials}</span><span className="grow"><b>{profile.name}</b><small>{profile.role} · 设置与账户</small></span><Icon name="settings" size={15} />
           </button>
+          <ResizeHandle pane={navigation} label="管理导航" />
         </aside>
         <main className="main nc-main">
           <div className="nc-window-content">
@@ -148,6 +153,7 @@ export default function App() {
           </div>
           {preview && <div className="nc-preview-note">合成仿真 · 隔离内存数据，不连接真实 CLI／SSH／供应商</div>}
         </main>
+        {!detail && <div className="pane-controls"><PaneToggle pane={navigation} label="管理导航" /></div>}
       </div>
       {settingsOpen && <SettingsCenter initialTab={settingsTab} onOpenTab={setSettingsTab} onClose={() => setSettingsOpen(false)} />}
       {searchOpen && <Modal title="搜索项目、需求、文档" onClose={() => setSearchOpen(false)} width={620}>
@@ -181,9 +187,11 @@ function HomeWindow({ route, visible }: { route: Route; visible: boolean }) {
 }
 
 function ProjectWindow({ projectId, tab, visible }: { projectId: string; tab: "requirements" | "design" | "tasks" | "code"; visible: boolean }) {
-  const { aiVisible, aiWidth, setAiWidth } = useApp();
+  const { aiVisible, aiWidth, setAiWidth, featureTargets } = useApp();
   const [project, setProject] = useState<api.Project | null>(null);
   const officeVersion = useOfficeVersion();
+  const layoutRef = useRef<HTMLDivElement>(null);
+  const ai = usePaneWidth(`project:${projectId}`, "ai", { default: 372, min: 320, max: 620, side: "right", containerRef: layoutRef, minCenter: 376, disabled: !visible });
   const preferencesRef = useRef({ visible: aiVisible, width: aiWidth });
   if (visible) preferencesRef.current = { visible: aiVisible, width: aiWidth };
   const preferences = preferencesRef.current;
@@ -192,24 +200,21 @@ function ProjectWindow({ projectId, tab, visible }: { projectId: string; tab: "r
     api.listProjects().then(projects => { if (alive) setProject(projects.find(project => project.id === projectId) ?? null); }).catch(() => {});
     return () => { alive = false; };
   }, [projectId]);
-  const startResize = (event: React.PointerEvent<HTMLDivElement>) => {
-    const initialX = event.clientX;
-    const initialWidth = preferences.width;
-    const move = (event: PointerEvent) => setAiWidth(initialWidth + initialX - event.clientX);
-    const finish = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish); };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", finish, { once: true });
-    event.preventDefault();
-  };
+  useEffect(() => {
+    if (!visible) return;
+    setAiWidth(ai.preferred);
+  }, [ai.preferred, setAiWidth, visible]);
   const officeFiles = project?.kind === "work" ? officeFileList(project.id) : undefined;
   void officeVersion;
   return (
-    <div className="nc-project-window">
+    <div className="nc-project-window pane-container" ref={layoutRef}>
       <div className="nc-project-content"><ProjectsModule.Workspace projectId={projectId} tab={tab} visible={visible} /></div>
-      {project && <aside className="nc-chat-host" style={{ width: preferences.width }} hidden={!preferences.visible}>
-        <div className="nc-chat-resize" role="separator" aria-orientation="vertical" aria-label="调整 AI 侧栏宽度" title="拖动调整宽度" onPointerDown={startResize} />
-        <ChatPanel projectId={project.id} rootUri={project.rootUri} office={project.kind === "work"} officeFiles={officeFiles} visible={visible && preferences.visible} width={preferences.width} />
+      {project && <aside {...ai.paneProps} className={`${ai.paneProps.className} nc-chat-host`} style={ai.style} hidden={!preferences.visible || !ai.visible}>
+        <ResizeHandle pane={ai} label="AI 侧栏" />
+        <ChatPanel projectId={project.id} rootUri={project.rootUri} office={project.kind === "work"} officeFiles={officeFiles} visible={visible && preferences.visible && ai.visible} width={ai.width}
+          featureTarget={featureTargets[project.id] ?? null} />
       </aside>}
+      {preferences.visible && <div className="pane-controls"><PaneToggle pane={ai} label="AI 侧栏" /></div>}
     </div>
   );
 }

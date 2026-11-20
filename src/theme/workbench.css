@@ -73,5 +73,5 @@ html[data-theme='dark'] .brand-mark { background: #dff3ec; border-color: #b9dccf
 .nc-search-results { margin-top: 12px; }
 .nc-error { margin-bottom: 12px; padding: 10px 12px; background: var(--danger-soft); color: var(--danger); border: 1px solid var(--danger-line); border-radius: 6px; }
 @media (max-width: 1180px) { .nc-searchbox { width: 200px; } }
-@media (max-width: 960px) { .nc-sidebar { width: 180px; flex-basis: 180px; } .nc-context { font-size: 12px; } .nc-chat-host { position: fixed; top: 96px; right: 0; bottom: 0; width: min(392px,100vw) !important; z-index: 40; box-shadow: var(--shadow-pop); } }
-@media (max-width: 720px) { .nc-sidebar { display: none; } .nc-topbar { padding: 0 12px; gap: 10px; } .nc-context, .nc-top-sep, .nc-searchbox { display: none; } .nc-dashboard-grid { grid-template-columns: minmax(0,1fr); } .nc-stats { flex-wrap: wrap; } .nc-stats > div { flex: 0 0 50%; } .nc-home { padding: 18px 12px; } .nc-chat-host { width: 100vw !important; } .nc-chat-top-align { display: none; } .nc-chat-resize { display: none; } .nc-page-foot { flex-direction: column; } }
+@media (max-width: 960px) { .nc-context { font-size: 12px; } }
+@media (max-width: 720px) { .nc-topbar { padding: 0 12px; gap: 10px; } .nc-context, .nc-top-sep, .nc-searchbox { display: none; } .nc-dashboard-grid { grid-template-columns: minmax(0,1fr); } .nc-stats { flex-wrap: wrap; } .nc-stats > div { flex: 0 0 50%; } .nc-home { padding: 18px 12px; } .nc-chat-top-align { display: none; } .nc-page-foot { flex-direction: column; } }

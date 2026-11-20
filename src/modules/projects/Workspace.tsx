@@ -1,5 +1,5 @@
 import { Icon } from "@/components/icons";
-/** 项目工作区：需求（全宽树 + AI）/ 设计（UI/模型）/ 编码（文件/Git + 编辑器 + AI）；
+/** 项目工作区：需求贯通阅读 / 设计（UI/模型）/ 编码（文件/Git + 编辑器 + AI）；
  *  办公项目（CR-043）：文件树 + 文档查看器 + 统一 AI 侧栏。 */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -15,6 +15,9 @@ import { OfficeViewer } from "@/modules/office/OfficeViewer";
 import { locateFile as officeLocateFile } from "@/modules/office/office-model";
 import { ensureOfficeProjectSample, OfficeArtifacts } from "@/modules/office";
 import { ProjectHome } from "./ProjectHome";
+import { RequirementsReading } from "./RequirementsReading";
+import { flattenRequirements, mergeRequirementSources, normalizedSource } from "./requirementSources";
+import { PaneToggle, ResizeHandle, usePaneWidth } from "@/components/pane-resize";
 import "./projects.css";
 import "@/modules/office/office.css";
 
@@ -83,11 +86,14 @@ export function ProjectWorkspace(props: { projectId: string; tab: Tab; visible?:
 
 function OfficeWorkspace({ project, tab, active, onOpenFile }: { project: api.Project; tab: Tab; active: boolean; onOpenFile: () => void }) {
   useEffect(() => { ensureOfficeProjectSample(project); }, [project.id, project.name]);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const filePane = usePaneWidth(`project:${project.id}`, "office-files", { default: 260, min: 180, max: 480, side: "left", containerRef: rootRef, reserve: 0, minCenter: 320, disabled: !active || tab !== "code" });
   return <>
     <section className="pw-pane" hidden={tab !== "code"}>
-      <div className="office-shell">
-        <div className="office-tree-col"><OfficeFileTree projectId={project.id} projectName={project.name} /></div>
+      <div ref={rootRef} className="office-shell">
+        <div {...filePane.paneProps} className={`office-tree-col ${filePane.paneProps.className}`}><OfficeFileTree projectId={project.id} projectName={project.name} /><ResizeHandle pane={filePane} label="办公文件" /></div>
         <div className="office-main-col"><OfficeViewer projectId={project.id} visible={active && tab === "code"} /></div>
+        <div className="pane-controls"><PaneToggle pane={filePane} label="办公文件" /></div>
       </div>
     </section>
     <section className="pw-pane" hidden={tab !== "design"}><OfficeArtifacts projectId={project.id} onOpenFile={fileId => { officeLocateFile(project.id, fileId); onOpenFile(); }} /></section>
@@ -100,86 +106,59 @@ function normalizePath(path: string) { return path.replace(/\\/g, "/").replace(/
 
 function RequirementsPane(props: { project: api.Project; focusEntityId?: string | null; onFocusDone?: () => void }) {
   const { project } = props;
-  const toast = useToast();
   const [tree, setTree] = useState<RequirementNode[]>([]);
+  const [manifest, setManifest] = useState<api.RequirementSources | null>(null);
   const [loading, setLoading] = useState(true);
-  const [preview, setPreview] = useState(false);
-  const [detail, setDetail] = useState<RequirementNode | null>(null);
+  const [errors, setErrors] = useState<string[]>([]);
+  const [revision, setRevision] = useState(0);
+  const request = useRef(0);
   const [editTarget, setEditTarget] = useState<RequirementNode | null>(null);
   const [createParent, setCreateParent] = useState<RequirementNode | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [delTarget, setDelTarget] = useState<RequirementNode | null>(null);
-  const [query, setQuery] = useState("");
   const [dispatchTarget, setDispatchTarget] = useState<RequirementNode | null>(null);
   const addChild = (parent: RequirementNode | null) => { setCreateParent(parent); setCreateOpen(true); };
-
   const reload = useCallback(async () => {
+    const seq = ++request.current;
     setLoading(true);
-    try {
-      setTree(await api.readRequirements(project.id));
-    } catch (e) {
-      toast(String(e), "err");
-    } finally {
-      setLoading(false);
-    }
-  }, [project.id, toast]);
+    const results = await Promise.allSettled([api.readRequirements(project.id), api.readRequirementSources(project.id)]);
+    if (request.current !== seq) return;
+    const [indexed, sources] = results, failures: string[] = [];
+    if (indexed.status === "fulfilled") setTree(indexed.value);
+    else { setTree([]); failures.push(`需求关系索引读取失败：${String(indexed.reason)}`); }
+    if (sources.status === "fulfilled" && normalizedSource("", sources.value.rootUri) === normalizedSource("", project.rootUri)) setManifest(sources.value);
+    else { setManifest(null); failures.push(sources.status === "rejected" ? `完整源清单读取失败：${String(sources.reason)}；不能证明全文完整。` : "源清单根目录与当前项目不一致，未读取该清单正文。"); }
+    setErrors(failures); setRevision(value => value + 1); setLoading(false);
+  }, [project.id, project.rootUri]);
+  useEffect(() => { void reload(); return () => { request.current++; }; }, [reload]);
+  const sources = useMemo(() => mergeRequirementSources(project.id, project.rootUri, tree, manifest), [project.id, project.rootUri, tree, manifest]);
+  return <>
+    <RequirementsReading key={JSON.stringify([project.id, project.rootUri])} project={project} sources={sources} loading={loading} errors={errors} warnings={manifest?.warnings ?? []} complete={manifest !== null} revision={revision}
+      focusEntityId={props.focusEntityId} onFocusDone={props.onFocusDone} onReload={() => void reload()} onNew={() => addChild(null)} onAddChild={addChild} onEdit={setEditTarget} onDelete={setDelTarget} onDispatch={setDispatchTarget} />
+    {editTarget && <DocEditModal project={project} node={editTarget} onClose={() => setEditTarget(null)} onSaved={() => { setEditTarget(null); void reload(); }} />}
+    {createOpen && <CreateNodeModal project={project} parent={createParent} tree={tree} onClose={() => setCreateOpen(false)} onCreated={() => { setCreateOpen(false); void reload(); }} />}
+    {delTarget && <DeleteNodeModal project={project} node={delTarget} onClose={() => setDelTarget(null)} onDeleted={() => { setDelTarget(null); void reload(); }} />}
+    {dispatchTarget && <DispatchModal project={project} tree={tree} node={dispatchTarget} onClose={() => setDispatchTarget(null)} />}
+  </>;
+}
 
-  useEffect(() => {
-    void reload();
-  }, [reload]);
-
-  // 会话引用定位：打开对应需求条目详情（AC-STORY-062-09）
-  useEffect(() => {
-    const id = props.focusEntityId;
-    if (!id || loading || tree.length === 0) return;
-    const find = (nodes: RequirementNode[]): RequirementNode | null => {
-      for (const n of nodes) {
-        if (n.entityId === id) return n;
-        const hit = find(n.children);
-        if (hit) return hit;
-      }
-      return null;
-    };
-    const hit = find(tree);
-    if (hit) setDetail(hit);
-    props.onFocusDone?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.focusEntityId, loading, tree]);
-
-  const flat = useMemo(() => flattenRequirements(tree), [tree]);
-  const roots = useMemo(() => query.trim() ? flat.filter(n => `${n.entityId} ${n.title}`.toLowerCase().includes(query.trim().toLowerCase())) : tree, [tree, flat, query]);
-  const stories = flat.filter(n => n.kind === "story" || n.kind === "bug");
-  const epics = useMemo(() => tree.filter(n => n.kind === "epic"), [tree]);
-  const visions = useMemo(() => tree.filter(n => n.kind === "vision"), [tree]);
-
-  if (preview) {
-    return <PreviewPage project={project} epics={epics} visions={visions} onClose={() => setPreview(false)} />;
+/** CR-047：Story/Bug 沿父链找唯一Feature；父链缺失或父不是Feature时不猜测。 */
+function findAncestorFeature(tree: RequirementNode[], entityId: string): RequirementNode | null {
+  const flat = flattenRequirements(tree);
+  const self = flat.find(n => n.entityId === entityId);
+  if (!self) return null;
+  const seen = new Set([self.entityId]);
+  let parentId = self.parentId;
+  while (parentId) {
+    if (seen.has(parentId)) return null;
+    seen.add(parentId);
+    const parent = flat.find(n => n.entityId === parentId);
+    if (!parent) return null;
+    if (parent.kind === "feature") return parent;
+    if (parent.kind !== "epic") return null;
+    parentId = parent.parentId;
   }
-
-  return (
-    <div className="req-shell">
-      <div className="req-tree-col">
-        <div className="req-toolbar row">
-          <input className="input" aria-label="搜索需求" placeholder="搜索编号或标题" value={query} onChange={e => setQuery(e.target.value)} />
-          <span className="spacer" /><span className="small muted">{stories.length} 条 Story · {stories.filter(n => n.status === "已完成").length} 已完成</span>
-          <button className="btn sm" onClick={() => void reload()}>刷新</button>
-          <button className="btn sm" onClick={() => setPreview(true)}>预览</button>
-          <button className="btn primary sm" onClick={() => addChild(null)}><Icon name="plus" size={14} /> 新建史诗</button>
-        </div>
-        <div className="req-tree" role="tree" aria-label="需求树">
-          {roots.map(n => <TreeLine key={n.entityId} node={n} depth={0} onOpen={setDetail} onEdit={setEditTarget} onDelete={setDelTarget} onAddChild={addChild} onDispatch={setDispatchTarget} showChildren={!query.trim()} />)}
-          {loading && <Empty title="加载中…" />}
-          {!loading && roots.length === 0 && <Empty title={query.trim() ? "没有匹配的需求" : "暂无需求文档"} desc="从 Epic 开始拆解；正文保存于项目 docs/Plan。" />}
-        </div>
-      </div>
-
-      {detail && <DocDetailModal project={project} node={detail} onClose={() => setDetail(null)} />}
-      {editTarget && <DocEditModal project={project} node={editTarget} onClose={() => setEditTarget(null)} onSaved={() => { setEditTarget(null); void reload(); }} />}
-      {createOpen && <CreateNodeModal project={project} parent={createParent} tree={tree} onClose={() => setCreateOpen(false)} onCreated={() => { setCreateOpen(false); void reload(); }} />}
-      {delTarget && <DeleteNodeModal project={project} node={delTarget} onClose={() => setDelTarget(null)} onDeleted={() => { setDelTarget(null); void reload(); }} />}
-      {dispatchTarget && <DispatchModal node={dispatchTarget} onClose={() => setDispatchTarget(null)} />}
-    </div>
-  );
+  return null;
 }
 
 function statusTag(status: string | null) {
@@ -230,8 +209,6 @@ function TreeLine(props: {
   </div>;
 }
 
-function flattenRequirements(nodes: RequirementNode[]): RequirementNode[] { return nodes.flatMap(n => [n, ...flattenRequirements(n.children)]); }
-
 function stripFrontMatter(md: string): string {
   if (md.startsWith("---")) {
     const end = md.indexOf("---", 3);
@@ -247,30 +224,26 @@ function DeleteNodeModal({ project, node, onClose }: { project: api.Project; nod
   </Modal>;
 }
 
-function DispatchModal({ node, onClose }: { node: RequirementNode; onClose: () => void }) {
+function DispatchModal({ project, tree, node, onClose }: { project: api.Project; tree: RequirementNode[]; node: RequirementNode; onClose: () => void }) {
+  const { setFeatureTarget } = useApp();
   const stories = flattenRequirements([node]).filter(n => n.kind === "story" || n.kind === "bug");
-  return <Modal title="派发预检" onClose={onClose} width={760} footer={<><button className="btn" onClick={onClose}>关闭</button><button className="btn primary" disabled>确认派发</button></>}>
-    <div className="requirement-note">任务执行器与派发 API 尚未接入。仅列出当前范围，不创建 Run、不推进需求状态或伪造执行成功。</div>
+  // CR-047：从所选范围直接解析唯一Feature；Story上溯Feature，Feature即自身；Epic/全范围不猜一个Feature。
+  const feature = node.kind === "feature" ? node : node.kind === "story" || node.kind === "bug"
+    ? findAncestorFeature(tree, node.entityId) : null;
+  const featureBlocked = !feature || node.kind === "epic" || node.kind === "vision";
+  const useFeature = () => {
+    if (!feature) return;
+    setFeatureTarget(project.id, { featureId: feature.entityId, featureTitle: feature.title });
+    window.dispatchEvent(new CustomEvent("app:new-execution-session", { detail: { projectId: project.id, featureId: feature.entityId } }));
+    onClose();
+  };
+  return <Modal title="派发预检" onClose={onClose} width={760} footer={<><button className="btn" onClick={onClose}>关闭</button>{feature && <button className="btn primary" onClick={useFeature}>为 {feature.entityId} 创建执行会话</button>}</>}>
+    <div className="requirement-note">任务执行器与派发 API 尚未接入。本步骤只把所选特性设为 AI 新建执行会话的归属，不创建 Run、不推进需求状态或伪造执行成功。</div>
     <h3>{node.entityId} · {node.title}</h3>
+    {feature && <p className="small"><b>执行特性：</b>{feature.entityId} · {feature.title}（本执行会话仅实现该Feature）</p>}
+    {!feature && <p className="requirement-note" role="alert">当前范围不能确定唯一执行特性：{node.kind === "epic" ? "Epic 下可能有多个特性，请逐特性派发或新建独立执行会话，不能合并到一个会话。" : "Story 的父链缺失或不是特性，请先修复源关系。"}</p>}
     {stories.map(n => <div key={n.entityId} className="dispatch-item"><span className="req-id">{n.entityId}</span><span className="grow">{n.title}</span>{statusTag(n.status)}</div>)}
     {!stories.length && <Empty title="范围内没有 Story" />}
-  </Modal>;
-}
-
-function DocDetailModal(props: { project: api.Project; node: RequirementNode; onClose: () => void }) {
-  const [html, setHtml] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    let alive = true;
-    api.fsReadFile(props.project.rootUri, props.node.sourceUri).then(async md => {
-      const result = await renderMarkdown(stripFrontMatter(md));
-      if (alive) setHtml(result);
-    }).catch(e => { if (alive) setError(String(e)); });
-    return () => { alive = false; };
-  }, [props.project.rootUri, props.node.sourceUri]);
-  return <Modal title={`${props.node.entityId} ${props.node.title}`} onClose={props.onClose} width={620}>
-    <div className="row">{statusTag(props.node.status)}<span className="small muted">负责人：{props.node.owner || "未分配"}</span></div>
-    {error ? <Empty title="读取文档失败" desc={error} /> : html ? <div className="kb-content" dangerouslySetInnerHTML={{ __html: html }} /> : <Empty title="加载中…" />}
   </Modal>;
 }
 
@@ -393,66 +366,6 @@ function collectIds(nodes: RequirementNode[]): string[] {
   return out;
 }
 
-/* ============ 预览 ============ */
-
-function PreviewPage(props: {
-  project: api.Project;
-  epics: RequirementNode[];
-  visions: RequirementNode[];
-  onClose: () => void;
-}) {
-  const [html, setHtml] = useState("");
-  const [toc, setToc] = useState<{ level: number; text: string; id: string }[]>([]);
-  useEffect(() => {
-    (async () => {
-      const parts: string[] = [];
-      for (const v of props.visions) {
-        const md = await api.readDoc(v.sourceUri).catch(() => "");
-        parts.push(stripFrontMatter(md));
-      }
-      for (const e of props.epics) {
-        const emd = await api.readDoc(e.sourceUri).catch(() => "");
-        parts.push(`# ${e.entityId} ${e.title}\n\n` + stripH1(stripFrontMatter(emd)));
-        for (const f of e.children) {
-          const fmd = await api.readDoc(f.sourceUri).catch(() => "");
-          parts.push(`## ${f.entityId} ${f.title}\n\n` + stripH1(stripFrontMatter(fmd)));
-          for (const s of f.children) {
-            const smd = await api.readDoc(s.sourceUri).catch(() => "");
-            parts.push(`### ${s.entityId} ${s.title}\n\n` + stripH1(stripFrontMatter(smd)));
-          }
-        }
-      }
-      const md = parts.join("\n\n");
-      setHtml(await renderMarkdown(md));
-      setToc(extractToc(md));
-    })();
-  }, [props.epics, props.visions]);
-  return (
-    <div className="preview-shell">
-      <div className="row" style={{ padding: "10px 16px", borderBottom: "1px solid var(--line)" }}>
-        <button className="backlink" onClick={props.onClose}><Icon name="arrowLeft" size={14} /> 返回需求树</button>
-        <strong>需求预览</strong>
-      </div>
-      <div className="preview-body">
-        <div className="preview-doc kb-content" dangerouslySetInnerHTML={{ __html: html }} />
-        <aside className="preview-toc">
-          <div className="small muted" style={{ padding: "8px 12px" }}>目录</div>
-          {toc.map((t, i) => (
-            <div key={i} className="toc-line clickable ellipsis" style={{ paddingLeft: 12 + (t.level - 1) * 12 }}
-              onClick={() => document.getElementById(t.id)?.scrollIntoView({ behavior: "smooth" })}>
-              {t.text}
-            </div>
-          ))}
-        </aside>
-      </div>
-    </div>
-  );
-}
-
-function stripH1(md: string): string {
-  return md.replace(/^#\s+.*\n/, "").trimStart();
-}
-
 /* ============ 设计 ============ */
 
 const DESIGN_SECTIONS = [
@@ -475,7 +388,8 @@ function DesignPane({ project }: { project: api.Project }) {
   const [error, setError] = useState<string | null>(null);
   const [readError, setReadError] = useState<string | null>(null);
   const [html, setHtml] = useState("");
-  const [tocOpen, setTocOpen] = useState(true);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const tocPane = usePaneWidth(`project:${project.id}`, "design-toc", { default: 240, min: 160, max: 360, side: "right", containerRef: rootRef, reserve: 56, minCenter: 320, overlayInset: 56 });
   const [busy, setBusy] = useState(false);
   const docRef = useRef<HTMLDivElement>(null);
   const reload = useCallback(async () => {
@@ -525,11 +439,11 @@ function DesignPane({ project }: { project: api.Project }) {
     const url = URL.createObjectURL(new Blob([draft.text], { type: "text/plain;charset=utf-8" }));
     const a = document.createElement("a"); a.href = url; a.download = current.split(/[\\/]/).pop() ?? "document.md"; a.click(); URL.revokeObjectURL(url);
   };
-  return <div className={`design-shell ${tocOpen ? "" : "toc-closed"}`}>
+  return <div ref={rootRef} className="design-shell">
     <nav className="design-rail" aria-label="设计资料">
       {DESIGN_SECTIONS.map(item => <button key={item.key} className={`rail-btn ${section === item.key ? "active" : ""}`} aria-label={item.title} aria-pressed={section === item.key} title={item.title} onClick={() => setSection(item.key)}><WorkspaceIcon name={item.icon} /></button>)}
-      <div className="rail-sep" /><button className="rail-btn" aria-label="关联需求" title="关联需求" onClick={() => setTocOpen(true)}><WorkspaceIcon name="link" /></button>
-      <button className="rail-btn" aria-label={tocOpen ? "收起目录" : "展开目录"} title={tocOpen ? "收起目录" : "展开目录"} onClick={() => setTocOpen(!tocOpen)}><WorkspaceIcon name="panel" /></button>
+      <div className="rail-sep" /><button className="rail-btn" aria-label="关联需求" title="关联需求" onClick={() => tocPane.setVisible(true)}><WorkspaceIcon name="link" /></button>
+      <PaneToggle pane={tocPane} label="目录" className="rail-btn"><WorkspaceIcon name="panel" /></PaneToggle>
     </nav>
     <section className="design-main">
       <div className="design-topbar">
@@ -546,7 +460,8 @@ function DesignPane({ project }: { project: api.Project }) {
         </div>
       ) : markdown ? <div ref={docRef} className="design-doc kb-content" dangerouslySetInnerHTML={{ __html: html }} /> : <div className="design-doc"><div className="small muted">源码阅读；HTML 不执行脚本。交互 UI 预览尚未接入。</div><pre className="design-source mono">{draft.text}</pre></div>}
     </section>
-    {tocOpen && <aside className="design-toc">
+    <aside {...tocPane.paneProps} className={`design-toc ${tocPane.paneProps.className}`}>
+      <ResizeHandle pane={tocPane} label="设计目录" />
       <div className="design-toc-info"><b>文档信息</b>
         <div className="meta-row"><span>版本</span><b>{fm.version || "未登记"}</b></div>
         <div className="meta-row"><span>更新</span><b>{fm.updated || fm.updatedAt || "未登记"}</b></div>
@@ -555,7 +470,7 @@ function DesignPane({ project }: { project: api.Project }) {
         <button className="btn sm" disabled={loading} onClick={() => void reload()}>刷新资料目录</button><span className="small muted">同步设计依据未接入，不标记已同步。</span>
       </div>
       <div className="design-toc-list"><div className="small muted">本页目录</div>{toc.map((t, i) => <button key={i} className="toc-line" style={{ paddingLeft: 8 + (t.level - 1) * 12 }} onClick={() => docRef.current?.querySelector(`[id="${t.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" })}>{t.text}</button>)}{!toc.length && <span className="small muted">无章节</span>}</div>
-    </aside>}
+    </aside>
   </div>;
 }
 
@@ -566,12 +481,26 @@ function projectRelativePath(root: string, path: string): string {
 }
 
 function TasksPane({ project, onRequirements }: { project: api.Project; onRequirements: () => void }) {
-  return <div className="tasks-pane">
-    <div className="task-stats">{["派发批次", "子任务", "执行中", "等待依赖", "已交付 / 待验收"].map(label => <div key={label}><span className="small muted">{label}</span><b>—</b></div>)}</div>
-    <div className="task-body"><section className="task-list-pane"><div className="task-pane-head"><h3>派发树</h3><span className="small muted">{project.name} · 每次派发一棵</span></div>
-      <div className="task-columns small muted"><span>任务 / 执行器</span><span>状态</span><span>耗时</span></div>
-      <Empty title="该项目还没有可读取的运行" desc="任务与 runner API 尚未接入，不能派发、暂停、重试或验收；此处不展示虚构任务数据或成功状态。" action={<button className="btn primary" onClick={onRequirements}>查看需求</button>} />
-    </section><aside className="task-detail-pane"><Empty title="未选择任务" desc="接入真实运行记录后，显示协调者、子任务、日志、产物与用量。" /></aside></div>
+  const [view, setView] = useState<"tree" | "detail">("tree");
+  const rootRef = useRef<HTMLDivElement>(null), detailRef = useRef<HTMLElement>(null), listRef = useRef<HTMLElement>(null);
+  const detailPane = usePaneWidth(`project:${project.id}`, "task-detail", { default: 360, min: 240, max: 520, side: "right", containerRef: rootRef, reserve: 88, minCenter: 320, overlayInset: 56 });
+  const selectView = (next: "tree" | "detail") => {
+    setView(next);
+    if (next === "detail") detailPane.setVisible(view !== "detail" || !detailPane.visible);
+    requestAnimationFrame(() => (next === "detail" ? detailRef.current : listRef.current)?.focus({ preventScroll: true }));
+  };
+  return <div ref={rootRef} className="task-workspace" data-task-view={view} data-ui-version="UI-CR045-v1.1">
+    <nav className="req-rail" aria-label="任务工作区">
+      <button className={`rail-btn ${view === "tree" ? "on" : ""}`} aria-label="派发树" aria-pressed={view === "tree"} onClick={() => selectView("tree")}><Icon name="workflow" size={18} /><span>派发树</span></button>
+      <button className={`rail-btn ${view === "detail" ? "on" : ""}`} aria-label="任务详情" aria-pressed={view === "detail"} onClick={() => selectView("detail")}><Icon name="fileText" size={18} /><span>详情</span></button>
+    </nav>
+    <div className="tasks-pane">
+      <div className="task-stats">{["派发批次", "子任务", "执行中", "等待依赖", "已交付 / 待验收"].map(label => <div key={label}><span className="small muted">{label}</span><b>—</b></div>)}</div>
+      <div className="task-body"><section ref={listRef} className="task-list-pane" tabIndex={-1}><div className="task-pane-head"><h3>派发树</h3><span className="small muted">{project.name} · 每次派发一棵</span></div>
+        <div className="task-columns small muted"><span>任务 / 执行器</span><span>状态</span><span>耗时</span></div>
+        <Empty title="该项目还没有可读取的运行" desc="任务与 runner API 尚未接入，不能派发、暂停、重试或验收；此处不展示虚构任务数据或成功状态。" action={<button className="btn primary" onClick={onRequirements}>查看需求</button>} />
+      </section><aside {...detailPane.paneProps} ref={detailRef} className={`task-detail-pane ${detailPane.paneProps.className}`} tabIndex={-1}><ResizeHandle pane={detailPane} label="任务详情" /><Empty title="未选择任务" desc="接入真实运行记录后，显示协调者、子任务、日志、产物与用量。" /></aside></div>
+    </div>
   </div>;
 }
 
@@ -583,14 +512,16 @@ function WorkspaceIcon({ name }: { name: string }) {
 
 function CodePane({ project, visible }: { project: api.Project; visible: boolean }) {
   const [leftTab, setLeftTab] = useState<"file" | "git">("file");
-  return <div className="code-shell">
+  const rootRef = useRef<HTMLDivElement>(null);
+  const gitPane = usePaneWidth(`project:${project.id}`, "code-git", { default: 260, min: 180, max: 480, side: "left", containerRef: rootRef, reserve: 56, minCenter: 320, overlayInset: 56, disabled: !visible });
+  return <div ref={rootRef} className="code-shell">
     <nav className="code-rail" aria-label="编码管理">
       <button className={`rail-btn ${leftTab === "file" ? "active" : ""}`} aria-label="资源管理" title="资源管理" aria-pressed={leftTab === "file"} onClick={() => setLeftTab("file")}><WorkspaceIcon name="folder" /></button>
-      <button className={`rail-btn ${leftTab === "git" ? "active" : ""}`} aria-label="Git 管理" title="Git 管理" aria-pressed={leftTab === "git"} onClick={() => setLeftTab("git")}><WorkspaceIcon name="git" /></button>
+      <button className={`rail-btn ${leftTab === "git" ? "active" : ""}`} aria-label="Git 管理" title="Git 管理" aria-pressed={leftTab === "git"} onClick={() => { setLeftTab("git"); gitPane.setVisible(true); }}><WorkspaceIcon name="git" /></button>
       <button className="rail-btn" aria-label="外部编辑器尚未接入" title="外部编辑器尚未接入" disabled><WorkspaceIcon name="external" /></button>
     </nav>
     <div className={`code-left ${leftTab === "git" ? "git-active" : ""}`}>
-      <div className="code-git-panel" hidden={leftTab !== "git"}><GitPanel repoPath={project.rootUri} /></div>
+      <div {...gitPane.paneProps} className={`code-git-panel ${gitPane.paneProps.className}`} hidden={leftTab !== "git" || !gitPane.visible}><GitPanel repoPath={project.rootUri} /><ResizeHandle pane={gitPane} label="Git 管理" /></div>
       <CodeArea rootUri={project.rootUri} projectId={project.id} hideTree={leftTab === "git"} visible={visible} />
     </div>
   </div>;

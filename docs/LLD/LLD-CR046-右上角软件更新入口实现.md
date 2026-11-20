@@ -1,0 +1,181 @@
+# LLD-CR046：右上角软件更新入口实现方案
+
+- 关联需求／Story／AC：[CR-046](../PRD/CR-046-右上角软件更新入口.md)、[STORY-064](../Plan/Story/STORY-064-主界面按评审意见重构.md#cr-046右上角软件更新入口) AC-35～39；UI 基准 [UI-CR046](UI-CR046-右上角更新入口.md)。
+- 本次解决的问题：应用没有更新能力；用户希望有更新时标题栏出现「更新」、下载校验后变「重启」，并同时适配安装版与免安装版。
+- 不在本次范围：更新说明弹窗、跳过版本、自动更新开关、差分更新、断点续传、代码签名、发布流程改造；正式源码改动以用户明确指令「再改代码实现」为授权依据。
+
+## 1. 当前实现与受影响模块
+
+| 现状 | 说明 |
+| --- | --- |
+| 无更新能力 | `src-tauri/Cargo.toml` 未引入 updater 插件，`lib.rs` 无更新命令；`src/App.tsx` 顶栏只有搜索、主题、通知、账户与窗口控制 |
+| 已有依赖可复用 | `ureq`（同步 HTTP，已启用 TLS）用于上游请求；`tokio` 提供异步运行时；`sha2` 已在 `Cargo.lock`（0.10.9）中，可直接声明为直接依赖；Tauri 2 提供 `AppHandle`、`Emitter`、`app_data_dir` |
+| 数据目录 | `setup` 中解析 `app.path().app_data_dir()`，更新暂存放其下 `update/`，不写数据库、不写安装目录之外的用户数据 |
+| 分发形态 | `tauri.conf.json` 当前只配置 `nsis` 安装包；尚无免安装版构建脚本与标记文件，运行时判定按「标记优先、卸载器次之、其余不支持」设计 |
+
+受影响文件：`src-tauri/src/updater.rs`（新增）、`src-tauri/src/commands/updater.rs`（新增，命令包装）、`src-tauri/src/lib.rs`（模块与命令注册、启动清理）、`src-tauri/Cargo.toml`（`sha2` 直接依赖）、`src/api/index.ts`（命令封装与类型）、`src/modules/update/UpdateBadge.tsx`（新增）、`src/modules/update/update.css`（新增）、`src/App.tsx`（顶栏挂载）。
+
+不改：`tauri.conf.json`、数据库 schema、既有窗口关闭流程、通知面板、设置页。
+
+## 2. 选定方案与流程
+
+采用**自研轻量更新**：清单 JSON + HTTPS 下载 + SHA-256 校验 + 按形态落位，不引入 Tauri updater 插件，避免签名密钥与配置体系成为前置依赖。
+
+### 2.1 状态机
+
+```text
+unsupported ──（开发环境 / 无法判定形态）──> 不显示入口
+hidden ──检查到更高版本且资产匹配──> available
+available ──点击/自动开始──> downloading ──校验通过──> ready
+downloading ──失败──> available
+ready ──点击──> applying ──成功──> 新版本启动
+applying ──失败──> ready
+```
+
+前端只在 `available`／`downloading`／`ready`／`applying` 渲染徽标；`downloading` 与 `applying` 为 `disabled`。检查结果不得覆盖进行中的下载或安装状态。
+
+### 2.2 更新源与清单
+
+默认清单地址（待确认 Q-046-01，常量化便于调整）：
+
+```text
+https://github.com/GaoHu1997/NestCraft/releases/latest/download/nestcraft-win64.json
+```
+
+候选地址优先级：
+
+1. 环境变量 `NESTCRAFT_UPDATE_FEED`（单个 URL，设置后只用它，便于强制指定与测试）。
+2. `<app_data>/update/feed.json`：内容为单个或多个 URL，逗号／空白／换行分隔，只接受 `http://`、`https://`。
+3. 内置默认地址。
+
+清单结构（只允许 `installer`／`portable` 两类资产）：
+
+```json
+{
+  "version": "0.2.0",
+  "notes": "本版更新说明（本轮不展示，仅保留字段）",
+  "pub_date": "2026-11-21",
+  "installer": {
+    "url": "https://github.com/GaoHu1997/NestCraft/releases/download/v0.2.0/NestCraft_0.2.0_x64-setup.exe",
+    "sha256": "64 位十六进制",
+    "size": 12345678,
+    "mirrors": ["https://mirror.example/NestCraft_0.2.0_x64-setup.exe"]
+  },
+  "portable": {
+    "url": "https://github.com/GaoHu1997/NestCraft/releases/download/v0.2.0/NestCraft_0.2.0_x64_portable.exe",
+    "sha256": "64 位十六进制",
+    "size": 12345678,
+    "mirrors": []
+  }
+}
+```
+
+- 字段校验：`version` 非空；资产 `url` 必须 `http(s)`；`sha256` 必须 64 位十六进制；`size` 允许 0 但大于 0 时严格校验。
+- 只取当前形态资产；另一形态缺失不影响本形态；当前形态缺失时 `update_available=false` 并记录原因，不显示可安装状态。
+- 不走第三方加速代理；镜像由清单显式声明，校验仍以清单 SHA-256 为准。
+
+### 2.3 版本比较
+
+按 `.` 分段比较数字；`v` 前缀忽略；带 `-` 的预发布段低于同号正式版；数字段缺失按 0。只接受候选严格大于当前 `CARGO_PKG_VERSION`。
+
+### 2.4 形态判定
+
+按顺序，全部为纯函数，便于单测：
+
+1. `debug_assertions` 为真 → `unsupported`（开发环境不升级）。
+2. 可执行文件同目录存在 `portable.marker` → `portable`。
+3. 可执行文件同目录存在 `uninstall.exe` → `installed`（NSIS 安装目录特征）。
+4. 其余 → `unsupported`（无法安全判定，不显示入口）。
+
+免安装版构建需在产物目录写入 `portable.marker`；本批不提供构建脚本，判定逻辑先就绪。
+
+### 2.5 下载与校验
+
+- 使用 `ureq::AgentBuilder`，连接超时 10s、单次读超时 30s；在 `tauri::async_runtime::spawn_blocking` 中执行，避免阻塞 UI 线程。
+- 暂存目录 `<app_data>/update/`；临时文件 `update.part`，落位名 `update-staged.exe`（两形态共用，内容由清单决定）。
+- 分块 64 KiB 写入，累计 `done`、按 1 秒窗口计算 `speed`；每块后更新全局进度并 `emit("update-progress", ...)`；前端同时以 700ms 轮询 `update_status` 兜底。
+- 下载完成：若清单 `size>0` 且实际大小不等 → 失败；计算 SHA-256，不匹配 → 删除 `.part`、失败；匹配 → `rename` 为 `update-staged.exe`，状态 `ready`，写入 `staged.json`（版本、sha256、形态）供重启后恢复。
+- 同一时刻只允许一个下载（`AtomicBool`）；重复触发返回「已有下载任务进行中」。
+- 不使用清单中的文件名或路径落盘，避免路径穿越。
+
+### 2.6 落位
+
+**免安装版**
+
+1. 安装前重新校验 `update-staged.exe` 的 SHA-256。
+2. 当前 exe 改名为 `<name>.exe.old`（已存在则 `.old-2`…`.old-9`，再冲突用随机后缀）；改名失败按 100/200/400/800/1500ms 退避重试。
+3. `update-staged.exe` 改名为当前 exe；失败则把旧版改回原名并返回错误。
+4. 以分离进程启动新 exe（Windows：`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`），设置 `NESTCRAFT_UPDATED=1`。
+5. `app.exit(0)`。新版本启动时清理 `*.old`、`.part`、`staged.json`。
+
+**安装版**
+
+1. 安装前重新校验安装包 SHA-256。
+2. 以 `Command::new(staged).arg("/S")` 启动 NSIS 安装包；`/S` 为 NSIS 标准静默参数，安装包是否完全无界面或触发 UAC 由其自身配置决定，不在此承诺。
+3. 启动成功后 `app.exit(0)`；由安装包替换文件、更新卸载登记并启动新版本。
+4. 启动失败：保留安装包与 `ready` 状态，提示用户可重试或手动运行安装包。
+
+**共同约束**：失败不删除暂存包；不修改用户项目、知识、会话与数据库；不自动重试安装。
+
+### 2.7 命令契约
+
+| 命令 | 参数 | 返回 | 说明 |
+| --- | --- | --- | --- |
+| `update_environment` | 无 | `{ kind: "installed"\|"portable"\|"unsupported", current_version, exe_path, updatable }` | 前端启动时先取；`unsupported` 时不检查、不渲染 |
+| `update_check` | 无 | `{ current_version, update_available, manifest, asset }` | `asset` 为按形态裁剪后的 `{ url, mirrors, sha256, size }`；不可用时 `manifest=null` |
+| `update_download` | `expected_version`, `expected_sha256` | `{ path }` | 下载前校验清单身份与期望值，防止检查后被替换；成功后返回暂存路径 |
+| `update_status` | 无 | `{ phase, done, total, speed, message, staged_file, kind, version }` | `phase`：`idle\|downloading\|verifying\|ready\|applying\|unsupported`；启动时由 `staged.json` 恢复 `ready` |
+| `update_apply` | `expected_sha256` | `()` | 再次校验后落位；成功时不返回（进程退出），失败返回错误 |
+
+所有命令返回 `Result<T, String>`；错误信息使用可操作中文，例如「更新包 SHA-256 不匹配，已删除损坏文件」「旧版程序改名失败（可能被杀毒软件占用）」「安装器启动失败」。不返回本机敏感路径以外的信息。
+
+### 2.8 前端
+
+- 新增 `UpdateBadge` 组件，挂在 `App.tsx` 顶栏 `.top-actions` 中、通知按钮之后、账户按钮之前；无状态时不渲染。
+- 启动流程：`update_environment` → 若 `updatable` 则 2 秒后 `update_check`，此后每 30 分钟一次；同时 `update_status` 恢复 `ready`／`downloading`。
+- 点击 `available` → `update_download`；监听 `update-progress` 更新进度，轮询 `update_status` 兜底；成功后 `ready`。
+- 点击 `ready` → `update_apply`；失败恢复 `ready` 并 Toast 提示。
+- 失败提示复用 `src/components/ui.tsx` 的 `useToast`；错误文案直接来自后端。
+- 状态机与样式按 [UI-CR046](UI-CR046-右上角更新入口.md)：54×22 文字胶囊，绿「更新」、橙「重启」、边框进度、加载环。
+- 卸载时清理监听与定时器；页面不可见不改变状态。
+
+## 3. 数据、权限、安全与兼容
+
+- **数据**：不新建数据库表、不迁移、不改现有 schema；只写 `<app_data>/update/` 下的暂存包、`staged.json` 与 `feed.json`（可选）。DB 不适用，理由：更新状态是瞬时本机安装状态，不参与业务数据与多设备同步。
+- **权限**：只读网络与自身安装目录；不在应用内提权；安装版由安装包自行处理 UAC；免安装版仅在 exe 目录可写时允许落位，不可写时返回错误。
+- **安全**：只允许 `http(s)`；SHA-256 必填并在下载后、安装前各校验一次；固定落盘路径；不执行未校验文件；失败清理临时文件；不记录凭据。
+- **兼容**：Windows 10/11 x64；`http(s)` 代理沿用系统环境变量（ureq 默认）；无更新源或离线时静默；版本号取 `CARGO_PKG_VERSION`，与 `tauri.conf.json`／`package.json` 保持一致由发布流程保证。
+- **并发**：下载单飞；apply 期间忽略重复点击；检查与下载互不覆盖状态。
+
+## 4. 实现步骤与验证
+
+1. `Cargo.toml` 增加 `sha2 = "0.10"`；确认 `cargo check --offline` 可解析（lock 已有 0.10.9）。
+2. 实现 `updater.rs` 的纯函数与单测：版本比较、清单解析、资产选择、形态判定、URL／哈希校验、SHA-256 校验（临时文件）。
+3. 实现下载、状态、落位与 Tauri 命令；`lib.rs` 注册命令并在 `setup` 中启动清理。
+4. 前端 API、组件、样式与顶栏挂载；构建类型检查。
+5. 验证：
+   - `cargo test --offline --lib`（新增 updater 单测）；
+   - `npm run build`（含 `tsc --noEmit`）；
+   - 本机 feed 夹具 + 本地 HTTP 服务：检查、下载、进度、校验失败、`ready` 恢复；
+   - 免安装落位：用临时副本 exe 与 marker 夹具验证换名／回滚（不替换正在运行的应用）；安装版落位只验证安装包启动路径与参数，不实际完成升级；
+   - 设计／软件同视口五态对照截图。
+6. 未验证项如实登记：真实 GitHub Release、安装版完整升级、免安装版构建产物、代码签名、UAC 行为。
+
+## 5. 风险、取舍与未决项
+
+| 项 | 取舍／风险 | 缓解 |
+| --- | --- | --- |
+| 不使用 Tauri updater 插件 | 需要自己实现下载、校验与落位 | 复用现有 `ureq`／`sha2`；逻辑集中在一个模块并单测 |
+| NSIS `/S` | 安装器是否完全无界面、是否需要 UAC 取决于其配置 | 文案不承诺无界面；失败保留 ready 可重试 |
+| 形态判定 | 无 marker、无卸载器的绿色版会被判为 unsupported | 免安装构建写入 marker；文档明确；不猜测目录可写性作为唯一依据 |
+| 更新源 | 默认仓库与清单名待确认 | 常量集中、可用环境变量覆盖；Q-046-01 |
+| 大文件下载 | 无断点续传 | 本轮范围外；失败重下，`.part` 清理 |
+| 安装版替换时机 | 安装器可能在应用退出前开始 | 启动安装器后立即退出；安装器自身负责文件占用处理 |
+
+未决：Q-046-01 更新源、Q-046-02 安装器界面／UAC 接受度、Q-046-03 是否本批交付免安装构建脚本。三者均不阻塞代码结构，按默认值实现并在交付说明中标注。
+
+## 6. 变更记录
+
+| 日期 | 变更 | 依据 |
+| --- | --- | --- |
+| 2026-11-20 | 建立 LLD-CR046：自研清单＋SHA-256 更新、安装版／免安装版分叉、五态前端与命令契约 | 用户直接指令先需求设计后代码；UI-CR046-v1 已登记 |

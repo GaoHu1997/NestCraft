@@ -25,6 +25,8 @@ interface ChatPanelProps {
   width?: number;
   height?: string;
   className?: string;
+  /** CR-047：本工作区当前选定的特性；新建会话绑定它，已有会话保留原绑定。 */
+  featureTarget?: { featureId: string; featureTitle: string } | null;
 }
 interface PendingSend {
   sid: string;
@@ -166,7 +168,7 @@ function Panel(props: ChatPanelProps) {
       await markRead(meta, targetScope); bumpRt();
     } catch (e) { if (viewing(meta.id, targetScope)) toast(String(e), "err"); }
   };
-  const createSession = (preserveNewDraft = false): Promise<SessionMeta> => {
+  const createSession = (preserveNewDraft = false, featureId?: string | null): Promise<SessionMeta> => {
     if (createPromise.current) return createPromise.current;
     const targetScope = scope;
     const previous = curRef.current;
@@ -176,6 +178,7 @@ function Panel(props: ChatPanelProps) {
       ...(previous?.cliId ? { cliId: previous.cliId } : cliCands[0] ? { cliId: cliCands[0].id } : {}),
       ...(previous?.providerId ? { providerId: previous.providerId } : {}), ...(previous?.modelId ? { modelId: previous.modelId } : {}),
       ...(previous?.effort ? { effort: previous.effort } : {}),
+      ...(featureId ? { featureId } : {}),
     };
     const work = (async () => {
       await saveDraftNow(); // 新会话也必须先保存旧会话，包含空草稿
@@ -196,7 +199,7 @@ function Panel(props: ChatPanelProps) {
     void work.finally(() => { if (createPromise.current === work) createPromise.current = null; }).catch(() => {});
     return work;
   };
-  const newSession = () => { void createSession().catch(e => toast(String(e), "err")); };
+  const newSession = () => { void createSession(false, props.featureTarget?.featureId).catch(e => toast(String(e), "err")); };
   const deleteSession = async (id: string) => {
     try { await api.chatSessionDelete(id); }
     catch (e) { toast(String(e), "err"); return; }
@@ -239,6 +242,15 @@ function Panel(props: ChatPanelProps) {
     })();
     return () => { alive = false; void saveDraftNow(scope); };
   }, [scope]);
+  useEffect(() => {
+    const create = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectId?: string; featureId?: string }>).detail;
+      if (!detail?.featureId || detail.projectId !== props.projectId) return;
+      void createSession(false, detail.featureId).catch(e => toast(String(e), "err"));
+    };
+    window.addEventListener("app:new-execution-session", create);
+    return () => window.removeEventListener("app:new-execution-session", create);
+  }, [createSession, props.projectId, toast]);
   useEffect(() => {
     let alive = true, inventoryGeneration = 0;
     const load = async () => {
@@ -377,7 +389,7 @@ function Panel(props: ChatPanelProps) {
       let meta = curRef.current;
       if (!meta) {
         const unsent = draftRef.current;
-        meta = await createSession(true);
+        meta = await createSession(true, props.featureTarget?.featureId);
         drafts.set(`${targetScope}:${meta.id}`, unsent);
         migrateComposerDraft(`${targetScope}:new`, `${targetScope}:${meta.id}`);
         if (viewing(meta.id, targetScope)) onDraftChange(unsent);
@@ -471,7 +483,7 @@ function Panel(props: ChatPanelProps) {
     if (cfgLock.current || sendLock.current || running) { toast("运行快照已锁定，停止并静止后再调整执行配置", "warn"); return; }
     cfgLock.current = true; setCfgBusy(true);
     try {
-      const meta = curRef.current ?? await createSession(true);
+      const meta = curRef.current ?? await createSession(true, props.featureTarget?.featureId);
       if (await api.chatStatus(meta.id)) throw new Error("会话仍在运行，配置未更改");
       await api.chatSessionUpdate({ id: meta.id, ...patch });
       const updated = { ...meta, ...patch };
@@ -500,10 +512,10 @@ function Panel(props: ChatPanelProps) {
       {bgCount > 0 && <div className="chat-drop-wrap"><button className="chat-count-btn" data-chat-overlay-trigger="bg" aria-expanded={overlay.activeOverlay === "bg"} onClick={e => overlay.toggle("bg", e.currentTarget)}><Icon name="terminal" size={14} />{bgCount} 后台任务 <Icon name="chevronDown" size={12} /></button>
         {overlay.activeOverlay === "bg" && <div className="chat-drop chat-drop-bg" data-chat-overlay="bg" role="dialog" aria-label="后台任务"><div className="chat-drop-h"><b>后台任务</b><span className="chat-drop-cap">仅本会话</span></div><div className="chat-drop-list">{[true, false].map(active => { const rows = curRt!.background.filter(b => (b.state === "运行中") === active); return <div className="chat-bg-group" key={String(active)}><div className="chat-bg-group-h"><span>{active ? "进行中" : "已结束"} {rows.length}</span>{!active && <button className="chat-bg-clear" disabled={!rows.length} onClick={() => { clearEndedBackground(cur!.id); setBgOpenId(null); if (!getRuntime(cur!.id).background.length) overlay.close(false); bumpRt(); }}>清空已结束</button>}</div>{!rows.length && <div className="chat-bg-empty">暂无记录</div>}{rows.map(b => <div className="chat-bg-row" key={b.id}><button className="chat-bg-head" aria-expanded={bgOpenId === b.id} onClick={() => setBgOpenId(prev => prev === b.id ? null : b.id)}><span className={`chat-bg-dot ${b.state === "运行中" ? "run" : b.state === "完成" ? "ok" : "fail"}`} /><span className="chat-bg-main"><b>{b.cmd}</b><span>{b.state} · 退出码 {b.exit} · {b.duration}</span></span><Icon name="chevronDown" size={12} /></button>{bgOpenId === b.id && <div className="chat-bg-detail"><span className="chat-bg-jobid">jobId {b.id}</span><pre>{b.output || "暂无输出"}</pre></div>}</div>)}</div>; })}</div><div className="chat-drop-f">{curRt!.recordsDemo ? "合成演示 · " : ""}只清展示，不终止任务</div></div>}
       </div>}
-      <span className="spacer" />{newButton}
+      <span className="spacer" />{cur?.sessionRole === "executor" && cur.featureId && <span className="chat-scope-tag" title={`执行特性：${cur.featureTitle ?? cur.featureId}；本会话仅实现该Feature`} aria-label={`执行特性：${cur.featureTitle ?? cur.featureId}，单特性执行会话`}>FEAT · <b>{cur.featureId}</b></span>}{newButton}
     </div>
     <div className="chat-fade" />
-    {overlay.activeOverlay === "history" && <SessionHistory sessions={sessions} currentId={cur?.id ?? null} runningIds={runningIds} onSwitch={openSession} onNew={newSession} onDelete={deleteSession} onClose={() => overlay.close(true)} />}
+    {overlay.activeOverlay === "history" && <SessionHistory scopeId={scope} sessions={sessions} currentId={cur?.id ?? null} runningIds={runningIds} onSwitch={openSession} onNew={newSession} onDelete={deleteSession} onClose={() => overlay.close(true)} />}
     <MessageList msgs={msgs} projectId={props.projectId} rootUri={props.rootUri} officeFiles={props.officeFiles} visible={props.visible} stepsSlot={<>{queued > 0 && <div className="chat-queued">已排队 {queued} 条，当前静止后发送</div>}{curRt && curRt.steps.length > 0 && <StepsBox steps={curRt.steps} demo={curRt.stepsDemo} preview={Boolean((window as unknown as { __DESIGN_PREVIEW__?: boolean }).__DESIGN_PREVIEW__)} open={curRt.stepsOpen} sid={cur!.id} onToggle={() => { curRt.stepsOpen = !curRt.stepsOpen; bumpRt(); }} bump={bumpRt} />}</>} />
     <div className="chat-composer-wrap">
       <Composer scopeKey={`${scope}:${cur?.id ?? "new"}`} rootUri={props.rootUri} projectId={props.projectId} office={props.office} officeFiles={props.officeFiles} sessions={sessions} value={draft} streaming={running} disabled={cfgBusy} onChange={onDraftChange} onSend={startSend} onStop={stopSend} controls={<ModelPicker cliId={cur?.cliId ?? null} providerId={cur?.providerId ?? null} modelId={cur?.modelId ?? null} effort={cur?.effort ?? null} cliCandidates={cliCands} models={models} locked={running || cfgBusy} onChange={applyCfg} />} />

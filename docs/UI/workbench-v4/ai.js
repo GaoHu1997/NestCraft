@@ -23,10 +23,10 @@ window.AIPanel = (function () {
 
   /* ---------------- 历史：覆盖在 AI 侧栏左侧的浮层，不参与布局 ---------------- */
   function historyRail() {
-    return `<aside class="ai-history" role="dialog" aria-label="会话历史">
+    return `<aside class="ai-history" data-ai-overlay="history" data-pane="ai-history" data-pane-default="296" data-pane-min="240" data-pane-max="420" role="dialog" aria-label="会话历史">
       <div class="ai-history-h"><span class="ah-title">${icon("history", "ico-14")}<b>会话历史</b><span class="caption">${D.ai.sessions.length}</span></span><button class="icon-btn" data-act="ai-history-close" aria-label="关闭会话历史">${icon("x", "ico-14")}</button></div>
       <div class="ai-history-list">${D.ai.sessions.map(s => `<button class="ai-session ${s.id === store.aiSession ? "active" : ""}" data-act="ai-switch" data-id="${s.id}" aria-current="${s.id === store.aiSession ? "true" : "false"}">
-        ${statusDot(s.status)}<span class="s-main"><b class="ellipsis">${esc(s.title)}</b><span>${esc(s.updated)} · ${esc(s.tokens)} · ${esc(s.duration)}</span></span><span class="s-state">${esc(statusText(s.status))}</span></button>`).join("")}</div>
+        ${statusDot(s.status)}<span class="s-main"><b class="ellipsis">${esc(s.title)}</b><span>${esc(s.updated)} · ${esc(s.tokens)} · ${esc(s.duration)}</span>${s.sessionRole === "executor" && s.featureId ? `<span class="ai-hist-scope" title="执行特性：${esc(s.featureTitle || s.featureId)}">单特性 · ${esc(s.featureId)}</span>` : ""}</span><span class="s-state">${esc(statusText(s.status))}</span></button>`).join("")}</div>
       <div class="ai-history-f"><button class="btn sm" style="width:100%" data-act="ai-new">${icon("plus", "ico-14")}新会话</button></div>
     </aside>`;
   }
@@ -110,14 +110,22 @@ window.AIPanel = (function () {
   }
 
   /* ---------------- 模型能力 ---------------- */
-  const visibleModels = p => (p.models || []).filter(m => !m.image && !(m.modalities || []).includes("生图"));
+  const visibleModels = p => (p?.models || []).filter(m => !m.image && !(m.modalities || []).includes("生图"));
+  const runtimeBusy = () => Boolean(store.aiBusy || store.aiRuntimeBusy);
+  const usableCli = c => Boolean(c.installed && c.enabled !== false && c.available !== false);
+  const usableModel = m => m.on !== false && m.enabled !== false && m.available !== false;
   function currentProvider() {
     const cat = D.ai.modelCatalog;
-    return cat.providers.find(p => p.name === cat.current.provider) || cat.providers[0];
+    return (cat.providers || []).find(p => p.name === cat.current.provider);
   }
   function currentModel() {
-    const list = visibleModels(currentProvider());
-    return list.find(m => m.name === D.ai.modelCatalog.current.model) || list[0] || { name: "未配置", ctx: "—", vision: false, thinking: false };
+    const cat = D.ai.modelCatalog, p = currentProvider(), list = visibleModels(p);
+    const m = list.find(m => m.name === cat.current.model);
+    if (m) return p.enabled === false || p.available === false ? { ...m, available: false } : m;
+    return { name: cat.current.model || "未配置", ctx: "—", vision: false, thinking: false, available: false };
+  }
+  function anchorSlot(kind, button) {
+    return `<div class="ai-anchor-slot ai-anchor-${kind}">${button}${store.aiPop === kind ? popups() : ""}</div>`;
   }
   function capCtx(m) {
     return `<span class="m-cap ctx" title="上下文 ${esc(m.ctx || "未知")}" aria-label="上下文 ${esc(m.ctx || "未知")}">${icon("gauge", "ico-13")}<b>${esc(m.ctx || "—")}</b></span>`;
@@ -130,35 +138,35 @@ window.AIPanel = (function () {
   function popups() {
     if (store.aiPop === "cli") {
       const installed = D.settings.clis.filter(c => c.installed);
-      return `<div class="ai-pop ai-pop-cli">
-        <div class="pop-h">切换 CLI</div>
-        ${installed.map(c => `<button class="menu-item ${store.aiCli === c.id ? "on" : ""}" data-act="ai-cli-set" data-id="${c.id}">${cliLogo(c.id, 18)}<span class="mi-main"><b>${esc(c.name)}</b><span>${esc(c.version)}${c.badge ? " · " + c.badge : ""}</span></span>${store.aiCli === c.id ? `<span class="check">${icon("check", "ico-14")}</span>` : ""}</button>`).join("")}
+      return `<div class="ai-pop ai-pop-cli" id="ai-popup-cli" data-ai-popup="cli" role="dialog" aria-label="切换 CLI" tabindex="-1">
+        <div class="pop-h">切换 CLI<button class="icon-btn" data-ai-popup-close="cli" aria-label="关闭 CLI 选择">${icon("x", "ico-14")}</button></div>
+        ${installed.length ? installed.map(c => `<button class="menu-item ${store.aiCli === c.id ? "on" : ""}" data-act="ai-cli-set" data-id="${c.id}" ${runtimeBusy() || !usableCli(c) ? 'disabled aria-disabled="true"' : ""}>${cliLogo(c.id, 18)}<span class="mi-main"><b>${esc(c.name)}</b><span>${esc(c.version)}${c.badge ? " · " + c.badge : ""}${!usableCli(c) ? " · 不可用" : ""}</span></span>${store.aiCli === c.id ? `<span class="check">${icon("check", "ico-14")}</span>` : ""}</button>`).join("") : '<div class="drop-empty">没有已安装且可用的 CLI，请在配置管理中检查。</div>'}
         <div class="menu-sep"></div>
         <button class="menu-item" data-act="open-settings" data-tab="cli">${icon("sliders", "ico-14")}CLI 配置管理</button>
       </div>`;
     }
     if (store.aiPop === "perm") {
-      return `<div class="ai-pop ai-pop-perm">
-        <div class="pop-h">权限模式</div>
-        ${D.ai.permissions.map(p => `<button class="menu-item perm ${store.aiPermission === p.name ? "on" : ""}" data-act="ai-perm-set" data-name="${esc(p.name)}">${icon(p.icon, "ico-14")}<span class="mi-main"><b>${esc(p.name)}</b><span>${esc(p.desc)}</span></span>${store.aiPermission === p.name ? `<span class="check">${icon("check", "ico-14")}</span>` : ""}</button>`).join("")}
+      return `<div class="ai-pop ai-pop-perm" id="ai-popup-perm" data-ai-popup="perm" role="dialog" aria-label="权限模式" tabindex="-1">
+        <div class="pop-h">权限模式<button class="icon-btn" data-ai-popup-close="perm" aria-label="关闭权限选择">${icon("x", "ico-14")}</button></div>
+        ${(D.ai.permissions || []).map(p => `<button class="menu-item perm ${store.aiPermission === p.name ? "on" : ""}" data-act="ai-perm-set" data-name="${esc(p.name)}" ${runtimeBusy() || p.available === false || p.enabled === false ? 'disabled aria-disabled="true"' : ""}>${icon(p.icon, "ico-14")}<span class="mi-main"><b>${esc(p.name)}</b><span>${esc(p.desc)}</span></span>${store.aiPermission === p.name ? `<span class="check">${icon("check", "ico-14")}</span>` : ""}</button>`).join("") || '<div class="drop-empty">没有可用的权限模式。</div>'}
       </div>`;
     }
     if (store.aiPop === "model") {
       const cat = D.ai.modelCatalog, p = currentProvider(), models = visibleModels(p), cm = currentModel();
       const q = (store.aiModelQuery || "").toLowerCase();
       const filtered = models.filter(m => !q || m.name.toLowerCase().includes(q));
-      return `<div class="ai-pop ai-pop-model" role="dialog" aria-label="选择模型">
-        <div class="pop-h">模型 <span class="caption">${esc(cat.current.provider)} · ${esc(cm.name)}</span></div>
+      return `<div class="ai-pop ai-pop-model" id="ai-popup-model" data-ai-popup="model" role="dialog" aria-label="选择模型" tabindex="-1">
+        <div class="pop-h">模型 <span class="caption">${esc(cat.current.provider)} · ${esc(cm.name)}</span><button class="icon-btn" data-ai-popup-close="model" aria-label="关闭模型选择">${icon("x", "ico-14")}</button></div>
         <label class="search">${icon("search", "ico-14")}<input class="input" id="ai-model-q" data-act="ai-model-q" value="${esc(store.aiModelQuery || "")}" placeholder="搜索模型…"></label>
-        <div class="model-grid">
-          <div class="model-providers">${cat.providers.map(pp => { const n = visibleModels(pp).length; return `<button class="provider-row ${pp.name === cat.current.provider ? "on" : ""}" data-act="ai-model-provider" data-name="${esc(pp.name)}"><span class="ellipsis">${esc(pp.name)}</span><span class="count">${n}</span></button>`; }).join("")}</div>
-          <div class="model-list">${filtered.length ? filtered.map(m => `<button class="model-row ${m.name === cm.name ? "on" : ""}" data-act="ai-model-set" data-name="${esc(m.name)}">
+        <div class="model-grid" data-ai-resize-root="model">
+          <div class="model-providers" data-pane="ai-model-providers" data-pane-default="112" data-pane-min="96" data-pane-max="180">${(cat.providers || []).map(pp => { const n = visibleModels(pp).filter(usableModel).length; return `<button class="provider-row ${pp.name === cat.current.provider ? "on" : ""}" data-act="ai-model-provider" data-name="${esc(pp.name)}" ${runtimeBusy() || !n || pp.enabled === false || pp.available === false ? 'disabled aria-disabled="true"' : ""}><span class="ellipsis">${esc(pp.name)}</span><span class="count">${n}</span></button>`; }).join("")}</div>
+          <div class="model-list" data-pane-center-min="160">${filtered.length ? filtered.map(m => `<button class="model-row ${m.name === cm.name ? "on" : ""}" data-act="ai-model-set" data-name="${esc(m.name)}" ${runtimeBusy() || !usableModel(m) || p?.enabled === false || p?.available === false ? 'disabled aria-disabled="true"' : ""}>
             <span class="mr-name ellipsis">${esc(m.name)}</span>
             <span class="mr-caps">${capCtx(m)}${capFlag("vision", !!m.vision, "视觉", "eye")}${capFlag("think", !!m.thinking, "思考", "bulb")}</span>
-          </button>`).join("") : '<div class="empty" style="padding:16px"><b>没有匹配</b><p>换关键词，或检查供应商配置。</p></div>'}</div>
+          </button>`).join("") : `<div class="empty" style="padding:16px"><b>${models.length ? "没有匹配" : "没有可用模型"}</b><p>${models.length ? "换关键词，或检查供应商配置。" : "检查供应商配置；不回退到生图模型。"}</p></div>`}</div>
         </div>
         <div class="model-level ${cm.thinking ? "" : "disabled"}"><div class="row between"><b>思考等级</b><span class="caption">${cm.thinking ? esc(cat.current.level) : "该模型未声明思考档位"}</span></div>
-          ${cm.thinking ? `<input type="range" min="0" max="3" step="1" value="${cat.levels.indexOf(cat.current.level)}" data-act="ai-level" class="range" aria-label="思考等级">
+          ${cm.thinking ? `<input type="range" min="0" max="3" step="1" value="${cat.levels.indexOf(cat.current.level)}" data-act="ai-level" class="range" aria-label="思考等级" ${runtimeBusy() || !usableModel(cm) ? "disabled" : ""}>
           <div class="level-labels">${cat.levels.map(l => `<span>${l}</span>`).join("")}</div>` : '<div class="level-note">不支持思考档位，选择其它模型后可调整。</div>'}
         </div>
       </div>`;
@@ -233,8 +241,11 @@ window.AIPanel = (function () {
 
   function render() {
     const msgs = store.aiMessages;
-    const cli = D.settings.clis.find(c => c.id === store.aiCli) || D.settings.clis[0];
-    const cm = currentModel();
+    const cli = D.settings.clis.find(c => c.id === store.aiCli) || { id: "", name: "未配置 CLI" };
+    const cm = currentModel(), busy = runtimeBusy();
+    const cliDisabled = busy || !D.settings.clis.some(usableCli);
+    const permDisabled = busy || !(D.ai.permissions || []).some(p => p.available !== false && p.enabled !== false);
+    const modelDisabled = busy || !(D.ai.modelCatalog.providers || []).some(p => p.enabled !== false && p.available !== false && visibleModels(p).some(usableModel));
     return `<aside class="ai-panel"${window.OfficeAI ? OfficeAI.panelAttrs() : ""} aria-label="AI 会话" style="width:${store.aiWidth}px">
       <div class="ai-resize" data-act="ai-resize" title="拖动调整宽度"></div>
       ${store.aiHistory ? historyRail() : ""}
@@ -249,6 +260,7 @@ window.AIPanel = (function () {
           ${store.aiTop === "bg" ? aiTopPop() : ""}
         </div>
         <span class="spacer"></span>
+        ${activeSession()?.sessionRole === "executor" && activeSession()?.featureId ? `<span class="ai-scope-tag" title="执行特性：${esc(activeSession().featureTitle || activeSession().featureId)}；本会话仅实现该特性" aria-label="执行特性 ${esc(activeSession().featureId)}，单特性执行会话">FEAT · <b>${esc(activeSession().featureId)}</b></span>` : ""}
         <button class="icon-btn" data-act="ai-new" title="新会话" aria-label="新会话">${icon("plus")}</button>
       </div>
       <div class="ai-fade"></div>
@@ -261,14 +273,13 @@ window.AIPanel = (function () {
       </div>
       <div class="ai-composer-wrap">
         ${store.aiMenu ? menuHtml() : ""}
-        ${store.aiPop && store.aiPop !== "session" && store.aiPop !== "tokens" && store.aiPop !== "context" ? popups() : ""}
         <div class="ai-composer">
           <textarea id="ai-input" placeholder="${window.OfficeAI && OfficeAI.isActive() ? "描述办公意图，/ 调用指令，@ 项目资料或对话" : "描述你想构建的内容，/ 调用指令，@ 文件或对话"}">${esc(store.aiInput)}</textarea>
           <div class="ai-tools">
             <button class="ai-chip icon-only" data-act="ai-menu-open" data-tab="add" title="添加" aria-label="添加">${icon("plus")}</button>
-            <button class="ai-chip cli" data-act="ai-cli" title="切换 CLI：${esc(cli.name)}" aria-label="切换 CLI：${esc(cli.name)}">${cliLogo(cli.id, 16)}</button>
-            <button class="ai-chip perm" data-act="ai-permission" title="权限模式" aria-label="权限模式">${icon("shield")}${esc(store.aiPermission)}</button>
-            <button class="ai-chip model" data-act="ai-model" title="选择模型" aria-label="选择模型">${esc(cm.name)} · ${esc(cm.thinking ? D.ai.modelCatalog.current.level : "无思考档位")}</button>
+            ${anchorSlot("cli", `<button class="ai-chip cli" id="ai-anchor-cli" data-ai-anchor="cli" data-act="ai-cli" aria-haspopup="dialog" aria-controls="ai-popup-cli" aria-expanded="${store.aiPop === "cli"}" ${cliDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : cliDisabled ? "没有可用 CLI" : "切换 CLI：" + esc(cli.name)}" aria-label="切换 CLI：${esc(cli.name)}">${cliLogo(cli.id, 16)}</button>`)}
+            ${anchorSlot("perm", `<button class="ai-chip perm" id="ai-anchor-perm" data-ai-anchor="perm" data-act="ai-permission" aria-haspopup="dialog" aria-controls="ai-popup-perm" aria-expanded="${store.aiPop === "perm"}" ${permDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : "权限模式"}" aria-label="权限模式">${icon("shield")}${esc(store.aiPermission)}</button>`)}
+            ${anchorSlot("model", `<button class="ai-chip model" id="ai-anchor-model" data-ai-anchor="model" data-act="ai-model" aria-haspopup="dialog" aria-controls="ai-popup-model" aria-expanded="${store.aiPop === "model"}" ${modelDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : modelDisabled ? "没有可用模型" : !usableModel(cm) ? "当前模型失效，请重新选择" : "选择模型"}" aria-label="选择模型">${esc(cm.name)} · ${esc(cm.thinking ? D.ai.modelCatalog.current.level : "无思考档位")}</button>`)}
             <button class="ai-send" data-act="ai-send" title="${store.aiBusy && !store.aiInput.trim() ? "停止" : "发送"}" aria-label="${store.aiBusy && !store.aiInput.trim() ? "停止" : "发送"}">${icon(store.aiBusy && !store.aiInput.trim() ? "stop" : "arrowUp", "ico-18")}</button>
           </div>
         </div>
@@ -293,13 +304,15 @@ window.AIPanel = (function () {
     render && UI.render();
   }
 
-  function newSession() {
+  function newSession(feature) {
     if (window.OfficeAI && OfficeAI.newSession()) return;
     const cur = activeSession();
     cur.messages = store.aiMessages.slice();
     cur.tokens = cur.tokens || "0";
     const id = "S-" + Date.now().toString().slice(-6);
-    D.ai.sessions.unshift({ id, title: "新会话", status: "read", updated: "刚刚", tokens: "0", duration: "0s", messages: [] });
+    const session = { id, title: feature ? `执行 ${feature.id} · ${feature.title}` : "新会话", status: "read", updated: "刚刚", tokens: "0", duration: "0s", messages: [] };
+    if (feature) { session.featureId = feature.id; session.featureTitle = feature.title; session.sessionRole = "executor"; }
+    D.ai.sessions.unshift(session);
     store.aiSession = id;
     store.aiMessages = [];
     store.aiInput = "";

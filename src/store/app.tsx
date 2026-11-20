@@ -38,6 +38,9 @@ interface AppState {
   setAiVisible: (value: boolean) => void;
   aiWidth: number;
   setAiWidth: (value: number) => void;
+  /** CR-047：各项目当前选定的特性；仅用于显式新建执行会话，不自动改写已有会话。 */
+  featureTargets: Record<string, { featureId: string; featureTitle: string } | null>;
+  setFeatureTarget: (projectId: string, target: { featureId: string; featureTitle: string } | null) => void;
 }
 
 const AppCtx = createContext<AppState>(null as unknown as AppState);
@@ -49,6 +52,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [aiPreferences, setAiPreferences] = useState<Record<string, { visible: boolean; width: number }>>({});
+  const [featureTargets, setFeatureTargets] = useState<Record<string, { featureId: string; featureTitle: string } | null>>({});
   const route = windows.find(window => window.key === activeKey)?.route ?? windows[0].route;
   const aiPreference = aiPreferences[activeKey] ?? { visible: true, width: 372 };
 
@@ -99,6 +103,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       [activeKey]: { visible: previous[activeKey]?.visible ?? true, width: Math.min(620, Math.max(320, width)) },
     }));
   }, [activeKey]);
+  const setFeatureTarget = useCallback((projectId: string, target: { featureId: string; featureTitle: string } | null) => {
+    setFeatureTargets(previous => ({ ...previous, [projectId]: target }));
+  }, []);
   const toggleTheme = useCallback(() => {
     const next = theme === "light" ? "dark" : "light";
     setTheme(next);
@@ -110,7 +117,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     route, go, openObject, windows, activateWindow, closeWindow, settingsOpen, setSettingsOpen,
     theme, toggleTheme, aiVisible: aiPreference.visible, setAiVisible,
     aiWidth: aiPreference.width, setAiWidth,
-  }), [route, go, openObject, windows, activateWindow, closeWindow, settingsOpen, theme, toggleTheme, aiPreference.visible, setAiVisible, aiPreference.width, setAiWidth]);
+    featureTargets, setFeatureTarget,
+  }), [route, go, openObject, windows, activateWindow, closeWindow, settingsOpen, theme, toggleTheme, aiPreference.visible, setAiVisible, aiPreference.width, setAiWidth, featureTargets, setFeatureTarget]);
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }

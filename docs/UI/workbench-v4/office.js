@@ -61,7 +61,7 @@ window.Office = (function () {
     return `<p>${esc(text)}</p>`;
   }
   function editor(pid, file) {
-    const v = view(pid), p = pstate(pid), editing = v.editing[file.id] === true && !file.source, content = model.current(file), loc = p.location || v.locations[file.id] || {};
+    const v = view(pid), p = pstate(pid), editing = !file.source, content = model.current(file), loc = p.location || v.locations[file.id] || {};
     if (p.scenario === "no-permission" && file.source) return `<div class="office-empty"><h2>无法读取源资料</h2><p>当前演示状态为“源无权限”。原件保留，AI 也不能绕过权限读取。</p>${btn("recover", "恢复正常状态")}</div>`;
     if (file.type === "unsupported") return `<div class="office-empty"><h2>此格式尚不支持预览</h2><p>可能是未支持、损坏或加密的原件。本轮保留导入记录，不会降为纯文本覆盖。</p>${btn("import", "重新添加可读资料")}</div>`;
     if (file.type === "xlsx") {
@@ -74,13 +74,14 @@ window.Office = (function () {
     if (file.type === "pptx") {
       const index = Math.max(0, Math.min(content.slides.length - 1, Number(loc.index) || 0)), slide = content.slides[index];
       if (!slide) return '<div class="office-empty"><h2>暂无已接受页面</h2><p>接受候选页后在这里编辑。</p></div>';
-      return `<div class="office-presentation"><nav class="office-thumbnails" aria-label="幻灯片缩略图">${content.slides.map((s, i) => `<button data-act="office-page" data-index="${i}" class="office-thumbnail ${i === index ? "selected" : ""}" aria-label="第${i + 1}页 ${esc(s.title)}"><small>${i + 1}</small><b>${esc(s.title)}</b><span>${esc(s.body.slice(0, 48))}</span></button>`).join("")}</nav><div class="office-slide-area"><article class="office-slide office-paper">${editing ? `${field("office-slide-title", "本页标题", input("office-slide-title", slide.title))}${field("office-slide-body", "本页正文", textarea("office-slide-body", slide.body, 'rows="8"'))}` : `<div class="office-slide-kicker">${index + 1} / ${content.slides.length} · 合成演示内容</div><h1>${esc(slide.title)}</h1><p>${esc(slide.body)}</p>`}</article><p class="office-format-note">逐页标题／正文可编辑；不承诺动画、母版或复杂布局保真。</p></div></div>`;
+      return `<div class="office-presentation"><nav class="office-thumbnails" aria-label="幻灯片缩略图">${content.slides.map((s, i) => `<button data-act="office-page" data-index="${i}" class="office-thumbnail ${i === index ? "selected" : ""}" aria-label="第${i + 1}页 ${esc(s.title)}"><small>${i + 1}</small><b>${esc(s.title)}</b><span>${esc(s.body.slice(0, 48))}</span></button>`).join("")}</nav><div class="office-slide-area"><article class="office-slide office-paper">${editing ? `<h1 contenteditable="true" id="office-slide-title" aria-label="幻灯片标题">${esc(slide.title)}</h1><p contenteditable="true" id="office-slide-body" aria-label="幻灯片正文">${esc(slide.body)}</p>` : `<div class="office-slide-kicker">${index + 1} / ${content.slides.length} · 合成演示内容</div><h1>${esc(slide.title)}</h1><p>${esc(slide.body)}</p>`}</article><p class="office-format-note">逐页标题／正文可编辑；不承诺动画、母版或复杂布局保真。</p></div></div>`;
     }
     if (file.type === "pdf") {
       const index = Math.max(0, Math.min(content.pages.length - 1, Number(loc.index) || 0));
       return `<div class="office-pdf"><div class="office-pagination">${btn("page", "上一页", `data-index="${index - 1}" ${index === 0 ? "disabled" : ""}`)}<span>第 ${index + 1} / ${content.pages.length} 页 · 只读</span>${btn("page", "下一页", `data-index="${index + 1}" ${index === content.pages.length - 1 ? "disabled" : ""}`)}</div>
       ${p.scenario === "scanned-pdf" ? `<div class="office-empty"><h2>扫描 PDF：未接入 OCR</h2><p>仅能识别页数元数据，不能提取或编造正文。请换用可复制文字的 PDF。</p>${btn("recover", "恢复文字 PDF 样例")}</div>` : `<article class="office-paper office-pdf-page"><span class="office-paper-meta">只读分页仿真 · 第 ${index + 1} 页</span>${paragraphHtml(content.pages[index])}</article>`}</div>`;
     }
+    if(['md','docx'].includes(file.type))return LiveDoc.render(JSON.stringify(['office',pid,file.id]),content,{readOnly:file.source,write:text=>{const r=model.edit(pid,file.id,text);if(!r.ok)return {ok:false,error:r.message};const saved=model.save(pid,file.id);publishOffice(pid,file.id);return {ok:saved.ok,error:saved.message,conflict:saved.code==='CONFLICT'};}});
     const parts = model.paragraphs(content);
     if (editing && file.type === "md") return `<div class="office-md-edit">${field("office-md-editor", "Markdown 源文草稿", textarea("office-md-editor", content, 'spellcheck="false" rows="24"'))}<p class="office-format-note">源文与预览使用同一草稿；保存前不会变为成果版本。</p></div>`;
     return `<div class="office-document-scroll"><article class="office-paper ${editing ? "editing" : ""}"><div class="office-paper-meta">${file.type.toUpperCase()} · ${file.source ? "原件只读" : "编辑副本"} · 中文正文</div>${parts.map((part, i) => `<section id="office-paragraph-${i}" class="office-paragraph ${loc.kind === "paragraph" && loc.index === i ? "selected" : ""}">${editing ? `<label class="office-block-label" for="office-block-${i}">第 ${i + 1} 段${/^#/.test(part) ? " · 标题" : ""}</label><textarea id="office-block-${i}" data-office-block="${i}" class="office-prose-edit" rows="${Math.min(10, Math.max(2, part.split("\n").length + 1))}">${esc(part)}</textarea>` : `<button class="office-anchor" data-act="office-paragraph" data-index="${i}" aria-label="选择第 ${i + 1} 段用于 AI">§${i + 1}</button>${paragraphHtml(part)}`}</section>`).join("") || `<p>空白文档。点击编辑开始写作。</p>`}${editing ? btn("add-paragraph", "+ 添加段落") : ""}</article></div>`;
@@ -88,11 +89,11 @@ window.Office = (function () {
   function documentPane(pid) {
     const p = pstate(pid), v = view(pid), f = p.files.find(x => x.id === p.selectedId);
     if (!f) return `<main class="office-main office-empty"><span class="office-empty-mark">${icon("fileText")}</span><h1>从一份资料开始</h1><p>添加资料供阅读，或新建一份文档。编辑副本与 AI 候选只有保存成功后才进入成果。</p><div class="office-row">${btn("import", "添加资料", "", "primary")}${btn("new", "新建文档")}</div>${!p.loaded ? btn("samples", "载入演示样例", "", "ghost") : ""}<small>样例为明确合成夹具，不读取用户目录。</small></main>`;
-    const editable = !["pdf", "unsupported"].includes(f.type), editing = v.editing[f.id] === true;
+    const editable = !["pdf", "unsupported"].includes(f.type), editing = !f.source;
     const status = saveNames[f.saveState] || "";
     return `<main class="office-main"><div class="office-open-tabs" aria-label="打开的文件">${v.openFiles.filter(id => p.files.some(x => x.id === id)).map(id => { const d = p.files.find(x => x.id === id); return `<div class="office-open-tab ${id === f.id ? "selected" : ""}"><button data-act="office-file" data-id="${id}">${esc(d.name)}${d.draft != null ? " ●" : ""}</button><button data-act="office-close-file" data-id="${id}" aria-label="关闭 ${esc(d.name)}">${icon("x", "ico-14")}</button></div>`; }).join("")}</div>
       <div class="office-editor-toolbar"><span class="office-format ${f.type}">${f.type.toUpperCase()}</span><b class="office-file-title" title="${esc(model.filePath(pid, f.id))}">${esc(f.name)}</b><span class="office-save-status ${f.saveState}" role="status">${esc(status)}</span><span class="spacer"></span>
-        ${editable ? f.source ? btn("copy", "创建编辑副本") : `${btn("edit", editing ? "阅读预览" : "编辑")}${btn("save", f.saveState === "failed" || f.saveState === "conflict" ? "重试保存" : "保存", f.draft == null || f.saveState === "saving" ? "disabled" : "", "primary sm")}` : '<span class="caption">只读</span>'}
+        ${editable ? f.source ? btn("copy", "创建编辑副本") : `<span class="caption">直接编辑 · 自动保存</span>` : '<span class="caption">只读</span>'}
         ${btn("versions", "版本", f.versions.length ? "" : "disabled")}</div>
       <details class="office-provenance"><summary>${sourceLabel(f)} · 来源与格式边界</summary><p>${esc(f.provenance)}</p><p>该视图是设计仿真；Office 原生解析、复杂格式往返与写入均未实现。</p></details>
       ${f.error ? `<div class="office-error" role="alert">${esc(f.error)} ${btn("recover", "恢复正常状态")}${btn("copy", "保留两份")}</div>` : ""}
@@ -101,7 +102,7 @@ window.Office = (function () {
   }
   function resultsPane(pid) {
     const p = pstate(pid), files = p.files.filter(f => f.versions.length);
-    return `<main class="office-main office-results"><div class="office-results-head"><h1>项目成果</h1><p>同一文件的已保存版本。接受 AI 建议只入草稿，不会自动出现在这里。</p></div>${files.length ? `<div class="office-result-list">${files.map(f => `<article class="office-result"><span class="office-format ${f.type}">${f.type.toUpperCase()}</span><div><h2>${esc(f.name)}</h2><p>v${f.versions.length} · ${esc(f.updated)} · ${f.citations.length} 个来源 · 待人工核对${f.draft != null ? " · 有未保存草稿" : ""}</p></div><div class="office-row">${btn("file", "打开", attr("id", f.id))}${btn("versions", "版本", attr("id", f.id))}${btn("export", "导出检查", attr("id", f.id))}</div></article>`).join("")}</div>` : `<div class="office-empty"><h2>还没有已保存成果</h2><p>先编辑或审阅候选，再点击保存。全部拒绝的 AI 候选不会产生新成果。</p>${btn("tab", "回到文档", 'data-tab="documents"', "primary")}</div>`}</main>`;
+    return `<main class="office-main office-results"><div class="office-results-head"><h1>项目成果</h1><p>同一文件的已保存版本。接受 AI 建议只入草稿，不会自动出现在这里。</p></div>${files.length ? `<div class="office-result-list">${files.map(f => `<article class="office-result"><span class="office-format ${f.type}">${f.type.toUpperCase()}</span><div><h2>${esc(f.name)}</h2><p>v${f.versions.length} · ${esc(f.updated)} · ${f.citations.length} 个来源 · 待人工核对${f.draft != null ? " · 有未保存草稿" : ""}</p></div><div class="office-row">${btn("file", "打开", attr("id", f.id))}${btn("versions", "版本", attr("id", f.id))}${btn("export", "导出检查", attr("id", f.id))}</div></article>`).join("")}</div>` : `<div class="office-empty"><h2>还没有已保存成果</h2><p>编辑或接受候选后自动保存；失败保留内容。全部拒绝的 AI 候选不会产生新成果。</p>${btn("tab", "回到文档", 'data-tab="documents"', "primary")}</div>`}</main>`;
   }
   function renderPage(project) {
     const pid = project.id, v = view(pid), p = pstate(pid);
@@ -127,7 +128,7 @@ window.Office = (function () {
       ${proposal ? `<section class="office-proposal"><div class="office-row"><h3>候选修改</h3><span class="tag blue">只入草稿</span></div><p>${esc(proposal.name)}</p>${proposal.items.some(i => i.decision === "pending") && !model.isProposalFresh(pid) ? `<div class="office-error">编辑基线已变化，旧提案禁止写入。${btn("recompare", "重新比较")}${btn("regenerate", "重新生成")}</div>` : ""}
         ${proposal.items.map(item => `<article class="office-diff" data-item="${item.id}"><header><b>${proposal.type === "pptx" ? "第 " + (item.index + 1) + " 页" : "修改 " + (item.index + 1)}</b><span>${item.decision === "accepted" ? "已接受 → 草稿" : item.decision === "rejected" ? "已拒绝" : "待决定"}</span></header><div class="office-before"><small>原内容</small><p>${esc(typeof item.before === "object" ? item.before.title + "\n" + item.before.body : item.before || "新内容（原文件不变）")}</p></div><div class="office-after"><small>建议内容</small><p>${esc(typeof item.after === "object" ? item.after.title + "\n" + item.after.body : item.after)}</p></div>${item.decision === "pending" ? `<div class="office-row">${btn("accept", "接受此项", attr("item", item.id), "primary sm")}${btn("reject", "拒绝此项", attr("item", item.id))}</div>` : ""}</article>`).join("")}
         <div class="office-citations"><b>结果来源</b>${proposal.citations.map(citeButton).join("")}</div>
-        ${proposal.items.some(i => i.decision === "pending") ? btn("reject-all", "拒绝其余建议", "", "ghost sm") : '<p class="office-caveat">审阅已结束。接受项还需保存；全拒绝不会新增成果。</p>'}${btn("regenerate", "重新生成", "", "ghost sm")}</section>` : ""}
+        ${proposal.items.some(i => i.decision === "pending") ? btn("reject-all", "拒绝其余建议", "", "ghost sm") : '<p class="office-caveat">审阅已结束。接受项按审阅边界自动保存；全拒绝不会新增成果。</p>'}${btn("regenerate", "重新生成", "", "ghost sm")}</section>` : ""}
       ${v.aiError ? `<div class="office-error" role="alert">${esc(v.aiError)}</div>` : ""}</div>
       `;
   }
@@ -165,7 +166,7 @@ window.Office = (function () {
   function saveFile(pid, fid, done) {
     const start = model.beginSave(pid, fid); if (!start.ok) { notice(pid, start); rerender(); return start; }
     view(pid).saveTokens[fid] = start.token; rerender();
-    // 有界微任务：一次“保存”完成，不让日常操作额外确认；无定时器。
+    // 显式快捷键与自动保存复用同一个既有版本机制。
     queueMicrotask(() => { const result = model.finishSave(pid, fid, start.token); delete view(pid).saveTokens[fid]; if (result.ok) view(pid).notice = "已保存到本会话成果 v" + result.version + "。刷新仍会丢失，不是真实磁盘写入。"; else notice(pid, result); if (done) done(result); rerender(); });
     return start;
   }
@@ -242,14 +243,27 @@ window.Office = (function () {
     settings() { U.closeDialog(); window.Screens.openSettings("models"); },
     resize() {}
   };
+  function publishOffice(pid,fid){
+    if(activeId()!==pid)return;const f=model.getFile(pid,fid),p=pstate(pid);if(!f)return;
+    const root=document.querySelector('.office-page');if(!root)return;
+    const row=root.querySelector('[data-act="office-file"][data-id="'+fid+'"]');row?.querySelector('.office-dirty-dot')?.remove();
+    root.querySelectorAll('.office-open-tabs [data-id="'+fid+'"]').forEach(el=>{if(el.tagName==='BUTTON'&&el.dataset.act==='office-file')el.textContent=f.name;});
+    if(p.selectedId!==fid)return;
+    const status=root.querySelector('.office-save-status');if(status){status.textContent=f.saveState==='saved'?'已自动保存':saveNames[f.saveState];status.className='office-save-status '+f.saveState;}
+    if(f.type==='xlsx'){const loc=p.location||{sheet:0,row:0,col:0};const cell=root.querySelector('.office-grid button.selected');if(cell)cell.textContent=model.cellValue(f.content.sheets[loc.sheet||0].cells,loc.row||0,loc.col||0);}
+    if(f.type==='pptx'){const slide=f.content.slides[Number(p.location?.index)||0],thumb=root.querySelector('.office-thumbnail.selected');if(slide&&thumb){thumb.querySelector('b').textContent=slide.title;thumb.querySelector('span').textContent=slide.body.slice(0,48);}}
+  }
+  const autoTimers=new Map();
+  function scheduleOffice(pid,fid){const key=JSON.stringify([pid,fid]);clearTimeout(autoTimers.get(key));autoTimers.set(key,setTimeout(()=>{model.save(pid,fid);publishOffice(pid,fid);},900));}
+  document.addEventListener('focusout',e=>{const pid=activeId();if(!pid||!e.target.closest('.office-page'))return;const f=model.getFile(pid,pstate(pid).selectedId);if(f?.draft!=null&&!f.source){clearTimeout(autoTimers.get(JSON.stringify([pid,f.id])));model.save(pid,f.id);}});
   function updateEditor(pid, el) {
     const p = pstate(pid), f = model.getFile(pid, p.selectedId); if (!f) return;
     let content = model.current(f), changed = false;
     if (el.id === "office-md-editor") { content = el.value; changed = true; }
     else if (el.dataset.officeBlock != null) { content = Array.from(document.querySelectorAll("[data-office-block]")).map(block => block.value).join("\n\n"); changed = true; }
-    else if (["office-slide-title", "office-slide-body"].includes(el.id)) { const i = Number(p.location?.index) || 0; content.slides[i][el.id === "office-slide-title" ? "title" : "body"] = el.value; changed = true; }
+    else if (["office-slide-title", "office-slide-body"].includes(el.id)) { const i = Number(p.location?.index) || 0; content.slides[i][el.id === "office-slide-title" ? "title" : "body"] = el.textContent; changed = true; }
     else if (el.id === "office-formula" && !el.readOnly) { const loc = p.location || { sheet: 0, row: 0, col: 0 }; content.sheets[loc.sheet || 0].cells[loc.row || 0][loc.col || 0] = el.value; changed = true; }
-    if (changed) { const r = model.edit(pid, f.id, content); if (!r.ok) { notice(pid, r); return; } const updated = model.getFile(pid, f.id); const status = document.querySelector(".office-save-status"); if (status) { status.textContent = saveNames[updated.saveState]; status.className = "office-save-status " + updated.saveState; } const save = document.querySelector('[data-act="office-save"]'); if (save) save.disabled = updated.draft == null; }
+    if (changed) { const r = model.edit(pid, f.id, content); if (!r.ok) { notice(pid, r); return; } const updated = model.getFile(pid, f.id); const status = document.querySelector(".office-save-status"); if (status) { status.textContent = saveNames[updated.saveState]; status.className = "office-save-status " + updated.saveState; } const save = document.querySelector('[data-act="office-save"]'); if (save) save.disabled = updated.draft == null; scheduleOffice(pid,f.id); }
   }
   document.addEventListener("click", e => {
     const el = e.target.closest('[data-act^="office-"]'); if (!el || el.disabled) return;

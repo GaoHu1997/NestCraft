@@ -5,10 +5,11 @@
  * 主入口/API/设计资源由其负责人维护；本文件不自动启动，也不读取应用数据。
  */
 import type {
-  Project, RequirementNode, FileNode, SearchHit, Provider, ProviderDraft, ModelConfig,
+  Project, RequirementNode, RequirementSources, FileNode, SearchHit, Provider, ProviderDraft, ModelConfig,
   ModelCandidate, DiscoveredModel, SdkState, SdkJob, SkillEntry, McpServer, McpToolInfo,
   ToolEntry, SessionMeta, ChatMessage, ChatEvent, ContextRef, ServerHost, HostMetrics,
-  ExecResult, KnowledgeLibrary, NoteNode, NoteContent, KnowledgeHit, LibraryGrant,
+  ExecResult, KnowledgeLibrary, NoteNode, NoteContent, KnowledgeFileInfo, KnowledgeFileData,
+  KnowledgeUploadResult, KnowledgeHit, LibraryGrant,
   GitStatus, GitChange, BranchEntry, CommitEntry, CommitFileEntry,
 } from "../api/index";
 import type { DocBlock, OfficeFile, OfficeProjectState } from "../modules/office/office-model";
@@ -225,7 +226,62 @@ function createFixture() {
     { id: "KB-03", name: "运维手册", sourceKind: "directory", sourceRef: "/demo/knowledge/ops", enabled: true, noteCount: 0, revision: 1 },
   ];
   const library = (id: string) => lookup(libraries, id, l => l.id, "知识库");
-  const notes = new Map<string, NoteContent[]>();
+  const notes = new Map<string, NoteContent[]>(); // 仅已保存 Markdown，未保存草稿不进入索引或 AI 网关。
+  interface KnowledgeAsset { noteId: string; title: string; relativeUri: string; kind: KnowledgeFileInfo["kind"]; mime: string; bytes?: Uint8Array; text?: string }
+  const assets = new Map<string, KnowledgeAsset[]>();
+  const knowledgeDirs = new Map<string, Set<string>>();
+  const encoder = new TextEncoder();
+  // 与后端 FNV-1a64 相同：逐实际 UTF-8/原件字节计算；不是 contentHash 或密码学校验。
+  function knowledgeHash(bytes: Uint8Array): string {
+    let hash = 0xcbf29ce484222325n;
+    for (const byte of bytes) hash = BigInt.asUintN(64, (hash ^ BigInt(byte)) * 0x100000001b3n);
+    return `fnv1a64:${hash.toString(16).padStart(16, "0")}`;
+  }
+  function knowledgeText(value: unknown): string {
+    const body = text(value, "content", true, 1024 * 1024);
+    if (encoder.encode(body).byteLength > 1024 * 1024 || body.includes("\0")) fail("知识文本必须是 1 MiB 内无 NUL 的 UTF-8 文本；未修改内存原文");
+    return body;
+  }
+  function enabledLibrary(id: string): KnowledgeLibrary {
+    const l = library(id); if (!l.enabled) fail("知识库已禁用，拒绝访问"); return l;
+  }
+  function knowledgeName(value: unknown): string {
+    const raw = text(value, "文件名", false, 120), n = raw.normalize("NFC");
+    const device = n.split(".")[0].trimEnd().toUpperCase();
+    if (raw !== raw.trim() || encoder.encode(n).byteLength > 240 || n.startsWith(".nestcraft-kb-save-") || /[. ]$/.test(n) || /[\\/:*?"<>|\u0000-\u001f\u007f-\u009f]/.test(n) || ["CON", "PRN", "AUX", "NUL", "CLOCK$", "CONIN$", "CONOUT$"].includes(device) || /^(COM|LPT)[1-9¹²³]$/.test(device) || n === "." || n === "..") fail("知识文件名非法，不得包含路径、保留名或首尾空白");
+    return n;
+  }
+  function knowledgeRelative(value: unknown): string {
+    const raw = text(value, "parentRelativeUri", true, 500);
+    if (!raw) return "";
+    if (raw.includes("\\")) fail("知识库父路径必须是使用 / 的相对 URI");
+    const path = raw;
+    const parts = path.split("/");
+    if (parts.length > 9 || parts.some(part => !part || part === "." || part === "..")) fail("知识库父路径必须为受检相对路径，拒绝绝对路径或目录逃逸");
+    parts.forEach(knowledgeName);
+    return path.normalize("NFC");
+  }
+  function knowledgeParent(l: KnowledgeLibrary, value: unknown): string {
+    const parent = knowledgeRelative(value);
+    if (!knowledgeDirs.get(l.id)?.has(parent)) fail("知识库父目录不存在；不会级联创建或读取真实磁盘");
+    return parent;
+  }
+  function addKnowledgeParents(id: string, rel: string): void {
+    const dirs = knowledgeDirs.get(id)!;
+    const parts = rel.split("/"); parts.pop();
+    while (parts.length) { dirs.add(parts.join("/")); parts.pop(); }
+  }
+  function knowledgeTarget(l: KnowledgeLibrary, parent: string, fileName: string): string {
+    const rel = parent ? `${parent}/${fileName}` : fileName;
+    const keys = [...(knowledgeDirs.get(l.id) ?? []), ...(notes.get(l.id) ?? []).map(n => n.relativeUri), ...(assets.get(l.id) ?? []).map(n => n.relativeUri)];
+    if (keys.some(path => keyOf(path) === keyOf(rel))) fail("同名文件或目录已存在；夹具拒绝覆盖");
+    if (keys.length >= 2000) fail("知识夹具节点超过 2000 项限制");
+    return rel;
+  }
+  function markdownTitle(fileName: string, content: string): string {
+    return /^#\s+(.+)$/m.exec(content)?.[1].trim() || fileName.replace(/\.(md|markdown)$/i, "");
+  }
+  function refreshKnowledge(l: KnowledgeLibrary): void { l.noteCount = notes.get(l.id)?.length ?? 0; l.revision++; }
   const grants = new Map<string, Set<string>>([
     ["PRJ-1042", new Set(["KB-01", "KB-02"])], ["PRJ-1031", new Set()], ["PRJ-1018", new Set(["KB-02"])], ["PRJ-1009", new Set()],
   ]);
@@ -248,23 +304,71 @@ function createFixture() {
     "KB-03": [], // 保留设计空树：默认无项目授权，不编造“15篇实测文档”。
   };
   for (const l of libraries) {
-    notes.set(l.id, (noteSeeds[l.id] ?? []).map(([noteId, title, relativeUri, body]) => ({ noteId, title, relativeUri, content: `# ${title}\n\n> ${LABEL}\n\n${body}\n` })));
+    knowledgeDirs.set(l.id, new Set([""])); assets.set(l.id, []);
+    notes.set(l.id, (noteSeeds[l.id] ?? []).map(([noteId, title, relativeUri, body]) => {
+      const content = `# ${title}\n\n> ${LABEL}\n\n${body}\n`;
+      addKnowledgeParents(l.id, relativeUri);
+      return { noteId, title, relativeUri, content, hash: knowledgeHash(encoder.encode(content)) };
+    }));
     l.noteCount = notes.get(l.id)!.length;
   }
-  function note(libId: string, noteId: string): NoteContent { library(libId); return lookup(notes.get(libId) ?? [], noteId, n => n.noteId, "笔记"); }
+  // 同设计 D 的路径/身份仅用作元信息；摘要不是 PDF/Office/图片原件，绝不造预览。
+  // KD-014 的旧 type=pdf/path=.md 冲突仍不回填，避免以图标猜测真实能力。
+  assets.get("KB-01")!.push(
+    { noteId: "KD-018", title: "架构评审记录（原件未嵌入）", relativeUri: "架构/评审-2026-11.pdf", kind: "pdf", mime: "application/pdf" },
+    { noteId: "KD-019", title: "发布记录（原件未嵌入）", relativeUri: "发布/记录.xlsx", kind: "attachment", mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+    { noteId: "KD-020", title: "预约流程图（原件未嵌入）", relativeUri: "架构/预约流程.png", kind: "image", mime: "image/png" },
+    { noteId: "KD-026", title: "预约样本数据（合成）", relativeUri: "数据/预约样本.csv", kind: "text", mime: "text/csv", text: "activity,slot,remaining,booked\n社区读书会,A-01,2,18\n社区读书会,A-02,0,20\n亲子手工,B-01,5,15" },
+    { noteId: "KD-CR045-TEXT", title: "演示文本（合成）", relativeUri: "演示样例/演示文本.txt", kind: "text", mime: "text/plain", text: "纯文本安全源码演示\n<script>alert('不执行')</script>\n" },
+    { noteId: "KD-CR045-JSON", title: "演示配置（合成）", relativeUri: "演示样例/演示配置.json", kind: "text", mime: "application/json", text: '{\n  "source": "synthetic-demo",\n  "enabled": true,\n  "markup": "<script>never execute</script>"\n}' },
+    { noteId: "KD-CR045-IMAGE", title: "演示图片（合成1×1 PNG；非知识原图）", relativeUri: "演示样例/演示图片.png", kind: "image", mime: "image/png", bytes: Uint8Array.from(atob(IMAGE.split(",")[1]), c => c.charCodeAt(0)) },
+    { noteId: "KD-CR045-HTML", title: "HTML附件（元信息；不执行）", relativeUri: "演示样例/主动内容.html", kind: "attachment", mime: "text/html" },
+    { noteId: "KD-CR045-SVG", title: "SVG附件（元信息；不执行）", relativeUri: "演示样例/主动内容.svg", kind: "attachment", mime: "image/svg+xml" },
+  );
+  assets.get("KB-02")!.push({ noteId: "KD-027", title: "问卷结果（原件未嵌入）", relativeUri: "问卷/结果.xlsx", kind: "attachment", mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  for (const [id, files] of assets) for (const file of files) addKnowledgeParents(id, file.relativeUri);
+  knowledgeDirs.get("KB-01")!.add("待整理（合成空目录）");
+  function note(libId: string, noteId: string): NoteContent {
+    enabledLibrary(libId);
+    const n = lookup(notes.get(libId) ?? [], noteId, n => n.noteId, "已保存 Markdown 笔记");
+    n.hash = knowledgeHash(encoder.encode(n.content));
+    return n;
+  }
+  function knowledgeFile(l: KnowledgeLibrary, id: string): NoteContent | KnowledgeAsset {
+    const file = [...(notes.get(l.id) ?? []), ...(assets.get(l.id) ?? [])].find(n => n.noteId === id);
+    if (!file) fail("知识文件不存在或不属于当前库；拒绝任意路径或未保存草稿");
+    return file;
+  }
+  function knowledgeInfo(l: KnowledgeLibrary, id: string): KnowledgeFileInfo {
+    const file = knowledgeFile(l, id), markdown = "content" in file;
+    const body = markdown ? file.content : file.text;
+    const bytes = body !== undefined ? encoder.encode(body) : "bytes" in file ? file.bytes : undefined;
+    const kind = markdown ? "markdown" : file.kind;
+    const previewSupported = kind === "markdown" || (kind === "text" && body !== undefined) || (kind === "image" && bytes !== undefined);
+    return { noteId: file.noteId, title: file.title, relativeUri: file.relativeUri,
+      sizeBytes: bytes?.byteLength ?? 0, // 未嵌入原件的占位大小为 0，标题明示缺原件；不捏造原件字节数。
+      modifiedAt: STAMP, kind, mime: markdown ? "text/markdown" : file.mime, previewSupported, editable: markdown,
+      ...(bytes ? { hash: knowledgeHash(bytes) } : {}) };
+  }
+  function knowledgeData(l: KnowledgeLibrary, id: string): KnowledgeFileData {
+    const info = knowledgeInfo(l, id), file = knowledgeFile(l, id);
+    if (info.kind === "markdown" && "content" in file) return { info, text: file.content };
+    if (info.kind === "text" && "text" in file && file.text !== undefined) return { info, text: file.text };
+    if (info.kind === "image" && "bytes" in file && file.bytes) return { info, base64: btoa(Array.from(file.bytes, b => String.fromCharCode(b)).join("")) };
+    return { info }; // PDF/Office/主动格式及无原件图片只元信息，不假正文、不生成可执行资源。
+  }
   function noteTree(libId: string): NoteNode[] {
-    library(libId);
-    const roots: NoteNode[] = [];
-    for (const n of notes.get(libId) ?? []) {
-      let siblings = roots, parent = "";
-      const parts = n.relativeUri.split("/");
-      for (let i = 0; i < parts.length - 1; i++) {
-        parent += `${parent ? "/" : ""}${parts[i]}`;
-        let folder = siblings.find(x => x.isDir && x.relativeUri === parent);
-        if (!folder) { folder = { noteId: `${libId}:dir:${parent}`, title: parts[i], relativeUri: parent, isDir: true, children: [] }; siblings.push(folder); }
-        siblings = folder.children;
-      }
-      siblings.push({ noteId: n.noteId, title: n.title, relativeUri: n.relativeUri, isDir: false, children: [] });
+    enabledLibrary(libId);
+    const roots: NoteNode[] = [], folders = new Map<string, NoteNode>();
+    const dirs = [...(knowledgeDirs.get(libId) ?? [])].filter(Boolean).sort((a, b) => a.split("/").length - b.split("/").length || a.localeCompare(b, "zh-CN"));
+    for (const rel of dirs) {
+      const parent = rel.split("/").slice(0, -1).join("/");
+      const folder: NoteNode = { noteId: `${libId}:dir:${rel}`, title: rel.split("/").pop()!, relativeUri: rel, isDir: true, children: [] };
+      folders.set(rel, folder); (parent ? folders.get(parent)!.children : roots).push(folder);
+    }
+    for (const n of [...(notes.get(libId) ?? []), ...(assets.get(libId) ?? [])]) {
+      const parent = n.relativeUri.split("/").slice(0, -1).join("/");
+      (parent ? folders.get(parent)!.children : roots).push({ noteId: n.noteId, title: n.title, relativeUri: n.relativeUri, isDir: false, children: [] });
     }
     return roots;
   }
@@ -452,6 +556,17 @@ function createFixture() {
     const projectId = a.projectId == null ? null : projectById(str(a, "projectId")).id;
     const serverId = a.serverId == null ? null : text(a.serverId, "serverId");
     if (serverId) lookup(hosts, serverId, h => h.id, "主机");
+    let featureId: string | null = null, featureTitle: string | null = null, featureSourceHash: string | null = null;
+    if (a.featureId != null) {
+      featureId = str(a, "featureId");
+      if (!projectId) fail("执行会话必须指定所属项目");
+      const flattenRequirements = (nodes: RequirementNode[]): RequirementNode[] => nodes.flatMap(node => [node, ...flattenRequirements(node.children)]);
+      const node = flattenRequirements(requirements(projects.find(p => p.id === projectId)!)).find(r => r.entityId === featureId);
+      if (!node || node.kind !== "feature") fail("执行特性不存在、不属于该项目或不是特性");
+      const epic = flattenRequirements(requirements(projects.find(p => p.id === projectId)!)).find(r => r.entityId === node.parentId);
+      if (!epic || epic.kind !== "epic") fail("执行特性缺少所属Epic；源关系不完整");
+      featureTitle = node.title; featureSourceHash = `preview:${featureId}`;
+    }
     const providerId = a.providerId == null ? "PRV-MAGPIE" : str(a, "providerId");
     const selectedModel = a.modelId == null ? provider(providerId).models.find(m => m.text && !m.imageGen) : provider(providerId).models.find(m => m.modelId === a.modelId);
     // 指定供应商但未指定模型时从该供应商取默认，不能跨供应商套用 deepseek id。
@@ -459,7 +574,8 @@ function createFixture() {
     const selectedEffort = a.effort == null ? (a.modelId == null && a.providerId == null ? "high" : selectedModel?.defaultEffort ?? null) : str(a, "effort");
     const s: SessionMeta = { id, projectId, serverId, title: "新会话", cliId: a.cliId == null ? "claude" : str(a, "cliId"),
       providerId, modelId: a.modelId == null ? defaultModel : str(a, "modelId"),
-      effort: selectedEffort, draft: "", unread: null, createdAt: now(), updatedAt: now(), messageCount: 0 };
+      effort: selectedEffort, draft: "", unread: null, createdAt: now(), updatedAt: now(), messageCount: 0,
+      featureId, featureTitle, featureSourceHash: featureId ? `preview:${featureId}` : null, sessionRole: featureId ? "executor" : "ordinary" };
     validateSession(s); sessions.push(s); messages.set(s.id, []); return s;
   }
   function validateSession(s: SessionMeta): void {
@@ -660,8 +776,54 @@ function createFixture() {
   on("app_data_ensure_dir", a => { const rel = str(a, "rel"); if (rel.startsWith("/") || /^[a-z]:/i.test(rel)) fail("目录参数必须为相对演示路径"); return absolute(`/demo/app-data/${rel}`); });
   on("get_setting", a => settings.get(str(a, "key")) ?? null);
   on("set_setting", a => { const key = text(a.key, "key", false, 200); if (a.value === null) settings.delete(key); else settings.set(key, safeSetting(key, str(a, "value", true))); return null; });
-  on("get_theme", () => settings.get("theme") ?? "light");
+  on("get_theme", () => new URLSearchParams(window.location.search).get("theme") === "dark" ? "dark" : (settings.get("theme") ?? "light"));
   on("set_theme", a => { const theme = str(a, "theme"); if (!["light", "dark", "system"].includes(theme)) fail("未知主题"); settings.set("theme", theme); return null; });
+  // CR-046：更新徽标隔离夹具。URL ?update=hidden|available|downloading|ready|applying 控制初始状态；
+  // 只返回合成状态，不联网、不落盘、不替换程序。
+  const updateParam = new URLSearchParams(window.location.search).get("update");
+  const updatePhaseNames = ["hidden", "available", "downloading", "ready", "applying"];
+  let previewUpdatePhase = updateParam && updatePhaseNames.includes(updateParam) ? updateParam : "available";
+  let previewUpdateProgress = previewUpdatePhase === "downloading" ? 42 : previewUpdatePhase === "ready" ? 100 : 0;
+  const previewUpdateVersion = "0.2.0";
+  const previewUpdateSha = "a".repeat(64);
+  const previewUpdateManifest = {
+    version: previewUpdateVersion,
+    notes: "合成更新夹具，不下载真实文件",
+    pub_date: "2026-11-21",
+    installer: { url: "https://example.com/setup.exe", mirrors: [], sha256: previewUpdateSha, size: 104857600 },
+    portable: { url: "https://example.com/portable.exe", mirrors: [], sha256: previewUpdateSha, size: 104857600 },
+  };
+  const previewUpdateStatus = () => ({
+    phase: previewUpdatePhase,
+    done: previewUpdateProgress,
+    total: 100,
+    speed: 0,
+    message: previewUpdatePhase === "ready" ? "更新已下载并通过校验，重启后安装" : "",
+    staged_file: previewUpdatePhase === "ready" || previewUpdatePhase === "applying" ? "/demo/app-data/update/update-staged.exe" : null,
+    kind: "portable",
+    version: previewUpdatePhase === "available" ? null : previewUpdateVersion,
+  });
+  on("update_environment", () => ({ kind: "portable", current_version: "0.1.0", exe_path: "/demo/NestCraft.exe", updatable: true }));
+  on("update_status", () => previewUpdateStatus());
+  on("update_check", () => previewUpdatePhase === "available"
+    ? { current_version: "0.1.0", update_available: true, manifest: previewUpdateManifest, asset: previewUpdateManifest.portable, message: "" }
+    : { current_version: "0.1.0", update_available: false, manifest: null, asset: null, message: "当前已是最新版本" });
+  on("update_download", async () => {
+    previewUpdatePhase = "downloading";
+    previewUpdateProgress = 0;
+    for (let step = 1; step <= 10; step++) {
+      await new Promise(resolve => setTimeout(resolve, 80));
+      previewUpdateProgress = step * 10;
+    }
+    previewUpdatePhase = "ready";
+    previewUpdateProgress = 100;
+    return "/demo/app-data/update/update-staged.exe";
+  });
+  on("update_apply", async () => {
+    previewUpdatePhase = "applying";
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    return null;
+  });
   on("smoke_should_run", () => false); // 绝不触发真实 smoke runner。
   on("smoke_report_write", a => { text(a.content, "诊断正文"); return null; }); // 不落盘，不记录正文。
   on("list_projects", () => copy(projects));
@@ -692,6 +854,20 @@ function createFixture() {
     projects.splice(projects.indexOf(p), 1); disks.delete(p.id); grants.delete(p.id); gitStates.delete(p.id); officeStates.delete(p.id); return null;
   });
   on("read_requirements", a => copy(requirements(projectById(str(a, "projectId")))));
+  on("read_requirement_sources", a => {
+    const p = projectById(str(a, "projectId")), indexed = new Map<string, RequirementNode>();
+    const visit = (nodes: RequirementNode[]) => { for (const n of nodes) { indexed.set(n.sourceUri, { ...n, children: [] }); visit(n.children); } };
+    const warnings: string[] = [];
+    try { visit(requirements(p)); } catch { warnings.push("合成需求索引无效；仍列出全部 Plan 文件，未静默漏掉源正文"); }
+    const result: RequirementSources = { rootUri: p.rootUri, warnings, sources: [...projectDisk(p).files.keys()]
+      .filter(rel => rel.startsWith("docs/Plan/") && /\.(md|markdown)$/i.test(rel))
+      .sort((a, b) => a.localeCompare(b, "zh-CN"))
+      .map(rel => {
+        const sourceUri = `${p.rootUri}/${rel}`, n = indexed.get(sourceUri);
+        return { sourceUri, node: n ?? null, error: null, warning: n ? null : "未进入需求索引的合成 Plan 文件；正文仍可受限读取" };
+      }) };
+    return copy(result);
+  });
   on("read_doc", a => { const { d, rel } = docTarget(a.sourceUri); return read(d, rel); });
   on("write_doc", a => { const { p, rel } = docTarget(a.sourceUri); writeProject(p, rel, str(a, "content", true)); return null; });
   on("fs_list_dir", a => { const p = projectByRoot(a.rootUri); return listing(projectDisk(p), p.rootUri, within(p.rootUri, a.relPath ?? "", true)); });
@@ -812,12 +988,45 @@ function createFixture() {
     const n = name(a.name); unique(libraries, n, l => l.name); const root = absolute(a.sourceRef);
     if (!root.startsWith("/demo/knowledge/")) fail("知识源必须位于 /demo/knowledge/...，不读取磁盘");
     if (libraries.some(l => l.sourceRef === root || l.sourceRef.startsWith(`${root}/`) || root.startsWith(`${l.sourceRef}/`))) fail("知识库源不能重叠");
-    const id = uid("KB"); libraries.push({ id, name: n, sourceKind: "directory", sourceRef: root, enabled: true, noteCount: 0, revision: 1 }); notes.set(id, []); return id;
+    const id = uid("KB"); libraries.push({ id, name: n, sourceKind: "directory", sourceRef: root, enabled: true, noteCount: 0, revision: 1 }); notes.set(id, []); assets.set(id, []); knowledgeDirs.set(id, new Set([""])); return id;
   });
-  on("kb_delete", a => { const l = library(str(a, "id")); libraries.splice(libraries.indexOf(l), 1); notes.delete(l.id); for (const set of grants.values()) set.delete(l.id); return null; });
-  on("kb_scan", a => { const l = library(str(a, "id")); l.noteCount = notes.get(l.id)?.length ?? 0; l.revision++; return l.noteCount; });
+  on("kb_delete", a => { const l = library(str(a, "id")); libraries.splice(libraries.indexOf(l), 1); notes.delete(l.id); assets.delete(l.id); knowledgeDirs.delete(l.id); for (const set of grants.values()) set.delete(l.id); return null; });
+  on("kb_scan", a => { const l = enabledLibrary(str(a, "id")); refreshKnowledge(l); return l.noteCount; });
   on("kb_tree", a => noteTree(str(a, "id")));
   on("kb_read", a => copy(note(str(a, "libId"), str(a, "noteId"))));
+  on("kb_create_folder", a => {
+    const l = enabledLibrary(str(a, "id")), parent = knowledgeParent(l, a.parentRelativeUri);
+    const rel = knowledgeTarget(l, parent, knowledgeName(a.name));
+    knowledgeDirs.get(l.id)!.add(rel); l.revision++;
+    return { noteId: `${l.id}:dir:${rel}`, title: rel.split("/").pop()!, relativeUri: rel, isDir: true, children: [] } satisfies NoteNode;
+  });
+  on("kb_create_markdown", a => {
+    const l = enabledLibrary(str(a, "id")), parent = knowledgeParent(l, a.parentRelativeUri), fileName = knowledgeName(a.name);
+    if (!/\.(md|markdown)$/i.test(fileName)) fail("新建仅允许 .md 或 .markdown 文件；前端在首保存前补扩展名");
+    const rel = knowledgeTarget(l, parent, fileName), content = knowledgeText(a.content);
+    const created: NoteContent = { noteId: uid("KD"), title: markdownTitle(fileName, content), relativeUri: rel, content, hash: knowledgeHash(encoder.encode(content)) };
+    notes.get(l.id)!.push(created); refreshKnowledge(l);
+    return copy(created); // 此命令只在首保存调用：新草稿此前不存在，也不改 grant。
+  });
+  on("kb_save_markdown", a => {
+    const l = enabledLibrary(str(a, "id")), existing = note(l.id, str(a, "noteId")), expected = str(a, "expectedHash");
+    if (expected !== knowledgeHash(encoder.encode(existing.content))) fail("基线 hash 冲突：原文已改变；未覆盖内存文件，当前草稿应保留");
+    const content = knowledgeText(a.content);
+    existing.content = content; existing.hash = knowledgeHash(encoder.encode(content));
+    existing.title = markdownTitle(existing.relativeUri.split("/").pop()!, content); refreshKnowledge(l);
+    return copy(existing); // 同步 compare-and-swap，在 await 前结束，两个同基线保存只有首个通过。
+  });
+  on("kb_upload_files", a => {
+    const l = enabledLibrary(str(a, "id")); knowledgeParent(l, a.parentRelativeUri);
+    // 安全确定性取消：不打开本机 picker，也不接受 sourcePath、File、URL 或额外字节。
+    return { cancelled: true, items: [] } satisfies KnowledgeUploadResult;
+  });
+  on("kb_file_info", a => copy(knowledgeInfo(enabledLibrary(str(a, "id")), str(a, "noteId"))));
+  on("kb_read_file", a => copy(knowledgeData(enabledLibrary(str(a, "id")), str(a, "noteId"))));
+  on("kb_export_file", a => {
+    knowledgeFile(enabledLibrary(str(a, "id")), str(a, "noteId"));
+    return { cancelled: true, exported: false }; // 不弹真实 Save As，不创建 Blob/链接、不下载原件或假附件。
+  });
   on("kb_search", a => searchNotes(strings(a.libIds, "libIds"), str(a, "query")));
   on("kb_grants", a => {
     const pid = a.projectId == null ? null : projectById(str(a, "projectId")).id;

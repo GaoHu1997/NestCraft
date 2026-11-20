@@ -177,20 +177,33 @@ export function TreeRow({
 }
 
 /** Markdown -> 安全 HTML（知识库/预览用；marked + DOMPurify，不执行脚本） */
-export async function renderMarkdown(md: string): Promise<string> {
+export async function renderMarkdown(md: string, options: { restrictResources?: boolean } = {}): Promise<string> {
   const [{ marked }, DOMPurifyMod] = await Promise.all([import("marked"), import("dompurify")]);
   const raw = await marked.parse(md, { async: true });
   const purify =
     (DOMPurifyMod as unknown as { default: { sanitize: (s: string) => string } }).default ??
     (DOMPurifyMod as unknown as { sanitize: (s: string) => string });
-  // 给标题注入 id 便于 TOC 锚点定位
-  const withIds = raw.replace(/<h([1-6])>([\s\S]*?)<\/h\1>/g, (_m, lvl, text) => {
-    const plain = String(text).replace(/<[^>]+>/g, "").trim();
-    const id =
-      "h-" + plain.replace(/\s+/g, "-").replace(/[^\p{L}\p{N}-]/gu, "").slice(0, 60) || `h-${Math.random()}`;
-    return `<h${lvl} id="${id}">${text}</h${lvl}>`;
+  const doc = new DOMParser().parseFromString(purify.sanitize(raw), "text/html");
+  const counts = new Map<string, number>();
+  doc.querySelectorAll("h1,h2,h3,h4,h5,h6").forEach((heading, index) => {
+    const stem = "h-" + (heading.textContent ?? "").trim().replace(/\s+/g, "-").replace(/[^\p{L}\p{N}-]/gu, "").slice(0, 60);
+    const count = counts.get(stem) ?? 0;
+    counts.set(stem, count + 1);
+    heading.id = stem === "h-" ? `h-section-${index}` : count ? `${stem}-${count}` : stem;
   });
-  return purify.sanitize(withIds);
+  if (options.restrictResources) {
+    doc.querySelectorAll("img,video,audio,iframe,object,embed,source,svg,form").forEach(element => element.remove());
+    doc.querySelectorAll("[style], [src], [srcset], [background]").forEach(element => {
+      ["style", "src", "srcset", "background"].forEach(attribute => element.removeAttribute(attribute));
+    });
+    doc.querySelectorAll<HTMLAnchorElement>("a[href]").forEach(link => {
+      if (!(link.getAttribute("href") ?? "").startsWith("#")) {
+        link.removeAttribute("href");
+        link.title = "资料阅读不自动打开外部或本地资源";
+      }
+    });
+  }
+  return doc.body.innerHTML;
 }
 
 /** 从 Markdown 提取标题目录 */

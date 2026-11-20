@@ -1,0 +1,27 @@
+/* UI-CR045-v1 · 限定Code/设计场景；不影响AI、知识、Office。 */
+.ws-page > .code-shell.code-reading-shell { grid-template-columns:56px 260px minmax(0,1fr); border:0; border-radius:0; min-height:0; height:calc(100dvh - var(--topbar-h,56px) - var(--tabbar-h,40px) - 44px); }
+.ws-page > .code-reading-shell > .code-rail { width:56px; padding:8px; }
+.ws-page > .code-reading-shell > .code-rail .rail-btn { width:40px; height:40px; padding:0; }
+.ws-page > .design-shell { grid-template-columns:56px minmax(0,1fr) 240px; }
+.ws-page > .design-shell > .design-rail { width:56px; padding:8px; }
+.ws-page > .design-shell > .design-rail .rail-btn { width:40px; height:44px; padding:4px 0; font-size:10px; }
+.code-reading-shell .code-main { overflow:hidden; min-height:0; }
+.code-reading-shell .editor-tabs { flex:0 0 40px; height:40px; }
+.code-reading-shell .code-file-tab { display:flex; align-items:center; flex:0 0 auto; gap:3px; }
+.code-reading-shell .code-file-tab.on { color:var(--primary); }
+.code-reading-shell .code-file-close { width:20px; height:24px; display:grid; place-items:center; color:var(--muted); }
+.code-reading-shell .code-file-close:hover { background:var(--surface-3); color:var(--ink); }
+.code-reading-shell .code-dirty { padding-left:6px; font-size:8px; color:var(--primary); }
+.code-reading-shell .editor-bar { flex:0 0 40px; height:40px; min-width:0; overflow:auto hidden; }
+.code-reading-shell .editor-bar .path { min-width:70px; }
+.code-reading-shell .editor-bar .btn, .code-reading-shell .seg { white-space:nowrap; flex:0 0 auto; }
+.code-reading-shell .code-reading-note { padding:6px 12px; background:var(--surface-2); border-bottom:1px solid var(--line-soft); color:var(--muted); font-size:10px; flex:0 0 auto; line-height:1.5; }
+.code-reading-shell .code-md-reader.doc-body { flex:1; min-height:0; width:100%; max-width:none; margin:0; overflow:auto; padding:28px clamp(18px,3vw,44px) 60px; font-size:13px; }
+.code-reading-shell .code-md-reader p, .code-reading-shell .code-md-reader li { line-height:1.85; overflow-wrap:anywhere; }
+.code-reading-shell .code-md-reader h1 { font-size:24px; margin-bottom:20px; }
+.code-reading-shell .code-md-reader h2 { font-size:18px; margin:28px 0 14px; }
+.code-reading-shell .code-md-reader h3 { font-size:15px; }
+.code-reading-shell .code-reading-error { padding:10px 14px; color:var(--danger); font-size:11px; }
+.code-reading-shell #code-editor { min-height:0; }
+.code-reading-shell #code-editor[hidden], .code-reading-shell .code-md-reader[hidden] { display:none !important; }
+@media (max-width:960px) { .ws-page > .code-shell.code-reading-shell { grid-template-columns:56px minmax(0,1fr); } .ws-page > .design-shell { grid-template-columns:56px minmax(0,1fr); } }

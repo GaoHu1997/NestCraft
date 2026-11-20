@@ -1,0 +1,190 @@
+/* CR-046：标题栏右上角软件更新徽标（UI-CR046-v1.2）。
+   54×22 文字胶囊；绿色「更新」→ 边框进度 → 橙色「重启」；hidden 不渲染。
+   位置：主题按钮左侧。软件顶栏相邻控件间距为 12px，设计稿为 6px：用左右 -6px 视觉对齐设计稿。 */
+
+.nc-topbar .update-badge {
+  width: 54px;
+  height: 22px;
+  min-width: 54px;
+  padding: 0;
+  margin: 0 -6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+
+.nc-topbar .update-badge:hover {
+  background: transparent;
+}
+
+.nc-topbar .update-badge:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.update-badge .ub {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 54px;
+  height: 22px;
+  border-radius: 6px;
+  box-sizing: border-box;
+  transition: background-color 0.18s var(--ease);
+}
+
+.update-badge .ub-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.update-badge .ub-track,
+.update-badge .ub-bar {
+  fill: none;
+  stroke-width: 1;
+}
+
+.update-badge .ub-bar {
+  display: none;
+}
+
+.update-badge .ub-lb {
+  position: relative;
+  z-index: 1;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.25px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 有可用更新：绿色文字 + 细描边。 */
+.update-badge[data-phase="available"] .ub {
+  background: rgba(26, 157, 90, 0.1);
+}
+.update-badge[data-phase="available"] .ub-track {
+  stroke: rgba(26, 157, 90, 0.34);
+}
+.update-badge[data-phase="available"] .ub-lb {
+  color: var(--success);
+}
+
+/* 下载中：边框加粗，进度自顶部中点顺时针生长。 */
+.update-badge[data-phase="downloading"] .ub {
+  background: rgba(26, 157, 90, 0.055);
+}
+.update-badge[data-phase="downloading"] .ub-track {
+  stroke: rgba(26, 157, 90, 0.16);
+  stroke-width: 2.5;
+}
+.update-badge[data-phase="downloading"] .ub-bar {
+  display: block;
+  stroke: var(--success);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+.update-badge[data-phase="downloading"] .ub-lb {
+  color: var(--success);
+}
+
+/* 就绪与安装中：橙色「重启」。 */
+.update-badge[data-phase="ready"] .ub,
+.update-badge[data-phase="applying"] .ub {
+  background: rgba(183, 106, 0, 0.11);
+}
+.update-badge[data-phase="ready"] .ub-track,
+.update-badge[data-phase="applying"] .ub-track {
+  stroke: rgba(183, 106, 0, 0.46);
+  stroke-width: 1.2;
+}
+.update-badge[data-phase="ready"] .ub-lb {
+  color: var(--warning);
+}
+
+/* 下载与安装期间：内部遮罩 + 加载环，不改变胶囊尺寸，也不盖住边框进度。 */
+.update-badge .ub-loading {
+  position: absolute;
+  inset: 3px;
+  z-index: 2;
+  display: none;
+  place-items: center;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.82);
+  pointer-events: none;
+}
+
+.update-badge[aria-busy="true"] .ub-loading {
+  display: grid;
+}
+.update-badge[aria-busy="true"] .ub-lb {
+  opacity: 0;
+}
+
+.update-badge .ub-spinner {
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: ub-spin 0.8s linear infinite;
+}
+
+.update-badge[data-phase="downloading"] .ub-loading {
+  color: var(--success);
+}
+.update-badge[data-phase="applying"] .ub-loading {
+  color: var(--warning);
+}
+
+.update-badge:active .ub {
+  transform: translateY(0.5px);
+}
+.update-badge:disabled {
+  cursor: wait;
+  opacity: 1;
+}
+
+/* 深色主题：同一语义，提高底色对比。 */
+html[data-theme="dark"] .update-badge[data-phase="available"] .ub {
+  background: rgba(76, 203, 131, 0.14);
+}
+html[data-theme="dark"] .update-badge[data-phase="available"] .ub-track {
+  stroke: rgba(76, 203, 131, 0.42);
+}
+html[data-theme="dark"] .update-badge[data-phase="downloading"] .ub {
+  background: rgba(76, 203, 131, 0.08);
+}
+html[data-theme="dark"] .update-badge[data-phase="downloading"] .ub-track {
+  stroke: rgba(76, 203, 131, 0.22);
+}
+html[data-theme="dark"] .update-badge[data-phase="ready"] .ub,
+html[data-theme="dark"] .update-badge[data-phase="applying"] .ub {
+  background: rgba(224, 160, 74, 0.15);
+}
+html[data-theme="dark"] .update-badge[data-phase="ready"] .ub-track,
+html[data-theme="dark"] .update-badge[data-phase="applying"] .ub-track {
+  stroke: rgba(224, 160, 74, 0.5);
+}
+html[data-theme="dark"] .update-badge .ub-loading {
+  background: rgba(30, 33, 38, 0.86);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-badge .ub-spinner {
+    animation: none;
+  }
+}
+
+@keyframes ub-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

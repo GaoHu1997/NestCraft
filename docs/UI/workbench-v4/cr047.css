@@ -1,0 +1,51 @@
+/* UI-CR047：单特性执行会话的归属标签与派发预检样式；只引用现有令牌。 */
+.ai-panel .ai-scope-tag {
+  flex: 0 0 auto;
+  max-width: 132px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 7px;
+  border: 1px solid var(--primary-line);
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+  font-size: 10px;
+  line-height: 16px;
+}
+.ai-panel .ai-scope-tag b { font-weight: 600; }
+.ai-panel .ai-history .ai-hist-scope {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--primary-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cr047-feature {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--primary-line);
+  border-radius: var(--r-sm);
+  background: var(--primary-soft);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.65;
+}
+.cr047-feature b { font-weight: 600; }
+.cr047-feature p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
+.cr047-tag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--primary-line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--primary-strong);
+  font-size: 10px;
+  line-height: 18px;
+}
+@media (max-width: 960px) {
+  .ai-panel .ai-scope-tag { max-width: 96px; }
+}

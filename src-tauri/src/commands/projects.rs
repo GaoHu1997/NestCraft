@@ -8,6 +8,12 @@ use crate::db;
 use crate::models::{now_ms, new_id, Project, RequirementNode};
 use std::path::{Path, PathBuf};
 
+#[path = "requirement_sources.rs"]
+mod sources;
+pub use sources::read_requirement_sources;
+pub use sources::__cmd__read_requirement_sources;
+pub use sources::__tauri_command_name_read_requirement_sources;
+
 #[tauri::command]
 pub fn list_projects() -> Result<Vec<Project>, String> {
     let guard = db::conn()?;

@@ -17,6 +17,9 @@ src-tauri/target/
 src-tauri/dist/
 src-tauri/gen/schemas/
 
+# 本地发布产物（GitHub Actions 在 CI 内重新生成）
+dist-release/
+
 # 冒烟测试的编译产物（mockbin/*.cs 源码入库，exe/cmd 本地生成）
 mockbin/*.exe
 mockbin/*.cmd

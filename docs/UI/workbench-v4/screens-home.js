@@ -143,7 +143,7 @@
     const body = store.projectTab === "design" ? Screens.designTab(p)
       : store.projectTab === "tasks" ? Screens.tasksTab(p)
       : store.projectTab === "code" ? Screens.codeTab(p)
-      : requirementsTab(p);
+      : (Screens.requirementsWorkspace ? Screens.requirementsWorkspace(p) : requirementsTab(p));
     return `<div class="page ws-page">
       <div class="ws-tabs" role="tablist">
         ${tabs.map(([k, label, n]) => `<button class="ws-tab" role="tab" aria-selected="${store.projectTab === k}" data-act="project-tab" data-tab="${k}">${label}${n != null ? `<span class="n">${n}</span>` : ""}</button>`).join("")}

@@ -268,7 +268,20 @@ pub struct SessionMeta {
     pub created_at: i64,
     pub updated_at: i64,
     pub message_count: i64,
+    /// CR-047：执行会话绑定的唯一特性；普通会话为空。
+    #[serde(default)]
+    pub feature_id: Option<String>,
+    #[serde(default)]
+    pub feature_title: Option<String>,
+    /// 派发时特性源修订（来自 requirement_index.contentHash）；源变化只提示待核验。
+    #[serde(default)]
+    pub feature_source_hash: Option<String>,
+    /// ordinary | executor；历史记录默认 ordinary。
+    #[serde(default = "ordinary_session_role")]
+    pub session_role: String,
 }
+
+fn ordinary_session_role() -> String { "ordinary".into() }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -397,6 +410,12 @@ pub struct NoteContent {
     pub title: String,
     pub relative_uri: String,
     pub content: String,
+    /// Actual-byte FNV-1a64 revision token; not a cryptographic digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hash: Option<String>,
+    /// The file is saved even when updating the derived index fails.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index_error: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
