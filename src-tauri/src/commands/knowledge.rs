@@ -415,7 +415,11 @@ mod tests {
     struct Fixture { path: PathBuf, conn: Connection }
     impl Fixture {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(new_id("knowledge-cr045-test"));
+            // 夹具目录必须直接基于规范化后的临时目录：GitHub Windows runner 的
+            // %TEMP% 可能是 8.3 短名（如 RUNNER~1），SafeRoot 会把 canonicalize
+            // 结果与原始路径不一致判为“路径已变化”，与产品行为无关。
+            let base = fs::canonicalize(std::env::temp_dir()).unwrap_or_else(|_| std::env::temp_dir());
+            let path = base.join(new_id("knowledge-cr045-test"));
             fs::create_dir(&path).unwrap();
             let conn = Connection::open_in_memory().unwrap();
             conn.execute_batch(
