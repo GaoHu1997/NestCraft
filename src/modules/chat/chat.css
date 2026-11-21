@@ -37,6 +37,36 @@
 .chat-attachment { font-size: 10.5px; color: var(--muted); }
 .chat-card.error { border-color: var(--danger-line); background: var(--danger-bg); color: var(--danger-deep); white-space: pre-wrap; word-break: break-word; font-size: 13px; }
 .chat-sysline { align-self: center; max-width: 92%; background: var(--msg-bg); color: var(--muted); font-size: 12px; padding: 4px 10px; border-radius: 10px; text-align: center; white-space: pre-wrap; word-break: break-word; }
+
+/* ---------- CR-037 SR-01：上下文断点卡（对照 docs/UI/chat-resume-design） ---------- */
+.chat-breakpoint { display: flex; gap: 8px; align-items: flex-start; border: 1px dashed var(--notice-line); background: var(--notice-bg); border-radius: 8px; padding: 8px 10px; max-width: 92%; min-width: 0; }
+.chat-breakpoint-ico { flex: 0 0 auto; width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--tag-bg); color: var(--notice-ink); font-size: 11px; font-weight: 700; }
+.chat-breakpoint.ok .chat-breakpoint-ico { background: var(--blue-bg, var(--soft)); color: var(--blue-ink, var(--accent)); }
+.chat-breakpoint-main { min-width: 0; }
+.chat-breakpoint-title { font-size: 12px; font-weight: 600; color: var(--ink); display: flex; align-items: center; gap: 6px; }
+.chat-breakpoint-tag { font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 4px; font-weight: 600; }
+.chat-breakpoint-tag.good { background: var(--blue-bg, var(--soft)); color: var(--blue-ink, var(--accent)); }
+.chat-breakpoint-tag.bad { background: var(--danger-bg); color: var(--danger-deep); }
+.chat-breakpoint-reason { font-size: 11px; color: var(--notice-ink); margin-top: 2px; word-break: break-word; }
+
+/* ---------- CR-037 SR-02：绑定阻塞横幅（blocked） ---------- */
+.chat-block-banner { border-top: 1px solid var(--warn-line); background: var(--warn-bg); padding: 10px 12px; display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; }
+.chat-block-ico { flex: 0 0 auto; width: 16px; height: 16px; border-radius: 4px; background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn-deep); font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.chat-block-main { min-width: 0; flex: 1; }
+.chat-block-title { font-size: 12px; font-weight: 600; color: var(--warn-deep); }
+.chat-block-reason { font-size: 11px; color: var(--warn-deep); margin-top: 2px; }
+.chat-block-foot { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; align-items: center; }
+.chat-block-draft { font-size: 10.5px; color: var(--warn-deep); background: var(--paper); border: 1px solid var(--warn-line); border-radius: 4px; padding: 1px 6px; }
+.chat-block-btn { font-size: 11px; border: 1px solid var(--warn-line); border-radius: 6px; padding: 3px 10px; background: var(--paper); color: var(--warn-deep); font-weight: 600; }
+.chat-block-btn.primary { background: var(--warn-deep); border-color: var(--warn-deep); color: var(--paper); }
+
+/* ---------- CR-037：绑定状态 pill（头部） ---------- */
+.chat-binding-pill { font-size: 10px; font-weight: 600; border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
+.chat-binding-pill.native { background: var(--blue-bg, var(--soft)); color: var(--blue-ink, var(--accent)); }
+.chat-binding-pill.fresh { background: var(--blue-bg, var(--soft)); color: var(--blue-ink, var(--accent)); }
+.chat-binding-pill.freshPending { background: var(--warn-bg); color: var(--warn-deep); }
+.chat-binding-pill.blocked { background: var(--danger-bg); color: var(--danger-deep); }
+
 .chat-refs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
 .chat-refs .chat-chip { max-width: 200px; }
 
@@ -369,3 +399,73 @@
   .chat-ctl-chip.perm { padding: 0 4px; }
 }
 .chat-cap { margin-left: auto; flex: 0 0 auto; font-size: 10.5px; color: var(--muted); }
+
+/* ---------- UI-CR056：目标、任务与 producer 身份 ---------- */
+.chat-menu-section-title { padding: 8px 8px 4px; font-size: 10.5px; color: var(--muted); font-weight: 600; border-top: 1px solid var(--line-soft); }
+.chat-inline-form { display: flex; align-items: center; gap: 6px; padding: 4px 8px; }
+.chat-inline-form input { flex: 1 1 auto; min-width: 0; height: 28px; border: 1px solid var(--input-line); border-radius: 6px; padding: 0 8px; background: var(--paper); color: var(--ink); font-size: 11px; }
+.chat-inline-form input:focus { outline: 2px solid var(--focus); outline-offset: -1px; }
+.chat-goal-actions { display: flex; align-items: center; gap: 8px; padding: 3px 8px 6px; }
+.chat-goal-state { font-size: 10px; padding: 2px 6px; border-radius: 999px; background: var(--soft); color: var(--accent); }
+.chat-goal-state.paused { background: var(--warn-bg); color: var(--warn-deep); }
+.chat-goal-state.cancelled { background: var(--danger-bg); color: var(--danger-deep); }
+.chat-task-row { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 5px 8px; font-size: 10.5px; color: var(--muted); }
+.chat-task-row > span:nth-child(2) { flex: 1 1 auto; color: var(--ink); }
+.chat-task-dot { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; background: var(--neutral-dot); }
+.chat-task-dot.running { background: var(--blue-dot); }
+.chat-task-dot.completed { background: var(--good-dot); }
+.chat-task-dot.failed { background: var(--bad-dot); }
+.chat-msg.subagent { align-items: flex-start; }
+.chat-msg.subagent .chat-who { background: var(--purple-bg); color: var(--purple); border: 1px solid var(--purple-line, var(--line)); }
+.chat-subagent-card { border: 1px solid var(--purple-line, var(--line)); background: var(--purple-bg); border-radius: 8px; padding: 8px 10px; min-width: 0; }
+.chat-subagent-head { display: flex; gap: 8px; align-items: center; font-size: 11px; }
+.chat-subagent-head b { color: var(--purple); font-weight: 600; }
+.chat-subagent-state { margin-left: auto; color: var(--muted); font-size: 10px; }
+.chat-subagent-output { margin-top: 5px; color: var(--ink-2, var(--ink)); font-size: 11.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+.chat-agent-event { width: 100%; padding: 5px 0 7px 10px; border-left: 2px solid var(--purple-line, var(--accent-line)); }
+.chat-agent-event-head { display: flex; align-items: center; gap: 6px; min-height: 22px; color: var(--muted); font-size: 10.5px; }
+.chat-agent-event-head .ui-icon { color: var(--purple); }
+.chat-agent-kind { color: var(--ink-2, var(--ink)); font-weight: 550; }
+.chat-agent-state { color: var(--accent); }
+.chat-agent-time { margin-left: auto; color: var(--muted-2, var(--muted)); font-variant-numeric: tabular-nums; }
+.chat-agent-task { margin: 3px 0 0 21px; color: var(--ink); font-size: 12px; line-height: 1.5; }
+.chat-agent-meta { margin: 2px 0 0 21px; color: var(--muted-2, var(--muted)); font-size: 10px; }
+.chat-agent-output { margin: 5px 0 0 21px; padding: 6px 8px; border-radius: 6px; background: var(--inset); color: var(--muted); font-size: 11px; line-height: 1.5; white-space: pre-wrap; }
+
+/* ---------- UI-CR056：zcode 风格消息时间线 ---------- */
+.chat-msg { gap: 0; }
+.chat-msg.user { justify-content: flex-end; }
+.chat-msg.user .chat-bubble { max-width: min(88%, 620px); }
+.chat-msg.assistant .chat-bubble { max-width: 100%; width: 100%; }
+.chat-msg-name.chat-msg-time { margin: 0 0 5px; color: var(--muted-2, var(--muted)); font-size: 10px; line-height: 1.3; opacity: .8; }
+.chat-msg.user .chat-msg-time { text-align: right; }
+.chat-msg.assistant .chat-msg-time { text-align: left; }
+.chat-bubble-user { border: 1px solid var(--line-soft); border-radius: 12px; background: var(--surface-3, var(--hover-bg)); padding: 9px 12px; line-height: 1.65; }
+.chat-msg.assistant .chat-card { width: 100%; max-width: 100%; }
+.chat-msg.assistant .chat-md { font-size: 13px; line-height: 1.75; }
+.chat-thinking-block { margin: 0 0 10px; border-left: 2px solid var(--accent-line); color: var(--muted); }
+.chat-thinking-block summary { display: flex; align-items: center; gap: 7px; padding: 2px 0 4px 9px; cursor: pointer; list-style: none; font-size: 11px; user-select: none; }
+.chat-thinking-block summary::-webkit-details-marker { display: none; }
+.chat-thinking-block summary::after { content: "›"; order: 3; margin-left: auto; color: var(--muted-2, var(--muted)); transform: rotate(90deg); transition: transform .14s ease; }
+.chat-thinking-block:not([open]) summary::after { transform: rotate(0deg); }
+.chat-thinking-mark { color: var(--purple); font-size: 12px; }
+.chat-thinking-block summary > span:nth-child(2) { color: var(--ink-2, var(--ink)); font-weight: 550; }
+.chat-thinking-block .chat-think-size { margin-left: auto; color: var(--muted-2, var(--muted)); font-size: 10px; }
+.chat-thinking-content { margin: 0 0 6px 9px; padding: 6px 10px 7px; border-radius: 6px; background: var(--inset); color: var(--muted); font-size: 11.5px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow-y: auto; }
+.chat-msg.assistant .chat-typing { display: none; }
+/* 回复操作行：默认淡出，鼠标进入消息或键盘聚焦时可见 */
+.chat-msg-actions { display: flex; gap: 6px; margin-top: 6px; opacity: 0; transition: opacity .14s ease; }
+.chat-msg.assistant:hover .chat-msg-actions, .chat-msg-actions:focus-within { opacity: 1; }
+.chat-msg-action { display: inline-flex; align-items: center; gap: 4px; padding: 3px 7px; border: 1px solid var(--line-soft); border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 10.5px; cursor: pointer; }
+.chat-msg-action:hover { color: var(--ink); border-color: var(--line); background: var(--hover-bg); }
+@media (hover: none) { .chat-msg-actions { opacity: 1; } }
+
+/* zcode 风格工具/步骤块：内容流中的轻量状态行，不重复套消息气泡 */
+.chat-toolblock { max-width: 100%; border: 0; border-left: 2px solid var(--accent-line); border-radius: 0; background: transparent; padding: 5px 0 5px 10px; }
+.chat-toolblock.fail { border-left-color: var(--danger-line); }
+.chat-toolblock-head { min-height: 22px; }
+.chat-toolblock .chat-toolblock-brief { color: var(--muted); }
+.chat-toolblock .chat-tool-detail pre { max-height: 220px; }
+.chat-steps { margin: 5px 0 8px; border-radius: 8px; box-shadow: none; }
+.chat-steps-h { padding: 6px 9px; background: transparent; }
+.chat-steps-list { padding: 2px 0 4px; }

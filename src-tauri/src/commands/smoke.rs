@@ -274,15 +274,35 @@ pub async fn smoke_start_ssh() -> Result<u16, String> {
     crate::ssh::testserver::start().await
 }
 
+/// 冒烟用：设置 mock CLI 的 resume 场景（confirm/silent-new/stale/refuse）。
+/// 通过进程环境变量传给子进程（mock-cli.cs / mock-*.mjs 读取 MOCK_RESUME）。
+#[tauri::command]
+pub fn smoke_mock_resume(mode: String) -> Result<(), String> {
+    if !matches!(mode.as_str(), "confirm" | "silent-new" | "stale" | "refuse") {
+        return Err(format!("未知 MOCK_RESUME 场景：{}", mode));
+    }
+    std::env::set_var("MOCK_RESUME", &mode);
+    Ok(())
+}
+
+/// 冒烟用：当前是否处于保留库模式（SMOKE_KEEP_DB=1），供套件区分「首次建档」与「重启复验」。
+#[tauri::command]
+pub fn smoke_keep_db_flag() -> bool {
+    std::env::var("SMOKE_KEEP_DB").map(|v| v == "1").unwrap_or(false)
+}
+
 /// 冒烟用：把 SDK 登记路径清空，让 claude 走 PATH 解析到真实 CLI。
 #[tauri::command]
-pub fn smoke_use_real_claude() -> Result<(), String> {
-    // 解析真实 claude 可执行文件（排除 mockbin，避免误用 mock）
+pub fn smoke_use_real_claude() -> Result<(), String> {    // 解析真实 claude 可执行文件（排除 mockbin，避免误用 mock）。
+    // Git Bash 启动时 SMOKE_MOCKBIN 会带正斜杠（D:/…），PATH 目录是反斜杠，须归一化后比较。
     let mock_dir = std::env::var("SMOKE_MOCKBIN").unwrap_or_default();
+    let mock_norm = mock_dir.replace('/', "\\").trim_end_matches('\\').to_lowercase();
     let mut real: Option<std::path::PathBuf> = None;
     if let Some(paths) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&paths) {
-            if !mock_dir.is_empty() && dir.to_string_lossy().contains(&mock_dir) {
+            if !mock_norm.is_empty()
+                && dir.to_string_lossy().replace('/', "\\").to_lowercase().contains(&mock_norm)
+            {
                 continue;
             }
             for ext in ["cmd", "exe"] {

@@ -35,9 +35,10 @@
 
 .cda-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
 
-.cda-tabs { display: flex; align-items: center; gap: 2px; padding: 0 8px; height: 40px; flex: 0 0 40px; overflow-x: auto; border-bottom: 1px solid var(--line-soft); background: var(--panel-2); }
+/* CR-052：文件页签条不出现横向滚动条；溢出由共享 tab-overflow「更多」下拉承接。 */
+.cda-tabs { display: flex; align-items: center; gap: 2px; padding: 0 8px; height: 40px; flex: 0 0 40px; overflow: hidden; border-bottom: 1px solid var(--line-soft); background: var(--panel-2); }
 .cda-tabs-empty { align-self: center; padding: 0 4px; }
-.cda-tab { display: inline-flex; align-items: center; gap: 6px; padding: 0 6px 0 10px; max-width: 200px; height: 28px; border: 1px solid transparent; border-radius: 5px; font-size: 11.5px; user-select: none; }
+.cda-tab { display: inline-flex; align-items: center; gap: 6px; padding: 0 6px 0 10px; max-width: 200px; height: 28px; flex: 0 0 auto; border: 1px solid transparent; border-radius: 5px; font-size: 11.5px; user-select: none; }
 .cda-tab:hover { background: var(--hover-bg); }
 .cda-tab.active { background: var(--code-bg); border-color: var(--line-soft); font-weight: 500; }
 .cda-tab-name { max-width: 150px; }
@@ -80,3 +81,18 @@
 /* 定位高亮行（STORY-062 AC-08） */
 .cda-line-hl { background: var(--soft); }
 .cda-line-hl .cm-gutters { color: var(--accent); }
+
+/* UI-CR055-FEAT007-v1: native scrolling remains active; UI-SCROLL-001 is global. */
+.cda-virtual-tree { padding-top: 0; padding-bottom: 0; }
+.cda-virtual-space { position: relative; min-width: 0; }
+.cda-virtual-row { position: absolute; left: 0; right: 0; width: 100%; height: 26px; min-height: 26px; border: 0; background: transparent; color: inherit; text-align: left; }
+.cda-virtual-row.active { background: var(--soft); color: var(--accent); }
+.cda-virtual-tree:focus-visible .keyboard-lead { outline: 1px solid var(--accent); outline-offset: -1px; }
+.cda-more { color: var(--muted); font-size: 11px; }
+.cda-search-list .cda-hit { border: 0; background: transparent; color: inherit; text-align: left; width: 100%; }
+.cda-search-list .cda-hit:hover { background: var(--hover-bg); }
+.cda-perf-notice { padding: 7px 12px; color: var(--muted); background: var(--panel-2); border-bottom: 1px solid var(--line-soft); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.cda-perf-notice.error { color: var(--danger); }
+.cda-window { position: absolute; inset: 0; display: flex; flex-direction: column; min-height: 0; background: var(--paper); }
+.cda-window-tools { padding: 8px 12px; display: flex; align-items: center; gap: 8px; font-size: 11px; flex: 0 0 auto; flex-wrap: wrap; }
+.cda-window-text { flex: 1; min-height: 0; overflow: auto; padding: 12px; margin: 0; font: 13px/1.6 Consolas, "Cascadia Mono", monospace; white-space: pre; }

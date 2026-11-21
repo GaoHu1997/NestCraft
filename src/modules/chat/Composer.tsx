@@ -28,12 +28,19 @@ export function Composer(props: {
   onChange: (v: string) => void;
   onSend: (text: string, refs: ContextRef[], atts: AttachmentMeta[]) => Promise<boolean>;
   onStop: () => void | Promise<void>;
+  goal?: { text: string; state: "active" | "paused" | "cancelled" } | null;
+  tasks?: { id: string; taskName: string; state: string }[];
+  onCreateGoal?: (text: string) => void;
+  onGoalStateChange?: (state: "active" | "paused" | "cancelled") => void;
+  onCreateTask?: (taskName: string) => void;
 }) {
   const overlay = useChatOverlay();
   const [saved, setSaved] = useState<DraftExtras>(() => extras.get(props.scopeKey) ?? { refs: [], atts: [] });
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<"add" | "cmd">("add");
+  const [goalDraft, setGoalDraft] = useState("");
+  const [taskDraft, setTaskDraft] = useState("");
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const scopeRef = useRef(props.scopeKey);
@@ -91,7 +98,11 @@ export function Composer(props: {
       {tab === "add" ? <>
         <button className="chat-menu-row" onClick={() => { setQuery(""); overlay.open("@", taRef.current); }}>文件<span className="chat-cap">引用项目文件、对话或已授权知识</span></button>
         <button className="chat-menu-row" onClick={() => fileRef.current?.click()}>本地附件<span className="chat-cap">仅记录元信息，不读取正文</span></button>
-        <Unavailable name="目标" reason="长期任务目标尚未接入" /><Unavailable name="计划" reason="真实计划模式尚未接入" /><Unavailable name="反馈" reason="会话反馈提交接口尚未接入" />
+                 <div className="chat-menu-section-title">会话状态</div>
+         <div className="chat-inline-form"><input aria-label="会话目标" placeholder="输入本会话目标" value={goalDraft || props.goal?.text || ""} onChange={e => setGoalDraft(e.target.value)} /><button className="btn sm" disabled={!goalDraft.trim()} onClick={() => { props.onCreateGoal?.(goalDraft.trim()); setGoalDraft(""); }}>保存目标</button></div>
+         {props.goal && <div className="chat-goal-actions"><span className={`chat-goal-state ${props.goal.state}`}>{props.goal.state === "active" ? "进行中" : props.goal.state === "paused" ? "已暂停" : "已取消"}</span>{props.goal.state === "active" ? <button className="link-btn" onClick={() => props.onGoalStateChange?.("paused")}>暂停</button> : props.goal.state === "paused" ? <button className="link-btn" onClick={() => props.onGoalStateChange?.("active")}>恢复</button> : null}<button className="link-btn danger" onClick={() => props.onGoalStateChange?.("cancelled")}>取消目标</button></div>}
+         <div className="chat-inline-form"><input aria-label="新建会话任务" placeholder="添加任务名称" value={taskDraft} onChange={e => setTaskDraft(e.target.value)} /><button className="btn sm" disabled={!taskDraft.trim()} onClick={() => { props.onCreateTask?.(taskDraft.trim()); setTaskDraft(""); }}>添加任务</button></div>
+         {props.tasks?.map(task => <div className="chat-task-row" key={task.id}><span className={`chat-task-dot ${task.state}`} /><span className="ellipsis">{task.taskName}</span><span>{task.state === "pending" ? "待处理" : task.state === "running" ? "进行中" : task.state === "completed" ? "已完成" : task.state === "failed" ? "失败" : task.state}</span></div>)}
       </> : <>
         <button className="chat-menu-row" disabled={overlay.getTrigger("perm")?.disabled} onClick={() => overlay.open("perm")}>权限<span className="chat-cap">查看已验证模式</span></button>
         <button className="chat-menu-row" disabled={overlay.getTrigger("model")?.disabled} onClick={() => overlay.open("model")}>模型<span className="chat-cap">模型与思考档位</span></button>
@@ -169,8 +180,8 @@ function ReferencePopover(props: {
   const fileRows = files.filter(f => match(f.path));
   const sessionRows = props.sessions.filter(s => props.projectId ? s.projectId === props.projectId : !s.projectId && !s.serverId).filter(s => match(s.title));
   return <div className="chat-refpop" data-chat-overlay={props.trigger} role="dialog" aria-label={props.trigger === "@" ? "引用浮层" : "能力与指令"}>
-    <div className="chat-refpop-head"><span>{props.trigger}</span><input autoFocus aria-label="筛选引用或能力" value={q} placeholder={props.trigger === "@" ? "筛选项目文件、对话、已授权知识" : "筛选 Skill / MCP / Tool"} onChange={e => setQ(e.target.value)} /></div>
-    <div className="chat-refpop-body">{loading && <div className="chat-menu-hint">加载中…</div>}{error && <div className="chat-menu-hint">加载失败：{error}</div>}
+    <div className="chat-refpop-head"><span>{props.trigger}</span><input autoFocus aria-label="筛选引用或能力" value={q} placeholder={props.trigger === "@" ? "筛选项目文件、对话、已授权知识" : "筛选 Skill / MCP / Tool"} onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === "ArrowDown") { const first = e.currentTarget.closest(".chat-refpop")?.querySelector<HTMLButtonElement>("button.chat-ref-row"); if (first) { e.preventDefault(); first.focus(); } } }} /></div>
+    <div className="chat-refpop-body" onKeyDown={e => { if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return; const target = e.target as HTMLElement; const current = target.closest<HTMLButtonElement>("button.chat-ref-row"); if (!current) return; const buttons = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>("button.chat-ref-row")); const index = buttons.indexOf(current); if (index < 0) return; const next = buttons[(index + (e.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length]; if (next) { e.preventDefault(); next.focus(); } }}>{loading && <div className="chat-menu-hint">加载中…</div>}{error && <div className="chat-menu-hint">加载失败：{error}</div>}
       {props.trigger === "@" ? <>
         <div className="chat-ref-group-title">项目文件</div>
         {props.office ? officeRows.map(f => <button className="chat-ref-row" key={f.id} onClick={() => props.onPick({ kind: "file", objectId: `office:${f.id}`, display: f.path })}><span className="name">{f.name}</span><span className="sub">{f.path}</span></button>) : fileRows.map(f => <button className="chat-ref-row" key={f.path} onClick={() => props.onPick({ kind: "file", objectId: f.path, display: f.path })}><span className="name">{f.name}</span><span className="sub">{f.path}</span></button>)}

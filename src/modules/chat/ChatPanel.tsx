@@ -1,8 +1,8 @@
 import { Icon, CliLogo } from "@/components/icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as api from "@/api";
-import type { AttachmentMeta, ChatEvent, ContextRef, ModelCandidate, SdkState, SessionMeta } from "@/api";
-import { useToast } from "@/components/ui";
+import type { AttachmentMeta, ChatEvent, ContextRef, ModelCandidate, SdkState, SessionBinding, SessionMeta } from "@/api";
+import { Confirm, useToast } from "@/components/ui";
 import { MessageList, fromChatMessage, mkMsg } from "./MessageList";
 import type { OfficeFileRef, UiMessage } from "./MessageList";
 import { Composer, migrateComposerDraft, clearComposerDraft } from "./Composer";
@@ -11,7 +11,7 @@ import { ModelPicker, effectiveEfforts, permissionSupported } from "./ModelPicke
 import { StatsBar } from "./StatsBar";
 import { StepsBox } from "./StepsBox";
 import { ChatOverlayProvider, useChatOverlay } from "./overlay";
-import { addUsage, finishOnce, getRuntime, hydrateUsage, isCurrentTurn, markFirstDelta, markStreamStart, recordToolResult, recordToolUse, rebuildStepsFromPairs, clearEndedBackground, dropRuntime, setStatus } from "./sessionRuntime";
+import { addUsage, finishOnce, getRuntime, hydrateUsage, isCurrentTurn, markFirstDelta, markStreamStart, recordToolResult, recordToolUse, rebuildStepsFromPairs, clearEndedBackground, dropRuntime, setStatus, setGoal, updateGoalState, addSessionTask, upsertSubagent, hasBlockingChildren } from "./sessionRuntime";
 import { officeFileContentText } from "@/modules/office/office-model";
 import "./chat.css";
 
@@ -34,13 +34,41 @@ interface PendingSend {
   refs: ContextRef[];
   atts: AttachmentMeta[];
   model: string | null;
+  /** CR-056：本轮 CLI，子智能体等派生行未单独上报时继承它。 */
+  cliId: string | null;
+  permissionId: string | null;
   scope: string;
 }
+
+/** CR-037：原因码 → 中文摘要（横幅/弹窗共用；与后端 reason_text 口径一致）。 */
+const REASON_TEXT: Record<string, string> = {
+  REF_MISSING: "引用缺失（历史无原生绑定）",
+  REF_STALE: "原线程引用已过期",
+  REF_NOT_READY: "引用尚未就绪，请重试",
+  INCOMPATIBLE_CLI: "CLI 或版本不兼容",
+  INCOMPATIBLE_STORE: "后端实例或存储位置不兼容",
+  GRANT_REVOKED: "知识授权已变化或撤销",
+  STOPPED: "本轮已停止",
+  LATE: "本轮结果迟到",
+  ADAPTER_REFUSED: "适配器未确认回到同一线程",
+  UNSUPPORTED_CLI: "当前 CLI 不支持原生续接",
+};
+const reasonLabel = (code: string | null | undefined) =>
+  (code && REASON_TEXT[code]) || code || "原因未知";
+const BINDING_PILL: Record<string, string> = {
+  native: "已续接",
+  fresh: "fresh 上下文",
+  freshPending: "待确认",
+  blocked: "不可续接",
+};
 interface Turn {
   sid: string;
   generation: number;
   request: PendingSend;
   buffer: { text: string; thinking: string };
+  /** CR-056：思考阶段计时（首段 thinking → 首段正文），用于折叠态显示"思考 持续 N 秒"。 */
+  thinkStarted: number | null;
+  thinkMs: number | null;
   msgs: UiMessage[];
   finished: boolean;
   accepted: boolean;
@@ -65,10 +93,14 @@ function Panel(props: ChatPanelProps) {
   const [runningIds, setRunningIds] = useState<string[]>([]);
   const [cliCands, setCliCands] = useState<SdkState[]>([]);
   const [models, setModels] = useState<ModelCandidate[]>([]);
+  const [permissionBySession, setPermissionBySession] = useState<Record<string, string>>({});
   const [sendMode, setSendMode] = useState<"queue" | "immediate">("queue");
   const [queued, setQueued] = useState(0);
   const [cfgBusy, setCfgBusy] = useState(false);
   const [bgOpenId, setBgOpenId] = useState<string | null>(null);
+  // CR-037：fresh 重建确认弹窗与切换 CLI 另建会话确认弹窗
+  const [freshConfirm, setFreshConfirm] = useState<SessionBinding | null>(null);
+  const [cliSwitchTarget, setCliSwitchTarget] = useState<string | null>(null);
   const [, bump] = useState(0);
   const bumpRt = () => bump(v => v + 1);
   const currentIdRef = useRef<string | null>(null);
@@ -93,6 +125,54 @@ function Panel(props: ChatPanelProps) {
   const viewing = (sid: string, targetScope = scope) => mounted.current && scopeRef.current === targetScope && currentIdRef.current === sid;
   const curRt = cur ? getRuntime(cur.id) : null;
   const running = !!cur && runningIds.includes(cur.id);
+  // CR-037：当前会话绑定状态（阻塞时禁输入但保留草稿与历史；REF_NOT_READY 可直接重试）
+  const binding = cur?.sessionRole === "executor" ? null : cur?.binding ?? null;
+  const composerLocked =
+    cfgBusy ||
+    (binding?.state === "blocked" && binding.reasonCode !== "REF_NOT_READY") ||
+    binding?.state === "freshPending";
+  const executionLocked = running || (cur ? hasBlockingChildren(cur.id) : false);
+
+  /** AC-06：fresh 重建确认 → CAS 清空旧引用 + 断点卡；失败（已有新轮）提示刷新。 */
+  const confirmFresh = async (info: SessionBinding) => {
+    const sid = curRef.current?.id;
+    if (!sid) return;
+    try {
+      await api.chatSessionConfirmFresh(sid, info.expectedRevision, info.reasonCode);
+      setFreshConfirm(null);
+      const meta = await api.chatSessionGet(sid);
+      setSessions(prev => prev.map(s => s.id === meta.id ? { ...s, binding: meta.binding ?? null, messageCount: meta.messageCount } : s));
+      if (viewing(sid)) {
+        curRef.current = { ...curRef.current!, binding: meta.binding ?? null, messageCount: meta.messageCount };
+        setCur(curRef.current);
+        const ui = (await api.chatMessages(sid)).map(fromChatMessage);
+        syncMessages(sid, ui); setMsgs(ui);
+      }
+      void refreshSessions();
+    } catch (e) { toast(String(e), "err"); }
+  };
+
+  /** STORY-011 AC-05 / AC-06：非空会话切 CLI → 确认后另建会话，保留原 CLI/模型配置与历史。 */
+  const switchCliNewSession = async (cliId: string) => {
+    const meta = curRef.current;
+    setCliSwitchTarget(null);
+    if (!meta) return;
+    try {
+      const created = await api.chatSessionCreate({
+        ...(props.projectId ? { projectId: props.projectId } : {}),
+        ...(props.serverId ? { serverId: props.serverId } : {}),
+        cliId,
+        ...(meta.providerId ? { providerId: meta.providerId } : {}),
+        ...(meta.modelId ? { modelId: meta.modelId } : {}),
+        ...(meta.effort ? { effort: meta.effort } : {}),
+        ...(meta.featureId ? { featureId: meta.featureId } : {}),
+      });
+      ++loadSerial.current;
+      setSessions(prev => [created, ...prev.filter(s => s.id !== created.id)]);
+      setCurrent(created, drafts.get(`${scope}:${created.id}`) ?? "");
+      setMsgs([]);
+    } catch (e) { toast(String(e), "err"); }
+  };
 
   const persistDraft = (sid: string, value: string) => {
     const prior = draftsPending.current.get(sid) ?? Promise.resolve();
@@ -120,7 +200,7 @@ function Panel(props: ChatPanelProps) {
     currentIdRef.current = meta?.id ?? null; curRef.current = meta;
     setCur(meta); setDraft(value); draftRef.current = value;
     setQueued(meta ? queues.current.get(meta.id)?.length ?? 0 : 0);
-    setBgOpenId(null); overlay.close(false);
+    setBgOpenId(null); setFreshConfirm(null); setCliSwitchTarget(null); overlay.close(false);
   };
   const filterSessions = (ss: SessionMeta[], project = props.projectId, server = props.serverId) => ss.filter(s =>
     project ? s.projectId === project && (!server || s.serverId === server) : server ? s.serverId === server : !s.projectId && !s.serverId
@@ -276,10 +356,13 @@ function Panel(props: ChatPanelProps) {
     const b = turn.buffer;
     if (!b.text && !b.thinking) return;
     markFirstDelta(turn.sid);
+    if (b.thinking && turn.thinkStarted === null) turn.thinkStarted = Date.now();
+    if (b.text && turn.thinkMs === null && turn.thinkStarted !== null) turn.thinkMs = Date.now() - turn.thinkStarted;
     const id = `stream-${turn.sid}-${turn.generation}`;
     let message = turn.msgs.find(m => m.id === id);
     if (!message) { message = mkMsg({ id, role: "assistant", streaming: true, model: turn.request.model, createdAt: Date.now() }); turn.msgs.push(message); }
     message.content += b.text; message.thinking = (message.thinking ?? "") + b.thinking;
+    if (turn.thinkMs !== null) message.thinkingMs = turn.thinkMs;
     turn.buffer = { text: "", thinking: "" }; publish(turn);
   };
   const waitSettled = async (sid: string) => {
@@ -295,13 +378,22 @@ function Panel(props: ChatPanelProps) {
     drafts.set(key, value); void persistDraft(request.sid, value);
     if (viewing(request.sid, request.scope)) { onDraftChange(value); toast(message, "err"); }
   };
+  /** CR-037：发送在进入 CLI 前被绑定拒绝——只清理本轮 UI 状态，不写错误卡、不触发排队。 */
+  const rejectBeforeSend = (turn: Turn) => {
+    if (turn.finished || !isCurrentTurn(turn.sid, turn.generation)) return;
+    turn.finished = true;
+    finishOnce(turn.sid, turn.generation, "failed");
+    publish(turn);
+    if (mounted.current) setRunningIds(prev => prev.filter(x => x !== turn.sid));
+  };
   const finalize = async (turn: Turn, error?: string, stopped = false) => {
     if (turn.finished || !isCurrentTurn(turn.sid, turn.generation)) return;
     flush(turn);
     const failedTool = getRuntime(turn.sid).steps.some(s => s.state === "failed");
     if (!finishOnce(turn.sid, turn.generation, error || stopped || failedTool ? "failed" : "success")) return;
     turn.finished = true;
-    turn.msgs = turn.msgs.map(m => ({ ...m, streaming: false }));
+    if (turn.thinkMs === null && turn.thinkStarted !== null) turn.thinkMs = Date.now() - turn.thinkStarted;
+    turn.msgs = turn.msgs.map(m => (m.role === "assistant" && m.thinkingMs == null && turn.thinkMs !== null ? { ...m, streaming: false, thinkingMs: turn.thinkMs } : { ...m, streaming: false }));
     if (error || stopped) turn.msgs.push(mkMsg({ id: `error-${turn.sid}-${turn.generation}`, role: "error", content: error ?? "已停止本次生成", isError: true, createdAt: Date.now() }));
     publish(turn); bumpRt();
     try {
@@ -332,7 +424,7 @@ function Panel(props: ChatPanelProps) {
   const dispatch = async (request: PendingSend): Promise<boolean> => {
     await waitSettled(request.sid);
     const generation = markStreamStart(request.sid);
-    const turn: Turn = { sid: request.sid, generation, request, buffer: { text: "", thinking: "" }, msgs: [...(messageCache.current.get(request.sid) ?? [])], finished: false, accepted: false, timer: null };
+    const turn: Turn = { sid: request.sid, generation, request, buffer: { text: "", thinking: "" }, thinkStarted: null, thinkMs: null, msgs: [...(messageCache.current.get(request.sid) ?? [])], finished: false, accepted: false, timer: null };
     turns.current.set(request.sid, turn);
     const uid = `user-${request.sid}-${generation}`;
     turn.msgs.push(mkMsg({ id: uid, role: "user", content: request.text, refs: request.refs, attachments: request.atts, createdAt: Date.now() }));
@@ -354,28 +446,70 @@ function Panel(props: ChatPanelProps) {
           publish(turn); bumpRt(); break;
         case "usage": addUsage(request.sid, ev.inputTokens, ev.outputTokens, ev.cacheReadTokens, String(generation)); bumpRt(); break;
         case "subagent": {
-          const rt = getRuntime(request.sid);
-          const row = { id: ev.id, cli: "unknown", title: ev.task, model: "未知", duration: "未上报", tokens: "未上报", status: ev.status === "failed" ? "失败" as const : ev.status === "done" || ev.status === "success" ? "成功" as const : "待确认" as const };
-          const index = rt.subagents.findIndex(a => a.id === ev.id);
-          if (index >= 0) rt.subagents[index] = row; else rt.subagents.push(row);
-          bumpRt(); break;
+          const row = upsertSubagent(request.sid, ev);
+          // 子智能体没有自带 CLI 上报时沿用本轮 CLI，避免显示成"未知"。
+          const agentCli = row.cli ?? request.cliId ?? null;
+          const existing = turn.msgs.find(m => m.id === `subagent-${ev.id}`);
+          if (existing) {
+            existing.content = row.output || row.title;
+            existing.sourceLabel = row.status;
+            existing.producerTask = row.title;
+            existing.producerId = row.id;
+            existing.cli = agentCli;
+          } else {
+            turn.msgs.push(mkMsg({ id: `subagent-${ev.id}`, role: "subagent", content: row.output || row.title, sourceLabel: row.status, producerId: row.id, producerTask: row.title, cli: agentCli, createdAt: Date.now() }));
+          }
+          publish(turn); bumpRt(); break;
         }
         case "approvalRequest":
           setStatus(request.sid, "pending");
           turn.msgs.push(mkMsg({ id: `approval-${ev.requestId}`, role: "system", content: `待处理：${ev.toolName}。当前非交互CLI适配器未提供可用的人工审批流程，未自动放行。` })); publish(turn); bumpRt(); break;
+        case "retrying":
+          turn.msgs.push(mkMsg({ id: `retry-${request.sid}-${generation}-${ev.attempt}`, role: "system", kind: "retrying", content: `供应商暂时不可用（${ev.reason}），${ev.delayMs}ms 后重试（${ev.attempt}/${ev.maxAttempts}）`, createdAt: Date.now() }));
+          publish(turn); bumpRt(); break;
         case "error": void finalize(turn, ev.message); break;
         case "done": void finalize(turn); break;
       }
     };
     try {
       const meta = await api.chatSessionGet(request.sid);
-      const permissionId = permissionSupported(meta.cliId) ? "agent" : undefined;
+      const permissionId = request.permissionId || "default";
+      // CR-037：freshPending/blocked 会话在后端被拒（用户消息未持久化，草稿保留）。
+      const b = meta.binding;
+      if (b?.state === "freshPending") {
+        turn.msgs = turn.msgs.filter(m => m.id !== uid);
+        rejectBeforeSend(turn);
+        setFreshConfirm(b);
+        toast("当前会话需要确认重建上下文后才能发送", "warn");
+        return false;
+      }
+      if (b?.state === "blocked" && b.reasonCode !== "REF_NOT_READY") {
+        turn.msgs = turn.msgs.filter(m => m.id !== uid);
+        rejectBeforeSend(turn);
+        toast(`原线程不可续接（${reasonLabel(b.reasonCode)}），请重建上下文或另建会话`, "err");
+        return false;
+      }
       await api.chatSend({ sessionId: request.sid, content: request.text, refs: request.refs, attachments: request.atts, ...(permissionId ? { permissionId } : {}) }, onEvent);
       turn.accepted = true;
       return true;
     } catch (e) {
       turn.msgs = turn.msgs.filter(m => m.id !== uid);
-      void finalize(turn, String(e));
+      // 后端绑定拒绝（BINDING_FRESH_REQUIRED/BINDING_BLOCKED）：打开确认弹窗而非报错。
+      const msg = String(e);
+      const bindMatch = /BINDING_(FRESH_REQUIRED|BLOCKED)\|([^|]*)\|(\d+)\|/.exec(msg);
+      if (bindMatch) {
+        const info: SessionBinding = {
+          state: bindMatch[1] === "FRESH_REQUIRED" ? "freshPending" : "blocked",
+          reasonCode: bindMatch[2],
+          refFingerprint: null,
+          expectedRevision: Number(bindMatch[3]),
+        };
+        rejectBeforeSend(turn);
+        if (bindMatch[1] === "FRESH_REQUIRED") setFreshConfirm(info);
+        else toast(`原线程不可续接（${reasonLabel(info.reasonCode)}），请重建上下文或另建会话`, "err");
+        return false;
+      }
+      void finalize(turn, msg);
       return false;
     }
   };
@@ -414,7 +548,7 @@ function Panel(props: ChatPanelProps) {
           // 引用已展开为受检会话正文；现后端没有session类型，不能仍发送不支持的引用。
         } else enriched.push(ref);
       }
-      const request: PendingSend = { sid: meta.id, text, refs: enriched.map(r => ({ ...r })), atts: atts.map(a => ({ ...a })), model: meta.modelId, scope: targetScope };
+      const request: PendingSend = { sid: meta.id, text, refs: enriched.map(r => ({ ...r })), atts: atts.map(a => ({ ...a })), model: meta.modelId, cliId: meta.cliId ?? null, permissionId: permissionBySession[meta.id] ?? "default", scope: targetScope };
       const active = turns.current.get(meta.id);
       const acceptDraft = () => {
         // 请求等待期间用户新写的文本/附件不能被完成回调清掉。
@@ -479,8 +613,18 @@ function Panel(props: ChatPanelProps) {
     return () => window.clearInterval(timer);
   }, [runningIds]);
 
-  const applyCfg = async (patch: { cliId?: string; providerId?: string; modelId?: string; effort?: string }) => {
-    if (cfgLock.current || sendLock.current || running) { toast("运行快照已锁定，停止并静止后再调整执行配置", "warn"); return; }
+  const applyCfg = async (patch: { cliId?: string; providerId?: string; modelId?: string; effort?: string; permissionId?: string }) => {
+    if (cfgLock.current || sendLock.current || executionLocked) { toast("当前会话仍有运行中的请求或子任务，配置已锁定；完成后再调整", "warn"); return; }
+    if (patch.permissionId && curRef.current) {
+      setPermissionBySession(prev => ({ ...prev, [curRef.current!.id]: patch.permissionId! }));
+      return;
+    }
+    // CR-037 / STORY-011 AC-05：非空会话（有消息或已有绑定）切 CLI 须确认后另建会话；后端亦拒绝原地改。
+    if (patch.cliId && curRef.current && patch.cliId !== curRef.current.cliId
+      && (curRef.current.messageCount > 0 || curRef.current.binding)) {
+      setCliSwitchTarget(patch.cliId);
+      return;
+    }
     cfgLock.current = true; setCfgBusy(true);
     try {
       const meta = curRef.current ?? await createSession(true, props.featureTarget?.featureId);
@@ -507,20 +651,46 @@ function Panel(props: ChatPanelProps) {
     <div className="chat-head">
       <button className={`chat-iconbtn ${overlay.activeOverlay === "history" ? "active" : ""}`} data-chat-overlay-trigger="history" title="会话历史" aria-label="会话历史" aria-expanded={overlay.activeOverlay === "history"} onClick={e => overlay.toggle("history", e.currentTarget)}><HistoryIcon /></button>
       {agentCount > 0 && <div className="chat-drop-wrap"><button className="chat-count-btn" data-chat-overlay-trigger="agents" aria-expanded={overlay.activeOverlay === "agents"} onClick={e => overlay.toggle("agents", e.currentTarget)}><Icon name="users" size={14} />{agentCount} 子智能体 <Icon name="chevronDown" size={12} /></button>
-        {overlay.activeOverlay === "agents" && <div className="chat-drop" data-chat-overlay="agents" role="dialog" aria-label="子智能体"><div className="chat-drop-h"><b>子智能体</b><span className="chat-drop-cap">{agentCount} 个 · 仅本会话</span></div><div className="chat-drop-list">{curRt!.subagents.map(a => <div key={a.id} className="chat-agent-row"><CliLogo id={a.cli} size={20} /><span className="chat-agent-main"><b>{a.title}</b><span>{a.model} · {a.duration} · {a.tokens}</span></span><span className={`tag ${a.status === "失败" ? "bad" : a.status === "待确认" ? "warn" : "good"}`}>{a.status}</span></div>)}</div><div className="chat-drop-f">{curRt!.recordsDemo ? "合成演示 · 不调用真实 CLI" : "来自本会话子代理事件 · 未上报的用量/引擎保持未知"}</div></div>}
+        {overlay.activeOverlay === "agents" && <div className="chat-drop" data-chat-overlay="agents" role="dialog" aria-label="子智能体"><div className="chat-drop-h"><b>子智能体</b><span className="chat-drop-cap">{agentCount} 个 · 仅本会话</span></div><div className="chat-drop-list">{curRt!.subagents.map(a => <div key={a.id} className="chat-agent-row"><CliLogo id={a.cli ?? "unknown"} size={20} /><span className="chat-agent-main"><b>{a.title}</b><span>{a.cli ?? "CLI 未知"} · {a.model ?? "模型未知"} · {a.duration ?? "耗时未知"} · {a.tokens ?? "tokens 未知"}</span></span><span className={`tag ${a.status === "失败" ? "bad" : a.status === "待确认" ? "warn" : "good"}`}>{a.status}</span></div>)}</div><div className="chat-drop-f">{curRt!.recordsDemo ? "合成演示 · 不调用真实 CLI" : "事件未提供用量或引擎信息时保持未知，不把未知填成 0"}</div></div>}
       </div>}
       {bgCount > 0 && <div className="chat-drop-wrap"><button className="chat-count-btn" data-chat-overlay-trigger="bg" aria-expanded={overlay.activeOverlay === "bg"} onClick={e => overlay.toggle("bg", e.currentTarget)}><Icon name="terminal" size={14} />{bgCount} 后台任务 <Icon name="chevronDown" size={12} /></button>
         {overlay.activeOverlay === "bg" && <div className="chat-drop chat-drop-bg" data-chat-overlay="bg" role="dialog" aria-label="后台任务"><div className="chat-drop-h"><b>后台任务</b><span className="chat-drop-cap">仅本会话</span></div><div className="chat-drop-list">{[true, false].map(active => { const rows = curRt!.background.filter(b => (b.state === "运行中") === active); return <div className="chat-bg-group" key={String(active)}><div className="chat-bg-group-h"><span>{active ? "进行中" : "已结束"} {rows.length}</span>{!active && <button className="chat-bg-clear" disabled={!rows.length} onClick={() => { clearEndedBackground(cur!.id); setBgOpenId(null); if (!getRuntime(cur!.id).background.length) overlay.close(false); bumpRt(); }}>清空已结束</button>}</div>{!rows.length && <div className="chat-bg-empty">暂无记录</div>}{rows.map(b => <div className="chat-bg-row" key={b.id}><button className="chat-bg-head" aria-expanded={bgOpenId === b.id} onClick={() => setBgOpenId(prev => prev === b.id ? null : b.id)}><span className={`chat-bg-dot ${b.state === "运行中" ? "run" : b.state === "完成" ? "ok" : "fail"}`} /><span className="chat-bg-main"><b>{b.cmd}</b><span>{b.state} · 退出码 {b.exit} · {b.duration}</span></span><Icon name="chevronDown" size={12} /></button>{bgOpenId === b.id && <div className="chat-bg-detail"><span className="chat-bg-jobid">jobId {b.id}</span><pre>{b.output || "暂无输出"}</pre></div>}</div>)}</div>; })}</div><div className="chat-drop-f">{curRt!.recordsDemo ? "合成演示 · " : ""}只清展示，不终止任务</div></div>}
       </div>}
-      <span className="spacer" />{cur?.sessionRole === "executor" && cur.featureId && <span className="chat-scope-tag" title={`执行特性：${cur.featureTitle ?? cur.featureId}；本会话仅实现该Feature`} aria-label={`执行特性：${cur.featureTitle ?? cur.featureId}，单特性执行会话`}>FEAT · <b>{cur.featureId}</b></span>}{newButton}
+      <span className="spacer" />{cur?.sessionRole === "executor" && cur.featureId && <span className="chat-scope-tag" title={`执行特性：${cur.featureTitle ?? cur.featureId}；本会话仅实现该Feature`} aria-label={`执行特性：${cur.featureTitle ?? cur.featureId}，单特性执行会话`}>FEAT · <b>{cur.featureId}</b></span>}{binding && <span className={`chat-binding-pill ${binding.state}`} title={binding.state === "blocked" ? `原线程不可续接：${reasonLabel(binding.reasonCode)}` : binding.state === "freshPending" ? "上下文需要确认重建后才能发送" : binding.state === "fresh" ? "已确认重建上下文" : "已绑定原线程，续轮自动续接"}>{BINDING_PILL[binding.state] ?? binding.state}</span>}{newButton}
     </div>
     <div className="chat-fade" />
     {overlay.activeOverlay === "history" && <SessionHistory scopeId={scope} sessions={sessions} currentId={cur?.id ?? null} runningIds={runningIds} onSwitch={openSession} onNew={newSession} onDelete={deleteSession} onClose={() => overlay.close(true)} />}
     <MessageList msgs={msgs} projectId={props.projectId} rootUri={props.rootUri} officeFiles={props.officeFiles} visible={props.visible} stepsSlot={<>{queued > 0 && <div className="chat-queued">已排队 {queued} 条，当前静止后发送</div>}{curRt && curRt.steps.length > 0 && <StepsBox steps={curRt.steps} demo={curRt.stepsDemo} preview={Boolean((window as unknown as { __DESIGN_PREVIEW__?: boolean }).__DESIGN_PREVIEW__)} open={curRt.stepsOpen} sid={cur!.id} onToggle={() => { curRt.stepsOpen = !curRt.stepsOpen; bumpRt(); }} bump={bumpRt} />}</>} />
+    {(binding?.state === "blocked" || binding?.state === "freshPending") && <div className="chat-block-banner" role="alert" aria-label="绑定阻塞横幅">
+      <span className="chat-block-ico" aria-hidden>!</span>
+      <div className="chat-block-main">
+        <div className="chat-block-title">{binding.state === "blocked" ? "原线程不可续接，已暂停发送" : "上下文待确认重建"}</div>
+        <div className="chat-block-reason">原因：{reasonLabel(binding.reasonCode)}。历史记录仍可查看；未发送草稿已保留。</div>
+        <div className="chat-block-foot">
+          {draft.length > 0 && <span className="chat-block-draft">草稿已保留（{draft.length} 字）</span>}
+          {binding.state === "freshPending" && <button className="chat-block-btn primary" onClick={() => setFreshConfirm(binding)}>确认重建…</button>}
+          {binding.state === "blocked" && <button className="chat-block-btn primary" onClick={() => setFreshConfirm(binding)}>重建上下文…</button>}
+          <button className="chat-block-btn" onClick={e => overlay.toggle("cli", e.currentTarget)}>切换 CLI 另建会话</button>
+        </div>
+      </div>
+    </div>}
     <div className="chat-composer-wrap">
-      <Composer scopeKey={`${scope}:${cur?.id ?? "new"}`} rootUri={props.rootUri} projectId={props.projectId} office={props.office} officeFiles={props.officeFiles} sessions={sessions} value={draft} streaming={running} disabled={cfgBusy} onChange={onDraftChange} onSend={startSend} onStop={stopSend} controls={<ModelPicker cliId={cur?.cliId ?? null} providerId={cur?.providerId ?? null} modelId={cur?.modelId ?? null} effort={cur?.effort ?? null} cliCandidates={cliCands} models={models} locked={running || cfgBusy} onChange={applyCfg} />} />
+      <Composer scopeKey={`${scope}:${cur?.id ?? "new"}`} rootUri={props.rootUri} projectId={props.projectId} office={props.office} officeFiles={props.officeFiles} sessions={sessions} value={draft} streaming={running} disabled={composerLocked} goal={curRt?.goal ?? null} tasks={curRt?.tasks ?? []} onCreateGoal={text => { if (cur) { setGoal(cur.id, text); bumpRt(); } }} onGoalStateChange={state => { if (cur) { updateGoalState(cur.id, state); bumpRt(); } }} onCreateTask={taskName => { if (cur) { addSessionTask(cur.id, taskName); bumpRt(); } }} onChange={onDraftChange} onSend={startSend} onStop={stopSend} controls={<ModelPicker cliId={cur?.cliId ?? null} providerId={cur?.providerId ?? null} modelId={cur?.modelId ?? null} effort={cur?.effort ?? null} cliCandidates={cliCands} models={models} permissionId={(cur?.id && permissionBySession[cur.id] as any) || "default"} locked={executionLocked || cfgBusy} onChange={applyCfg} />} />
+      {freshConfirm && cur && <Confirm
+        title="无法续接原线程，是否重建上下文？"
+        message={`本轮开始前检测到原生引用不可用。重建后将开启全新上下文；历史消息保留可见，不再自动送给模型。\n\n原因：${reasonLabel(freshConfirm.reasonCode)}\n引用指纹：${freshConfirm.refFingerprint ?? "—"} · 绑定版本：#${freshConfirm.expectedRevision}`}
+        onOk={() => void confirmFresh(freshConfirm)}
+        onCancel={() => setFreshConfirm(null)}
+      />}
+      {cliSwitchTarget && <Confirm
+        title="切换 CLI 将另建会话"
+        message={`当前会话已有消息或原生绑定，不能原地更换 CLI。将另建一个会话继续（携带原模型配置，CLI 改为 ${cliSwitchTarget}）；本会话的历史与绑定保留不变。`}
+        danger
+        onOk={() => void switchCliNewSession(cliSwitchTarget)}
+        onCancel={() => setCliSwitchTarget(null)}
+      />}
       <StatsBar data={statsData} />
-      <div className="chat-foot"><span>Enter 发送 · Shift+Enter 换行</span><span>{cur?.cliId ?? "CLI 未配置"} · {permissionSupported(cur?.cliId) ? "代理模式" : "权限未验证"}</span></div>
+      <div className="chat-foot"><span>Enter 发送 · Shift+Enter 换行</span><span>{cur?.cliId ?? "CLI 未配置"} · {permissionBySession[cur?.id ?? ""] ?? "default"}</span></div>
     </div>
   </div>;
 }

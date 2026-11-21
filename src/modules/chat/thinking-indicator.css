@@ -1,0 +1,7 @@
+.chat-working { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; color: var(--muted); font-size: 11.5px; }
+.chat-working-logo { position: relative; width: 44px; height: 44px; display: inline-grid; place-items: center; flex: 0 0 auto; }
+.chat-working-canvas { display: block; width: 44px; height: 44px; }
+.chat-working-fallback { width: 22px; height: 22px; object-fit: contain; opacity: .9; }
+.chat-working-label { color: var(--ink-2, var(--ink)); font-weight: 550; letter-spacing: .01em; }
+.chat-working-duration { color: var(--muted-2, var(--muted)); font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .chat-working-canvas { opacity: .95; } }

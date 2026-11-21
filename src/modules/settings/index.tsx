@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getSetting } from "@/api";
+import { UserAvatar } from "@/components/icon-tiles";
+import { useAvatarPhoto } from "@/components/avatar";
 import { usePaneWidth, ResizeHandle, PaneToggle } from "@/components/pane-resize";
 import { SettingsGeneral } from "./SettingsGeneral";
 import { SettingsModels } from "./SettingsModels";
@@ -23,6 +25,8 @@ const normalizeTab = (tab: string) => ({ cli: "sdk", skills: "skill", tools: "to
 export function SettingsCenter(props: { initialTab: string; onOpenTab: (tab: string) => void; onClose: () => void }) {
   const [tab, setTab] = useState(normalizeTab(props.initialTab));
   const [profile, setProfile] = useState({ name: "", email: "" });
+  // CR-051 r6：设置左栏头像与通用页/弹窗同源（自定义照片优先，默认品牌 Logo）。
+  const settingsPhoto = useAvatarPhoto();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const layoutRef = useRef<HTMLDivElement>(null);
   const navigation = usePaneWidth("settings", "navigation", { default: 224, min: 176, max: 320, side: "left", containerRef: layoutRef, minCenter: 320 });
@@ -53,7 +57,7 @@ export function SettingsCenter(props: { initialTab: string; onOpenTab: (tab: str
   }}>
     <div className="set-shell pane-container" ref={layoutRef} style={{ gridTemplateColumns: `${navigation.overlay ? 0 : navigation.width}px minmax(0,1fr)` }}>
       <nav {...navigation.paneProps} className={`${navigation.paneProps.className} set-nav`} style={navigation.style} aria-label="设置分类">
-        <div className="set-user"><span className="set-avatar">{profile.name.slice(0, 2) || "NC"}</span><div><b>{profile.name || "未设置名称"}</b><span>{profile.email || "未设置邮箱"}</span></div></div>
+        <div className="set-user"><UserAvatar size={34} photo={settingsPhoto} /><div><b>{profile.name || "未设置名称"}</b><span>{profile.email || "未设置邮箱"}</span></div></div>
         <div className="set-nav-list">{TABS.map(t => <button key={t.id} className={`set-nav-btn ${tab === t.id ? "active" : ""}`} aria-current={tab === t.id ? "page" : undefined} onClick={() => open(t.id)}><SettingsIcon name={t.icon} />{t.label}</button>)}</div>
         <div className="set-nav-foot"><span className="set-caption">设置与账户</span><button className="btn sm" onClick={props.onClose}>关闭</button></div>
         <ResizeHandle pane={navigation} label="设置分类" />

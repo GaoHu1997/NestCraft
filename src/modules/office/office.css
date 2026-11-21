@@ -32,7 +32,8 @@
 .office-files-foot { flex:0 0 auto; padding:9px 12px; border-top:1px solid var(--line); color:var(--muted); font-size:11px; line-height:1.7; }
 .office-files-foot button { display:block; margin-top:6px; }
 .office-viewer,.office-main { flex:1; min-width:0; min-height:0; display:flex; flex-direction:column; background:var(--paper); overflow:hidden; }
-.office-open-tabs { display:flex; align-items:stretch; overflow-x:auto; min-height:36px; flex:0 0 auto; border-bottom:1px solid var(--line); background:var(--panel-2); }
+/* CR-052：打开文件页签条不出现横向滚动条；溢出由共享 tab-overflow「更多」下拉承接。 */
+.office-open-tabs { display:flex; align-items:stretch; overflow:hidden; min-height:36px; flex:0 0 auto; border-bottom:1px solid var(--line); background:var(--panel-2); }
 .office-open-tabs:empty { display:none; }
 .office-open-tab { display:flex; align-items:stretch; flex:0 0 auto; border-bottom:2px solid transparent; max-width:235px; padding:0 4px 0 10px; color:var(--muted); min-height:34px; }
 .office-open-tab button { border:0; background:transparent; color:inherit; cursor:pointer; }

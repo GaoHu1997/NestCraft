@@ -19,10 +19,17 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
 a { color: var(--accent); text-decoration: none; }
 #root { height: 100dvh; }
 
+/* UI-CR049-v1 / UI-SCROLL-001：滚动条只在实际滚动时着色（显隐由 src/components/scrollbar.ts
+   加/移除 .scrollbar-active 控制）。静止与初始滑块、轨道全透明，原生滚动占位与宽度不变；
+   不通过切换宽度或 display 实现显隐。活动色浅 #a4abb5 / 深 #7d8794（--muted-2），
+   活动滑块悬停分别 #86909c / #9aa3ae（--muted）。 */
+* { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.scrollbar-active { scrollbar-color: var(--muted-2) transparent; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: var(--hover-line); border-radius: 5px; border: 2px solid transparent; background-clip: content-box; }
-::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: content-box; }
-::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: transparent; border: 3px solid transparent; background-clip: content-box; border-radius: 8px; }
+.scrollbar-active::-webkit-scrollbar-thumb { background: var(--muted-2); background-clip: content-box; }
+.scrollbar-active::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: content-box; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 
 /* ---------- 按钮 ---------- */

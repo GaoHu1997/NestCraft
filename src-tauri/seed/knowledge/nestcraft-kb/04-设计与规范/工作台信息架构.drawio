@@ -1,0 +1,72 @@
+<mxfile host="NestCraft" modified="2026-11-21T10:20:00.000Z" agent="NestCraft Knowledge Seed" version="24.7.0" type="device">
+  <diagram id="workbench-ia" name="工作台信息架构">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="826" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="root" value="栖造 NestCraft 工作台" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f0ff;strokeColor=#2f6feb;fontStyle=1;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="440" y="30" width="260" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="home" value="工作台首页&#10;最近项目 · 会话 · 快捷入口" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#c4cad4;" vertex="1" parent="1">
+          <mxGeometry x="80" y="140" width="200" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="projects" value="项目管理&#10;编码项目 / 办公项目" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#c4cad4;" vertex="1" parent="1">
+          <mxGeometry x="320" y="140" width="200" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="kb" value="知识库&#10;受管目录 · 授权给项目" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#c4cad4;" vertex="1" parent="1">
+          <mxGeometry x="560" y="140" width="200" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="servers" value="服务器管理&#10;SSH · 终端 · 监控" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#c4cad4;" vertex="1" parent="1">
+          <mxGeometry x="800" y="140" width="200" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e-root-home" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#2f6feb;" edge="1" parent="1" source="root" target="home"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-root-projects" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#2f6feb;" edge="1" parent="1" source="root" target="projects"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-root-kb" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#2f6feb;" edge="1" parent="1" source="root" target="kb"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-root-servers" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#2f6feb;" edge="1" parent="1" source="root" target="servers"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="proj-win" value="项目窗口（独立页签）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0f2f5;strokeColor=#8c96a6;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="120" y="270" width="840" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="e-project-win" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#8c96a6;" edge="1" parent="1" source="projects" target="proj-win"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="tab-req" value="需求&#10;VISION/EPIC/FEAT/STORY&#10;源清单 + 全文阅读" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#c4cad4;" vertex="1" parent="1">
+          <mxGeometry x="120" y="350" width="190" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="tab-design" value="设计&#10;PRD / UI / LLD / DB&#10;文档阅读与编辑" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#c4cad4;" vertex="1" parent="1">
+          <mxGeometry x="335" y="350" width="190" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="tab-task" value="任务&#10;派发树与运行记录&#10;（未接入时空态）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#c4cad4;" vertex="1" parent="1">
+          <mxGeometry x="550" y="350" width="190" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="tab-code" value="编码&#10;文件树 + 编辑器 + Git&#10;办公项目走文档工作区" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#c4cad4;" vertex="1" parent="1">
+          <mxGeometry x="765" y="350" width="190" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e-win-req" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#8c96a6;" edge="1" parent="1" source="proj-win" target="tab-req"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-win-design" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#8c96a6;" edge="1" parent="1" source="proj-win" target="tab-design"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-win-task" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#8c96a6;" edge="1" parent="1" source="proj-win" target="tab-task"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-win-code" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#8c96a6;" edge="1" parent="1" source="proj-win" target="tab-code"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="ai" value="AI 侧栏（项目内常驻）&#10;模型选择 · 引用 · 步骤 · 统计" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff6e5;strokeColor=#d08a17;" vertex="1" parent="1">
+          <mxGeometry x="120" y="500" width="835" height="46" as="geometry" />
+        </mxCell>
+        <mxCell id="e-ai-req" style="edgeStyle=orthogonalEdgeStyle;rounded=0;dashed=1;html=1;endArrow=block;strokeColor=#d08a17;" edge="1" parent="1" source="tab-req" target="ai"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-ai-code" style="edgeStyle=orthogonalEdgeStyle;rounded=0;dashed=1;html=1;endArrow=block;strokeColor=#d08a17;" edge="1" parent="1" source="tab-code" target="ai"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="settings" value="设置（独立弹窗）&#10;通用 · 模型 · SDK · 能力 · MCP" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0f2f5;strokeColor=#8c96a6;" vertex="1" parent="1">
+          <mxGeometry x="120" y="600" width="400" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="updater" value="软件更新入口（右上角）&#10;检查 · 下载 · 重启应用" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0f2f5;strokeColor=#8c96a6;" vertex="1" parent="1">
+          <mxGeometry x="555" y="600" width="400" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="note" value="说明：虚线表示「AI 侧栏复用同一套会话能力」，不新增第二套消息体系。" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontColor=#6a7280;" vertex="1" parent="1">
+          <mxGeometry x="120" y="700" width="835" height="30" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

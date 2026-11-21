@@ -1,0 +1,10 @@
+{
+  "name": "nestcraft-example-calculator",
+  "private": true,
+  "version": "1.0.0",
+  "description": "示例项目：从需求到代码的四则运算计算器",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/calculator.test.mjs"
+  }
+}

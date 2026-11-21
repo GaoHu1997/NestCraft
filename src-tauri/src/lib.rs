@@ -18,6 +18,11 @@ pub fn run() {
     tauri::Builder::default()
         .manage(commands::window::WindowCloseState::default())
         .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                commands::fs::document::destroyed(window.label());
+                commands::knowledge::performance::close_window(window.label());
+                commands::knowledge::snapshot::close_window(window.label());
+            }
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     // 无条件拦截；缺状态、前端未 ready 或 emit 失败都不能自动关闭。
@@ -31,10 +36,17 @@ pub fn run() {
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
-            // TAURI_SMOKE=1：冒烟测试模式，使用独立隔离库（每次全新）并触发前端套件
+            commands::fs::document::save::initialize_recovery(dir.join("editor-operations"))
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
+            // CR-055 FEAT-007：启动时按保留策略（最近 32 条 / 7 天）静默回收已终态保存的
+            // backup/temp/journal。失败不影响启动——材料只是诊断与恢复线索，不参与保存正确性。
+            let _ = commands::fs::document::save::gc_materials(Default::default());
+            // TAURI_SMOKE=1：冒烟测试模式，使用独立隔离库（默认每次全新）并触发前端套件。
+            // SMOKE_KEEP_DB=1：保留上次冒烟库——用于 CR-037「重启后仍属原会话」续接验证。
             let smoke = std::env::var("TAURI_SMOKE").is_ok();
+            let keep_db = std::env::var("SMOKE_KEEP_DB").map(|v| v == "1").unwrap_or(false);
             let db_file = if smoke { "workbench-smoke.db" } else { "workbench.db" };
-            if smoke {
+            if smoke && !keep_db {
                 let _ = std::fs::remove_file(dir.join(db_file));
                 let _ = std::fs::remove_file(dir.join("workbench-smoke.db-shm"));
                 let _ = std::fs::remove_file(dir.join("workbench-smoke.db-wal"));
@@ -83,6 +95,8 @@ pub fn run() {
             commands::smoke::smoke_channel_probe,
             commands::smoke::smoke_start_ssh,
             commands::smoke::smoke_use_real_claude,
+            commands::smoke::smoke_mock_resume,
+            commands::smoke::smoke_keep_db_flag,
             commands::smoke::smoke_gateway_record,
             commands::smoke::smoke_set_tierflow_key,
             commands::smoke::smoke_progress,
@@ -92,6 +106,13 @@ pub fn run() {
             commands::general::set_setting,
             commands::general::get_theme,
             commands::general::set_theme,
+            commands::general::get_avatar_style,
+            commands::general::set_avatar_style,
+            commands::general::get_avatar_image,
+            commands::general::set_avatar_image,
+            commands::general::save_avatar,
+            commands::general::clear_avatar_image,
+            commands::general::avatar_image_data,
             // 项目与需求
             commands::projects::list_projects,
             commands::projects::create_project,
@@ -108,6 +129,21 @@ pub fn run() {
             commands::fs::fs_write_file,
             commands::fs::fs_delete_file,
             commands::fs::fs_search,
+            commands::fs::performance::fs_perf_dir_page,
+            commands::fs::performance::fs_perf_search_start,
+            commands::fs::performance::fs_perf_search_poll,
+            commands::fs::performance::fs_perf_cancel,
+            commands::fs::document::read::fs_perf_open_document,
+            commands::fs::document::read::fs_perf_read_window,
+            commands::fs::document::read::fs_perf_close_document,
+            commands::fs::document::read::fs_perf_release_file,
+            commands::fs::document::save::fs_perf_save_begin_v2,
+            commands::fs::document::save::fs_perf_save_append_v2,
+            commands::fs::document::save::fs_perf_save_seal_v2,
+            commands::fs::document::save::fs_perf_save_commit_v2,
+            commands::fs::document::save::fs_perf_save_status_v2,
+            commands::fs::document::save::fs_perf_save_abort_v2,
+            commands::fs::document::save::fs_perf_save_release_v2,
             commands::fs::app_data_ensure_dir,
             commands::fs::pick_project_directory,
             // Git
@@ -141,6 +177,10 @@ pub fn run() {
             commands::sdk::sdk_versions,
             commands::sdk::sdk_set_enabled,
             commands::sdk::sdk_cli_candidates,
+            // CR-053：CLI 命令工具（Shell）探测/读取/保存
+            commands::shell::cli_shell_candidates,
+            commands::shell::cli_shell_get,
+            commands::shell::cli_shell_save,
             // 能力
             commands::capabilities::skill_list,
             commands::capabilities::skill_save,
@@ -154,6 +194,9 @@ pub fn run() {
             commands::capabilities::mcp_delete,
             commands::capabilities::mcp_set_enabled,
             commands::capabilities::mcp_discover_tools,
+            commands::capabilities::mcp_auth_start,
+            commands::capabilities::mcp_auth_status,
+            commands::capabilities::mcp_auth_logout,
             // 会话
             commands::chat::chat_sessions,
             commands::chat::chat_session_create,
@@ -165,6 +208,8 @@ pub fn run() {
             commands::chat::chat_abort,
             commands::chat::chat_status,
             commands::chat::chat_approve_tool,
+            // CR-037：侧栏原生续接——fresh 重建确认
+            commands::chat_binding::chat_session_confirm_fresh,
             // 服务器
             commands::servers::server_list,
             commands::servers::server_save,
@@ -185,6 +230,9 @@ pub fn run() {
             // 知识库
             commands::knowledge::kb_list,
             commands::knowledge::kb_save,
+            commands::knowledge::kb_set_icon,
+            commands::knowledge::kb_set_icon_color,
+            commands::knowledge::kb_set_appearance,
             commands::knowledge::kb_delete,
             commands::knowledge::kb_scan,
             commands::knowledge::kb_tree,
@@ -197,6 +245,27 @@ pub fn run() {
             commands::knowledge::kb_file_info,
             commands::knowledge::kb_read_file,
             commands::knowledge::kb_export_file,
+            // CR-055 FEAT-008: owner metadata tasks; not AI mutation tools.
+            commands::knowledge::performance::kb_list_children,
+            commands::knowledge::performance::kb_scan_start,
+            commands::knowledge::performance::kb_task_status,
+            commands::knowledge::performance::kb_task_cancel,
+            commands::knowledge::performance::kb_search_indexed,
+            commands::knowledge::performance::kb_search_cancel,
+            commands::knowledge::performance::windows::kb_open_document,
+            commands::knowledge::performance::windows::kb_read_window,
+            commands::knowledge::performance::windows::kb_close_document,
+            commands::knowledge::performance::windows::kb_search_document,
+            commands::knowledge::performance::windows::kb_search_document_cancel,
+            // CR-055 FEAT-008: immutable index generations remain human-searchable while rebuilding.
+            commands::knowledge::snapshot::kb_index_start,
+            commands::knowledge::snapshot::kb_index_status,
+            commands::knowledge::snapshot::kb_index_cancel,
+            // CR-055 FEAT-008: bounded GB-scale original transfer tasks (progress/cancel; index stays pending).
+            commands::knowledge::transfers::kb_transfer_import,
+            commands::knowledge::transfers::kb_transfer_export,
+            commands::knowledge::transfers::kb_transfer_status,
+            commands::knowledge::transfers::kb_transfer_cancel,
             commands::knowledge::kb_search,
             commands::knowledge::kb_grants,
             commands::knowledge::kb_grant_set,

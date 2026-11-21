@@ -12,6 +12,7 @@ import type {
   KnowledgeUploadResult, KnowledgeHit, LibraryGrant,
   GitStatus, GitChange, BranchEntry, CommitEntry, CommitFileEntry,
 } from "../api/index";
+import { PROJECT_ICON_IDS, KB_ICON_IDS, ICON_COLORS } from "@/components/icon-tiles";
 import type { DocBlock, OfficeFile, OfficeProjectState } from "../modules/office/office-model";
 import type { InvokeArgs, InvokeOptions } from "@tauri-apps/api/core";
 
@@ -144,10 +145,10 @@ function createFixture() {
   const uid = (prefix: string) => `${prefix}-${String(++seq).padStart(5, "0")}`;
   const now = () => STAMP + seq * 1000;
   const projects: Project[] = [
-    { id: "PRJ-1042", name: "预约服务", kind: "code", rootUri: "/demo/booking-service", createdAt: STAMP - 23 * 86400000, updatedAt: STAMP },
-    { id: "PRJ-1031", name: "运维控制台", kind: "code", rootUri: "/demo/ops-console", createdAt: STAMP - 18 * 86400000, updatedAt: STAMP - 1000 },
-    { id: "PRJ-1018", name: "市场研究资料", kind: "work", rootUri: "/demo/research-booking", createdAt: STAMP - 14 * 86400000, updatedAt: STAMP - 2000 },
-    { id: "PRJ-1009", name: "品牌与官网", kind: "work", rootUri: "/demo/nestcraft-site", createdAt: STAMP - 11 * 86400000, updatedAt: STAMP - 3000 },
+    { id: "PRJ-1042", name: "预约服务", kind: "code", rootUri: "/demo/booking-service", icon: null, iconColor: null, createdAt: STAMP - 23 * 86400000, updatedAt: STAMP },
+    { id: "PRJ-1031", name: "运维控制台", kind: "code", rootUri: "/demo/ops-console", icon: null, iconColor: null, createdAt: STAMP - 18 * 86400000, updatedAt: STAMP - 1000 },
+    { id: "PRJ-1018", name: "市场研究资料", kind: "work", rootUri: "/demo/research-booking", icon: null, iconColor: null, createdAt: STAMP - 14 * 86400000, updatedAt: STAMP - 2000 },
+    { id: "PRJ-1009", name: "品牌与官网", kind: "work", rootUri: "/demo/nestcraft-site", icon: null, iconColor: null, createdAt: STAMP - 11 * 86400000, updatedAt: STAMP - 3000 },
   ];
   const projectById = (id: string) => lookup(projects, id, p => p.id, "项目");
   const projectByRoot = (root: unknown) => lookup(projects, absolute(root), p => p.rootUri, "项目根");
@@ -213,19 +214,23 @@ function createFixture() {
     { id: "tool:web-fetch", name: "web-fetch", description: "网络能力禁用；不发请求", risk: "medium", enabled: false, builtin: true },
   ];
   const mcps: McpServer[] = [
-    { id: "MCP-FS", name: "filesystem", transport: "stdio", command: "demo-mcp-fs", args: ["--root", "/demo/booking-service"], env: { DEMO_TOKEN: MASK }, url: null, enabled: true,
+    { id: "MCP-FS", name: "filesystem", transport: "stdio", command: "demo-mcp-fs", args: ["--root", "/demo/booking-service"], env: { DEMO_TOKEN: MASK }, url: null, enabled: true, authStatus: "unauthenticated", authRevision: 0, authMode: "oauth", allowInsecureLocalTls: false,
       tools: [{ name: "read_file", description: "合成文件读取" }, { name: "list_directory", description: "合成目录列表" }] },
-    { id: "MCP-KNOWLEDGE", name: "knowledge-gateway", transport: "http", command: null, args: [], env: {}, url: "https://knowledge.demo.invalid/mcp", enabled: true,
+    { id: "MCP-KNOWLEDGE", name: "knowledge-gateway", transport: "http", command: null, args: [], env: {}, url: "https://knowledge.demo.invalid/mcp", enabled: true, authStatus: "unauthenticated", authRevision: 0, authMode: "oauth", allowInsecureLocalTls: false,
       tools: [{ name: "knowledge.list", description: "已授权库" }, { name: "knowledge.search", description: "授权内检索" }, { name: "knowledge.read", description: "授权内读取" }] },
-    { id: "MCP-BROWSER", name: "browser", transport: "stdio", command: "demo-mcp-browser", args: [], env: {}, url: null, enabled: false, tools: [] },
+    { id: "MCP-BROWSER", name: "browser", transport: "stdio", command: "demo-mcp-browser", args: [], env: {}, url: null, enabled: false, authStatus: "unauthenticated", authRevision: 0, authMode: "oauth", allowInsecureLocalTls: false, tools: [] },
   ];
 
   const libraries: KnowledgeLibrary[] = [
-    { id: "KB-01", name: "研发手册", sourceKind: "directory", sourceRef: "/demo/knowledge/dev", enabled: true, noteCount: 0, revision: 1 },
-    { id: "KB-02", name: "竞品与用户研究", sourceKind: "directory", sourceRef: "/demo/knowledge/research", enabled: true, noteCount: 0, revision: 1 },
-    { id: "KB-03", name: "运维手册", sourceKind: "directory", sourceRef: "/demo/knowledge/ops", enabled: true, noteCount: 0, revision: 1 },
+    { id: "KB-01", name: "研发手册", sourceKind: "directory", sourceRef: "/demo/knowledge/dev", enabled: true, noteCount: 0, revision: 1, icon: null, iconColor: null },
+    { id: "KB-02", name: "竞品与用户研究", sourceKind: "directory", sourceRef: "/demo/knowledge/research", enabled: true, noteCount: 0, revision: 1, icon: null, iconColor: null },
+    { id: "KB-03", name: "运维手册", sourceKind: "directory", sourceRef: "/demo/knowledge/ops", enabled: true, noteCount: 0, revision: 1, icon: null, iconColor: null },
   ];
   const library = (id: string) => lookup(libraries, id, l => l.id, "知识库");
+  // CR-051：头像风格偏好（隔离内存演示，缺省 a）。
+  let avatarStyle = "b";
+// CR-051 r6：自定义头像（本机引用）；smoke 只存内存字符串，不写磁盘。
+let avatarImage: { path: string; hash: string } | null = null;
   const notes = new Map<string, NoteContent[]>(); // 仅已保存 Markdown，未保存草稿不进入索引或 AI 网关。
   interface KnowledgeAsset { noteId: string; title: string; relativeUri: string; kind: KnowledgeFileInfo["kind"]; mime: string; bytes?: Uint8Array; text?: string }
   const assets = new Map<string, KnowledgeAsset[]>();
@@ -763,7 +768,7 @@ function createFixture() {
       } else {
         append(s, "assistant", answer, { thinking, usage: { inputTokens, outputTokens, cacheReadTokens: 0 }, estimate: "字符数/4（合成）" }, refs);
         s.draft = ""; s.unread = "success";
-        ch.emit({ type: "done", sessionRef: `DEMO:${s.id}` } satisfies ChatEvent);
+        ch.emit({ type: "done", turnId: `DEMO:${s.id}`, nativeResumed: false, freshContext: false, blocked: false, reasonCode: null, refFingerprint: null } satisfies ChatEvent);
       }
       return null;
     } finally { turns.delete(s.id); ch.close(); }
@@ -836,13 +841,24 @@ function createFixture() {
   }
   on("create_project", a => {
     const n = name(a.name); unique(projects, n, p => p.name); const kind = str(a, "kind"); if (kind !== "code" && kind !== "work") fail("未知项目类型");
-    const p: Project = { id: uid("PRJ-DEMO"), name: n, kind, rootUri: validProjectRoot(a.rootUri), createdAt: now(), updatedAt: now() };
+    const p: Project = { id: uid("PRJ-DEMO"), name: n, kind, rootUri: validProjectRoot(a.rootUri), icon: null, iconColor: null, createdAt: now(), updatedAt: now() };
     projects.push(p); grants.set(p.id, new Set()); seedProject(p); seedGit(p); return copy(p);
   });
   on("update_project", a => {
     const p = projectById(str(a, "id")), n = name(a.name); unique(projects, n, x => x.name, p);
     const oldRoot = p.rootUri, nextRoot = a.rootUri == null ? oldRoot : validProjectRoot(a.rootUri, p);
     p.name = n; p.rootUri = nextRoot; p.updatedAt = now();
+    // CR-051：icon / iconColor 缺省=保持；null=清空回默认；字符串须命中 50 图标 / 10 色卡白名单。
+    if (a.iconColor !== undefined) {
+      const color = a.iconColor == null || a.iconColor === "" ? null : String(a.iconColor);
+      if (color && !ICON_COLORS.some(sw => sw.id === color)) fail(`非法背景色卡 id：${color}`);
+      p.iconColor = color;
+    }
+    if (a.icon !== undefined) {
+      const value = a.icon == null || a.icon === "" ? null : String(a.icon);
+      if (value && !PROJECT_ICON_IDS.includes(value)) fail(`非法项目图标 id：${value}`);
+      p.icon = value;
+    }
     if (oldRoot !== nextRoot) for (const s of sessions.filter(s => s.projectId === p.id)) for (const m of messages.get(s.id) ?? []) {
       m.content = m.content.split(oldRoot).join(nextRoot); if (m.refsJson) m.refsJson = m.refsJson.split(oldRoot).join(nextRoot); if (m.metaJson) m.metaJson = m.metaJson.split(oldRoot).join(nextRoot);
     }
@@ -957,7 +973,9 @@ function createFixture() {
     const env = object(d.env, "env"); if (Object.keys(env).some(k => !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(k))) fail("MCP 环境变量名无效");
     const next: McpServer = { id: old?.id ?? uid("MCP"), name: n, transport, command: transport === "stdio" ? str(d, "command") : null,
       args: strings(d.args, "args"), env: Object.fromEntries(Object.keys(env).map(k => [k, MASK])), url: transport === "http" ? demoUrl(d.url) : null,
-      enabled: bool(d.enabled, "enabled"), tools: old ? copy(old.tools) : [] };
+      enabled: bool(d.enabled, "enabled"), tools: old ? copy(old.tools) : [], authStatus: old?.authStatus ?? "unauthenticated", authRevision: old?.authRevision ?? 0,
+      authMode: transport === "http" ? (str(d, "authMode") === "bearer" ? "bearer" : str(d, "authMode") === "none" ? "none" : "oauth") : "oauth",
+      allowInsecureLocalTls: transport === "http" && bool(d.allowInsecureLocalTls, "allowInsecureLocalTls") };
     if (old) mcps[mcps.indexOf(old)] = next; else mcps.push(next); return next.id;
   });
   on("mcp_delete", a => { const m = lookup(mcps, str(a, "id"), m => m.id, "MCP"); mcps.splice(mcps.indexOf(m), 1); return null; });
@@ -988,9 +1006,46 @@ function createFixture() {
     const n = name(a.name); unique(libraries, n, l => l.name); const root = absolute(a.sourceRef);
     if (!root.startsWith("/demo/knowledge/")) fail("知识源必须位于 /demo/knowledge/...，不读取磁盘");
     if (libraries.some(l => l.sourceRef === root || l.sourceRef.startsWith(`${root}/`) || root.startsWith(`${l.sourceRef}/`))) fail("知识库源不能重叠");
-    const id = uid("KB"); libraries.push({ id, name: n, sourceKind: "directory", sourceRef: root, enabled: true, noteCount: 0, revision: 1 }); notes.set(id, []); assets.set(id, []); knowledgeDirs.set(id, new Set([""])); return id;
+    const id = uid("KB"); libraries.push({ id, name: n, sourceKind: "directory", sourceRef: root, enabled: true, noteCount: 0, revision: 1, icon: null, iconColor: null }); notes.set(id, []); assets.set(id, []); knowledgeDirs.set(id, new Set([""])); return id;
   });
   on("kb_delete", a => { const l = library(str(a, "id")); libraries.splice(libraries.indexOf(l), 1); notes.delete(l.id); assets.delete(l.id); knowledgeDirs.delete(l.id); for (const set of grants.values()) set.delete(l.id); return null; });
+  // CR-051：库图标（与项目共用 50 个白名单）、色卡（10 色）与头像风格（a–e）。
+  on("kb_set_icon", a => {
+    const l = library(str(a, "id"));
+    const raw = a.icon;
+    const value = raw == null || raw === "" ? null : String(raw);
+    if (value && !KB_ICON_IDS.includes(value as (typeof KB_ICON_IDS)[number])) fail(`非法知识库图标 id：${value}`);
+    l.icon = value; l.revision++;
+    return null;
+  });
+  on("kb_set_icon_color", a => {
+    const l = library(str(a, "id"));
+    const raw = a.iconColor;
+    const value = raw == null || raw === "" ? null : String(raw);
+    if (value && !ICON_COLORS.some(sw => sw.id === value)) fail(`非法背景色卡 id：${value}`);
+    l.iconColor = value; l.revision++;
+    return null;
+  });
+  on("get_avatar_image", () => (avatarImage ? { ...avatarImage } : { path: null, hash: null }));
+  on("avatar_image_data", () => avatarImage?.path?.startsWith("data:") ? avatarImage.path : null);
+  on("set_avatar_image", a => {
+    const dataUrl = String(a.dataUrl ?? "");
+    if (!/^data:image\/(png|jpeg|webp);base64,/.test(dataUrl)) fail("头像只支持 PNG、JPG 或 WebP");
+    const bytes = Math.floor((dataUrl.split(",")[1] ?? "").length * 0.75);
+    if (bytes > 200 * 1024) fail(`头像图片不能超过 200KB（当前 ${bytes} 字节）`);
+    avatarImage = { path: "smoke://avatar/current.png", hash: String(bytes) };
+    return { ...avatarImage };
+  });
+  on("clear_avatar_image", () => { avatarImage = null; return null; });
+  on("save_avatar", a => { const value=String(a.style); if(!["a","b","c","d","e"].includes(value)) fail("头像风格无效"); const data=String(a.dataUrl ?? ""); avatarImage=data ? {path:data,hash:String(data.length)} : null; avatarStyle=value; return avatarImage ?? {path:null,hash:null}; });
+  on("kb_set_appearance", a => { const l=library(str(a,"id")); const icon=a.icon==null||a.icon===""?null:String(a.icon); const color=a.iconColor==null||a.iconColor===""?null:String(a.iconColor); if(icon&&!KB_ICON_IDS.includes(icon)) fail("非法图标"); if(color&&!ICON_COLORS.some(c=>c.id===color)) fail("非法色卡"); l.icon=icon;l.iconColor=color;return null; });
+  on("get_avatar_style", () => avatarStyle);
+  on("set_avatar_style", a => {
+    const value = String(a.style);
+    if (!["a", "b", "c", "d", "e"].includes(value)) fail("头像风格必须是 a、b、c、d、e 之一");
+    avatarStyle = value;
+    return null;
+  });
   on("kb_scan", a => { const l = enabledLibrary(str(a, "id")); refreshKnowledge(l); return l.noteCount; });
   on("kb_tree", a => noteTree(str(a, "id")));
   on("kb_read", a => copy(note(str(a, "libId"), str(a, "noteId"))));

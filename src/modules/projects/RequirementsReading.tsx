@@ -3,6 +3,7 @@ import * as api from "@/api";
 import { Icon } from "@/components/icons";
 import { Empty, renderMarkdown } from "@/components/ui";
 import { PaneToggle, ResizeHandle, usePaneWidth } from "@/components/pane-resize";
+import { TabMoreDropdown, TabMoreIcon, useTabOverflow } from "@/components/tab-overflow";
 import { closeReadingTab, orderReadingSources, splitReadingFrontMatter, type ReadingSource } from "./requirementSources";
 
 interface ReadState { state: "loading" | "ready" | "error"; text?: string; html?: string; error?: string }
@@ -117,6 +118,10 @@ export function RequirementsReading({ project, sources, loading, errors, warning
   }, [menu]);
   const toggle = (key: string, setter: typeof setCollapsed) => setter(previous => { const next = new Set(previous); next.has(key) ? next.delete(key) : next.add(key); return next; });
   const close = (key: string) => { capture(); const next = closeReadingTab(tabs, active, key, vision?.key ?? null); setTabs(next.tabs); setActive(next.active); };
+  // CR-052 / UI-TAB-001：内部文档页签溢出统一走共享「更多」下拉，不出现横向滚动条。
+  const reqTabItems = tabs.map(key => { const source = byKey.get(key); return source ? { key, sub: source.kind === "vision" ? "愿景" : source.entityId ?? "文件", label: source.title, active: active === key } : { key, label: key, active: active === key }; });
+  const reqTabSig = reqTabItems.map(item => `${item.key}:${item.label}:${item.active ? 1 : 0}`).join("|");
+  const reqTabsOverflow = useTabOverflow({ tabSelector: ".req-tab", items: reqTabItems, deps: [reqTabSig] });
   const matching = query.trim().toLowerCase();
   const hidden = new Set<string>();
   const visibleRows = rows.filter(row => {
@@ -163,7 +168,10 @@ export function RequirementsReading({ project, sources, loading, errors, warning
       <ResizeHandle pane={treePane} label="需求树" controls={`${scope}-tree`} />
     </aside>
     <section className="req-document-pane">
-      <div className="req-tabs" role="tablist" aria-label="内部需求文档Tab">{tabs.map(key => { const source = byKey.get(key); if (!source) return null; return <div key={key} className={`req-tab ${active === key ? "on" : ""}`}><button role="tab" aria-selected={active === key} title={source.title} onClick={() => open(source)}>{source.kind === "vision" ? "愿景" : source.entityId ?? "文件"}<span>{source.title}</span></button><button className="req-tab-close" aria-label={`关闭${source.title}`} onClick={() => close(key)}><Icon name="x" size={14} /></button></div>; })}</div>
+      <div ref={reqTabsOverflow.barRef} className="req-tabs" role="tablist" aria-label="内部需求文档Tab">{tabs.map(key => { const source = byKey.get(key); if (!source) return null; return <div key={key} className={`req-tab ${active === key ? "on" : ""}`}><button role="tab" aria-selected={active === key} title={source.title} onClick={() => open(source)}><em className="req-tab-key">{source.kind === "vision" ? "愿景" : source.entityId ?? "文件"}</em><span className="req-tab-title">{source.title}</span></button><button className="req-tab-close" aria-label={`关闭${source.title}`} onClick={() => close(key)}><Icon name="x" size={14} /></button></div>; })}
+        <button {...reqTabsOverflow.moreProps}><TabMoreIcon /></button>
+      </div>
+      {reqTabsOverflow.dropdownOpen && <TabMoreDropdown anchorRef={reqTabsOverflow.moreRef} items={reqTabItems} onPick={key => { const source = byKey.get(key); if (source) open(source); }} onClose={reqTabsOverflow.closeDropdown} />}
       <div className="req-toolbar"><button className={`btn sm ${mode === "preview" ? "primary" : ""}`} onClick={() => switchMode("preview")}><Icon name="eye" size={14} />全文预览</button><button className={`btn sm ${mode === "map" ? "primary" : ""}`} onClick={() => switchMode("map")}><Icon name="workflow" size={14} />思维导图</button><span className="spacer" />{current?.node && <><button className="btn sm" onClick={() => onEdit(current.node!)}><Icon name="edit" size={14} />编辑</button>{current.kind !== "vision" && <button className="btn sm" onClick={() => onDispatch(current.node!)}><Icon name="play" size={14} />派发预检</button>}</>}</div>
       {errors.length > 0 && <div className="req-source-error" role="alert">{errors.map(error => <p key={error}>{error}</p>)}<button className="btn sm" disabled={loading} onClick={onReload}>重试源清单</button></div>}
       {mode === "map" && <section className="req-map-area"><div className="req-map-controls"><b>思维导图</b><button className="btn sm" aria-label="缩小" onClick={() => setZoom(value => Math.max(.5, Math.round((value - .1) * 10) / 10))}>−</button><span>{Math.round(zoom * 100)}%</span><button className="btn sm" aria-label="放大" onClick={() => setZoom(value => Math.min(1.8, Math.round((value + .1) * 10) / 10))}>+</button><button className="btn sm" onClick={() => { setZoom(1); setMapCollapsed(new Set()); mapScroll.current = [0, 0]; mapRef.current?.scrollTo(0, 0); }}>重置</button><button className="btn sm" onClick={() => setMapCollapsed(new Set())}>全部展开</button><button className="btn sm" onClick={() => setMapCollapsed(new Set(sources.filter(source => source.kind !== "vision").map(source => source.key)))}>折叠分支</button></div>

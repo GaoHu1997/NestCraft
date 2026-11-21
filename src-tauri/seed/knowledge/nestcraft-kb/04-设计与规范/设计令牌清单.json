@@ -1,0 +1,83 @@
+{
+  "$schema": "internal://nestcraft/design-tokens/v1",
+  "version": "2026-11-21",
+  "note": "平台内共享的视觉令牌清单，供界面实现与设计稿对照使用。",
+  "color": {
+    "brand": {
+      "primary": "#2f6feb",
+      "primaryHover": "#2560d2",
+      "primarySoft": "#e8f0ff",
+      "accentTeal": "#17a398",
+      "accentAmber": "#d08a17"
+    },
+    "surface": {
+      "page": "#f5f6f8",
+      "card": "#ffffff",
+      "raised": "#ffffff",
+      "sunken": "#f0f2f5",
+      "overlay": "rgba(20, 24, 31, 0.36)"
+    },
+    "text": {
+      "primary": "#1b1f26",
+      "secondary": "#5b6472",
+      "muted": "#6a7280",
+      "inverse": "#ffffff",
+      "link": "#2f6feb"
+    },
+    "border": {
+      "default": "#dde1e8",
+      "strong": "#c4cad4",
+      "focus": "#2f6feb"
+    },
+    "status": {
+      "success": "#1f9d55",
+      "warning": "#c98a00",
+      "danger": "#c0392b",
+      "info": "#2f6feb"
+    },
+    "dark": {
+      "page": "#14171c",
+      "card": "#1c2027",
+      "sunken": "#242932",
+      "text": "#eef1f6",
+      "textSecondary": "#b7c0cd",
+      "muted": "#98a1b0",
+      "border": "#303641"
+    }
+  },
+  "typography": {
+    "fontFamily": "\"Segoe UI\", \"Microsoft YaHei\", system-ui, sans-serif",
+    "monoFamily": "\"Cascadia Code\", Consolas, monospace",
+    "scale": {
+      "display": { "size": 34, "weight": 600, "lineHeight": 1.2 },
+      "title": { "size": 20, "weight": 600, "lineHeight": 1.35 },
+      "heading": { "size": 16, "weight": 600, "lineHeight": 1.4 },
+      "body": { "size": 14, "weight": 400, "lineHeight": 1.6 },
+      "caption": { "size": 12, "weight": 400, "lineHeight": 1.5 }
+    }
+  },
+  "spacing": {
+    "unit": 4,
+    "scale": [0, 4, 8, 12, 16, 20, 24, 32, 40, 48]
+  },
+  "radius": {
+    "sm": 6,
+    "md": 8,
+    "lg": 12,
+    "pill": 999
+  },
+  "shadow": {
+    "card": "0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.1)",
+    "popover": "0 8px 24px rgba(16, 24, 40, 0.16)",
+    "focusRing": "0 0 0 2px #2f6feb"
+  },
+  "motion": {
+    "duration": { "fast": 120, "base": 180, "slow": 240 },
+    "easing": "cubic-bezier(0.2, 0, 0.2, 1)",
+    "scrollbarHideDelay": 700
+  },
+  "icon": {
+    "builtinCount": 50,
+    "colors": ["blue", "teal", "violet", "amber", "green", "rose", "indigo", "orange", "slate", "sand"]
+  }
+}

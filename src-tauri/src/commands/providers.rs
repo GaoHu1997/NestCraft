@@ -21,11 +21,19 @@ fn secrets_file(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("secrets.json"))
 }
 
+/// 供应商密钥与 MCP 凭据共用同一文件，必须共用同一把写锁，避免并发丢更新。
+static SECRETS_FILE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub(crate) fn secrets_file_guard() -> std::sync::MutexGuard<'static, ()> {
+    SECRETS_FILE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 fn secrets_read(app: &tauri::AppHandle) -> Result<BTreeMap<String, String>, String> {
     secrets_read_path(&secrets_file(app)?)
 }
 
 fn secrets_read_path(path: &Path) -> Result<BTreeMap<String, String>, String> {
+    let _guard = secrets_file_guard();
     match std::fs::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(|_| "密钥文件格式无效，已拒绝覆盖".into()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
@@ -38,6 +46,7 @@ fn secrets_write(app: &tauri::AppHandle, map: &BTreeMap<String, String>) -> Resu
 }
 
 fn secrets_write_path(path: &Path, map: &BTreeMap<String, String>) -> Result<(), String> {
+    let _guard = secrets_file_guard();
     let tmp = path.with_file_name(format!("secrets-{}.tmp", uuid::Uuid::new_v4().simple()));
     let result = (|| {
         let mut options = std::fs::OpenOptions::new();

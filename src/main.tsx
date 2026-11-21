@@ -4,11 +4,20 @@ import App from "./App";
 import { AppProvider } from "./store/app";
 import { ToastProvider } from "./components/ui";
 import { invoke } from "./api";
+import { installScrollbarReveal } from "./components/scrollbar";
 import "./theme/tokens.css";
 import "./theme/base.css";
 import "./theme/workbench.css";
 import "./theme/icons.css";
 import "./theme/cr044.css";
+import "./theme/tab-overflow.css";
+// CR-051：内置图标砖、文件类型色与头像 5 风格样式（UI-CR051-v1）。
+import "./theme/cr051.css";
+// CR-051 r6：50 图标分组、10 整块色卡、头像框与固定尺寸更换弹窗（UI-CR051-v6）。
+import "./theme/cr051-v6.css";
+
+// UI-CR049 / UI-SCROLL-001：滚动条按需显示机制在应用启动时安装一次。
+installScrollbarReveal();
 
 async function mountApp() {
   const preview = new URLSearchParams(location.search).get("preview") === "design";

@@ -28,8 +28,11 @@ fn claude_thinking_budget(effort: &str) -> Option<u32> {
 pub struct DispatchConfig {
     /// 子进程环境变量（含密钥；不得写入日志）
     pub env: BTreeMap<String, String>,
-    /// 临时目录（用后删除）
+    /// 临时目录（用后删除；只放 --settings / mcp 配置等一次性文件）
     pub temp_dir: Option<PathBuf>,
+    /// CR-037：按会话稳定的线程存储目录（claude 的 CLAUDE_CONFIG_DIR / codex 的 CODEX_HOME）。
+    /// 跨轮、跨重启持久保留，绝不随 Drop 清理——这是原生续接的存储前提。
+    pub profile_dir: Option<PathBuf>,
     /// claude：`--settings` 指向的受管配置文件
     pub settings_file: Option<PathBuf>,
     /// 需清理的继承环境变量前缀
@@ -55,6 +58,7 @@ impl Drop for DispatchConfig {
 #[serde(rename_all = "camelCase")]
 pub struct ProviderDisplay {
     pub provider_name: String,
+    pub provider_id: String,
     pub protocol: String,
     pub base_url_host: String,
     pub model_id: String,
@@ -105,33 +109,40 @@ fn toml_key(v: &str) -> String {
 }
 
 struct McpRow {
+    id: String,
     name: String,
     transport: String,
     command: Option<String>,
     args: Vec<String>,
     env: BTreeMap<String, String>,
+    url: Option<String>,
+    auth_status: String,
 }
 
 fn enabled_mcp_servers() -> Result<Vec<McpRow>, String> {
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
     let mut stmt = conn
-        .prepare("SELECT name, transport, command, argsJson, envJson FROM mcp_server WHERE enabled=1")
+        .prepare("SELECT id, name, transport, command, argsJson, envJson, url, authStatus FROM mcp_server WHERE enabled=1")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,
-                r.get::<_, Option<String>>(2)?,
+                r.get::<_, String>(2)?,
                 r.get::<_, Option<String>>(3)?,
                 r.get::<_, Option<String>>(4)?,
+                r.get::<_, Option<String>>(5)?,
+                r.get::<_, Option<String>>(6)?,
+                r.get::<_, Option<String>>(7)?.unwrap_or_else(|| "unauthenticated".into()),
             ))
         })
         .map_err(|e| e.to_string())?;
     Ok(rows
         .filter_map(|r| r.ok())
-        .map(|(name, transport, command, args_json, env_json)| McpRow {
+        .map(|(id, name, transport, command, args_json, env_json, url, auth_status)| McpRow {
+            id,
             name,
             transport,
             command,
@@ -143,14 +154,31 @@ fn enabled_mcp_servers() -> Result<Vec<McpRow>, String> {
                 .as_deref()
                 .and_then(|s| serde_json::from_str(s).ok())
                 .unwrap_or_default(),
+            url,
+            auth_status,
         })
         .collect())
 }
 
-/// 解析会话所需的派发配置。None = 无供应商且无能力需要注入。
+/// 按会话稳定的线程存储目录：`<app_data>/claude-profiles/<sessionId>` 等。
+/// 目录只创建不删除；同一会话跨轮、跨重启命中同一存储，是 `--resume` / `exec resume` 的前提。
+pub fn stable_profile_dir(app: &tauri::AppHandle, cli_id: &str, session_id: &str) -> Result<PathBuf, String> {
+    use tauri::Manager;
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join(format!("{}-profiles", cli_id))
+        .join(session_id);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建会话线程存储目录失败：{}", e))?;
+    Ok(dir)
+}
+
+/// 解析会话所需的派发配置。None = 无供应商且无能力需要注入（此时无 profile 需求）。
 pub fn resolve(
     app: &tauri::AppHandle,
     cli_id: &str,
+    session_id: &str,
     provider_id: Option<&str>,
     model_id: &str,
     effort: &str,
@@ -161,6 +189,7 @@ pub fn resolve(
     let mut cfg = DispatchConfig {
         env: BTreeMap::new(),
         temp_dir: None,
+        profile_dir: None,
         settings_file: None,
         strip_prefixes: vec![],
         mcp_config_file: None,
@@ -250,13 +279,16 @@ pub fn resolve(
                 write_private(&sf, &serde_json::json!({ "env": env_block }).to_string())?;
                 cfg.env.insert("ANTHROPIC_BASE_URL".into(), base.clone());
                 cfg.env.insert("ANTHROPIC_AUTH_TOKEN".into(), secret.clone());
-                cfg.env.insert("CLAUDE_CONFIG_DIR".into(), dir.to_string_lossy().to_string());
                 if let Some(budget) = claude_thinking_budget(effort) {
                     cfg.env.insert("MAX_THINKING_TOKENS".into(), budget.to_string());
                 }
                 cfg.strip_prefixes.extend(["ANTHROPIC_".into(), "CLAUDE_CODE_USE_".into()]);
                 cfg.settings_file = Some(sf);
-                cfg.temp_dir = Some(dir);
+                // CR-037：线程存储改为按会话稳定目录（此前为随 Drop 删除的临时目录，续接不可能）。
+                // 含密钥的 --settings 临时文件保持现状：用后即删，不入 profile 目录。
+                let profile = stable_profile_dir(app, "claude", session_id)?;
+                cfg.env.insert("CLAUDE_CONFIG_DIR".into(), profile.to_string_lossy().to_string());
+                cfg.profile_dir = Some(profile);
             }
             "codex" => {
                 // codex：-c 覆盖 pin 住 provider/模型/端点；--ignore-user-config 防用户配置抢占
@@ -281,6 +313,11 @@ pub fn resolve(
                 cfg.env.insert("OPENAI_API_KEY".into(), secret.clone());
                 cfg.strip_prefixes.push("OPENAI_".into());
                 cfg.ignore_user_config = true;
+                // CR-037：CODEX_HOME 指向按会话稳定目录（exec resume 读同一 store）。
+                // auth 来自 env/覆盖，不依赖用户真实 ~/.codex；隔离亦避免跨会话 store 冲突。
+                let profile = stable_profile_dir(app, "codex", session_id)?;
+                cfg.env.insert("CODEX_HOME".into(), profile.to_string_lossy().to_string());
+                cfg.profile_dir = Some(profile);
             }
             "grok" => {
                 cfg.env.insert("OPENAI_BASE_URL".into(), format!("{}/v1", base));
@@ -292,6 +329,7 @@ pub fn resolve(
 
         cfg.display = ProviderDisplay {
             provider_name: name,
+            provider_id: pid.to_string(),
             protocol,
             base_url_host: masked_host(&base_url),
             model_id: model_id.to_string(),
@@ -318,69 +356,63 @@ fn apply_capabilities(
 
     match cli_id {
         "claude" => {
-            let stdio: Vec<&McpRow> = servers.iter().filter(|s| s.transport == "stdio").collect();
-            if stdio.is_empty() {
-                return Ok(());
-            }
+            let selected: Vec<&McpRow> = servers.iter().filter(|s| s.transport == "stdio" || s.transport == "http").collect();
+            if selected.is_empty() { return Ok(()); }
             let mut map = serde_json::Map::new();
-            for s in stdio.iter() {
+            let mut allowed = Vec::new();
+            for s in selected {
                 let mut entry = serde_json::Map::new();
-                entry.insert(
-                    "command".into(),
-                    serde_json::json!(s.command.clone().unwrap_or_default()),
-                );
-                if !s.args.is_empty() {
-                    // Windows 路径统一正斜杠：JSON 里的反斜杠会让 CLI 报 "不是有效 JSON"
-                    let safe_args: Vec<String> = s
-                        .args
-                        .iter()
-                        .map(|a| {
+                if s.transport == "stdio" {
+                    entry.insert("command".into(), serde_json::json!(s.command.clone().unwrap_or_default()));
+                    if !s.args.is_empty() {
+                        let safe_args: Vec<String> = s.args.iter().map(|a| {
                             let looks_like_path = a.len() > 2 && a.chars().nth(1) == Some(':');
-                            if looks_like_path && a.contains('\\') {
-                                a.replace('\\', "/")
-                            } else {
-                                a.clone()
-                            }
-                        })
-                        .collect();
-                    entry.insert("args".into(), serde_json::json!(safe_args));
-                }
-                if !s.env.is_empty() {
-                    entry.insert("env".into(), serde_json::json!(s.env));
+                            if looks_like_path && a.contains('\\') { a.replace('\\', "/") } else { a.clone() }
+                        }).collect();
+                        entry.insert("args".into(), serde_json::json!(safe_args));
+                    }
+                    if !s.env.is_empty() { entry.insert("env".into(), serde_json::json!(s.env)); }
+                    allowed.push(format!("mcp__{}", s.name));
+                } else {
+                    if s.auth_status != "authenticated" { return Err(format!("HTTP MCP「{}」未授权，无法派发", s.name)); }
+                    let url = s.url.as_deref().filter(|v| !v.trim().is_empty()).ok_or_else(|| format!("HTTP MCP「{}」缺少URL", s.name))?;
+                    let token = crate::commands::capabilities::mcp_http_authorization(app, &s.id)?;
+                    entry.insert("type".into(), serde_json::json!("http"));
+                    entry.insert("url".into(), serde_json::json!(url));
+                    if let Some(token) = token {
+                        entry.insert("headers".into(), serde_json::json!({"Authorization": format!("Bearer {}", token)}));
+                    }
                 }
                 map.insert(s.name.clone(), serde_json::Value::Object(entry));
             }
             let dir = make_temp_dir("mcp")?;
             let file = dir.join("mcp-config.json");
-            cfg.mcp_config_file = Some(file.clone());
             write_private(&file, &serde_json::json!({ "mcpServers": map }).to_string())?;
             cfg.mcp_config_file = Some(file);
-            cfg.mcp_allowed_tools = stdio.iter().map(|s| format!("mcp__{}", s.name)).collect();
-            if cfg.temp_dir.is_none() {
-                cfg.temp_dir = Some(dir);
-            }
+            cfg.mcp_allowed_tools = allowed;
+            if cfg.temp_dir.is_none() { cfg.temp_dir = Some(dir); }
         }
         "codex" => {
             for s in servers.iter() {
-                if s.transport != "stdio" || s.command.as_deref().unwrap_or("").trim().is_empty() {
-                    continue; // http 无 command，codex 无法 spawn
+                if s.transport == "stdio" {
+                    if s.command.as_deref().unwrap_or("").trim().is_empty() { continue; }
+                    let mut parts = vec![format!("command={}", toml_str(s.command.as_deref().unwrap_or("")))];
+                    if !s.args.is_empty() { parts.push(format!("args=[{}]", s.args.iter().map(|a| toml_str(a)).collect::<Vec<_>>().join(", "))); }
+                    parts.push("default_tools_approval_mode=\"approve\"".into());
+                    cfg.codex_overrides.push(format!("mcp_servers.{}={{ {} }}", toml_key(&s.name), parts.join(", ")));
+                } else if s.transport == "http" {
+                    if s.auth_status != "authenticated" { return Err(format!("HTTP MCP「{}」未授权，无法派发给Codex", s.name)); }
+                    let url = s.url.as_deref().filter(|v| !v.trim().is_empty()).ok_or_else(|| format!("HTTP MCP「{}」缺少URL", s.name))?;
+                    let token = crate::commands::capabilities::mcp_http_authorization(app, &s.id)?;
+                    let Some(token) = token else {
+                        cfg.codex_overrides.push(format!("mcp_servers.{}={{ url={} }}", toml_key(&s.name), toml_str(url)));
+                        continue;
+                    };
+                    let env_key = format!("AGENT_WORKBENCH_MCP_TOKEN_{}", s.id.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>());
+                    cfg.env.insert(env_key.clone(), token);
+                    cfg.strip_prefixes.push("AGENT_WORKBENCH_MCP_TOKEN_".into());
+                    cfg.codex_overrides.push(format!("mcp_servers.{}={{ url={}, bearer_token_env_var={} }}", toml_key(&s.name), toml_str(url), toml_str(&env_key)));
                 }
-                let mut parts = vec![format!(
-                    "command={}",
-                    toml_str(s.command.as_deref().unwrap_or(""))
-                )];
-                if !s.args.is_empty() {
-                    parts.push(format!(
-                        "args=[{}]",
-                        s.args.iter().map(|a| toml_str(a)).collect::<Vec<_>>().join(", ")
-                    ));
-                }
-                parts.push("default_tools_approval_mode=\"approve\"".into());
-                cfg.codex_overrides.push(format!(
-                    "mcp_servers.{}={{ {} }}",
-                    toml_key(&s.name),
-                    parts.join(", ")
-                ));
             }
         }
         _ => {}
@@ -388,7 +420,7 @@ fn apply_capabilities(
     Ok(())
 }
 
-/// 清理临时文件/目录（失败静默）。
+/// 清理临时文件/目录（失败静默）。profile_dir（会话线程存储）绝不清理——CR-037 续接前提。
 pub fn cleanup(cfg: &DispatchConfig) {
     if let Some(file) = &cfg.mcp_config_file {
         let _ = std::fs::remove_file(file);
@@ -414,7 +446,7 @@ mod tests {
         let file = mcp.join("mcp-config.json");
         std::fs::write(&file, "test-only").unwrap();
         let config = DispatchConfig {
-            env: BTreeMap::new(), temp_dir: Some(provider.clone()), settings_file: None,
+            env: BTreeMap::new(), temp_dir: Some(provider.clone()), profile_dir: None, settings_file: None,
             strip_prefixes: vec![], mcp_config_file: Some(file), mcp_allowed_tools: vec![],
             add_dirs: vec![], codex_overrides: vec![], ignore_user_config: false,
             display: ProviderDisplay::default(),
@@ -422,6 +454,22 @@ mod tests {
         drop(config);
         assert!(!provider.exists());
         assert!(!mcp.exists());
+    }
+
+    /// CR-037：profile_dir 是会话线程存储，绝不随 Drop 清理；目录按 session 稳定创建。
+    #[test]
+    fn profile_dir_survives_drop_and_is_stable_per_session() {
+        let dir = std::env::temp_dir().join(format!("profile-test-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = DispatchConfig {
+            env: BTreeMap::new(), temp_dir: None, profile_dir: Some(dir.clone()), settings_file: None,
+            strip_prefixes: vec![], mcp_config_file: None, mcp_allowed_tools: vec![],
+            add_dirs: vec![], codex_overrides: vec![], ignore_user_config: false,
+            display: ProviderDisplay::default(),
+        };
+        drop(config);
+        assert!(dir.exists(), "profile 目录不得随 Drop 删除");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

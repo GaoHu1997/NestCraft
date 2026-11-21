@@ -4,7 +4,10 @@ import { useApp, routeKey } from "@/store/app";
 import type { Route } from "@/store/app";
 import { Modal } from "@/components/ui";
 import { Icon } from "@/components/icons";
+import { ProjectIconTile, UserAvatar, normalizeAvatarStyle, type AvatarStyleId } from "@/components/icon-tiles";
+import { AvatarHoverEdit } from "@/components/avatar";
 import { usePaneWidth, ResizeHandle, PaneToggle } from "@/components/pane-resize";
+import { TabMoreDropdown, TabMoreIcon, useTabOverflow } from "@/components/tab-overflow";
 import { useWindowChrome } from "@/store/window-chrome";
 import { WorkbenchHome } from "@/modules/WorkbenchHome";
 import { ChatPanel } from "@/modules/chat/ChatPanel";
@@ -33,6 +36,9 @@ export default function App() {
   const [libraries, setLibraries] = useState<api.KnowledgeLibrary[]>([]);
   const [hosts, setHosts] = useState<api.ServerHost[]>([]);
   const [profile, setProfile] = useState({ name: "未设置", email: "", role: "个人工作台" });
+  // CR-051：头像风格偏好（a–e，缺省 b）与自定义头像，作用于顶栏、侧栏与设置三处。
+  const [avatarStyle, setAvatarStyle] = useState<AvatarStyleId>("b");
+  const [avatarPhoto, setAvatarPhoto] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -44,6 +50,8 @@ export default function App() {
     api.listProjects().then(setProjects).catch(() => {});
     api.kbList().then(setLibraries).catch(() => {});
     api.serverList().then(setHosts).catch(() => {});
+    api.getAvatarStyle().then(style => setAvatarStyle(normalizeAvatarStyle(style))).catch(() => {});
+    api.getAvatarImage().then(img => setAvatarPhoto(api.avatarPhotoSrc(img?.path))).catch(() => {});
     Promise.all([api.getSetting("user.name"), api.getSetting("user.email"), api.getSetting("user.role")])
       .then(([name, email, role]) => setProfile({ name: name || "未设置", email: email || "", role: role || "个人工作台" })).catch(() => {});
   }, []);
@@ -53,9 +61,11 @@ export default function App() {
     const listener = () => refresh();
     window.addEventListener("app:settings-changed", listener);
     window.addEventListener("app:projects-changed", listener);
+    window.addEventListener("app:avatar-changed", listener);
     return () => {
       window.removeEventListener("app:settings-changed", listener);
       window.removeEventListener("app:projects-changed", listener);
+      window.removeEventListener("app:avatar-changed", listener);
     };
   }, [refresh]);
 
@@ -91,13 +101,17 @@ export default function App() {
   const windowTitle = (item: Route) => item.page === "project" ? projects.find(project => project.id === item.projectId)?.name ?? "项目"
     : item.page === "knowledge-lib" ? libraries.find(library => library.id === item.libId)?.name ?? "知识库"
       : item.page === "server" ? hosts.find(host => host.id === item.hostId)?.name ?? "服务器" : "工作台";
+  // CR-052 / UI-TAB-001：对象窗口页签溢出统一走共享「更多」下拉，不出现横向滚动条。
+  const openWindows = windows.filter(window => window.open !== false);
+  const windowTabItems = openWindows.map(window => ({ key: window.key, label: window.key === "home" ? "首页" : windowTitle(window.route), active: routeKey(route) === window.key }));
+  const windowTabSig = windowTabItems.map(item => `${item.key}:${item.label}:${item.active ? 1 : 0}`).join("|");
+  const windowTabsOverflow = useTabOverflow<HTMLElement>({ tabSelector: ".nc-window-tab", items: windowTabItems, deps: [windowTabSig] });
   const currentProject = route.page === "project" ? projects.find(project => project.id === route.projectId) : projects.find(project => project.kind === "code");
-  const initials = profile.name === "未设置" ? "我" : Array.from(profile.name).slice(0, 2).join("");
   const preview = (window as Window & { __DESIGN_PREVIEW__?: boolean }).__DESIGN_PREVIEW__ === true;
   const detail = routeKey(route) !== "home";
 
   return (
-    <div className={`nc-app ${detail ? "object-detail" : ""} ${chrome.focused ? "" : "window-unfocused"}`} data-preview={preview || undefined}>
+    <div className={`nc-app ${detail ? "object-detail" : ""} ${chrome.focused ? "" : "window-unfocused"}`} data-preview={preview || undefined} data-avatar-style={avatarStyle}>
       <header className="topbar nc-topbar">
         <div className="brand nc-brand" aria-label="栖造 NestCraft">
           <span className="brand-mark"><img src="/brand/logo-sail.png" alt="栖造青绿色帆船 Logo" /></span>
@@ -109,7 +123,13 @@ export default function App() {
         <UpdateBadge />
         <button className="chat-iconbtn" aria-label="切换主题" title="切换主题" onClick={toggleTheme}><Icon name={theme === "dark" ? "sun" : "moon"} /></button>
         <button className="chat-iconbtn" aria-label="通知" title="通知" onClick={() => setNotificationsOpen(true)}><Icon name="bell" /></button>
-        <button className="nc-avatar" aria-label="设置与账户" onClick={() => setSettingsOpen(true)}>{initials}</button>
+        <span className="cr51-avatar-frame nc-avatar-frame">
+          <button className="nc-avatar" aria-label="设置与账户" title="设置与账户" onClick={() => setSettingsOpen(true)}>
+            <UserAvatar size={30} photo={avatarPhoto} />
+          </button>
+          <AvatarHoverEdit style={normalizeAvatarStyle(avatarStyle)} photo={avatarPhoto}
+            onApply={next => { setAvatarStyle(next.style); setAvatarPhoto(api.avatarPhotoSrc(next.photo)); }} />
+        </span>
         <span className="nc-window-sep" />
         <div className="nc-window-controls" aria-label={chrome.native ? "窗口控制" : "窗口控制（预览）"}>
           <button className="nc-window-control" aria-label="最小化" title="最小化" onClick={() => void chrome.act("minimize")}><Icon name="minimize" size={14} /></button>
@@ -117,12 +137,14 @@ export default function App() {
           <button className="nc-window-control window-close" aria-label="关闭窗口" title="关闭窗口" onClick={() => void chrome.act("close")}><Icon name="close" size={14} /></button>
         </div>
       </header>
-      <nav className="nc-window-tabs" aria-label="首页与打开的对象">
-        {windows.filter(window => window.open !== false).map(window => <div key={window.key} className={`nc-window-tab ${window.key === "home" ? "home-tab" : ""} ${routeKey(route) === window.key ? "active" : ""}`}>
+      <nav ref={windowTabsOverflow.barRef} className="nc-window-tabs" aria-label="首页与打开的对象">
+        {openWindows.map(window => <div key={window.key} className={`nc-window-tab ${window.key === "home" ? "home-tab" : ""} ${routeKey(route) === window.key ? "active" : ""}`}>
           <button className="nc-tab-focus" onClick={() => activateWindow(window.key)}><Icon name={window.key === "home" ? "home" : window.route.page === "project" ? "folder" : window.route.page === "knowledge-lib" ? "book" : "server"} size={14} />{window.key === "home" ? "首页" : windowTitle(window.route)}</button>
           {window.key !== "home" && <button className="nc-tab-close" aria-label={`关闭 ${windowTitle(window.route)}`} title="关闭此Tab，保留内存状态" onClick={() => setClosingTab(window.key)}><Icon name="close" size={13} /></button>}
         </div>)}
+        <button {...windowTabsOverflow.moreProps}><TabMoreIcon /></button>
       </nav>
+      {windowTabsOverflow.dropdownOpen && <TabMoreDropdown anchorRef={windowTabsOverflow.moreRef} items={windowTabItems} onPick={key => activateWindow(key)} onClose={windowTabsOverflow.closeDropdown} />}
       <div className="nc-body pane-container" ref={bodyRef}>
         <aside {...navigation.paneProps} className={`${navigation.paneProps.className} sidebar nc-sidebar`} hidden={detail || !navigation.visible} style={{ ...navigation.style, flexBasis: navigation.width }}>
           <div className="nav-label">工作空间</div>
@@ -134,15 +156,19 @@ export default function App() {
           ))}
           <div className="nav-label nc-nav-section">当前项目</div>
           {currentProject ? <button className="nc-side-project" onClick={() => openProject(currentProject, currentProject.kind === "work" ? "code" : "requirements")}>
-            <span className="nc-project-avatar">{Array.from(currentProject.name).slice(0, 2).join("")}</span>
+            <ProjectIconTile project={currentProject} size={26} />
             <span className="grow"><b>{currentProject.name}</b><small title={currentProject.rootUri}>{currentProject.rootUri}</small></span>
           </button> : <span className="nc-side-empty">尚未打开项目</span>}
           <div className="nav-label nc-nav-section">快捷入口</div>
           <button className="nav-item" onClick={() => currentProject ? go({ page: "project", projectId: currentProject.id, tab: "tasks" }) : go({ page: "projects" })}><Icon name="grid" /><span>运行队列</span></button>
           <button className="nav-item" onClick={() => currentProject ? go({ page: "project", projectId: currentProject.id, tab: "design" }) : go({ page: "projects" })}><Icon name="book" /><span>设计资料</span></button>
-          <button className="nc-side-user" onClick={() => setSettingsOpen(true)} aria-label="设置与账户">
-            <span className="nc-avatar">{initials}</span><span className="grow"><b>{profile.name}</b><small>{profile.role} · 设置与账户</small></span><Icon name="settings" size={15} />
-          </button>
+          <span className="cr51-avatar-frame nc-side-avatar-frame">
+            <button className="nc-side-user" onClick={() => setSettingsOpen(true)} aria-label="设置与账户">
+              <UserAvatar size={30} photo={avatarPhoto} /><span className="grow"><b>{profile.name}</b><small>{profile.role} · 设置与账户</small></span><Icon name="settings" size={15} />
+            </button>
+            <AvatarHoverEdit style={normalizeAvatarStyle(avatarStyle)} photo={avatarPhoto}
+              onApply={next => { setAvatarStyle(next.style); setAvatarPhoto(api.avatarPhotoSrc(next.photo)); }} />
+          </span>
           <ResizeHandle pane={navigation} label="管理导航" />
         </aside>
         <main className="main nc-main">

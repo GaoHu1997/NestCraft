@@ -107,6 +107,10 @@ export interface Project {
   name: string;
   kind: "code" | "work";
   rootUri: string;
+  /** CR-051：内置图标 id（项目与知识库共用 50 个白名单）；null 按类型推导显示。 */
+  icon: string | null;
+  /** CR-051 r6：背景色卡 id（10 色之一）；null 按类型默认，旧项目保持原显示。 */
+  iconColor: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -126,8 +130,18 @@ export const listProjects = () => invoke<Project[]>("list_projects");
 export const createProject = (name: string, kind: string, rootUri: string) =>
   invoke<Project>("create_project", { name, kind, rootUri });
 export const deleteProject = (id: string) => invoke<void>("delete_project", { id });
-export const updateProject = (id: string, name: string, rootUri?: string) =>
-  invoke<Project>("update_project", { id, name, rootUri: rootUri ?? null });
+/**
+ * CR-051：icon / iconColor 参数缺省（undefined）=保持不变；null=清空回默认；
+ * 字符串=50 个内置图标之一 / 10 个色卡之一（非法 id 服务端拒绝）。
+ */
+export const updateProject = (id: string, name: string, rootUri?: string, icon?: string | null, iconColor?: string | null) =>
+  invoke<Project>("update_project", {
+    id,
+    name,
+    rootUri: rootUri ?? null,
+    ...(icon === undefined ? {} : { icon: icon === null ? "" : icon }),
+    ...(iconColor === undefined ? {} : { iconColor: iconColor === null ? "" : iconColor }),
+  });
 export const pickProjectDirectory = () => invoke<string | null>("pick_project_directory");
 export const readRequirements = (projectId: string) =>
   invoke<RequirementNode[]>("read_requirements", { projectId });
@@ -372,6 +386,38 @@ export const sdkSetEnabled = (sdkId: string, enabled: boolean) =>
   invoke<void>("sdk_set_enabled", { sdkId, enabled });
 export const sdkCliCandidates = () => invoke<SdkState[]>("sdk_cli_candidates");
 
+// ---------- CR-053：CLI 命令工具（Shell） ----------
+
+export interface ShellCandidate {
+  kind: "pwsh" | "windows-powershell" | "git-bash" | string;
+  label: string;
+  path: string | null;
+  version: string | null;
+  /** fixed（固定位置）| path（PATH 兜底） */
+  source: string;
+  available: boolean;
+  detail: string | null;
+}
+
+export interface ShellSetting {
+  mode: "auto" | "pwsh" | "windows-powershell" | "git-bash" | string;
+  path: string | null;
+  savedAt: number | null;
+}
+
+export interface ShellSettingView {
+  setting: ShellSetting;
+  /** 非 auto 且保存路径当前不存在（标红、禁用保存的依据）。 */
+  missing: boolean;
+}
+
+export const cliShellCandidates = (cliId: string) =>
+  invoke<ShellCandidate[]>("cli_shell_candidates", { cliId });
+export const cliShellGet = (cliId: string) => invoke<ShellSettingView>("cli_shell_get", { cliId });
+/** path 仅在非 auto 时提供；服务端复核失败会抛错，不会静默改回 auto。 */
+export const cliShellSave = (cliId: string, mode: string, path?: string | null) =>
+  invoke<ShellSetting>("cli_shell_save", { cliId, mode, path: path ?? null });
+
 // ---------- 能力 ----------
 
 export interface SkillEntry {
@@ -398,6 +444,10 @@ export interface McpServer {
   url: string | null;
   enabled: boolean;
   tools: McpToolInfo[];
+  authStatus: "unauthenticated" | "pending" | "authenticated" | "expired" | "revoked" | "error" | string;
+  authRevision: number;
+  authMode: "oauth" | "bearer" | "none" | string;
+  allowInsecureLocalTls: boolean;
 }
 
 export interface ToolEntry {
@@ -429,10 +479,17 @@ export const mcpSave = (draft: {
   env: Record<string, string>;
   url?: string;
   enabled: boolean;
+  authMode?: "oauth" | "bearer" | "none";
+  /** 仅写入受管密钥；保存后不回显。 */
+  authToken?: string;
+  allowInsecureLocalTls?: boolean;
 }) => invoke<string>("mcp_save", { draft });
 export const mcpDelete = (id: string) => invoke<void>("mcp_delete", { id });
 export const mcpSetEnabled = (id: string, enabled: boolean) => invoke<void>("mcp_set_enabled", { id, enabled });
 export const mcpDiscoverTools = (serverId: string) => invoke<McpToolInfo[]>("mcp_discover_tools", { serverId });
+export const mcpAuthStart = (serverId: string) => invoke<{ status: string; authorizationUrl: string }>("mcp_auth_start", { serverId });
+export const mcpAuthStatus = (serverId: string) => invoke<string>("mcp_auth_status", { serverId });
+export const mcpAuthLogout = (serverId: string) => invoke<void>("mcp_auth_logout", { serverId });
 
 // ---------- AI 会话 ----------
 
@@ -456,6 +513,16 @@ export interface SessionMeta {
   featureSourceHash?: string | null;
   /** ordinary（普通聊天）| executor（单特性执行会话）。 */
   sessionRole?: "ordinary" | "executor";
+  /** CR-037：原生绑定派生视图（无原引用，仅脱敏指纹）；执行会话/未绑定会话为 null。 */
+  binding?: SessionBinding | null;
+}
+
+/** CR-037：binding.state = native（已绑定原线程）| fresh（已确认重建）| freshPending（待确认）| blocked（不可续接）。 */
+export interface SessionBinding {
+  state: "native" | "fresh" | "freshPending" | "blocked" | string;
+  reasonCode: string | null;
+  refFingerprint: string | null;
+  expectedRevision: number;
 }
 
 export interface ChatMessage {
@@ -476,9 +543,19 @@ export type ChatEvent =
   | { type: "toolResult"; toolId: string; content: string; isError: boolean }
   | { type: "approvalRequest"; requestId: string; toolName: string; inputJson: string; risk: string }
   | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens: number }
-  | { type: "subagent"; id: string; task: string; status: string }
+  | { type: "subagent"; id: string; task: string; status: string; cli?: string | null; model?: string | null; durationMs?: number | null; tokens?: number | null; output?: string | null; parentId?: string | null }
+  | { type: "retrying"; attempt: number; maxAttempts: number; delayMs: number; reason: string }
   | { type: "error"; message: string }
-  | { type: "done"; sessionRef: string | null };
+  /** CR-037：done 不再携带原 sessionRef；判定结果 + 脱敏指纹，前端据此更新绑定状态。 */
+  | {
+      type: "done";
+      turnId?: string;
+      nativeResumed?: boolean;
+      freshContext?: boolean;
+      blocked?: boolean;
+      reasonCode?: string | null;
+      refFingerprint?: string | null;
+    };
 
 export interface ContextRef {
   kind: "file" | "requirement" | "knowledge" | "session" | "command" | "skill";
@@ -520,6 +597,9 @@ export const chatSessionUpdate = (args: {
 }) => invoke<void>("chat_session_update", args);
 export const chatSessionDelete = (id: string) => invoke<void>("chat_session_delete", { id });
 export const chatMessages = (sessionId: string) => invoke<ChatMessage[]>("chat_messages", { sessionId });
+/** CR-037 AC-06：fresh 重建确认；CAS 失配（已有新轮）会抛错，前端刷新后重试。 */
+export const chatSessionConfirmFresh = (sessionId: string, expectedBindingRevision: number, reasonCode?: string | null) =>
+  invoke<void>("chat_session_confirm_fresh", { sessionId, expectedBindingRevision, reasonCode: reasonCode ?? null });
 export const chatAbort = (sessionId: string) => invoke<void>("chat_abort", { sessionId });
 export const chatStatus = (id: string) => invoke<boolean>("chat_status", { id });
 export const chatApproveTool = (requestId: string, decision: string) =>
@@ -619,6 +699,10 @@ export interface KnowledgeLibrary {
   enabled: boolean;
   noteCount: number;
   revision: number;
+  /** CR-051：内置图标 id（8 个白名单之一）；null 按 sourceKind 推导显示。 */
+  icon: string | null;
+  /** CR-051 r6：背景色卡 id（10 色之一）；null 默认青绿。 */
+  iconColor: string | null;
 }
 
 export interface NoteNode {
@@ -680,6 +764,39 @@ export interface LibraryGrant {
 
 export const kbList = () => invoke<KnowledgeLibrary[]>("kb_list");
 export const kbSave = (name: string, sourceRef: string) => invoke<string>("kb_save", { name, sourceRef });
+/** CR-051：icon 传 null=清空回来源默认；其余须为共用 50 个内置 id 之一（非法 id 服务端拒绝）。 */
+export const kbSetIcon = (id: string, icon: string | null) => invoke<void>("kb_set_icon", { id, icon });
+
+/** CR-051 r6：iconColor 传 null=清空回默认青绿；其余须为 10 个色卡之一。 */
+export const kbSetIconColor = (id: string, iconColor: string | null) => invoke<void>("kb_set_icon_color", { id, iconColor });
+
+/** CR-051 r6：自定义头像（本机文件引用 + hash）；未设置或引用失效时返回 null。 */
+export interface AvatarImage { path: string | null; hash: string | null }
+export const getAvatarImage = () => invoke<AvatarImage>("get_avatar_image");
+/** 保存裁剪后的头像副本：≤200KB、PNG/JPG/WebP；返回新的引用与 hash。 */
+export const setAvatarImage = (dataUrl: string, originalName?: string) =>
+  invoke<AvatarImage>("set_avatar_image", { dataUrl, originalName: originalName ?? null });
+export const clearAvatarImage = () => invoke<void>("clear_avatar_image");
+/** 图片与风格同事务保存，空图片恢复内置。 */
+export const saveAvatar = (dataUrl: string, style: string) => invoke<AvatarImage>("save_avatar", { dataUrl, style });
+export const kbSetAppearance = (id: string, icon: string | null, iconColor: string | null) => invoke<void>("kb_set_appearance", { id, icon, iconColor });
+/** CR-051 r6：读取已应用头像的 data URL（弹窗重开时继续拖动/缩放）；未设置或引用失效返回 null。 */
+export const avatarImageData = () => invoke<string | null>("avatar_image_data");
+/** CR-051 r6：本机头像路径 → WebView 可显示的 asset URL；data URL 与空值原样返回。
+ *  经 __TAURI_INTERNALS__.convertFileSrc 转换（设计预览通道对该函数有 mock）。 */
+export function avatarPhotoSrc(path: string | null | undefined): string | null {
+  if (!path) return null;
+  if (/^data:/i.test(path)) return path;
+  const internals = (window as unknown as { __TAURI_INTERNALS__?: { convertFileSrc?: (p: string) => string } }).__TAURI_INTERNALS__;
+  try {
+    return internals?.convertFileSrc ? internals.convertFileSrc(path) : path;
+  } catch {
+    return path;
+  }
+}
+/** CR-051：头像风格偏好（a–e，缺省 b）。 */
+export const getAvatarStyle = () => invoke<string>("get_avatar_style");
+export const setAvatarStyle = (style: string) => invoke<void>("set_avatar_style", { style });
 export const kbDelete = (id: string) => invoke<void>("kb_delete", { id });
 export const kbScan = (id: string) => invoke<number>("kb_scan", { id });
 export const kbTree = (id: string) => invoke<NoteNode[]>("kb_tree", { id });
@@ -692,6 +809,51 @@ export const kbSaveMarkdown = (id: string, noteId: string, expectedHash: string,
   invoke<NoteContent>("kb_save_markdown", { id, noteId, expectedHash, content });
 export const kbUploadFiles = (id: string, parentRelativeUri: string) =>
   invoke<KnowledgeUploadResult>("kb_upload_files", { id, parentRelativeUri });
+export type KbTransferPhase = "queued" | "picking" | "copying" | "completed" | "failed" | "cancelled";
+
+export interface KbTransferFile {
+  name: string;
+  relativeUri: string;
+  noteId: string;
+  bytes: string;
+  sha256: string;
+}
+
+export interface KbTransferFailure {
+  name: string;
+  error: string;
+}
+
+/** CR-055 FEAT-008：GB 级原件传输任务。索引与原件是两次独立完成，`indexPending` 只表示原件已落盘。 */
+export interface KbTransferTask {
+  id: string;
+  libraryId: string;
+  kind: "import" | "export";
+  phase: KbTransferPhase;
+  /** 当前文件已复制字节（十进制字符串），多文件任务每个文件归零。 */
+  processedBytes: string;
+  /** 当前文件源字节；多文件时不代表任务总量。 */
+  totalBytes: string | null;
+  sha256: string | null;
+  noteId: string | null;
+  relativeUri: string | null;
+  error: string | null;
+  indexPending: boolean;
+  cancelRequested: boolean;
+  currentFile: string | null;
+  fileIndex: number;
+  fileTotal: number;
+  completedFiles: KbTransferFile[];
+  failedFiles: KbTransferFailure[];
+}
+
+export const kbTransferImport = (libraryId: string, parentUri: string, taskId: string) =>
+  invoke<KbTransferTask>("kb_transfer_import", { libraryId, parentUri, taskId });
+export const kbTransferExport = (libraryId: string, noteId: string, taskId: string) =>
+  invoke<KbTransferTask>("kb_transfer_export", { libraryId, noteId, taskId });
+export const kbTransferStatus = (taskId: string) => invoke<KbTransferTask>("kb_transfer_status", { taskId });
+export const kbTransferCancel = (taskId: string) => invoke<KbTransferTask>("kb_transfer_cancel", { taskId });
+
 export const kbFileInfo = (id: string, noteId: string) => invoke<KnowledgeFileInfo>("kb_file_info", { id, noteId });
 export const kbReadFile = (id: string, noteId: string) => invoke<KnowledgeFileData>("kb_read_file", { id, noteId });
 export const kbExportFile = (id: string, noteId: string) =>

@@ -18,6 +18,7 @@ import { ProjectHome } from "./ProjectHome";
 import { RequirementsReading } from "./RequirementsReading";
 import { flattenRequirements, mergeRequirementSources, normalizedSource } from "./requirementSources";
 import { PaneToggle, ResizeHandle, usePaneWidth } from "@/components/pane-resize";
+import { TabMoreDropdown, TabMoreIcon, useTabOverflow } from "@/components/tab-overflow";
 import "./projects.css";
 import "@/modules/office/office.css";
 
@@ -42,6 +43,13 @@ export function ProjectWorkspace(props: { projectId: string; tab: Tab; visible?:
   }, [props.projectId, toast]);
   useEffect(() => { void reload(); }, [reload]);
   const changeTab = (next: Tab) => { setTab(next); go({ page: "project", projectId: props.projectId, tab: next }); };
+  // CR-052 / UI-TAB-001：项目页签溢出统一走共享「更多」下拉；右侧 AI 入口固定不受收缩影响。
+  const pwTabList: [Tab, string][] = project?.kind === "code"
+    ? [["requirements", "需求"], ["design", "设计"], ["tasks", "任务"], ["code", "编码"]]
+    : [["code", "文档"], ["design", "成果"]];
+  const pwTabItems = pwTabList.map(([key, label]) => ({ key, label, active: tab === key }));
+  const pwTabSig = pwTabItems.map(item => `${item.key}:${item.label}:${item.active ? 1 : 0}`).join("|");
+  const pwTabsOverflow = useTabOverflow({ tabSelector: ".pw-tab", items: pwTabItems, deps: [pwTabSig] });
 
   useEffect(() => {
     if (!project) return;
@@ -64,14 +72,18 @@ export function ProjectWorkspace(props: { projectId: string; tab: Tab; visible?:
   if (loading) return <div className="pagebody"><Empty title="加载项目…" /></div>;
   if (!project) return <div className="pagebody"><Empty title="项目不存在或已删除" /></div>;
   return <div className="pw-shell">
-    <div className="pw-top" role="tablist" aria-label="项目页签">
-      {(project.kind === "code" ? [["requirements", "需求"], ["design", "设计"], ["tasks", "任务"], ["code", "编码"]] : [["code", "文档"], ["design", "成果"]]).map(([key, label]) => (
-        <button key={key} className="pw-tab" role="tab" aria-selected={tab === key} onClick={() => changeTab(key as Tab)}>{label}</button>
-      ))}
+    <div ref={pwTabsOverflow.barRef} className="pw-top" role="tablist" aria-label="项目页签">
+      <div ref={pwTabsOverflow.hostRef} className="tab-overflow-host">
+        {pwTabList.map(([key, label]) => (
+          <button key={key} className="pw-tab" role="tab" aria-selected={tab === key} onClick={() => changeTab(key as Tab)}>{label}</button>
+        ))}
+        <button {...pwTabsOverflow.moreProps}><TabMoreIcon /></button>
+      </div>
       <span className="spacer" />
       <button className={`pw-ai-toggle ${aiVisible ? "on" : ""}`} aria-label="AI 侧栏" aria-pressed={aiVisible} title={aiVisible ? "收起 AI 侧栏" : "展开 AI 侧栏"} onClick={() => setAiVisible(!aiVisible)}>
         <Icon name="panelRight" size={18} />
       </button>
+      {pwTabsOverflow.dropdownOpen && <TabMoreDropdown anchorRef={pwTabsOverflow.moreRef} items={pwTabItems} onPick={key => changeTab(key as Tab)} onClose={pwTabsOverflow.closeDropdown} />}
     </div>
     <div className="pw-body">
       {project.kind === "code" ? <>

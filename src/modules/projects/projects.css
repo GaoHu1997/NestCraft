@@ -24,7 +24,8 @@
 .input-with-btn .input { flex: 1; min-width: 0; }
 
 .pw-shell { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-.pw-top { display: flex; align-items: center; gap: 2px; height: 44px; padding: 0 16px; background: var(--paper); border-bottom: 1px solid var(--line); flex: 0 0 44px; }
+/* CR-052：项目页签条不出现横向滚动条；溢出由共享 tab-overflow「更多」下拉承接（.tab-overflow-host 宿主）。 */
+.pw-top { display: flex; align-items: center; gap: 2px; height: 44px; padding: 0 16px; background: var(--paper); border-bottom: 1px solid var(--line); flex: 0 0 44px; overflow: hidden; }
 .pw-tab { position: relative; height: 44px; padding: 0 14px; color: var(--muted); font-size: 13px; font-weight: 500; border: 0; background: transparent; cursor: pointer; }
 .pw-tab:hover { color: var(--ink); }
 .pw-tab[aria-selected="true"] { color: var(--ink); font-weight: 600; }
@@ -61,12 +62,16 @@
 .req-row-more:hover, .req-row-more:focus-visible { opacity: 1; color: var(--accent); }
 .req-tree-foot { flex: 0 0 auto; padding: 9px 12px; font-size: 10px; line-height: 1.6; color: var(--muted); border-top: 1px solid var(--line-soft); }
 .req-tree-foot .btn { display: block; margin-top: 6px; }
-.req-tabs { display: flex; height: 40px; flex: 0 0 40px; overflow: auto hidden; background: var(--panel-2); border-bottom: 1px solid var(--line-soft); }
-.req-tab { display: flex; align-items: center; flex: 0 0 auto; min-width: 100px; max-width: 240px; padding: 0 6px 0 10px; gap: 8px; border-right: 1px solid var(--line-soft); border-top: 2px solid transparent; color: var(--muted); }
+/* UI-CR052-v1：内部文档页签单行紧凑——28px 高，编号弱化在前、标题省略在后，只留一行信息。
+   溢出不在页签条内滚动，由共享 tab-overflow「更多」下拉承接。 */
+.req-tabs { display: flex; align-items: stretch; height: 28px; flex: 0 0 28px; overflow: hidden; background: var(--panel-2); border-bottom: 1px solid var(--line-soft); }
+.req-tab { display: flex; align-items: center; flex: 0 0 auto; height: 27px; min-width: 92px; max-width: 196px; padding: 0 4px 0 8px; gap: 5px; border-right: 1px solid var(--line-soft); border-top: 2px solid transparent; color: var(--muted); }
 .req-tab.on { color: var(--accent); background: var(--paper); border-top-color: var(--accent); }
-.req-tab > button[role=tab] { text-align: left; min-width: 0; overflow: hidden; font-size: 10px; }
-.req-tab > button[role=tab] span { display: block; max-width: 165px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
-.req-tab-close { flex: 0 0 18px; height: 24px; display: grid; place-items: center; }
+.req-tab > button[role=tab] { display: flex; align-items: center; align-self: stretch; gap: 5px; min-width: 0; overflow: hidden; font-size: 11px; line-height: 1; text-align: left; }
+.req-tab > button[role=tab] .req-tab-key { flex: 0 0 auto; font-style: normal; font: 10px/1 var(--mono); color: var(--muted); }
+.req-tab.on > button[role=tab] .req-tab-key { color: var(--accent); }
+.req-tab > button[role=tab] .req-tab-title { display: block; min-width: 0; max-width: 132px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.req-tab-close { flex: 0 0 16px; width: 16px; height: 16px; display: grid; place-items: center; border-radius: 3px; }
 .req-tab-close:hover { background: var(--hover-bg); }
 .req-toolbar { display: flex; align-items: center; gap: 6px; height: 40px; flex: 0 0 40px; padding: 0 10px; border-bottom: 1px solid var(--line-soft); overflow: auto hidden; }
 .req-toolbar .btn { white-space: nowrap; font-size: 11px; }

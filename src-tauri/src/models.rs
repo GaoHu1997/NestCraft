@@ -21,6 +21,10 @@ pub struct Project {
     pub name: String,
     pub kind: String, // code | work
     pub root_uri: String,
+    /// CR-051：内置图标 id（50 个共享白名单之一）；NULL 按类型推导（code→code、work→briefcase）。
+    pub icon: Option<String>,
+    /// CR-051 r6：背景色卡 id（10 色之一）；NULL 按类型默认（code→blue、work→amber），旧项目不改显示。
+    pub icon_color: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -230,6 +234,16 @@ pub struct McpServer {
     pub url: Option<String>,
     pub enabled: bool,
     pub tools: Vec<McpToolInfo>,
+    #[serde(default)]
+    pub auth_status: String,
+    #[serde(default)]
+    pub auth_revision: i64,
+    /// http 认证方式：oauth | bearer | none。stdio 不使用。
+    #[serde(default)]
+    pub auth_mode: String,
+    /// 仅本机 loopback：显式信任自签名证书（默认关闭）。
+    #[serde(default)]
+    pub allow_insecure_local_tls: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -279,9 +293,23 @@ pub struct SessionMeta {
     /// ordinary | executor；历史记录默认 ordinary。
     #[serde(default = "ordinary_session_role")]
     pub session_role: String,
+    /// CR-037：原生绑定派生视图；执行会话与无绑定普通会话为 None。不含原引用。
+    #[serde(default)]
+    pub binding: Option<SessionBindingView>,
 }
 
 fn ordinary_session_role() -> String { "ordinary".into() }
+
+/// CR-037：侧栏原生绑定派生视图（不含原引用，只有脱敏指纹与状态）。
+/// state: native（已绑定原线程）| fresh（已确认重建）| freshPending（待确认）| blocked（不可续接）。
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionBindingView {
+    pub state: String,
+    pub reason_code: Option<String>,
+    pub ref_fingerprint: Option<String>,
+    pub expected_revision: i64,
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -307,6 +335,7 @@ pub enum ChatEvent {
     ApprovalRequest { request_id: String, tool_name: String, input_json: String, risk: String },
     Usage { input_tokens: i64, output_tokens: i64, cache_read_tokens: i64 },
     Subagent { id: String, task: String, status: String },
+    Retrying { attempt: i64, max_attempts: i64, delay_ms: i64, reason: String },
     Error { message: String },
     Done { session_ref: Option<String> },
 }
@@ -391,6 +420,10 @@ pub struct KnowledgeLibrary {
     pub enabled: bool,
     pub note_count: i64,
     pub revision: i64,
+    /// CR-051：内置图标 id（与项目共用 50 个白名单）；NULL 按 sourceKind 推导。
+    pub icon: Option<String>,
+    /// CR-051 r6：背景色卡 id（10 色之一）；NULL 默认青绿。
+    pub icon_color: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

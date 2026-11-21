@@ -1,6 +1,8 @@
 import { useState, type HTMLAttributes, type SVGProps } from "react";
 
-/** UI-ICON-001-v1; names match the locked CR044 sprite, including compatibility symbols. */
+/** UI-ICON-001-v1; names match the locked CR044 sprite, including compatibility symbols.
+ *  CR-051 增量：新增 7 个符号（fileMarkdown/fileHtml/fileAudio/fileVideo/fileUnknown/briefcase/library），
+ *  与 docs/UI/workbench-v4/icon-sprite.svg 及 public/ui/icon-sprite.svg 同步。 */
 export const ICON_NAMES = [
   "home", "grid", "folder", "folderOpen", "book", "server", "settings", "search", "plus", "x",
   "chevronDown", "chevronRight", "chevronLeft", "chevronUp", "arrowLeft", "arrowUp", "play", "pause",
@@ -14,6 +16,13 @@ export const ICON_NAMES = [
   "filePlus", "fileWord", "fileSlides", "fileCode", "fileArchive", "filterOff", "sort", "expand",
   "collapse", "layout", "alignLeft", "alignCenter", "alignRight", "palette", "checkCircle", "loader",
   "shieldCheck", "unlock", "gitMerge", "gitCommit", "command", "workflow", "bot", "wrench",
+  "fileMarkdown", "fileHtml", "fileAudio", "fileVideo", "fileUnknown", "briefcase", "library",
+  // CR-051 r2/r6：通用图标库（办公／商业／内容／产品／生活）+ 裁剪拖动提示
+  "building", "calendar", "clipboard", "presentation", "mail", "idBadge",
+  "chartBar", "chartLine", "chartPie", "wallet", "receipt", "cart", "tag", "scale",
+  "megaphone", "camera", "music", "video", "mic", "newspaper", "pen", "brush",
+  "rocket", "bug", "puzzle", "flag", "compass", "flask", "robot", "cloud",
+  "school", "heart", "star", "hand",
 ] as const;
 export type IconName = typeof ICON_NAMES[number];
 export const ICON_ALIASES: Readonly<Record<string, IconName>> = {

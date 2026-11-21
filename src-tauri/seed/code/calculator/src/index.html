@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>计算器</title>
+  <link rel="stylesheet" href="calculator.css" />
+</head>
+<body>
+  <main class="calc" aria-label="计算器">
+    <section class="calc-main">
+      <div class="calc-screen">
+        <div class="calc-expression" id="expression" aria-live="off">&nbsp;</div>
+        <output class="calc-display" id="display" role="status" aria-live="polite">0</output>
+      </div>
+
+      <div class="calc-keys" role="group" aria-label="计算按键">
+        <button class="key fn" data-action="allClear" aria-label="全部清除">AC</button>
+        <button class="key fn" data-action="clear" aria-label="清除当前输入">C</button>
+        <button class="key fn" data-action="percent" aria-label="百分比">%</button>
+        <button class="key op" data-action="op" data-value="÷" aria-label="除">÷</button>
+
+        <button class="key" data-action="digit" data-value="7">7</button>
+        <button class="key" data-action="digit" data-value="8">8</button>
+        <button class="key" data-action="digit" data-value="9">9</button>
+        <button class="key op" data-action="op" data-value="×" aria-label="乘">×</button>
+
+        <button class="key" data-action="digit" data-value="4">4</button>
+        <button class="key" data-action="digit" data-value="5">5</button>
+        <button class="key" data-action="digit" data-value="6">6</button>
+        <button class="key op" data-action="op" data-value="-" aria-label="减">−</button>
+
+        <button class="key" data-action="digit" data-value="1">1</button>
+        <button class="key" data-action="digit" data-value="2">2</button>
+        <button class="key" data-action="digit" data-value="3">3</button>
+        <button class="key op" data-action="op" data-value="+" aria-label="加">+</button>
+
+        <button class="key" data-action="negate" aria-label="正负号">±</button>
+        <button class="key" data-action="digit" data-value="0">0</button>
+        <button class="key" data-action="dot" aria-label="小数点">.</button>
+        <button class="key eq" data-action="equals" aria-label="等于">=</button>
+      </div>
+      <p class="calc-hint">键盘：数字 · <kbd>+</kbd> <kbd>-</kbd> <kbd>*</kbd> <kbd>/</kbd> · <kbd>Enter</kbd> 等于 · <kbd>Backspace</kbd> 退格 · <kbd>Esc</kbd> 全部清除</p>
+    </section>
+
+    <aside class="calc-history" aria-label="历史记录">
+      <header class="calc-history-head">
+        <h2>历史记录</h2>
+        <button class="link" id="clear-history" type="button">清空</button>
+      </header>
+      <ol class="calc-history-list" id="history"></ol>
+      <p class="calc-history-empty" id="history-empty">还没有计算记录</p>
+    </aside>
+  </main>
+
+  <script type="module">
+    import { createEngine, actionForKey } from "./calculator.js";
+
+    const display = document.getElementById("display");
+    const expression = document.getElementById("expression");
+    const historyList = document.getElementById("history");
+    const historyEmpty = document.getElementById("history-empty");
+    const engine = createEngine();
+
+    engine.subscribe(({ state, history }) => {
+      display.textContent = state.display;
+      display.dataset.error = state.error ? "true" : "false";
+      expression.innerHTML = state.expression ? state.expression.replace(/</g, "&lt;") : "&nbsp;";
+      historyList.replaceChildren(...history.map(item => {
+        const li = document.createElement("li");
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "history-item";
+        button.title = "点击把结果回填为当前输入";
+        button.innerHTML = `<span class="history-exp">${item.expression.replace(/</g, "&lt;")}</span><span class="history-result">${item.result}</span>`;
+        button.addEventListener("click", () => engine.press({ type: "recall", value: item.result }));
+        li.append(button);
+        return li;
+      }));
+      historyEmpty.hidden = history.length > 0;
+    });
+
+    document.querySelector(".calc-keys").addEventListener("click", event => {
+      const button = event.target.closest("button[data-action]");
+      if (!button) return;
+      const { action, value } = button.dataset;
+      engine.press(action === "digit" || action === "op" ? { type: action, value } : { type: action });
+    });
+
+    window.addEventListener("keydown", event => {
+      const action = actionForKey(event);
+      if (!action) return;
+      event.preventDefault();
+      engine.press(action);
+    });
+
+    document.getElementById("clear-history").addEventListener("click", () => engine.clearHistory());
+  </script>
+</body>
+</html>

@@ -1,0 +1,41 @@
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import assert from 'node:assert/strict';
+const require=createRequire(import.meta.url);
+const {chromium}=require('C:/Users/gaohu/AppData/Local/npm-cache/_npx/e41f203b7505f1fb/node_modules/playwright');
+const root=path.resolve('docs/UI/performance-editor');
+const browser=await chromium.launch({channel:'msedge',headless:true});
+const page=await browser.newPage({viewport:{width:1440,height:900}});
+const results=[];const errors=[];page.on('pageerror',e=>errors.push(e.message));
+const check=(name,value)=>{assert.ok(value,name);results.push(name)};
+try{
+ await page.goto(pathToFileURL(path.join(root,'index.html')).href);
+ await page.waitForSelector('[data-file]');
+ check('visible tree rows bounded',await page.locator('[data-file]').count()<60);
+ await page.screenshot({path:path.join(root,'light-normal.png')});
+ const editor=page.locator('#editor');await editor.fill('const draft = "保留选区";\n'+ 'line\n'.repeat(200));
+ await page.evaluate(()=>{const e=document.querySelector('#editor');e.setSelectionRange(6,11);e.scrollTop=80});
+ await page.waitForTimeout(70);
+ check('scroll activates own container',await editor.evaluate(e=>e.classList.contains('scrollbar-active')));
+ await page.screenshot({path:path.join(root,'scroll-active.png')});
+ await page.waitForTimeout(780);
+ check('scroll idle hidden after 700ms',await editor.evaluate(e=>!e.classList.contains('scrollbar-active')));
+ check('selection and input retained',await editor.evaluate(e=>e.selectionStart===6 && e.selectionEnd===11 && e.value.startsWith('const draft')));
+ await page.screenshot({path:path.join(root,'scroll-idle.png')});
+ await page.locator('#preview').click();check('window explicit readonly',await page.locator('#window').isVisible());
+ await page.locator('#back-edit').click();check('window return retains draft',(await editor.inputValue()).startsWith('const draft'));
+ await page.locator('#scenario').selectOption('search');await page.locator('#cancel').click();check('search cancel feedback',(await page.locator('#search-info').innerText()).includes('已取消'));
+ await page.locator('#scenario').selectOption('partial');await page.waitForTimeout(1000);check('partial results explicit',(await page.locator('#search-info').innerText()).includes('未搜索全部'));
+ await page.screenshot({path:path.join(root,'light-partial.png')});
+ for(const state of ['loading','empty','error','save-error','opening','window']){await page.locator('#scenario').selectOption(state);await page.screenshot({path:path.join(root,`state-${state}.png`)});results.push(`state ${state} renders`)}
+ await page.locator('#theme').click();await page.locator('#scenario').selectOption('normal');await page.screenshot({path:path.join(root,'dark-normal.png')});
+ await page.setViewportSize({width:390,height:844});await page.screenshot({path:path.join(root,'dark-narrow.png')});
+ check('no page horizontal overflow',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+ check('no page errors',errors.length===0);
+ const source=fs.readFileSync(path.join(root,'index.html'));
+ const report={version:'UI-CR055-FEAT007-v1',kind:'design-only',checkedAt:new Date().toISOString(),browser:browser.version(),sha256:crypto.createHash('sha256').update(source).digest('hex'),checks:results,errors};
+ fs.writeFileSync(path.join(root,'design-validation.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));
+}finally{await browser.close()}

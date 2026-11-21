@@ -1,0 +1,66 @@
+/* UI-CR052-v1：页签条溢出统一规则（共享样式）。
+   页签条一律不出现横向滚动条；放不下时在末尾显示「更多」图标，点击后悬浮下拉列出全部页签。
+   适用：对象窗口页签（.nc-window-tabs）、项目页签（.pw-top，页签包进 .tab-overflow-host）、
+   需求内部文档页签（.req-tabs）、办公打开文件页签（.office-open-tabs）、编辑器文件页签（.cda-tabs）。
+   选中/关闭仍走各页签条原有事件，不新增业务逻辑。 */
+
+/* 项目页签条宿主：尾部另有固定 AI 入口，页签与「更多」包进独立容器。 */
+.tab-overflow-host { display: flex; align-items: stretch; flex: 1 1 auto; min-width: 0; overflow: hidden; }
+.tab-overflow-host > .pw-tab { flex: 0 0 auto; }
+
+.tab-more {
+  display: none;
+  place-items: center;
+  flex: 0 0 26px;
+  width: 26px;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--line-soft);
+  border-radius: 0;
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: pointer;
+}
+.tab-more:hover { background: var(--surface-3); color: var(--ink); }
+.tab-more:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.tab-more[aria-expanded="true"] { background: var(--surface-3); color: var(--primary); }
+
+.tab-more-pop {
+  position: fixed;
+  z-index: 60;
+  min-width: 176px;
+  max-width: 320px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+}
+.tab-more-pop-h {
+  padding: 4px 8px 6px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.tab-more-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--ink-2);
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+.tab-more-item:hover { background: var(--surface-2); color: var(--ink); }
+.tab-more-item.on { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
+.tab-more-item .ellipsis { min-width: 0; flex: 1; }
+.tab-more-key { flex: 0 0 auto; font: 10px/1 var(--mono); color: var(--muted); }
+.tab-more-item.on .tab-more-key { color: var(--primary); }

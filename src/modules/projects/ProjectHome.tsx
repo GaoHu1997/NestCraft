@@ -1,4 +1,5 @@
 import { Icon } from "@/components/icons";
+import { ProjectIconTile, ICON_GROUPS, ICON_LABELS, ICON_COLORS } from "@/components/icon-tiles";
 import { useCallback, useEffect, useState } from "react";
 import * as api from "@/api";
 import { useApp } from "@/store/app";
@@ -56,7 +57,7 @@ export function ProjectHome() {
           {shown.map(p => <article key={p.id} className="card proj-card" tabIndex={0} aria-label={`打开项目 ${p.name}`}
             onClick={() => openProject(p)} onKeyDown={e => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openProject(p); } }}>
             <div className="proj-card-h">
-              <span className={`proj-avatar ${p.kind === "code" ? "blue" : "violet"}`}>{p.name.slice(0, 2)}</span>
+              <ProjectIconTile project={p} size={36} />
               <div className="proj-card-t"><b className="ellipsis">{p.name}</b><span>{p.id} · {p.kind === "code" ? "编码" : "办公"}</span></div>
               <button className="btn icon ghost sm" aria-label={`编辑项目 ${p.name}`} title="编辑项目" onClick={e => { e.stopPropagation(); setEditTarget(p); }}>
                 <Icon name="edit" />
@@ -87,6 +88,9 @@ function ProjectFormModal({ project, onClose, onSaved }: { project?: api.Project
   const [name, setName] = useState(project?.name ?? "");
   const [kind, setKind] = useState<"code" | "work">(project?.kind ?? "code");
   const [rootUri, setRootUri] = useState(project?.rootUri ?? "");
+  // CR-051：图标与色卡草稿本地保存；取消/关闭不落库，保存才生效（null=清空回默认）。
+  const [iconDraft, setIconDraft] = useState<string | null>(project?.icon ?? null);
+  const [colorDraft, setColorDraft] = useState<string | null>(project?.iconColor ?? null);
   const [busy, setBusy] = useState(false);
   const [picking, setPicking] = useState(false);
   const pick = async () => {
@@ -98,9 +102,13 @@ function ProjectFormModal({ project, onClose, onSaved }: { project?: api.Project
     if (!rootUri.trim()) return toast("必须选择项目目录", "warn");
     setBusy(true);
     try {
-      const saved = project ? await api.updateProject(project.id, name.trim(), rootUri) : await api.createProject(name.trim(), kind, rootUri);
+      const saved = project
+        ? await api.updateProject(project.id, name.trim(), rootUri, iconDraft, colorDraft)
+        : await api.createProject(name.trim(), kind, rootUri);
       toast(project ? "项目已保存" : "项目已创建");
       onSaved(saved);
+      // 卡片、侧栏、授权弹窗三处同步：App 监听该事件统一刷新。
+      window.dispatchEvent(new CustomEvent("app:projects-changed"));
     } catch (e) { toast(String(e), "err"); } finally { setBusy(false); }
   };
   return <Modal title={project ? "编辑项目" : "新建项目"} onClose={() => { if (!busy && !picking) onClose(); }} width={620}
@@ -111,6 +119,38 @@ function ProjectFormModal({ project, onClose, onSaved }: { project?: api.Project
         <Field label="项目标识"><input className="input" value={project?.id ?? "创建后自动生成"} readOnly /></Field>
         <Field label="类型"><select className="input" value={kind} disabled={!!project || busy} onChange={e => setKind(e.target.value as "code" | "work")}><option value="code">编码项目</option><option value="work">办公项目</option></select></Field>
       </div>
+      {project && <Field label="图标与背景色" hint="项目与知识库共用 50 个图标；图标 + 背景色成对保存。清空回类型默认（编码 code + 蓝、办公 briefcase + 琥珀）。旧项目保持原显示，手动修改后才写入。">
+        <div className="cr51-picker-groups" role="group" aria-label="项目图标选择">
+          {ICON_GROUPS.map(group => <div key={group.name} className="cr51-picker-group">
+            <div className="cr51-picker-group-h"><b>{group.name}</b><span>{group.hint} · {group.icons.length}</span></div>
+            <div className="cr51-picker">
+              {group.icons.map(id => <button key={id} type="button" className="cr51-picker-cell" aria-pressed={iconDraft === id}
+                onClick={() => setIconDraft(id)} title={ICON_LABELS[id] ?? id}>
+                <Icon name={id} size={20} /><span className="cr51-picker-name">{ICON_LABELS[id] ?? id}</span>
+              </button>)}
+            </div>
+          </div>)}
+          <button type="button" className="cr51-picker-cell cr51-picker-clear" aria-pressed={iconDraft === null}
+            onClick={() => setIconDraft(null)} title="清空回类型默认">
+            <Icon name="x" size={14} /><span className="cr51-picker-name">默认</span>
+          </button>
+        </div>
+        <div className="cr51-swatches" role="group" aria-label="背景色卡（10 色，无文字）">
+          {ICON_COLORS.map(sw => <button key={sw.id} type="button" className={`cr51-swatch cr51-color-${sw.id}`}
+            aria-pressed={colorDraft === sw.id} aria-label={`背景色 ${sw.id}`} title=""
+            onClick={() => setColorDraft(sw.id)} />)}
+          <button type="button" className="cr51-swatch cr51-swatch-clear" aria-pressed={colorDraft === null}
+            onClick={() => setColorDraft(null)} title="清空回默认色">
+            <Icon name="x" size={12} />
+          </button>
+        </div>
+        <div className="cr51-combo-preview">
+          <span className={`cr51-tile cr51-color-${colorDraft ?? (project.kind === "work" ? "amber" : "blue")}`}>
+            <Icon name={iconDraft ?? (project.kind === "work" ? "briefcase" : "code")} size={20} />
+          </span>
+          <span className="caption">组合预览：{ICON_LABELS[iconDraft ?? (project.kind === "work" ? "briefcase" : "code")] ?? "默认"} · {colorDraft ?? "默认色"}</span>
+        </div>
+      </Field>}
       <Field label="负责人"><input className="input" placeholder="未接入项目负责人存储" disabled /></Field>
       <Field label="项目描述"><textarea className="textarea" rows={3} placeholder="未接入项目描述存储" disabled /></Field>
       <Field label="本地目录" hint="从本机目录选择；取消选择后保留当前表单。">

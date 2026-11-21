@@ -9,6 +9,14 @@ use std::path::Path;
 
 #[path = "knowledge_files.rs"]
 mod files;
+#[path = "kb_performance.rs"]
+pub mod performance;
+#[path = "kb_verified.rs"]
+mod verified;
+#[path = "kb_snapshot.rs"]
+pub mod snapshot;
+#[path = "kb_transfers.rs"]
+pub mod transfers;
 pub use files::{ExportResult, KnowledgeFileData, KnowledgeFileInfo, UploadItem, UploadResult};
 
 fn enabled_root(conn: &Connection, id: &str) -> Result<files::SafeRoot, String> {
@@ -36,6 +44,10 @@ fn resolve(conn: &Connection, root: &mut files::SafeRoot, id: &str, note_id: &st
         |r| Ok((r.get(0)?, r.get(1)?)),
     ).optional().map_err(|e| e.to_string())?;
     if let Some((rel, name)) = note { root.file(&rel)?; return Ok((rel, name)); }
+    if let Some((rel, name)) = performance::resolve_registered(conn, id, note_id)? {
+        root.file(&rel)?;
+        return Ok((rel, name));
+    }
     // Binary/new Markdown files are visible immediately without an index migration.
     // Preserve the old decimal path-hash ID, and refuse collisions instead of guessing.
     let mut matches = files::entries(root)?.into_iter().filter(|e| !e.is_dir && files::file_id(&e.rel) == note_id);
@@ -45,19 +57,33 @@ fn resolve(conn: &Connection, root: &mut files::SafeRoot, id: &str, note_id: &st
     let name = item.rel.rsplit('/').next().unwrap_or("").to_string();
     Ok((item.rel, name))
 }
+fn filename(rel: &str) -> String {
+    rel.rsplit('/').next().unwrap_or_default().to_string()
+}
+
+/// CR-030-D1：保存/上传发布事务。同一事务内完成：
+/// ① md 登记 note_index（保持 noteCount 语义 = Markdown 篇数，前端展示不变）；
+/// ② 切片 + chunk/词项替换 + indexEpoch++（kb_index::republish_note_tx）；
+/// ③ revision+1。任一步失败整事务回滚，沿用 index_error 语义不静默回退读原件。
 fn publish_note(conn: &Connection, id: &str, rel: &str, content: &str) -> Result<String, String> {
+    let is_md = files::markdown(Path::new(rel));
     let existing: Option<String> = conn.query_row(
         "SELECT noteId FROM knowledge_note_index WHERE libraryId=?1 AND relativeUri=?2", [id,rel], |r| r.get(0),
     ).optional().map_err(|e| e.to_string())?;
     let note_id = existing.unwrap_or_else(|| files::file_id(rel));
     // Do not replace a different path when the non-cryptographic path hash collides.
+    let display_title = if is_md { title(rel,content) } else { filename(rel) };
+    let hash = files::hash(content.as_bytes());
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
-    tx.execute(
-        "INSERT INTO knowledge_note_index(libraryId,noteId,title,relativeUri,contentHash,updatedAt)
-         VALUES(?1,?2,?3,?4,?5,?6)
-         ON CONFLICT(libraryId,relativeUri) DO UPDATE SET title=excluded.title,contentHash=excluded.contentHash,updatedAt=excluded.updatedAt",
-        rusqlite::params![id,note_id,title(rel,content),rel,files::hash(content.as_bytes()),now_ms()],
-    ).map_err(|e| e.to_string())?;
+    if is_md {
+        tx.execute(
+            "INSERT INTO knowledge_note_index(libraryId,noteId,title,relativeUri,contentHash,updatedAt)
+             VALUES(?1,?2,?3,?4,?5,?6)
+             ON CONFLICT(libraryId,relativeUri) DO UPDATE SET title=excluded.title,contentHash=excluded.contentHash,updatedAt=excluded.updatedAt",
+            rusqlite::params![id,note_id,display_title,rel,hash,now_ms()],
+        ).map_err(|e| e.to_string())?;
+    }
+    crate::commands::kb_index::republish_note_tx(&tx, id, &note_id, rel, &display_title, content, &hash, is_md)?;
     tx.execute("UPDATE knowledge_library SET revision=revision+1 WHERE id=?1 AND enabled=1", [id]).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(note_id)
@@ -70,42 +96,95 @@ fn saved_note(conn: &Connection, id: &str, rel: &str, content: String, fallback_
     };
     NoteContent { note_id, title: title(rel,&content), relative_uri: rel.into(), hash: Some(files::hash(content.as_bytes())), content, index_error: error }
 }
+/// CR-030-D1：完整重建库索引。文件 I/O 与切片在事务外完成，单短事务发布
+/// note_index（仅 md，保持前端计数语义）+ chunk/词项 + epoch++。
+/// 文本格式（md/markdown/txt/log/text/json/csv）走切片；其它格式 metadata_only
+/// （文件名/路径可搜，正文不可搜）。文本读取失败沿用显式失败语义。
 fn scan_notes(conn: &Connection, id: &str, root: &mut files::SafeRoot) -> Result<i64, String> {
     let old = indexed(conn,id)?;
+    // 登记表 fail-closed：任何穿越路径都使重建显式失败（与搜索同一防线）。
+    for rel in old.keys() { files::relative(rel)?; }
     // Gather the entire bounded filesystem and valid text first. Never flatten walk
     // errors into an empty note or publish a partial/truncated replacement index.
-    let mut notes = vec![];
+    let mut library_files = vec![];
+    let mut md_count = 0i64;
     for entry in files::entries(root)? {
-        if entry.is_dir || !files::markdown(Path::new(&entry.rel)) { continue; }
-        let (content, hash) = files::read_text(root,&entry.rel).map_err(|e| format!("索引未更新，文件不可读取（{}）：{e}",entry.rel))?;
+        if entry.is_dir { continue; }
+        let path = Path::new(&entry.rel);
+        let is_md = files::markdown(path);
+        let is_text = is_md || files::indexable_text(path);
         let note_id = old.get(&entry.rel).map(|(id,_)| id.clone()).unwrap_or_else(|| files::file_id(&entry.rel));
-        notes.push((note_id,title(&entry.rel,&content),entry.rel,hash));
+        let (title, content) = if is_text {
+            let (content, hash) = files::read_text(root,&entry.rel).map_err(|e| format!("索引未更新，文件不可读取（{}）：{e}",entry.rel))?;
+            let name = if is_md { title(&entry.rel,&content) } else { filename(&entry.rel) };
+            (name, Some((content, hash)))
+        } else {
+            (filename(&entry.rel), None)
+        };
+        if is_md { md_count += 1; }
+        library_files.push(crate::commands::kb_index::LibraryFile {
+            note_id, relative_uri: entry.rel.clone(), title, markdown: is_md, content,
+        });
     }
     root.verify()?;
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM knowledge_note_index WHERE libraryId=?1",[id]).map_err(|e| e.to_string())?;
-    for (nid,name,rel,hash) in &notes {
+    for file in library_files.iter().filter(|f| f.markdown) {
+        let hash = file.content.as_ref().map(|(_, h)| h.as_str()).unwrap_or("");
         tx.execute(
             "INSERT INTO knowledge_note_index(libraryId,noteId,title,relativeUri,contentHash,updatedAt) VALUES(?1,?2,?3,?4,?5,?6)",
-            rusqlite::params![id,nid,name,rel,hash,now_ms()],
+            rusqlite::params![id,file.note_id,file.title,file.relative_uri,hash,now_ms()],
         ).map_err(|e| e.to_string())?;
     }
+    crate::commands::kb_index::republish_library_tx(&tx, id, &library_files)?;
     tx.execute("UPDATE knowledge_library SET revision=revision+1 WHERE id=?1 AND enabled=1",[id]).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
-    Ok(notes.len() as i64)
+    Ok(md_count)
 }
+
+/// CR-030-D1：惰性回填。无状态库（kb_library_state 缺失或 epoch=0）在检索前按库
+/// 内联完整重建。锁序：先释放 DB 连接再取 MUTATION（与保存路径一致，防死锁）；
+/// 失败时调用方应让该库显式退出本轮检索，其它库正常。
+fn ensure_library_indexed(library_id: &str) -> Result<(), String> {
+    {
+        let guard = db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        let epoch: Option<i64> = conn.query_row(
+            "SELECT indexEpoch FROM kb_library_state WHERE libraryId=?1", [library_id], |r| r.get(0),
+        ).optional().map_err(|e| e.to_string())?;
+        if epoch.unwrap_or(0) > 0 { return Ok(()); }
+    }
+    let started = std::time::Instant::now();
+    let _mutation = files::MUTATION.lock().map_err(|_| "知识操作锁不可用")?;
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    // 双检：等锁期间可能有其它写者完成发布。
+    let epoch: Option<i64> = conn.query_row(
+        "SELECT indexEpoch FROM kb_library_state WHERE libraryId=?1", [library_id], |r| r.get(0),
+    ).optional().map_err(|e| e.to_string())?;
+    if epoch.unwrap_or(0) > 0 { return Ok(()); }
+    let mut root = enabled_root(conn, library_id)?;
+    let files_count = scan_notes(conn, library_id, &mut root)?;
+    let elapsed = started.elapsed();
+    let warn = if elapsed > std::time::Duration::from_millis(2000) { "；超过2s，建议后续后台化" } else { "" };
+    eprintln!("[CR-030-D1] 惰性回填 library={library_id} files={files_count} 耗时={}ms{warn}", elapsed.as_millis());
+    Ok(())
+}
+
+/// CR-051 r6：知识库与项目共用 50 个图标（可清空回来源默认），白名单直接复用项目常量。
+pub const KB_ICON_IDS: [&str; 50] = super::projects::PROJECT_ICON_IDS;
 
 #[tauri::command]
 pub fn kb_list() -> Result<Vec<KnowledgeLibrary>, String> {
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
     let mut stmt = conn.prepare(
-        "SELECT l.id,l.name,l.sourceKind,l.sourceRef,l.enabled,l.revision,
+        "SELECT l.id,l.name,l.sourceKind,l.sourceRef,l.enabled,l.revision,l.icon,l.iconColor,
         (SELECT COUNT(*) FROM knowledge_note_index n WHERE n.libraryId=l.id)
         FROM knowledge_library l ORDER BY l.createdAt",
     ).map_err(|e| e.to_string())?;
     let rows = stmt.query_map([], |r| Ok(KnowledgeLibrary { id:r.get(0)?,name:r.get(1)?,source_kind:r.get(2)?,source_ref:r.get(3)?,
-        enabled:r.get::<_,i64>(4)? != 0,revision:r.get(5)?,note_count:r.get(6)? }))
+        enabled:r.get::<_,i64>(4)? != 0,revision:r.get(5)?,icon:r.get(6)?,icon_color:r.get(7)?,note_count:r.get(8)? }))
         .map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string());
     rows
 }
@@ -123,15 +202,93 @@ pub fn kb_save(app: tauri::AppHandle, name: String, source_ref: String) -> Resul
     let _ = app;
     Ok(id)
 }
+/// CR-051：设置知识库内置图标。None/空串=清空（展示层回来源默认）；其余必须命中共用 50 个白名单。
+#[tauri::command]
+pub fn kb_set_icon(id: String, icon: Option<String>) -> Result<(), String> {
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    kb_set_icon_inner(conn, &id, Some(icon), None)
+}
+
+/// CR-051 r6：设置知识库背景色卡。None/空串=清空回默认青绿；其余必须命中 10 色白名单。
+#[tauri::command]
+pub fn kb_set_icon_color(id: String, icon_color: Option<String>) -> Result<(), String> {
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    kb_set_icon_inner(conn, &id, None, Some(icon_color))
+}
+
+/// 图标与色卡同事务保存；None 表示清空对应列。
+#[tauri::command]
+pub fn kb_set_appearance(id: String, icon: Option<String>, icon_color: Option<String>) -> Result<(), String> {
+    let guard = db::conn()?;
+    kb_set_icon_inner(guard.as_ref().ok_or("db not initialized")?, &id, Some(icon), Some(icon_color))
+}
+
+fn kb_set_icon_inner(
+    conn: &Connection,
+    id: &str,
+    icon: Option<Option<String>>,
+    icon_color: Option<Option<String>>,
+) -> Result<(), String> {
+    let icon = match icon {
+        None => None,
+        Some(value) => Some(match value {
+            None => None,
+            Some(ref v) if v.trim().is_empty() => None,
+            Some(ref v) if KB_ICON_IDS.contains(&v.as_str()) => Some(v.clone()),
+            Some(ref v) => return Err(format!("非法知识库图标 id：{}；仅支持内置 50 个图标", v)),
+        }),
+    };
+    let color = match icon_color {
+        None => None,
+        Some(value) => Some(match value {
+            None => None,
+            Some(ref v) if v.trim().is_empty() => None,
+            Some(ref v) if super::projects::ICON_COLOR_IDS.contains(&v.as_str()) => Some(v.clone()),
+            Some(ref v) => return Err(format!("非法背景色卡 id：{}；仅支持 10 个色卡", v)),
+        }),
+    };
+    // icon / icon_color 各自独立：调用方传入 Some 表示「这一列要更新」（值可为 None=清空），
+    // 传入 None 表示「这一列不动」。kb_set_icon 只改图标，kb_set_icon_color 只改色卡。
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let exists: i64 = tx
+        .query_row("SELECT COUNT(*) FROM knowledge_library WHERE id=?1", [id], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    if exists == 0 {
+        return Err("知识库不存在".into());
+    }
+    match icon {
+        Some(value) => {
+            tx.execute("UPDATE knowledge_library SET icon=?2 WHERE id=?1", rusqlite::params![id, value])
+                .map_err(|e| e.to_string())?;
+        }
+        None => {}
+    }
+    match color {
+        Some(value) => {
+            tx.execute("UPDATE knowledge_library SET iconColor=?2 WHERE id=?1", rusqlite::params![id, value])
+                .map_err(|e| e.to_string())?;
+        }
+        None => {}
+    }
+    tx.commit().map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn kb_delete(id: String) -> Result<(), String> {
     let _mutation = files::MUTATION.lock().map_err(|_| "知识操作锁不可用")?;
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
-    tx.execute("DELETE FROM knowledge_library WHERE id=?1",[&id]).map_err(|e| e.to_string())?;
+    // CR-030-D1 索引表：kb_library_state 对 knowledge_library 有立即外键（PRAGMA foreign_keys=ON），
+    // 必须先删子表（索引状态、分片、授权、旧索引投影）再删库，否则 kb_delete 报
+    // FOREIGN KEY constraint failed（2026-11-21 冒烟发现，归属 CR-030-D1 会话登记）。
+    tx.execute("DELETE FROM kb_library_state WHERE libraryId=?1",[&id]).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM kb_chunk WHERE libraryId=?1",[&id]).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM knowledge_note_index WHERE libraryId=?1",[&id]).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM project_library_grant WHERE libraryId=?1",[&id]).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM knowledge_library WHERE id=?1",[&id]).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())
 }
 #[tauri::command]
@@ -190,20 +347,26 @@ pub fn kb_save_markdown(id: String, note_id: String, expected_hash: String, cont
     Ok(saved_note(conn,&id,&rel,content,Some(&note_id)))
 }
 #[tauri::command]
-pub fn kb_file_info(id: String, note_id: String) -> Result<KnowledgeFileInfo, String> {
-    let guard = db::conn()?;
-    let conn = guard.as_ref().ok_or("db not initialized")?;
-    let mut root = enabled_root(conn,&id)?;
-    let (rel,title) = resolve(conn,&mut root,&id,&note_id)?;
-    files::info(&mut root,&rel,&note_id,&title)
+pub async fn kb_file_info(id: String, note_id: String) -> Result<KnowledgeFileInfo, String> {
+    performance::blocking(move |conn| {
+        let source = performance::source_ref(&conn,&id)?;
+        let mut root = enabled_root(&conn,&id)?;
+        let (rel,title) = resolve(&conn,&mut root,&id,&note_id)?;
+        let result = files::info(&mut root,&rel,&note_id,&title)?;
+        if performance::source_ref(&conn,&id)? != source { return Err("SOURCE_CHANGED: 知识库根已改变".into()); }
+        Ok(result)
+    }).await
 }
 #[tauri::command]
-pub fn kb_read_file(id: String, note_id: String) -> Result<KnowledgeFileData, String> {
-    let guard = db::conn()?;
-    let conn = guard.as_ref().ok_or("db not initialized")?;
-    let mut root = enabled_root(conn,&id)?;
-    let (rel,title) = resolve(conn,&mut root,&id,&note_id)?;
-    files::data(&mut root,&rel,&note_id,&title)
+pub async fn kb_read_file(id: String, note_id: String) -> Result<KnowledgeFileData, String> {
+    performance::blocking(move |conn| {
+        let source = performance::source_ref(&conn,&id)?;
+        let mut root = enabled_root(&conn,&id)?;
+        let (rel,title) = resolve(&conn,&mut root,&id,&note_id)?;
+        let result = files::data(&mut root,&rel,&note_id,&title)?;
+        if performance::source_ref(&conn,&id)? != source { return Err("SOURCE_CHANGED: 知识库根已改变".into()); }
+        Ok(result)
+    }).await
 }
 fn upload_selected(conn: &Connection, id: &str, parent: &str, paths: Option<Vec<std::path::PathBuf>>) -> Result<UploadResult, String> {
     let mut root = enabled_root(conn,id)?;
@@ -220,7 +383,9 @@ fn upload_selected(conn: &Connection, id: &str, parent: &str, paths: Option<Vec<
                 item.success = true;
                 item.note_id = Some(files::file_id(&rel));
                 item.relative_uri = Some(rel.clone());
-                if files::markdown(Path::new(&rel)) {
+                // CR-030-D1：文本格式（md/markdown/txt/log/text/json/csv）同路径发布切片；
+                // 其它格式仍只复制原件，扫描时落 metadata 索引（文件名/路径可搜）。
+                if files::markdown(Path::new(&rel)) || files::indexable_text(Path::new(&rel)) {
                     match files::read_text(&mut root,&rel) {
                         Ok((content,_)) => match publish_note(conn,id,&rel,&content) {
                             Ok(note_id) => item.note_id = Some(note_id),
@@ -263,45 +428,110 @@ pub async fn kb_export_file(id: String, note_id: String) -> Result<ExportResult,
     };
     initial_root.file(&initial_rel)?;
     let choice = files::picker(true).await?;
-    let guard = db::conn()?;
-    let conn = guard.as_ref().ok_or("db not initialized")?;
-    let mut root = enabled_root(conn,&id)?;
-    initial_root.verify()?;
-    let (rel,_) = resolve(conn,&mut root,&id,&note_id)?;
-    if root.path != initial_root.path || rel != initial_rel { return Err("选择期间知识文件位置发生变化，未导出".into()); }
-    let Some(paths) = choice else { return Ok(ExportResult { cancelled:true,exported:false }); };
-    let path = paths.first().ok_or("没有选择导出目标")?;
-    files::export(&mut root,&rel,path)?;
-    Ok(ExportResult { cancelled:false,exported:true })
+    performance::blocking(move |conn| {
+        let mut root = enabled_root(&conn,&id)?;
+        initial_root.verify()?;
+        let (rel,_) = resolve(&conn,&mut root,&id,&note_id)?;
+        if root.path != initial_root.path || rel != initial_rel { return Err("选择期间知识文件位置发生变化，未导出".into()); }
+        let Some(paths) = choice else { return Ok(ExportResult { cancelled:true,exported:false }); };
+        let path = paths.first().ok_or("没有选择导出目标")?;
+        files::export(&mut root,&rel,path)?;
+        Ok(ExportResult { cancelled:false,exported:true })
+    }).await
 }
 
-fn search(conn: &Connection, libs: &[String], query: &str) -> Result<Vec<KnowledgeHit>, String> {
+/// CR-030-D1：检索只查询已发布派生索引（FTS5），不再逐篇读原件。
+/// 候选=当前代 chunk；命中经归一化原文核验；每文件一条（多 chunk 取最高分）；
+/// 跨库确定性 RRF（常数60）合并；单字查询走受限扫描（护栏+incomplete）。
+/// fail-closed：登记表任何穿越路径使该库搜索显式失败（保留既有安全语义）。
+fn search_bounded(
+    conn: &Connection, libs: &[String], query: &str, limit: usize,
+) -> Result<(Vec<(KnowledgeHit, bool)>, bool), String> {
+    let (hits,incomplete)=search_candidates_bounded(conn,libs,query,limit)?;
+    Ok((hits.into_iter().map(|(hit,meta,_)|(hit,meta)).collect(),incomplete))
+}
+fn search_candidates_bounded(
+    conn: &Connection,
+    libs: &[String],
+    query: &str,
+    limit: usize,
+) -> Result<(Vec<(KnowledgeHit, bool, crate::commands::kb_index::RawHit)>, bool), String> {
     // Validate every requested library before an early result limit can return.
     for lib in libs { enabled_root(conn,lib)?; }
-    if query.trim().is_empty() { return Ok(vec![]); }
-    let q = query.to_lowercase();
-    let mut hits = vec![];
     for lib in libs {
-        let mut root = enabled_root(conn,lib)?;
+        let mut statement = conn.prepare("SELECT relativeUri FROM knowledge_note_index WHERE libraryId=?1").map_err(|e|e.to_string())?;
+        let rows = statement.query_map([lib], |r| r.get::<_,String>(0)).map_err(|e|e.to_string())?;
+        for rel in rows { files::relative(&rel.map_err(|e|e.to_string())?)?; }
+    }
+    let parsed = crate::commands::kb_index::parse_query(query)?;
+    if parsed.is_empty() { return Ok((vec![], false)); }
+    let mut merged: Vec<(KnowledgeHit, bool, f64, crate::commands::kb_index::RawHit)> = vec![];
+    let mut incomplete = false;
+    for lib in libs {
         let name: String = conn.query_row("SELECT name FROM knowledge_library WHERE id=?1 AND enabled=1",[lib],|r| r.get(0)).map_err(|e| e.to_string())?;
-        for (rel,(nid,title)) in indexed(conn,lib)? {
-            if !files::markdown(Path::new(&rel)) { continue; }
-            // Resolve canonical/symlink boundaries even when the title alone matches.
-            let (content,_) = files::read_text(&mut root,&rel).map_err(|e| format!("搜索失败（{rel}）：{e}"))?;
-            let snippet = if title.to_lowercase().contains(&q) { Some(title.clone()) }
-                else { content.lines().find(|l| l.to_lowercase().contains(&q)).map(|l| l.trim().chars().take(200).collect()) };
-            if let Some(snippet) = snippet {
-                hits.push(KnowledgeHit { library_id:lib.clone(),library_name:name.clone(),note_id:nid,relative_uri:rel,title,snippet });
+        let (raw, hit_incomplete) = match crate::commands::knowledge::snapshot::search_library(conn, lib, &parsed)? {
+            Some((hits, incomplete)) => (hits, incomplete),
+            None => crate::commands::kb_index::search_library(conn, lib, &parsed)?,
+        };
+        if hit_incomplete {
+            incomplete = true;
+            eprintln!("[CR-030-D1] 单字受限扫描护栏触发 library={lib}：结果不完整（incomplete）");
+        }
+        // 每文件一条命中：多 chunk 取最高分（同分保留最低 ordinal）。
+        let mut best: BTreeMap<String, crate::commands::kb_index::RawHit> = BTreeMap::new();
+        for hit in raw {
+            files::relative(&hit.relative_uri)?;
+            match best.get(&hit.note_id) {
+                Some(prev) if prev.score <= hit.score => {}
+                _ => { best.insert(hit.note_id.clone(), hit); }
             }
-            if hits.len() >= 100 { return Ok(hits); }
+        }
+        let mut ranked: Vec<crate::commands::kb_index::RawHit> = best.into_values().collect();
+        ranked.sort_by(|a,b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal).then(a.note_id.cmp(&b.note_id)));
+        for (pos, hit) in ranked.iter().enumerate() {
+            let snippet = crate::commands::kb_index::snippet_for(hit, &parsed.needles, parsed.single_char);
+            merged.push((
+                KnowledgeHit { library_id:lib.clone(),library_name:name.clone(),note_id:hit.note_id.clone(),
+                    title:hit.title.clone(),relative_uri:hit.relative_uri.clone(),snippet },
+                hit.metadata_only,
+                1.0 / ((60 + pos) as f64),
+                hit.clone(),
+            ));
         }
     }
-    Ok(hits)
+    merged.sort_by(|a,b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal)
+        .then(a.0.library_id.cmp(&b.0.library_id))
+        .then(a.0.note_id.cmp(&b.0.note_id)));
+    Ok((merged.into_iter().take(limit).map(|(h,m,_,raw)| (h,m,raw)).collect(), incomplete))
+}
+fn search(conn: &Connection, libs: &[String], query: &str) -> Result<Vec<KnowledgeHit>, String> {
+    Ok(search_bounded(conn, libs, query, 100)?.0.into_iter().map(|(h,_)| h).collect())
+}
+/// 惰性回填入口：无状态库先按库内联完整重建再检索；失败该库显式退出本轮，其它库正常。
+fn usable_libraries(lib_ids: &[String]) -> Result<Vec<String>, String> {
+    let mut usable = vec![];
+    for lib in lib_ids {
+        match ensure_library_indexed(lib) {
+            Ok(()) => usable.push(lib.clone()),
+            Err(e) => eprintln!("[CR-030-D1] 库 {lib} 惰性回填失败，本轮不参与检索：{e}"),
+        }
+    }
+    if usable.is_empty() && !lib_ids.is_empty() {
+        return Err("知识索引重建失败，本轮检索不可用；请检查原件后重新扫描索引".into());
+    }
+    Ok(usable)
 }
 #[tauri::command]
 pub fn kb_search(lib_ids: Vec<String>, query: String) -> Result<Vec<KnowledgeHit>, String> {
+    {
+        let guard = db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        for lib in &lib_ids { enabled_root(conn, lib)?; }
+    }
+    if query.trim().is_empty() { return Ok(vec![]); }
+    let usable = usable_libraries(&lib_ids)?;
     let guard = db::conn()?;
-    search(guard.as_ref().ok_or("db not initialized")?,&lib_ids,&query)
+    search(guard.as_ref().ok_or("db not initialized")?,&usable,&query)
 }
 
 // ---------- Grants and read-only gateway ----------
@@ -324,17 +554,19 @@ pub fn kb_grant_set(project_id: String, library_id: String, read_allowed: bool) 
     let conn = guard.as_ref().ok_or("db not initialized")?;
     if read_allowed {
         enabled_root(conn,&library_id)?;
-        conn.execute(
-            "INSERT INTO project_library_grant(projectId,libraryId,readAllowed,updatedAt,actor) VALUES(?1,?2,1,?3,'owner')
-             ON CONFLICT(projectId,libraryId) DO UPDATE SET readAllowed=1,updatedAt=?3",
-            rusqlite::params![project_id,library_id,now_ms()],
-        ).map_err(|e| e.to_string())?;
-    } else {
-        conn.execute("DELETE FROM project_library_grant WHERE projectId=?1 AND libraryId=?2",[&project_id,&library_id]).map_err(|e| e.to_string())?;
     }
+    // CR-037：授权写路径同事务递增 revision（每次变化 +1），撤权保留历史行（readAllowed=0），
+    // 不再删除行——侧栏原生绑定的授权复检依赖 revision 失配检测（DB-FEAT-001 CR-037 节）。
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO project_library_grant(projectId,libraryId,readAllowed,revision,updatedAt,actor) VALUES(?1,?2,?3,1,?4,'owner')
+         ON CONFLICT(projectId,libraryId) DO UPDATE SET readAllowed=?3, revision=revision+1, updatedAt=?4",
+        rusqlite::params![project_id,library_id,if read_allowed {1} else {0},now_ms()],
+    ).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
-fn authorized(conn: &Connection, project_id: Option<&str>) -> Result<Vec<String>, String> {
+pub(crate) fn authorized(conn: &Connection, project_id: Option<&str>) -> Result<Vec<String>, String> {
     let Some(pid) = project_id else { return Ok(vec![]); };
     let mut stmt = conn.prepare(
         "SELECT g.libraryId FROM project_library_grant g JOIN knowledge_library l ON l.id=g.libraryId
@@ -361,49 +593,45 @@ pub fn gateway_list(project_id: Option<&str>) -> Result<serde_json::Value, Strin
     gateway_list_conn(guard.as_ref().ok_or("db not initialized")?,project_id)
 }
 pub fn gateway_search(project_id: Option<&str>, query: &str) -> Result<serde_json::Value, String> {
-    let guard = db::conn()?;
-    let conn = guard.as_ref().ok_or("db not initialized")?;
-    let libs = authorized(conn,project_id)?;
-    if libs.is_empty() { return Ok(serde_json::json!({"hits":[],"denied":true})); }
-    Ok(serde_json::json!({"hits":search(conn,&libs,query)?,"denied":false}))
+    let _ai=verified::gateway_permit()?;
+    let _permit=performance::foreground_permit()?;
+    let conn=db::knowledge_connection()?;
+    verified::search(&conn,project_id,query)
 }
-fn gateway_read_conn(conn: &Connection, project_id: Option<&str>, library_id: &str, note_id: &str) -> Result<String, String> {
-    if !authorized(conn,project_id)?.iter().any(|l| l == library_id) { return Err("知识库未授权或已禁用，读取被拒绝".into()); }
-    Ok(read_note(conn,library_id,note_id)?.content)
-}
-pub fn gateway_read(project_id: Option<&str>, library_id: &str, note_id: &str) -> Result<String, String> {
-    let guard = db::conn()?;
-    gateway_read_conn(guard.as_ref().ok_or("db not initialized")?,project_id,library_id,note_id)
+/// The original remains protected until this returned fragment is materialized.
+pub fn gateway_read_chunk(project_id: Option<&str>, library_id: &str, note_id: &str) -> Result<crate::commands::kb_index::ChunkView, String> {
+    let _ai=verified::gateway_permit()?;
+    let _permit=performance::foreground_permit()?;
+    let conn=db::knowledge_connection()?;
+    let (view,proof,_prepared)=verified::read(&conn,project_id,library_id,Some(note_id),None,None)?;
+    proof.recheck(&conn,project_id)?;
+    Ok(view)
 }
 #[tauri::command]
-pub fn kb_gateway(project_id: Option<String>, tool: String, args_json: Option<String>) -> Result<serde_json::Value, String> {
-    let args: serde_json::Value = serde_json::from_str(&args_json.unwrap_or_default()).unwrap_or(serde_json::json!({}));
-    match tool.as_str() {
-        "knowledge.list" => gateway_list(project_id.as_deref()),
-        "knowledge.search" => gateway_search(project_id.as_deref(),args.get("query").and_then(|v| v.as_str()).ok_or("缺少query")?),
-        "knowledge.read" => gateway_read(project_id.as_deref(),
-            args.get("libraryId").and_then(|v| v.as_str()).ok_or("缺少libraryId")?,
-            args.get("noteId").and_then(|v| v.as_str()).ok_or("缺少noteId")?)
-            .map(|content| serde_json::json!({"content":content})),
-        "knowledge.read_many" => {
-            let items = args.get("notes").and_then(|v| v.as_array()).ok_or("缺少notes")?;
-            if items.len() > 100 { return Err("单次最多读取100篇笔记".into()); }
-            let guard = db::conn()?;
-            let conn = guard.as_ref().ok_or("db not initialized")?;
-            let mut out = vec![];
-            let mut errors = vec![];
-            for item in items {
-                let lib = item.get("libraryId").and_then(|v| v.as_str()).unwrap_or("");
-                let note = item.get("noteId").and_then(|v| v.as_str()).unwrap_or("");
-                match gateway_read_conn(conn,project_id.as_deref(),lib,note) {
-                    Ok(content) => out.push(serde_json::json!({"noteId":note,"content":content})),
-                    Err(error) => errors.push(serde_json::json!({"noteId":note,"error":error})),
-                }
-            }
-            Ok(serde_json::json!({"notes":out,"errors":errors}))
+pub async fn kb_gateway(project_id: Option<String>, tool: String, args_json: Option<String>) -> Result<serde_json::Value, String> {
+    let input=args_json.unwrap_or_default();
+    if input.len()>65536{return Err("知识请求超过64KiB".into());}
+    let args:serde_json::Value=if input.is_empty(){serde_json::json!({})}else{serde_json::from_str(&input).map_err(|_|"知识请求JSON无效")?};
+    performance::blocking(move|conn|{
+        let _ai=if tool=="knowledge.list" {None} else {Some(verified::gateway_permit()?)};
+        let project=project_id.as_deref();
+        match tool.as_str(){
+            "knowledge.list"=>gateway_list_conn(&conn,project),
+            "knowledge.search"=>verified::search(&conn,project,args.get("query").and_then(|v|v.as_str()).ok_or("缺少query")?),
+            "knowledge.read"=>{
+                let library=args.get("libraryId").and_then(|v|v.as_str()).ok_or("缺少libraryId")?;
+                let max=args.get("maxBytes").and_then(|v|v.as_u64()).map(|n|n.min(8192)as usize);
+                let cursor=args.get("hitRef").or_else(||args.get("cursor")).and_then(|v|v.as_str());
+                let note=args.get("noteId").and_then(|v|v.as_str());
+                let (view,proof,_prepared)=verified::read(&conn,project,library,note,cursor,max)?;
+                let result=serde_json::to_value(view).map_err(|e|e.to_string())?;
+                proof.recheck(&conn,project)?;
+                Ok(result)
+            },
+            "knowledge.read_many"=>verified::read_many(&conn,project,args.get("notes").and_then(|v|v.as_array()).ok_or("缺少notes")?),
+            _=>Err("未知知识工具；AI不提供文件写入操作".into()),
         }
-        _ => Err("未知知识工具；AI不提供文件写入操作".into()),
-    }
+    }).await
 }
 
 #[cfg(test)]
@@ -423,16 +651,61 @@ mod tests {
             fs::create_dir(&path).unwrap();
             let conn = Connection::open_in_memory().unwrap();
             conn.execute_batch(
-                "CREATE TABLE knowledge_library(id TEXT PRIMARY KEY,name TEXT,sourceKind TEXT,sourceRef TEXT,revision INTEGER,enabled INTEGER,createdAt INTEGER);
+                "CREATE TABLE knowledge_library(id TEXT PRIMARY KEY,name TEXT,sourceKind TEXT,sourceRef TEXT,revision INTEGER,enabled INTEGER,createdAt INTEGER,icon TEXT,iconColor TEXT);
                  CREATE TABLE knowledge_note_index(libraryId TEXT,noteId TEXT,title TEXT,relativeUri TEXT,contentHash TEXT,updatedAt INTEGER,PRIMARY KEY(libraryId,noteId),UNIQUE(libraryId,relativeUri));
-                 CREATE TABLE project_library_grant(projectId TEXT,libraryId TEXT,readAllowed INTEGER,updatedAt INTEGER,actor TEXT,PRIMARY KEY(projectId,libraryId));"
+                 CREATE TABLE project_library_grant(projectId TEXT,libraryId TEXT,readAllowed INTEGER,updatedAt INTEGER,actor TEXT,PRIMARY KEY(projectId,libraryId));
+                 CREATE TABLE schema_version(version INTEGER PRIMARY KEY, appliedAt INTEGER NOT NULL);"
             ).unwrap();
-            conn.execute("INSERT INTO knowledge_library VALUES('kb','Test','managed-directory',?1,0,1,0)",[path.to_string_lossy().as_ref()]).unwrap();
+            // CR-030-D1：切片/FTS 最小表集与真实迁移保持同构。
+            crate::commands::kb_index::migrate_cr030_knowledge_index(&conn).unwrap();
+            performance::migrate(&conn).unwrap();
+            conn.execute("INSERT INTO knowledge_library VALUES('kb','Test','managed-directory',?1,0,1,0,NULL,NULL)",[path.to_string_lossy().as_ref()]).unwrap();
             Self { path, conn }
         }
         fn root(&self) -> files::SafeRoot { enabled_root(&self.conn,"kb").unwrap() }
     }
     impl Drop for Fixture { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.path); } }
+
+    #[test]
+    fn kb_appearance_preserves_null_and_rolls_back_pair() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE knowledge_library(id TEXT PRIMARY KEY,icon TEXT,iconColor TEXT); INSERT INTO knowledge_library(id) VALUES('kb');").unwrap();
+        kb_set_icon_inner(&conn,"kb",None,None).unwrap();
+        let read = || conn.query_row("SELECT icon,iconColor FROM knowledge_library WHERE id='kb'",[],|r| Ok((r.get::<_,Option<String>>(0)?,r.get::<_,Option<String>>(1)?))).unwrap();
+        assert_eq!(read(),(None,None));
+        conn.execute_batch("CREATE TRIGGER fail_color BEFORE UPDATE OF iconColor ON knowledge_library BEGIN SELECT RAISE(ABORT,'injected'); END;").unwrap();
+        assert!(kb_set_icon_inner(&conn,"kb",Some(Some("book".into())),Some(Some("blue".into()))).is_err());
+        assert_eq!(read(),(None,None));
+        conn.execute_batch("DROP TRIGGER fail_color;").unwrap();
+        assert!(kb_set_icon_inner(&conn,"kb",Some(Some("book".into())),Some(Some("invalid".into()))).is_err());
+        assert_eq!(read(),(None,None));
+        kb_set_icon_inner(&conn,"kb",Some(Some("book".into())),Some(Some("blue".into()))).unwrap();
+        assert_eq!(read(),(Some("book".into()),Some("blue".into())));
+    }
+
+    #[test]
+    fn kb_icon_whitelist_rejects_unknown_ids_and_clears() {
+        let f = Fixture::new();
+        // 白名单内 id 保存成功并回读。
+        for id in KB_ICON_IDS {
+            kb_set_icon_inner(&f.conn, "kb", Some(Some(id.to_string())), None).unwrap();
+            let icon: Option<String> = f.conn.query_row("SELECT icon FROM knowledge_library WHERE id='kb'", [], |r| r.get(0)).unwrap();
+            assert_eq!(icon.as_deref(), Some(id));
+        }
+        // 非法 id 拒绝且不落库。
+        // r6：rocket 已是共享图标库成员；用未登记 id 验证拒绝。
+        assert!(kb_set_icon_inner(&f.conn, "kb", Some(Some("notAnIcon".into())), None).is_err());
+        let icon: Option<String> = f.conn.query_row("SELECT icon FROM knowledge_library WHERE id='kb'", [], |r| r.get(0)).unwrap();
+        // r6 共享白名单后回读应为白名单最后一项（保持「拒绝不落库」语义，不绑定具体图标名）。
+        assert_eq!(icon.as_deref(), KB_ICON_IDS.last().copied());
+        // 空串与 null 均清空（展示层回来源默认）。
+        kb_set_icon_inner(&f.conn, "kb", Some(Some("".into())), None).unwrap();
+        let cleared: Option<String> = f.conn.query_row("SELECT icon FROM knowledge_library WHERE id='kb'", [], |r| r.get(0)).unwrap();
+        assert_eq!(cleared, None);
+        kb_set_icon_inner(&f.conn, "kb", Some(None), None).unwrap();
+        // 不存在的库报错。
+        assert!(kb_set_icon_inner(&f.conn, "no-such-kb", Some(Some("book".into())), None).is_err());
+    }
 
     #[test]
     fn knowledge_invalid_names_paths_and_devices_are_rejected() {
@@ -593,21 +866,24 @@ mod tests {
         fs::write(f.path.join("read.md"),"# Secret\nkeyword").unwrap();
         scan_notes(&f.conn,"kb",&mut f.root()).unwrap();
         let id = files::file_id("read.md");
-        assert!(gateway_read_conn(&f.conn,Some("p"),"kb",&id).is_err());
+        let gateway_read = |conn: &Connection, p: Option<&str>, kb: &str, n: &str| {
+            crate::commands::kb_index::gateway_read_chunk_conn(conn,p,kb,n,None).map(|v| v.content)
+        };
+        assert!(gateway_read(&f.conn,Some("p"),"kb",&id).is_err());
         f.conn.execute("INSERT INTO project_library_grant VALUES('p','kb',1,0,'test')",[]).unwrap();
-        assert!(gateway_read_conn(&f.conn,Some("p"),"kb",&id).is_ok());
+        assert!(gateway_read(&f.conn,Some("p"),"kb",&id).is_ok());
         assert_eq!(search(&f.conn,&["kb".into()],"keyword").unwrap().len(),1);
         f.conn.execute("UPDATE knowledge_library SET enabled=0",[]).unwrap();
         assert!(enabled_root(&f.conn,"kb").is_err());
         assert!(read_note(&f.conn,"kb",&id).is_err());
         assert!(search(&f.conn,&["kb".into()],"").is_err());
-        assert!(gateway_read_conn(&f.conn,Some("p"),"kb",&id).is_err());
+        assert!(gateway_read(&f.conn,Some("p"),"kb",&id).is_err());
         assert!(authorized(&f.conn,Some("p")).unwrap().is_empty());
         assert_eq!(gateway_list_conn(&f.conn,Some("p")).unwrap()["libraries"].as_array().unwrap().len(),0);
         assert!(upload_selected(&f.conn,"kb","",None).is_err());
         f.conn.execute("UPDATE knowledge_library SET enabled=1",[]).unwrap();
         f.conn.execute("DELETE FROM project_library_grant",[]).unwrap();
-        assert!(gateway_read_conn(&f.conn,Some("p"),"kb",&id).is_err());
+        assert!(gateway_read(&f.conn,Some("p"),"kb",&id).is_err());
     }
     #[test]
     fn knowledge_search_rejects_indexed_path_traversal_even_title_hit() {
@@ -615,6 +891,93 @@ mod tests {
         f.conn.execute("INSERT INTO knowledge_note_index VALUES('kb','bad','hit','../outside.md','',0)",[]).unwrap();
         assert!(search(&f.conn,&["kb".into()],"hit").is_err());
         assert!(read_note(&f.conn,"kb","bad").is_err());
+    }
+
+    /// CR-030-D1：扫描登记文本切片与 metadata 索引。
+    /// note_index 仍只登记 Markdown（前端 noteCount/N 篇 Markdown 语义不变）；
+    /// txt 等文本格式走切片；pdf 等其它格式仅文件名/路径可搜（metadata_only）。
+    #[test]
+    fn cr030_d1_scan_publishes_text_slices_and_metadata_only() {
+        let f = Fixture::new();
+        fs::write(f.path.join("note.md"),"# 笔记\n\n中文正文包含缓存一致性描述。").unwrap();
+        fs::write(f.path.join("run.log"),"2026-11-21 ERROR 数据库连接超时\n").unwrap();
+        fs::write(f.path.join("report.pdf"),b"%PDF-1.4 fake").unwrap();
+        assert_eq!(scan_notes(&f.conn,"kb",&mut f.root()).unwrap(),1,"返回值仍为 Markdown 篇数");
+        let indexed_count: i64 = f.conn.query_row("SELECT COUNT(*) FROM knowledge_note_index WHERE libraryId='kb'",[],|r| r.get(0)).unwrap();
+        assert_eq!(indexed_count,1,"note_count 语义不变：只统计 Markdown");
+        // txt/log 正文可搜
+        let hits = search(&f.conn,&["kb".into()],"连接超时").unwrap();
+        assert_eq!(hits.len(),1);
+        assert_eq!(hits[0].relative_uri,"run.log");
+        assert!(hits[0].snippet.contains("连接超时"));
+        // PDF 文件名可搜（metadata_only）
+        let hits = search(&f.conn,&["kb".into()],"report").unwrap();
+        assert_eq!(hits.len(),1);
+        assert_eq!(hits[0].title,"report.pdf");
+        // PDF 正文不可搜
+        assert!(search(&f.conn,&["kb".into()],"fake").unwrap().is_empty());
+        // AI 读取 PDF 显式拒绝；读取 log 返回片段
+        f.conn.execute("INSERT INTO project_library_grant VALUES('p','kb',1,0,'test')",[]).unwrap();
+        let pdf_id = files::file_id("report.pdf");
+        let err = crate::commands::kb_index::gateway_read_chunk_conn(&f.conn,Some("p"),"kb",&pdf_id,None).unwrap_err();
+        assert!(err.contains("METADATA_ONLY"));
+        let log_id = files::file_id("run.log");
+        let view = crate::commands::kb_index::gateway_read_chunk_conn(&f.conn,Some("p"),"kb",&log_id,None).unwrap();
+        assert!(view.content.contains("ERROR"));
+        assert!(view.eof, "单块文件应 eof");
+    }
+
+    /// CR-030-D1 IPC 冒烟三断言（「AI 走派生、人读走原件」）：
+    /// 夹具扫描成功后物理删除原件文件 →
+    /// ① kb_search 仍命中正文（snippet 来自派生 chunk）；
+    /// ② gateway read 仍返回片段（读派生索引，不读原件）；
+    /// ③ 人类 kb_read（read_note 路径）报文件不可访问。
+    /// 与 src/smoke/runner.ts 的 IPC 冒烟共用同一命令层函数。
+    #[test]
+    fn cr030_d1_ipc_ai_reads_derived_human_reads_original() {
+        let f = Fixture::new();
+        fs::write(f.path.join("guide.md"),"# 指南\n\nalpha 正文关键词在这里，包含传感器数据。").unwrap();
+        scan_notes(&f.conn,"kb",&mut f.root()).unwrap();
+        f.conn.execute("INSERT INTO project_library_grant VALUES('p','kb',1,0,'test')",[]).unwrap();
+        let note_id = files::file_id("guide.md");
+        // ① 删除原件前搜索命中
+        assert_eq!(search(&f.conn,&["kb".into()],"正文关键词").unwrap().len(),1);
+        // 物理删除原件
+        fs::remove_file(f.path.join("guide.md")).unwrap();
+        // ① kb_search 仍命中正文，snippet 来自派生 chunk（搜索路径不读原件）
+        let hits = search(&f.conn,&["kb".into()],"正文关键词").unwrap();
+        assert_eq!(hits.len(),1,"AI 搜索应走派生索引");
+        assert!(hits[0].snippet.contains("正文关键词") || hits[0].snippet.contains("关键词"));
+        assert_eq!(hits[0].relative_uri,"guide.md");
+        // ② gateway read 仍返回片段
+        let view = crate::commands::kb_index::gateway_read_chunk_conn(&f.conn,Some("p"),"kb",&note_id,None).unwrap();
+        assert!(view.content.contains("alpha"),"AI 读取应来自派生 chunk");
+        assert!(view.content.contains("传感器数据"));
+        // ③ 人类 kb_read 走原件 → 文件不可访问
+        let err = read_note(&f.conn,"kb",&note_id).unwrap_err();
+        assert!(err.contains("不可访问") || err.contains("不可读取"),"实际：{err}");
+    }
+
+    /// CR-030-D1：保存后 publish_note 在同一事务发布切片；AI 保存路径
+    /// （read_note 仅 Markdown）不受影响；重发后旧词项退役。
+    #[test]
+    fn cr030_d1_saved_note_publishes_chunks_in_same_transaction() {
+        let f = Fixture::new();
+        let rel = files::create_markdown(&mut f.root(),"","new.md","# 新文档\n\n量子算法简介。").unwrap();
+        let note = saved_note(&f.conn,"kb",&rel,"# 新文档\n\n量子算法简介。".into(),None);
+        assert!(note.index_error.is_none());
+        let hits = search(&f.conn,&["kb".into()],"量子算法").unwrap();
+        assert_eq!(hits.len(),1,"保存后立即可检索");
+        assert_eq!(hits[0].title,"新文档");
+        // 保存即发布的 chunk 与登记 hash 一致（gateway 校验通过）
+        f.conn.execute("INSERT INTO project_library_grant VALUES('p','kb',1,0,'test')",[]).unwrap();
+        let view = crate::commands::kb_index::gateway_read_chunk_conn(&f.conn,Some("p"),"kb",&note.note_id,None).unwrap();
+        assert!(view.content.contains("量子算法"));
+        // 替换内容后旧词项退役
+        files::save_markdown(&mut f.root(),"new.md",&files::hash("# 新文档\n\n量子算法简介。".as_bytes()),"# 新文档\n\n改为神经网络内容。").unwrap();
+        saved_note(&f.conn,"kb",&rel,"# 新文档\n\n改为神经网络内容。".into(),Some(&note.note_id));
+        assert!(search(&f.conn,&["kb".into()],"量子算法").unwrap().is_empty());
+        assert_eq!(search(&f.conn,&["kb".into()],"神经网络").unwrap().len(),1);
     }
     #[test]
     fn knowledge_export_bytes_no_overwrite_and_failed_save_keeps_draft() {
@@ -636,6 +999,48 @@ mod tests {
             drop(held);
         }
     }
+    /// CR-030-D1：惰性回填与检索耗时实测（真实磁盘 I/O + 文件 SQLite）。
+    /// 数字仅记录本机夹具实测，不作为性能承诺；>2s 时 ensure_library_indexed
+    /// 会输出后台化建议。
+    #[test]
+    fn cr030_d1_backfill_and_search_timing_on_real_files() {
+        let base = fs::canonicalize(std::env::temp_dir()).unwrap_or_else(|_| std::env::temp_dir());
+        let path = base.join(new_id("kb-cr030-d1-perf"));
+        fs::create_dir(&path).unwrap();
+        // 120 篇约 8KiB 中文文档（夹具，非真实用户库）。
+        let body: String = "这是用于回填耗时实测的中文正文段落，包含若干关键词与 Alpha 词，重复多行以接近真实文档长度。\n".repeat(20);
+        for i in 0..120 {
+            fs::write(path.join(format!("doc{i:03}.md")), format!("# 文档{i:03}\n\n{body}")).unwrap();
+        }
+        let conn = Connection::open(path.join("workbench.db")).unwrap();
+        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;").unwrap();
+        conn.execute_batch(
+            "CREATE TABLE schema_version(version INTEGER PRIMARY KEY, appliedAt INTEGER NOT NULL);
+             CREATE TABLE knowledge_library(id TEXT PRIMARY KEY,name TEXT,sourceKind TEXT,sourceRef TEXT,revision INTEGER,enabled INTEGER,createdAt INTEGER,icon TEXT,iconColor TEXT);
+             CREATE TABLE knowledge_note_index(libraryId TEXT,noteId TEXT,title TEXT,relativeUri TEXT,contentHash TEXT,updatedAt INTEGER,PRIMARY KEY(libraryId,noteId),UNIQUE(libraryId,relativeUri));
+             CREATE TABLE project_library_grant(projectId TEXT,libraryId TEXT,readAllowed INTEGER,updatedAt INTEGER,actor TEXT,PRIMARY KEY(projectId,libraryId));",
+        ).unwrap();
+        crate::commands::kb_index::migrate_cr030_knowledge_index(&conn).unwrap();
+        conn.execute("INSERT INTO knowledge_library VALUES('kb','PerfTest','managed-directory',?1,0,1,0,NULL,NULL)",[path.to_string_lossy().as_ref()]).unwrap();
+        let mut root = enabled_root(&conn,"kb").unwrap();
+        let started = std::time::Instant::now();
+        let count = scan_notes(&conn,"kb",&mut root).unwrap();
+        let backfill_ms = started.elapsed().as_millis();
+        let started = std::time::Instant::now();
+        let hits = search(&conn,&["kb".into()],"关键词").unwrap();
+        let search_ms = started.elapsed().as_millis();
+        let started = std::time::Instant::now();
+        let hits2 = search(&conn,&["kb".into()],"关键词").unwrap();
+        let warm_ms = started.elapsed().as_millis();
+        eprintln!("[CR-030-D1] 实测：files={count} 首次回填={backfill_ms}ms 冷检索={search_ms}ms(hits={}) 暖检索={warm_ms}ms(hits={})", hits.len(), hits2.len());
+        assert_eq!(count, 120);
+        assert!(!hits.is_empty(), "实测检索必须命中");
+        let chunks: i64 = conn.query_row("SELECT COUNT(*) FROM kb_chunk WHERE libraryId='kb'",[],|r| r.get(0)).unwrap();
+        eprintln!("[CR-030-D1] 实测：chunk 行数={chunks}");
+        drop(conn);
+        fs::remove_dir_all(&path).unwrap();
+    }
+
     #[test]
     fn knowledge_parent_change_and_symlink_are_rejected() {
         let f = Fixture::new();

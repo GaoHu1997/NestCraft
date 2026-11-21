@@ -1,0 +1,37 @@
+import assert from "node:assert/strict";
+import { EditorState, Text } from "@codemirror/state";
+import { history, undo, redo } from "@codemirror/commands";
+import { DirtyTracker, SaveQueue, virtualRange } from "../src/modules/editor/performance-model";
+import { TextBuilder } from "../src/modules/editor/document-session";
+import { preserveLineEndings, lineEndings } from "../src/modules/editor/line-endings";
+
+const passed: string[] = [];
+const test = (name: string, action: () => void) => { action(); passed.push(name); };
+let jobs: { run: () => void; cancelled: boolean }[] = [];
+const defer = (run: () => void) => { const job = { run, cancelled: false }; jobs.push(job); return () => { job.cancelled = true; }; };
+const flush = () => { let count = 0; while (jobs.length) { const job = jobs.shift()!; if (!job.cancelled) { job.run(); count++; } if (count > 20000) throw Error("unbounded compare"); } return count; };
+const initial = Text.of(Array.from({ length: 100000 }, (_, i) => `const item${i} = ${i};`));
+const changes: boolean[] = [];
+const tracker = new DirtyTracker(initial, dirty => changes.push(dirty), defer);
+test("typing length change is O(1) dirty, no comparison task", () => { tracker.update(initial.replace(0, 0, Text.of(["x"]))); assert.equal(tracker.dirty, true); assert.equal(flush(), 0); });
+test("return to same checkpoint clears dirty immediately", () => { tracker.update(initial); assert.equal(tracker.dirty, false); });
+test("manual equal content compares in bounded scheduled tasks", () => { const equal = Text.of(initial.toJSON()); tracker.update(equal); assert.equal(tracker.dirty, true); assert.ok(flush() > 1); assert.equal(tracker.dirty, false); });
+test("stale exact comparison cannot clear newer dirty content", () => { tracker.update(Text.of(initial.toJSON())); tracker.update(initial.replace(0, 1, Text.of(["Z"]))); flush(); assert.equal(tracker.dirty, true); });
+test("save ack of old immutable snapshot preserves new edits", () => { const old = tracker.document; const newer = old.replace(0, 0, Text.of(["new"])); tracker.update(newer); tracker.savedSnapshot(old); assert.equal(tracker.dirty, true); tracker.savedSnapshot(newer); assert.equal(tracker.dirty, false); });
+test("virtual tree bounds DOM for 100000 rows", () => { for (const top of [0, 26 * 50000, 26 * 99995]) { const range = virtualRange(100000, top, 800); assert.ok(range.end - range.start <= 48); assert.equal(range.totalHeight, 2600000); } });
+test("chunked text builder preserves CRLF across chunks and detects mixed endings", () => { const b = new TextBuilder(); b.append("a\r"); b.append("\nb\r"); b.append("c\nd", true); assert.equal(b.doc.toString(), "a\nb\nc\nd"); assert.equal(b.endingMap.toString(), "C\nR\nL\n"); assert.equal(b.mixedLineEndings, true); });
+test("mixed line ending map follows edits, undo and redo", () => {
+  const builder = new TextBuilder(); builder.append("a\r\nb\rc\nd", true);
+  let state = EditorState.create({ doc: builder.doc, extensions: [history(), preserveLineEndings(builder.endingMap, builder.lineEnding)] });
+  const dispatch = (tr: any) => { state = tr.state; };
+  dispatch(state.update({ changes: { from: 1, to: 4, insert: "\nX\n" } }));
+  assert.equal(state.field(lineEndings).toString(), "C\nC\nL\n");
+  assert.ok(undo({ state, dispatch })); assert.equal(state.doc.toString(), "a\nb\nc\nd"); assert.equal(state.field(lineEndings).toString(), "C\nR\nL\n");
+  assert.ok(redo({ state, dispatch })); assert.equal(state.field(lineEndings).toString(), "C\nC\nL\n");
+});
+let inFlight = 0, peak = 0; const writes: number[] = [], committed: number[] = []; const releases: (() => void)[] = [];
+const queue = new SaveQueue<number>(async snapshot => { writes.push(snapshot); peak = Math.max(peak, ++inFlight); await new Promise<void>(resolve => releases.push(resolve)); inFlight--; }, snapshot => committed.push(snapshot));
+const p = queue.request(1); await Promise.resolve(); queue.request(2); queue.request(3); releases.shift()!(); await new Promise(resolve => setTimeout(resolve, 0)); assert.deepEqual(writes, [1, 3]); releases.shift()!(); await p; assert.equal(peak, 1); assert.deepEqual(committed, [1, 3]); passed.push("concurrent save requests serialize and coalesce latest snapshot");
+const failing = new SaveQueue<number>(async () => { throw Error("conflict"); }, () => { throw Error("must not commit"); }); await assert.rejects(failing.request(4), /conflict/); assert.equal(failing.busy, false); passed.push("failed save never acknowledges a checkpoint");
+tracker.dispose();
+console.log(JSON.stringify({ kind: "editor model/logic tests", passed: passed.length, cases: passed }, null, 2));

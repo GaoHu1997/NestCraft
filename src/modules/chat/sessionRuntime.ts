@@ -17,14 +17,40 @@ export interface ChatStep {
   meta?: string;
 }
 
+export type SessionGoalState = "active" | "paused" | "cancelled";
+
+export interface SessionGoal {
+  id: string;
+  text: string;
+  state: SessionGoalState;
+  revision: number;
+  history: { revision: number; state: SessionGoalState; text: string; at: number }[];
+}
+
+export type SessionTaskState = "pending" | "running" | "completed" | "failed" | "cancelled" | "awaiting_user";
+
+export interface SessionTask {
+  id: string;
+  taskName: string;
+  state: SessionTaskState;
+  source: "user" | "agent" | "tool";
+  startedAt: number | null;
+  endedAt: number | null;
+  agentId?: string | null;
+}
+
 export interface SubagentRow {
   id: string;
-  cli: string;
+  cli: string | null;
   title: string;
-  model: string;
-  duration: string;
-  tokens: string;
-  status: "成功" | "待确认" | "失败";
+  model: string | null;
+  duration: string | null;
+  tokens: string | null;
+  status: "运行中" | "成功" | "待确认" | "失败" | "已停止";
+  output?: string | null;
+  parentId?: string | null;
+  startedAt?: number;
+  endedAt?: number;
 }
 
 export interface BackgroundRow {
@@ -39,6 +65,8 @@ export interface BackgroundRow {
 export type SessionStatus = "success" | "failed" | "pending" | "read";
 
 export interface SessionRuntime {
+  goal: SessionGoal | null;
+  tasks: SessionTask[];
   steps: ChatStep[];
   subagents: SubagentRow[];
   background: BackgroundRow[];
@@ -78,6 +106,8 @@ const store = new Map<string, SessionRuntime>();
 
 function blank(): SessionRuntime {
   return {
+    goal: null,
+    tasks: [],
     steps: [],
     subagents: [],
     background: [],
@@ -114,7 +144,67 @@ export function getRuntime(sid: string): SessionRuntime {
   return rt;
 }
 
-/* ---------- 流式计时（STORY-062 / CR-019 统计口径） ---------- */
+export function setGoal(sid: string, text: string): SessionGoal {
+  const rt = getRuntime(sid);
+  const prior = rt.goal;
+  const revision = (prior?.revision ?? 0) + 1;
+  const goal: SessionGoal = {
+    id: prior?.id ?? `goal-${sid}`,
+    text: text.trim(),
+    state: prior?.state === "paused" ? "paused" : "active",
+    revision,
+    history: [...(prior?.history ?? []), { revision, state: prior?.state === "paused" ? "paused" : "active", text: text.trim(), at: Date.now() }],
+  };
+  rt.goal = goal;
+  return goal;
+}
+
+export function updateGoalState(sid: string, state: SessionGoalState): SessionGoal | null {
+  const rt = getRuntime(sid);
+  if (!rt.goal) return null;
+  const revision = rt.goal.revision + 1;
+  rt.goal = { ...rt.goal, state, revision, history: [...rt.goal.history, { revision, state, text: rt.goal.text, at: Date.now() }] };
+  return rt.goal;
+}
+
+export function addSessionTask(sid: string, taskName: string): SessionTask {
+  const rt = getRuntime(sid);
+  const task: SessionTask = { id: `task-${sid}-${Date.now()}-${rt.tasks.length}`, taskName: taskName.trim(), state: "pending", source: "user", startedAt: null, endedAt: null };
+  rt.tasks.push(task);
+  return task;
+}
+
+export function hasBlockingChildren(sid: string): boolean {
+  const rt = getRuntime(sid);
+  return rt.subagents.some(a => ["运行中", "待确认"].includes(a.status)) || rt.tasks.some(t => ["running", "awaiting_user"].includes(t.state));
+}
+
+export function upsertSubagent(sid: string, input: { id: string; task: string; status: string; cli?: string | null; model?: string | null; durationMs?: number | null; tokens?: number | null; output?: string | null; parentId?: string | null }) {
+  const rt = getRuntime(sid);
+  const status = input.status === "failed" ? "失败" : input.status === "done" || input.status === "success" || input.status === "completed" ? "成功" : input.status === "stopped" ? "已停止" : input.status === "running" ? "运行中" : "待确认";
+  const prior = rt.subagents.find(a => a.id === input.id);
+  const now = Date.now();
+  const row: SubagentRow = {
+    id: input.id,
+    cli: input.cli ?? prior?.cli ?? null,
+    title: input.task || prior?.title || "子代理任务",
+    model: input.model ?? prior?.model ?? null,
+    duration: input.durationMs != null ? formatDur(input.durationMs) : prior?.duration ?? null,
+    tokens: input.tokens != null ? `${input.tokens >= 1000 ? (input.tokens / 1000).toFixed(1) + "k" : input.tokens}` : prior?.tokens ?? null,
+    status,
+    output: input.output ?? prior?.output ?? null,
+    parentId: input.parentId ?? prior?.parentId ?? null,
+    startedAt: prior?.startedAt ?? now,
+    endedAt: status === "运行中" || status === "待确认" ? prior?.endedAt : prior?.endedAt ?? now,
+  };
+  if (prior) Object.assign(prior, row); else rt.subagents.push(row);
+  if (status === "运行中" || status === "待确认") {
+    const task = rt.tasks.find(t => t.agentId === input.id);
+    if (task) task.state = status === "运行中" ? "running" : "awaiting_user";
+  }
+  return row;
+}
+
 
 export function markStreamStart(sid: string): number {
   const rt = getRuntime(sid);

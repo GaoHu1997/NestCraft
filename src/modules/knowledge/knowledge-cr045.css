@@ -83,8 +83,11 @@
 .knowledge-workspace .kw-welcome { padding: 64px 24px; }
 .knowledge-workspace .kw-welcome h2 { font-size: 18px; color: var(--ink-2); margin-top: 14px; }
 .knowledge-workspace .kw-welcome .btn { margin-top: 16px; }
-.knowledge-workspace .kw-notice { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 7px 12px; border-bottom: 1px solid var(--primary-line); background: var(--primary-soft); color: var(--primary-strong); font-size: 11px; line-height: 1.5; flex-shrink: 0; }
-.knowledge-workspace .kw-notice > span { min-width: 0; overflow-wrap: anywhere; }
+.knowledge-workspace .kw-notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; padding: 7px 12px; border-bottom: 1px solid var(--primary-line); background: var(--primary-soft); color: var(--primary-strong); font-size: 11px; line-height: 1.5; flex-shrink: 0; }
+.knowledge-workspace .kw-notice > span { min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere; }
+/* v1.4：提示条内的动作按钮只按需出现；窄屏换行而不截断，不占用也不改变正文滚动区宽度（UI-SCROLL-001）。 */
+.knowledge-workspace .kw-notice > .btn { flex: 0 0 auto; margin-left: auto; }
+.knowledge-workspace .kw-notice > .icon-btn { flex: 0 0 auto; }
 .knowledge-workspace .kw-save-error { padding: 9px 16px; border-bottom: 1px solid var(--danger); color: var(--danger); background: var(--danger-soft); font-size: 12px; line-height: 1.6; flex-shrink: 0; overflow-wrap: anywhere; }
 .knowledge-workspace .kw-error-text { color: var(--danger) !important; }
 .knowledge-workspace .kw-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 16px; background: var(--warning-soft); border-bottom: 1px solid var(--line); font-size: 11px; color: var(--warning); }

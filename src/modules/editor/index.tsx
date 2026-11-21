@@ -11,12 +11,13 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { EditorView, keymap } from "@codemirror/view";
 import type { ViewUpdate } from "@codemirror/view";
-import { Compartment, EditorState, Prec, StateEffect, StateField } from "@codemirror/state";
+import { Compartment, EditorState, Prec, StateEffect, StateField, Text, EditorSelection } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
 import { Decoration } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { onLocate, takePendingLocate } from "@/modules/locate";
 import type { LocateDetail } from "@/modules/locate";
+import { undoDepth, redoDepth } from "@codemirror/commands";
 import { basicSetup } from "codemirror";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { markdown } from "@codemirror/lang-markdown";
@@ -28,6 +29,10 @@ import { Confirm, Empty, renderMarkdown, useToast } from "@/components/ui";
 import { PaneClose, PaneToggle, ResizeHandle, usePaneWidth } from "@/components/pane-resize";
 import { FileTree } from "./FileTree";
 import { EditorTabs, baseName } from "./EditorTabs";
+import { DirtyTracker, SaveQueue } from "./performance-model";
+import { loadDocument, DocumentSaveSession } from "./document-session";
+import { lineEndings, preserveLineEndings } from "./line-endings";
+import { WindowPreview } from "./WindowPreview";
 import "./CodeArea.css";
 
 const DEFAULT_FONT_SIZE = 13;
@@ -114,7 +119,24 @@ function useHtmlTheme(): "light" | "dark" {
 /** EditorState carries undo/selection; scroll and mode are independent per file. */
 interface Tab {
   path: string;
-  saved: string; // 已保存内容（脏标记基准）
+  saved: Text; // Immutable checkpoint; typing never creates a full string.
+  tracker: DirtyTracker | null;
+  queue: SaveQueue<EditorState> | null;
+  saveSession?: DocumentSaveSession<EditorState>;
+  savedState: EditorState | null;
+  autoSaveTimer?: number;
+  saving: boolean;
+  saveError: string | null;
+  hash: string;
+  encoding: string;
+  lineEnding: string;
+  mixedLineEndings: boolean;
+  preview: boolean;
+  windowOnly: boolean;
+  sizeBytes: number;
+  suspended: boolean;
+  parkedSelection?: EditorSelection;
+  notify: () => void;
   dirty: boolean;
   binary: boolean;
   state: EditorState | null;
@@ -122,6 +144,15 @@ interface Tab {
   scrollLeft: number;
   readScroll: number;
   mode: "reading" | "editing";
+}
+
+const parkedSessions = new Map<string, { tabs: Tab[]; active: string | null }>();
+const liveSessions = new Map<symbol, () => Tab[]>();
+const openingReservations = new Map<symbol, number>();
+const modelCost = (tab: Tab) => tab.state ? tab.state.doc.length * 4 + tab.state.doc.lines * 16 : 0;
+
+function emptyTab(path: string): Tab {
+  return { path, saved: Text.empty, dirty: false, binary: false, state: null, scroll: 0, scrollLeft: 0, readScroll: 0, mode: "editing", tracker: null, queue: null, savedState: null, saving: false, saveError: null, hash: "", encoding: "utf-8", lineEnding: "\n", mixedLineEndings: false, preview: false, windowOnly: false, sizeBytes: 0, suspended: false, notify: () => {} };
 }
 
 function MarkdownReading({ tab, source }: { tab: Tab; source: string }) {
@@ -169,10 +200,12 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
     visible: hideTree ? false : undefined, disabled: !visible || hideTree,
   });
   const [closeTarget, setCloseTarget] = useState<string | null>(null);
+  const [openingStatus, setOpeningStatus] = useState<string | null>(null);
   const [discardTarget, setDiscardTarget] = useState<string | null>(null);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
   const openingRef = useRef(new Map<string, Promise<void>>());
+  const openingSerialRef = useRef<Promise<void>>(Promise.resolve());
   const fileRequestRef = useRef(0);
   const [, setVer] = useState(0);
   const rerender = useCallback(() => setVer(v => v + 1), []);
@@ -182,6 +215,9 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
   const tabsRef = useRef<Tab[]>([]);
   const activeRef = useRef<string | null>(null);
   const rootUriRef = useRef(rootUri);
+  const sessionOwner = useRef(Symbol("editor-session")).current;
+  const activeScope = useRef("");
+  const openFileRef = useRef<(path: string) => Promise<void>>(async () => {});
 
   const langComp = useRef(new Compartment()).current;
   const themeComp = useRef(new Compartment()).current;
@@ -193,25 +229,20 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
 
   /* ---------- 保存（Ctrl+S）/ 脏标记 ---------- */
 
+  const saveTab = useCallback((tab: Tab, retry = false) => {
+    window.clearTimeout(tab.autoSaveTimer);
+    if ((!tab.dirty && !tab.saveSession?.unresolved) || !tab.state || !tab.queue || (tab.saveError && !retry)) return;
+    if (retry) tab.saveError = null;
+    void tab.queue.request(tab.state).catch(e => {
+      tab.saveError = errMsg(e); tab.notify();
+    });
+  }, [rerender]);
   const saveActive = useCallback(async () => {
-    const path = activeRef.current;
-    const view = viewRef.current;
-    const tab = path ? tabsRef.current.find(t => t.path === path) : null;
-    if (!path || !view || !tab || tab.binary) return;
-    const root = rootUriRef.current;
-    const content = view.state.doc.toString();
-    try {
-      await api.fsWriteFile(root, path, content);
-      // A save completing after a root change/close must not mutate a different file session.
-      if (rootUriRef.current !== root || !tabsRef.current.includes(tab)) return;
-      tab.saved = content;
-      tab.dirty = (activeRef.current === path && viewRef.current === view ? view.state : tab.state)?.doc.toString() !== content;
-      rerender();
-      toast(`已保存 ${path}`);
-    } catch (e) {
-      if (rootUriRef.current === root && tabsRef.current.includes(tab)) toast(errMsg(e), "err");
-    }
-  }, [toast, rerender]);
+    const tab = tabsRef.current.find(t => t.path === activeRef.current);
+    if (!tab || tab.binary || tab.windowOnly) return;
+    if (viewRef.current) tab.state = viewRef.current.state;
+    saveTab(tab, true);
+  }, [saveTab]);
 
   // Reading has no focused CodeMirror; keep Ctrl+S scoped to the visible active buffer.
   useEffect(() => {
@@ -231,18 +262,16 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
 
   const onUpdate = useCallback(
     (u: ViewUpdate) => {
-      if (!u.docChanged) return;
       const path = activeRef.current;
       const tab = path ? tabsRef.current.find(t => t.path === path) : null;
       if (!tab || tab.binary) return;
       tab.state = u.state;
-      const dirty = u.state.doc.toString() !== tab.saved;
-      if (dirty !== tab.dirty || (isMarkdownPath(tab.path) && tab.mode === "reading")) {
-        tab.dirty = dirty;
-        rerender();
-      }
+      if (!u.docChanged) return;
+      tab.tracker?.update(u.state.doc);
+      window.clearTimeout(tab.autoSaveTimer);
+      if (tab.dirty && !tab.saveError) tab.autoSaveTimer = window.setTimeout(() => saveTab(tab), 1000);
     },
-    [rerender]
+    [rerender, saveTab]
   );
 
   /* ---------- 扩展（创建一次；语言/主题/字号走 Compartment） ---------- */
@@ -252,12 +281,13 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
       basicSetup,
       Prec.highest(keymap.of([{ key: "Mod-s", run: () => { if (!visibleRef.current) return false; void saveActive(); return true; } }])),
       EditorView.updateListener.of(onUpdate),
+      EditorView.domEventHandlers({ blur: () => { const tab = tabsRef.current.find(t => t.path === activeRef.current); if (tab) saveTab(tab); return false; } }),
       lineHighlightField,
       langComp.of([]),
       themeComp.of([]),
       fontComp.of(fontTheme(DEFAULT_FONT_SIZE)),
     ],
-    [saveActive, onUpdate, langComp, themeComp, fontComp]
+    [saveActive, saveTab, onUpdate, langComp, themeComp, fontComp]
   );
 
   /** 对当前视图重配语言 / 主题 / 字号（切页签或主题字号变化后调用）。 */
@@ -320,22 +350,30 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
     };
   }, [applyCompartments]);
 
-  // rootUri 变化：清空页签并重置编辑器
+  // Scope ownership survives project navigation/unmount without discarding failed drafts.
   useEffect(() => {
-    rootUriRef.current = rootUri;
-    fileRequestRef.current++;
-    openingRef.current.clear();
-    setCloseTarget(null);
-    setDiscardTarget(null);
-    tabsRef.current = [];
-    activeRef.current = null;
-    const view = viewRef.current;
-    if (view) {
-      view.setState(EditorState.create({ doc: "", extensions }));
-      applyCompartments(view, null);
+    const key = JSON.stringify([projectId ?? "", rootUri]); activeScope.current = key;
+    rootUriRef.current = rootUri; fileRequestRef.current++; openingRef.current.clear();
+    setCloseTarget(null); setDiscardTarget(null); setOpeningStatus(null);
+    const parked = parkedSessions.get(key); parkedSessions.delete(key);
+    tabsRef.current = parked?.tabs ?? []; activeRef.current = parked?.active ?? null;
+    liveSessions.set(sessionOwner, () => tabsRef.current);
+    for (const tab of tabsRef.current) {
+      tab.notify = () => { if (activeScope.current === key) rerender(); };
+      const rebind = (state: EditorState | null) => state ? state.update({ effects: StateEffect.reconfigure.of([...extensions, preserveLineEndings(state.field(lineEndings), tab.lineEnding)]) }).state : null;
+      tab.state = rebind(tab.state); tab.savedState = rebind(tab.savedState);
     }
+    const active = tabsRef.current.find(t => t.path === activeRef.current);
+    const view = viewRef.current;
+    if (view) { view.setState(active?.state ?? EditorState.create({ doc: "", extensions })); applyCompartments(view, active?.path ?? null); }
+    if (active?.suspended) queueMicrotask(() => void openFileRef.current(active.path));
     rerender();
-  }, [rootUri, extensions, applyCompartments, rerender]);
+    return () => {
+      fileRequestRef.current++; activeScope.current = "";
+      for (const tab of tabsRef.current) { window.clearTimeout(tab.autoSaveTimer); tab.notify = () => {}; saveTab(tab); }
+      parkedSessions.set(key, { tabs: tabsRef.current, active: activeRef.current }); liveSessions.delete(sessionOwner);
+    };
+  }, [rootUri, projectId, sessionOwner, extensions, applyCompartments, rerender, saveTab]);
 
   /* ---------- 页签操作 ---------- */
 
@@ -344,11 +382,12 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
     (path: string | null) => {
       const view = viewRef.current;
       const cur = activeRef.current;
-      if (cur === path && view) { applyCompartments(view, path); return; }
+      if (cur === path && view) { const same = tabsRef.current.find(t => t.path === path); if (same?.state && same.state !== view.state) view.setState(same.state); applyCompartments(view, path); rerender(); return; }
       if (cur && cur !== path && view) {
         const curTab = tabsRef.current.find(t => t.path === cur);
-        if (curTab && !curTab.binary) {
+        if (curTab && !curTab.binary && !curTab.windowOnly) {
           curTab.state = view.state;
+          saveTab(curTab);
           if (curTab.mode === "editing") {
             curTab.scroll = view.scrollDOM.scrollTop;
             curTab.scrollLeft = view.scrollDOM.scrollLeft;
@@ -358,7 +397,7 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
       activeRef.current = path;
       const tab = path ? tabsRef.current.find(t => t.path === path) : null;
       if (view) {
-        if (tab && !tab.binary) {
+        if (tab && !tab.binary && !tab.windowOnly) {
           view.setState(tab.state ?? EditorState.create({ doc: tab.saved, extensions }));
           applyCompartments(view, path);
           const top = tab.scroll;
@@ -378,29 +417,79 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
       }
       rerender();
     },
-    [extensions, applyCompartments, rerender]
+    [extensions, applyCompartments, rerender, saveTab]
   );
 
   const openFile = useCallback(async (path: string) => {
     const seq = ++fileRequestRef.current;
     const root = rootUriRef.current;
-    if (tabsRef.current.some(t => t.path === path)) { activate(path); return; }
+    const existing = tabsRef.current.find(t => t.path === path);
+    if (existing && !existing.suspended) { activate(path); return; }
     if (isBinaryPath(path)) {
-      tabsRef.current = [...tabsRef.current, { path, saved: "", dirty: false, binary: true, state: null, scroll: 0, scrollLeft: 0, readScroll: 0, mode: "editing" }];
-      activate(path); return;
+      const tab = emptyTab(path); tab.binary = true; tabsRef.current.push(tab); activate(path); return;
     }
-    let pending = openingRef.current.get(path);
-    if (!pending) {
-      pending = api.fsReadFile(root, path).then(content => {
-        if (rootUriRef.current !== root || !viewRef.current) return;
-        if (!tabsRef.current.some(t => t.path === path)) tabsRef.current = [...tabsRef.current, { path, saved: content, dirty: false, binary: false, state: null, scroll: 0, scrollLeft: 0, readScroll: 0, mode: isMarkdownPath(path) ? "reading" : "editing" }];
-        rerender();
-      }).finally(() => { if (openingRef.current.get(path) === pending) openingRef.current.delete(path); });
+    let pending: Promise<void>;
+    {
+      setOpeningStatus("正在准备 " + baseName(path) + "…");
+      pending = openingSerialRef.current.catch(() => {}).then(() => {
+        if (fileRequestRef.current !== seq) throw new Error("OPEN_CANCELLED");
+        return loadDocument(root, path, () => rootUriRef.current === root && fileRequestRef.current === seq && !!viewRef.current, (bytes, total) => {
+        if (fileRequestRef.current === seq) setOpeningStatus("正在准备 " + baseName(path) + " · " + Math.round(bytes / 1024) + " / " + Math.round(total / 1024) + " KiB");
+        }, size => {
+          const all = new Set([...tabsRef.current, ...Array.from(liveSessions.values()).flatMap(get => get()), ...Array.from(parkedSessions.values()).flatMap(session => session.tabs)]);
+          let retained = Array.from(all).reduce((sum, tab) => sum + modelCost(tab), 0) + Array.from(openingReservations.entries()).filter(([owner]) => owner !== sessionOwner).reduce((sum, [, bytes]) => sum + bytes, 0);
+          if (retained + size * 4 > 512 * 1024 * 1024) {
+            for (const session of parkedSessions.values()) for (const tab of session.tabs) {
+              if (retained + size * 4 <= 512 * 1024 * 1024) break;
+              if (!tab.state || tab.dirty || tab.saveError || tab.saving || tab.queue?.busy || undoDepth(tab.state) || redoDepth(tab.state)) continue;
+              retained -= modelCost(tab); tab.parkedSelection = tab.state.selection; tab.tracker?.dispose(); tab.queue?.dispose();
+              tab.state = null; tab.savedState = null; tab.saved = Text.empty; tab.tracker = null; tab.queue = null; tab.suspended = true;
+            }
+          }
+          if (retained + size * 4 > 512 * 1024 * 1024) throw new Error("MODEL_BUDGET: 完整编辑内存预算不足，请先关闭不需要的文档；当前草稿未丢弃，也未自动切成只读");
+          openingReservations.set(sessionOwner, size * 4);
+        });
+      }).then(loaded => {
+        if (rootUriRef.current !== root || fileRequestRef.current !== seq || !viewRef.current || tabsRef.current.some(t => t.path === path && !t.suspended)) return;
+        const tab = existing ?? emptyTab(path);
+        tab.suspended = false; const key = activeScope.current; tab.notify = () => { if (activeScope.current === key) rerender(); };
+        if ("windowOnly" in loaded) { tab.windowOnly = true; tab.preview = true; }
+        else {
+          tab.saved = loaded.doc; tab.hash = loaded.hash; tab.encoding = loaded.encoding; tab.lineEnding = loaded.lineEnding; tab.mixedLineEndings = loaded.mixedLineEndings; tab.sizeBytes = loaded.sizeBytes;
+          tab.state = EditorState.create({ doc: loaded.doc, extensions: [...extensions, preserveLineEndings(loaded.endings, loaded.lineEnding)] }); tab.savedState = tab.state;
+          if (!existing) tab.mode = isMarkdownPath(path) ? "reading" : "editing";
+          if (tab.parkedSelection) { const ranges = tab.parkedSelection.ranges.map(range => EditorSelection.range(Math.min(range.anchor, loaded.doc.length), Math.min(range.head, loaded.doc.length))); tab.state = tab.state.update({ selection: EditorSelection.create(ranges, tab.parkedSelection.mainIndex) }).state; }
+          tab.tracker = new DirtyTracker(loaded.doc, dirty => { tab.dirty = dirty; if (!dirty) window.clearTimeout(tab.autoSaveTimer); tab.notify(); });
+          const saveSession = tab.saveSession = new DocumentSaveSession<EditorState>(snapshot => ({ doc: snapshot.doc, endings: snapshot.field(lineEndings) }));
+          tab.queue = new SaveQueue(async snapshot => {
+            tab.saving = true; tab.saveError = null; tab.notify();
+            try {
+              for (;;) {
+                const result = await saveSession.save(root, path, snapshot, tab);
+                // A status retry may confirm an older frozen state, never the newer queued state.
+                tab.hash = result.sourceHash; tab.sizeBytes = Number(result.sourceBytes);
+                tab.savedState = result.snapshot; tab.saved = result.snapshot.doc; tab.tracker?.savedSnapshot(result.snapshot.doc);
+                tab.notify();
+                if (snapshot.doc === result.snapshot.doc && snapshot.field(lineEndings) === result.snapshot.field(lineEndings)) break;
+              }
+            } catch (e) { tab.saveError = errMsg(e); throw e; }
+            finally { tab.saving = false; tab.notify(); }
+          }, () => {
+            // Checkpoints are acknowledged above using the returned frozen state, not SaveQueue's input.
+            if (tab.dirty && !tab.saveError) { window.clearTimeout(tab.autoSaveTimer); tab.autoSaveTimer = window.setTimeout(() => saveTab(tab), 1000); }
+            tab.notify();
+          });
+        }
+        if (!existing) tabsRef.current.push(tab); rerender();
+      }).finally(() => { openingReservations.delete(sessionOwner); if (openingRef.current.get(path) === pending) openingRef.current.delete(path); if (fileRequestRef.current === seq) setOpeningStatus(null); });
+      openingSerialRef.current = pending.catch(() => {});
       openingRef.current.set(path, pending);
     }
     try { await pending; if (rootUriRef.current === root && fileRequestRef.current === seq && tabsRef.current.some(t => t.path === path)) activate(path); }
-    catch (e) { if (rootUriRef.current === root) toast(errMsg(e), "err"); }
-  }, [activate, toast, rerender]);
+    catch (e) { if (rootUriRef.current === root && errMsg(e) !== "OPEN_CANCELLED") toast(errMsg(e), "err"); }
+  }, [activate, toast, rerender, extensions, saveTab, sessionOwner]);
+
+  openFileRef.current = openFile;
 
   const changeMode = useCallback((mode: Tab["mode"]) => {
     const path = activeRef.current;
@@ -420,6 +509,9 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
     (path: string) => {
       const idx = tabsRef.current.findIndex(t => t.path === path);
       if (idx < 0) return;
+      const removed = tabsRef.current[idx];
+      if (removed.saving || removed.queue?.busy || removed.saveSession?.unresolved) { toast("文件仍在保存，请等待结果；草稿已保留", "warn"); return; }
+      window.clearTimeout(removed.autoSaveTimer); removed.tracker?.dispose(); removed.queue?.dispose();
       const rest = tabsRef.current.filter(t => t.path !== path);
       tabsRef.current = rest;
       if (activeRef.current === path) {
@@ -430,7 +522,7 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
         rerender();
       }
     },
-    [activate, rerender]
+    [activate, rerender, toast]
   );
 
   const closeTab = (path: string) => {
@@ -448,6 +540,7 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
       }
       await openFile(path); // 读取失败已在 openFile 内提示，且不改变当前已打开文件
       if (line == null || activeRef.current !== path) return;
+      if (tabsRef.current.find(t => t.path === path)?.windowOnly) { toast("大文件行索引尚未建立，暂不能按行跳转；已打开真实原件窗口，不使用隐藏编辑器的行号", "warn"); return; }
       changeMode("editing");
       requestAnimationFrame(() => {
         const view = viewRef.current;
@@ -494,11 +587,12 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
   const tabs = tabsRef.current;
   const active = activeRef.current;
   const activeTab = active ? tabs.find(t => t.path === active) ?? null : null;
-  const canEdit = activeTab != null && !activeTab.binary;
+  const canEdit = activeTab != null && !activeTab.binary && !activeTab.windowOnly && !activeTab.suspended;
+  const showWindow = !!activeTab?.preview && !activeTab.binary;
   const isMarkdown = !!activeTab && canEdit && isMarkdownPath(activeTab.path);
-  const showReading = isMarkdown && activeTab?.mode === "reading";
-  const showEditor = canEdit && !showReading;
-  const readingSource = showReading ? viewRef.current?.state.doc.toString() ?? activeTab?.state?.doc.toString() ?? activeTab?.saved ?? "" : "";
+  const showReading = isMarkdown && activeTab?.mode === "reading" && !showWindow;
+  const showEditor = canEdit && !showReading && !showWindow;
+  const readingSource = showReading ? viewRef.current?.state.doc.toString() ?? activeTab?.state?.doc.toString() ?? activeTab?.saved.toString() ?? "" : "";
 
   useLayoutEffect(() => {
     if (!visible || !showEditor || !activeTab) return;
@@ -510,7 +604,7 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
   }, [visible, showEditor, activeTab]);
 
   return (
-    <div ref={containerRef} className={`cda ${className ?? ""}`} data-ui-version="UI-CR045-v1">
+    <div ref={containerRef} className={`cda ${className ?? ""}`} data-ui-version="UI-CR055-FEAT007-v1">
       <aside {...treePane.paneProps} id={treeId} className={`cda-aside ${treePane.paneProps.className}`} aria-label="文件树">
         {treePane.overlay && <PaneClose pane={treePane} label="文件树" className="cda-tree-close btn sm" />}
         <FileTree rootUri={rootUri} onOpenFile={p => void openFile(p)} />
@@ -520,7 +614,7 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
         <EditorTabs
           tabs={tabs.map(t => ({ path: t.path, dirty: t.dirty }))}
           active={active}
-          onSelect={p => activate(p)}
+          onSelect={p => void openFile(p)}
           onClose={closeTab}
         />
         <div className="cda-editor-bar">
@@ -530,17 +624,21 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
             <button type="button" aria-pressed={showReading} onClick={() => changeMode("reading")}>阅读</button>
             <button type="button" aria-pressed={showEditor} onClick={() => changeMode("editing")}>编辑</button>
           </div>}
-          {activeTab?.dirty && <span className="small muted">未保存</span>}
-          <button className="btn sm" disabled={!canEdit} onClick={() => void saveActive()}>保存</button>
-          <button className="btn sm" disabled={!activeTab?.dirty} onClick={() => { if (active) setDiscardTarget(active); }}>取消修改</button>
+          {activeTab && !activeTab.binary && <span className="small muted" role="status">{activeTab.windowOnly ? "大文件窗口" : activeTab.saving ? "保存中…" : activeTab.saveError ? "保存失败 · 内容已保留" : activeTab.dirty ? "未保存" : "已保存"}</span>}
+          {activeTab?.saveError && <button className="btn sm" onClick={() => void saveActive()}>重试</button>}
+          {canEdit && !showWindow && <button className="btn sm" onClick={() => { if (activeTab) { activeTab.preview = true; rerender(); } }}>窗口预览</button>}
+          <button className="btn sm" disabled={!activeTab?.dirty || activeTab.saving} onClick={() => { if (active) setDiscardTarget(active); }}>取消修改</button>
         </div>
         {isMarkdown && <div className="cda-reading-note">当前编辑缓冲 · 不执行HTML／脚本，不自动读取本地或外联资源</div>}
+        {openingStatus && <div className="cda-perf-notice" role="status">{openingStatus} · 当前文档仍可编辑</div>}
+        {activeTab?.saveError && <div className="cda-perf-notice error" role="alert">{activeTab.saveError} · 当前草稿已保留。</div>}
         <div className="cda-stage">
           <div className={`cda-editor ${showEditor ? "" : "hide"}`} ref={hostRef} aria-hidden={!showEditor} />
+          {showWindow && activeTab && <WindowPreview key={activeTab.path} rootUri={rootUri} path={activeTab.path} buffer={activeTab.state?.doc} onClose={() => { if (activeTab.windowOnly) removeTab(activeTab.path); else { activeTab.preview = false; rerender(); } }} />}
           {showReading && activeTab && <MarkdownReading key={activeTab.path} tab={activeTab} source={readingSource} />}
           {!active && (
             <div className="cda-empty-fill">
-              <Empty title="未打开文件" desc="从左侧文件树选择一个文件开始编辑，Ctrl+S 保存" />
+              <Empty title="未打开文件" desc="从左侧文件树选择文件，修改后自动保存；Ctrl+S 立即保存" />
             </div>
           )}
           {activeTab?.binary && (
@@ -553,7 +651,8 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
       {closeTarget && visible && <Confirm title="关闭未保存文件" message={`「${baseName(closeTarget)}」有未保存修改。关闭将丢弃当前草稿；取消会完整保留内容、选择和滚动位置。`} danger onCancel={() => setCloseTarget(null)} onOk={() => { removeTab(closeTarget); setCloseTarget(null); }} />}
       {discardTarget && visible && <Confirm title="取消文件修改" message={`丢弃「${baseName(discardTarget)}」的未保存修改并恢复已保存内容？`} danger onCancel={() => setDiscardTarget(null)} onOk={() => {
         const tab = tabsRef.current.find(t => t.path === discardTarget);
-        if (tab) { tab.state = EditorState.create({ doc: tab.saved, extensions }); tab.dirty = false; if (activeRef.current === tab.path && viewRef.current) { viewRef.current.setState(tab.state); applyCompartments(viewRef.current, tab.path); } rerender(); }
+        if (tab?.saveSession?.unresolved) { toast("文件仍在保存，请等待结果；草稿已保留", "warn"); }
+        else if (tab && !tab.saving) { window.clearTimeout(tab.autoSaveTimer); tab.state = tab.savedState ?? EditorState.create({ doc: tab.saved, extensions }); tab.tracker?.update(tab.saved); tab.saveError = null; tab.dirty = false; if (activeRef.current === tab.path && viewRef.current) { viewRef.current.setState(tab.state); applyCompartments(viewRef.current, tab.path); } rerender(); }
         setDiscardTarget(null);
       }} />}
     </div>

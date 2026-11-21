@@ -148,6 +148,118 @@ async function suite(): Promise<void> {
     expect(list.some((p) => p.id === projectId), "应包含新项目");
     return `${list.length} 个项目`;
   });
+
+  /* ---------- CR-051：项目/知识库图标与头像风格（r6：50 图标共用 + 10 色卡成对 + 缺省 b + 头像图片） ---------- */
+  let smokeProjectName = "冒烟演示项目";
+  await t("CR-051 图标", "项目 icon 保存与读取", async () => {
+    const saved = await api.updateProject(projectId, smokeProjectName, projDir, "briefcase");
+    expect(saved.icon === "briefcase", `应保存 briefcase，实际 ${saved.icon}`);
+    const list = await api.listProjects();
+    expect(list.find((p) => p.id === projectId)?.icon === "briefcase", "列表应回读 icon");
+    await api.updateProject(projectId, smokeProjectName, projDir, null);
+    const cleared = (await api.listProjects()).find((p) => p.id === projectId);
+    expect(cleared?.icon === null, "清空后应为 null（展示层回类型默认）");
+    await api.updateProject(projectId, smokeProjectName, projDir, "target");
+    const kept = (await api.listProjects()).find((p) => p.id === projectId);
+    expect(kept?.icon === "target", "再次设置应生效");
+    await api.updateProject(projectId, smokeProjectName, projDir, null);
+    return "保存/清空/回读通过";
+  });
+  await t("CR-051 图标", "项目 icon 非法 id 拒绝", async () => {
+    // r6：rocket 已进入共用 50 白名单；非法样本改用未登记 id。
+    const msg = await expectError(api.updateProject(projectId, smokeProjectName, projDir, "notAnIcon"), "非法项目图标", "非法图标应被拒");
+    const list = await api.listProjects();
+    expect(list.find((p) => p.id === projectId)?.icon === null, "拒绝后不应写入");
+    return msg;
+  });
+  await t("CR-051 图标", "项目 icon+色卡成对保存与各自清空", async () => {
+    // r6：rocket 已在 50 图标共用白名单内；色卡与图标成对提交。
+    const saved = await api.updateProject(projectId, smokeProjectName, projDir, "rocket", "rose");
+    expect(saved.icon === "rocket" && saved.iconColor === "rose", `应成对保存 rocket+rose，实际 ${saved.icon}/${saved.iconColor}`);
+    let row = (await api.listProjects()).find((p) => p.id === projectId);
+    expect(row?.icon === "rocket" && row?.iconColor === "rose", "列表应回读成对值");
+    // 只改色卡：图标保持。
+    await api.updateProject(projectId, smokeProjectName, projDir, undefined, "indigo");
+    row = (await api.listProjects()).find((p) => p.id === projectId);
+    expect(row?.icon === "rocket" && row?.iconColor === "indigo", "只传色卡时应保留图标");
+    // 清空色卡回默认色（图标保留）；再清空图标回类型默认。
+    await api.updateProject(projectId, smokeProjectName, projDir, undefined, null);
+    row = (await api.listProjects()).find((p) => p.id === projectId);
+    expect(row?.icon === "rocket" && row?.iconColor === null, "清空色卡应写 NULL（展示层回默认色）");
+    await api.updateProject(projectId, smokeProjectName, projDir, null);
+    row = (await api.listProjects()).find((p) => p.id === projectId);
+    expect(row?.icon === null && row?.iconColor === null, "清空图标应写 NULL");
+    return "成对保存/改色/清空通过";
+  });
+  await t("CR-051 图标", "项目色卡非法 id 拒绝", async () => {
+    const msg = await expectError(api.updateProject(projectId, smokeProjectName, projDir, undefined, "magenta"), "非法背景色卡", "非法色卡应被拒");
+    const row = (await api.listProjects()).find((p) => p.id === projectId);
+    expect(row?.iconColor === null, "拒绝后不应写入");
+    return msg;
+  });
+  await t("CR-051 图标", "avatarStyle 缺省读取为 b", async () => {
+    // 独立键：不与 smoke.key 互相影响；缺省（未写入）时命令返回默认 b（r6）。
+    const style = await api.getAvatarStyle();
+    expect(style === "b", `未设置时应返回默认 b，实际 ${style}`);
+    return style;
+  });
+  await t("CR-051 图标", "avatarStyle 设置往返与非法值拒绝", async () => {
+    await api.setAvatarStyle("d");
+    expect(await api.getAvatarStyle() === "d", "应回读 d");
+    const msg = await expectError(api.setAvatarStyle("x"), "a、b、c、d、e", "非法风格应被拒");
+    await api.setAvatarStyle("b");
+    expect(await api.getAvatarStyle() === "b", "恢复默认 b");
+    return msg;
+  });
+  await t("CR-051 头像", "avatarImage 合法 PNG 保存/读取/清除", async () => {
+    const tinyPng = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    const saved = await api.setAvatarImage(tinyPng, "smoke.png");
+    expect(!!saved?.path && !!saved?.hash, "应返回本机路径与 hash");
+    const got = await api.getAvatarImage();
+    expect(got?.path === saved.path && got?.hash === saved.hash, "get_avatar_image 应回读引用");
+    const data = await api.avatarImageData();
+    expect(!!data && data.startsWith("data:image/png;base64,"), "avatar_image_data 应返回 data URL");
+    await api.clearAvatarImage();
+    const cleared = await api.getAvatarImage();
+    expect(cleared?.path === null && cleared?.hash === null, "清除后引用应为 null");
+    const dataCleared = await api.avatarImageData();
+    expect(dataCleared === null, "清除后 data URL 应为 null");
+    return "set/get/data/clear 通过";
+  });
+  await t("CR-051 头像", "avatarImage 魔数不符拒绝", async () => {
+    // 声明 PNG 但字节是 GIF（伪装内容）：服务端按魔数拒绝。
+    const fakePng = "data:image/png;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+    const msg = await expectError(api.setAvatarImage(fakePng), "格式不符", "伪装 PNG 应被拒");
+    const got = await api.getAvatarImage();
+    expect(got?.path === null, "拒绝后不应留下引用");
+    return msg;
+  });
+  await t("CR-051 头像", "avatarImage 超 200KB 拒绝", async () => {
+    // 在页面内合成随机噪声 PNG（不可压缩），从 360×360 逐步放大直到超过 200KB。
+    const bigDataUrl = await (async () => {
+      for (const size of [360, 460, 560, 660, 760]) {
+        const c = document.createElement("canvas");
+        c.width = size; c.height = size;
+        const ctx = c.getContext("2d")!;
+        const img = ctx.createImageData(size, size);
+        for (let i = 0; i < img.data.length; i += 4) {
+          img.data[i] = Math.floor(Math.random() * 256);
+          img.data[i + 1] = Math.floor(Math.random() * 256);
+          img.data[i + 2] = Math.floor(Math.random() * 256);
+          img.data[i + 3] = 255;
+        }
+        ctx.putImageData(img, 0, 0);
+        const url = c.toDataURL("image/png");
+        const bytes = Math.floor((url.length - url.indexOf(",") - 1) * 0.75);
+        if (bytes > 200 * 1024) return url;
+      }
+      throw new Error("未能合成超 200KB 样本（环境异常）");
+    })();
+    const msg = await expectError(api.setAvatarImage(bigDataUrl), "200KB", "超限应被拒");
+    const got = await api.getAvatarImage();
+    expect(got?.path === null, "超限拒绝后不应留下引用");
+    return msg;
+  });
   await t("需求", "read_requirements 树结构", async () => {
     const tree = await api.readRequirements(projectId);
     const flat: api.RequirementNode[] = [];
@@ -456,6 +568,99 @@ async function suite(): Promise<void> {
     return "ok";
   });
 
+  /* ---------- CR-053：CLI 命令工具（Shell） ---------- */
+  let realBashPath = "";
+  await t("CR-053 Shell", "cli_shell_candidates 三类候选真实探测", async () => {
+    const cs = await api.cliShellCandidates("claude");
+    expect(cs.length === 3, `应 3 条候选，实际 ${cs.length}`);
+    expect(cs.map((c) => c.kind).join(",") === "pwsh,windows-powershell,git-bash", "kind 顺序应为 pwsh,windows-powershell,git-bash");
+    // Windows PowerShell 5.1 在 System32 固定位置，Windows 上必装
+    const wp = cs.find((c) => c.kind === "windows-powershell")!;
+    expect(wp.available === true && !!wp.path && wp.path.toLowerCase().includes("windowspowershell"), `Windows PowerShell 5.1 应可用，实际 ${JSON.stringify(wp)}`);
+    expect(!!wp.version && /\d+\.\d+/.test(wp.version), `应有真实版本号，实际 ${wp.version}`);
+    for (const c of cs) {
+      if (c.available) {
+        expect(!!c.path && !!c.version, `${c.kind} 可用时应带路径与版本`);
+        if (c.kind === "git-bash") {
+          expect(!c.path!.toLowerCase().includes("windowsapps"), `Git Bash 不得是 WindowsApps 存根，实际 ${c.path}`);
+          realBashPath = c.path!;
+        }
+      } else {
+        expect(!!c.detail, `${c.kind} 不可用时应带原因，实际 ${JSON.stringify(c)}`);
+      }
+    }
+    return cs.map((c) => `${c.kind}=${c.available ? (c.source + " " + (c.version || "?")) : c.detail}`).join(" | ");
+  });
+  await t("CR-053 Shell", "cli_shell_get 缺省=auto 不报错", async () => {
+    const v = await api.cliShellGet("claude");
+    expect(v.setting.mode === "auto" && v.setting.path === null && v.missing === false, `缺省应为 auto，实际 ${JSON.stringify(v)}`);
+    return "auto";
+  });
+  await t("CR-053 Shell", "cli_shell_save 非法 mode / 相对路径 / 白名单外文件名 / grok 全拒绝", async () => {
+    const msgMode = await expectError(api.cliShellSave("claude", "cmd", null), "未知命令工具类型", "非法 mode 应被拒");
+    const msgRel = await expectError(api.cliShellSave("claude", "pwsh", "relative\\pwsh.exe"), "绝对路径", "相对路径应被拒");
+    // 白名单外：mock claude.exe 真实存在但文件名不在白名单
+    const probe = await api.invoke<{ resolvedClaude: string }>("smoke_spawn_probe");
+    const msgWl = await expectError(api.cliShellSave("claude", "pwsh", probe.resolvedClaude), "文件名必须是 pwsh.exe", "白名单外文件名应被拒");
+    const msgGrok = await expectError(api.cliShellSave("grok", "pwsh", "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"), "仅支持展示", "grok 指定应被拒");
+    return [msgMode, msgRel, msgWl, msgGrok].map((m) => m.slice(0, 40)).join(" / ");
+  });
+  await t("CR-053 Shell", "cli_shell_save 指定 pwsh 往返（无 pwsh 时用 git-bash）", async () => {
+    const cs = await api.cliShellCandidates("claude");
+    const pwsh = cs.find((c) => c.kind === "pwsh" && c.available);
+    const kind = pwsh ? "pwsh" : "git-bash";
+    const path = pwsh ? pwsh.path! : realBashPath;
+    expect(!!path, "应有可用候选路径供保存");
+    const saved = await api.cliShellSave("claude", kind, path);
+    expect(saved.mode === kind && saved.path === path, `保存应回显 ${kind}`);
+    const v = await api.cliShellGet("claude");
+    expect(v.setting.mode === kind && v.setting.path === path && v.missing === false, `重开设置应保留，实际 ${JSON.stringify(v)}`);
+    expect(!!v.setting.savedAt, "应记录 savedAt");
+    await api.cliShellSave("claude", "auto", null);
+    const back = await api.cliShellGet("claude");
+    expect(back.setting.mode === "auto", "改回 auto 应生效");
+    return `${kind} 保存/回读/恢复 auto 通过`;
+  });
+  await t("CR-053 Shell", "codex 实验性：可保存偏好（不注入）", async () => {
+    expect(!!realBashPath, "应有 Git Bash 路径");
+    const saved = await api.cliShellSave("codex", "git-bash", realBashPath);
+    expect(saved.mode === "git-bash", "codex 应接受保存（实验性只存偏好）");
+    const v = await api.cliShellGet("codex");
+    expect(v.setting.mode === "git-bash", "codex 偏好应回读");
+    await api.cliShellSave("codex", "auto", null);
+    return "保存/回读/恢复通过（注入语义未实测，后端不注入）";
+  });
+  await t("CR-053 Shell", "cli_shell_get 解析损坏数据=auto", async () => {
+    await api.setSetting("cli.shell.claude", "not-json{{{");
+    const v = await api.cliShellGet("claude");
+    expect(v.setting.mode === "auto", `损坏 JSON 应按 auto，实际 ${v.setting.mode}`);
+    await api.setSetting("cli.shell.claude", null);
+    return "auto";
+  });
+  await t("CR-053 Shell", "启动前复检：路径失效阻止 chat_send 并提示改选自动", async () => {
+    // 构造真实存在的 bash.exe → 保存 → 删除 → get missing → chat_send 被阻止（不静默回落）
+    await api.fsWriteFile(projDir, "bash.exe", "not a real shell");
+    const fakePath = projDir + "\\bash.exe";
+    await api.cliShellSave("claude", "git-bash", fakePath);
+    const ok = await api.cliShellGet("claude");
+    expect(ok.setting.mode === "git-bash" && ok.missing === false, "存在的路径不应标 missing");
+    await api.fsDeleteFile(projDir, "bash.exe");
+    const miss = await api.cliShellGet("claude");
+    expect(miss.missing === true, `删除后应标 missing，实际 ${JSON.stringify(miss)}`);
+    const s = await api.chatSessionCreate({ ...(projectId ? { projectId } : {}), cliId: "claude", modelId: "smoke-model" });
+    const msg = await expectError(
+      api.chatSend({ sessionId: s.id, content: "hi", refs: [], attachments: [] }, () => {}),
+      "已不存在",
+      "失效路径应阻止启动"
+    );
+    expect(msg.includes("自动"), "错误应提示改选「自动」：" + msg.slice(0, 120));
+    await api.chatSessionDelete(s.id).catch(() => {});
+    await api.cliShellSave("claude", "auto", null);
+    const restored = await api.cliShellGet("claude");
+    expect(restored.setting.mode === "auto" && restored.missing === false, "改回 auto 后应可恢复");
+    return msg.slice(0, 90);
+  });
+
 /* ---------- AI 会话（mock CLI 全链路） ---------- */
   let claudeSessionId = "";
   await t("会话", "chat_session_create", async () => {
@@ -563,18 +768,207 @@ async function suite(): Promise<void> {
     expect(rt.subagents.length === 4, "子智能体演示应为 4 条");
     expect(rt.background.length === 4, "后台任务演示应为 4 条");
     expect(rt.steps.length === 5 && rt.stepsDemo, "演示步骤应为 5 条");
-    // 真实工具执行记录：toolUse 开步 -> toolResult 落状态（不伪造）
-    recordToolUse(s.id, "T1", "Read");
-    recordToolResult(s.id, "T1", false);
-    expect(rt.steps.some((x) => x.id === "ST-T1" && x.state === "done"), "真实步骤应完成");
-    // 推进演示只推进本会话合成步骤
+    // 推进演示只推进本会话合成步骤（须在真实工具记录之前：recordToolUse 会清除演示步骤）
     const moved = advanceDemoStep(s.id);
     expect(moved, "推进演示应移动执行指针");
     expect(rt.steps.some((x) => x.state === "running"), "推进后仍有执行中步骤");
+    // 真实工具执行记录：toolUse 开步 -> toolResult 落状态（不伪造）
+    recordToolUse(s.id, "T1", "Read");
+    recordToolResult(s.id, "T1", false);
+    // sessionRuntime 以 generation 为前缀（新会话 generation=0 → ST-0-T1）；修正陈旧断言。
+    expect(rt.steps.some((x) => x.id === "ST-0-T1" && x.state === "done"), "真实步骤应完成");
     // 清空已结束只清展示
     clearEndedBackground(s.id);
     expect(getRuntime(s.id).background.every((b) => b.state === "运行中"), "清空后仅剩运行中");
     await api.chatSessionDelete(s.id);
+    return "ok";
+  });
+
+  /* ---------- CR-037：侧栏原生续接（STORY-032 AC-05/06，mock 全链路） ---------- */
+  /** 发送并等待 done/error 事件；返回全部事件（done 必有）。 */
+  async function sendAndWait(sid: string, text: string): Promise<api.ChatEvent[]> {
+    const events: api.ChatEvent[] = [];
+    await api.chatSend({ sessionId: sid, content: text, refs: [], attachments: [] }, (ev) => events.push(ev));
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { api.chatAbort(sid).catch(() => {}); reject(new Error("等待 done 超时")); }, 20000);
+      const check = setInterval(() => {
+        if (events.some((e) => e.type === "done")) { clearTimeout(timer); clearInterval(check); resolve(null); }
+        if (events.some((e) => e.type === "error")) {
+          clearTimeout(timer); clearInterval(check);
+          reject(new Error("CLI error 事件：" + JSON.stringify(events.find((e) => e.type === "error")).slice(0, 200)));
+        }
+      }, 100);
+    });
+    return events;
+  }
+
+  let resumeSessionId = "";
+  await t("CR-037 续接", "首轮 create：done 携带脱敏指纹且绑定落库（AC-05）", async () => {
+    const s = await api.chatSessionCreate({ ...(projectId ? { projectId } : {}), cliId: "claude", modelId: "smoke-model" });
+    resumeSessionId = s.id;
+    const events = await sendAndWait(s.id, "第一轮");
+    const done = events.find((e) => e.type === "done") as Extract<api.ChatEvent, { type: "done" }> | undefined;
+    expect(!!done, "应有 done 事件；实际=" + events.map((e) => e.type).join(","));
+    expect(typeof done!.turnId === "string" && done!.turnId!.length > 0, "done 应携带 turnId");
+    expect(!!done!.refFingerprint && /^[0-9a-f]{16}$/.test(done!.refFingerprint!), `应有 16 位脱敏指纹，实际 ${done!.refFingerprint}`);
+    expect(done!.nativeResumed === false, "首轮不得报已续接");
+    expect(!("sessionRef" in (done! as unknown as Record<string, unknown>)), "done 不得再携带原引用 sessionRef");
+    const meta = await api.chatSessionGet(s.id);
+    expect(meta.binding?.state === "native", `绑定应为 native，实际 ${JSON.stringify(meta.binding)}`);
+    expect(!!meta.binding?.refFingerprint, "绑定应带脱敏指纹");
+    expect(meta.binding?.expectedRevision === 1, `绑定修订应为 1，实际 ${meta.binding?.expectedRevision}`);
+    return `turnId=${done!.turnId?.slice(0, 12)} fp=${done!.refFingerprint}`;
+  });
+  await t("CR-037 续接", "第二轮 resume：mock confirm → nativeResumed=true（AC-05）", async () => {
+    const events = await sendAndWait(resumeSessionId, "第二轮");
+    const done = events.find((e) => e.type === "done") as Extract<api.ChatEvent, { type: "done" }>;
+    expect(done.nativeResumed === true, `第二轮应确认续接，实际 ${JSON.stringify(done)}`);
+    const meta = await api.chatSessionGet(resumeSessionId);
+    expect(meta.binding?.state === "native", "绑定应保持 native");
+    // 确认轮推进 CAS 代次：每次 confirmed 写入 revision+1（期望值随链推进）。
+    expect(meta.binding?.expectedRevision === 2, `确认轮应递增修订至 2，实际 ${meta.binding?.expectedRevision}`);
+    return "nativeResumed=true（修订 1→2）";
+  });
+  await t("CR-037 续接", "silent-new：适配器静默换线 → freshContext + 断点卡，不记已续接", async () => {
+    await api.invoke("smoke_mock_resume", { mode: "silent-new" });
+    const events = await sendAndWait(resumeSessionId, "第三轮");
+    const done = events.find((e) => e.type === "done") as Extract<api.ChatEvent, { type: "done" }>;
+    expect(done.freshContext === true && done.nativeResumed === false, `静默换线应为 freshContext，实际 ${JSON.stringify(done)}`);
+    const meta = await api.chatSessionGet(resumeSessionId);
+    expect(meta.binding?.state === "native", "新线程已确认绑定 → native");
+    expect(meta.binding?.expectedRevision === 3, `换线写入应递增修订至 3，实际 ${meta.binding?.expectedRevision}`);
+    const msgs = await api.chatMessages(resumeSessionId);
+    const bp = msgs.find((m) => m.role === "system" && (m.metaJson ?? "").includes("context-breakpoint"));
+    expect(!!bp, "应存在 system 断点消息");
+    expect((bp!.content ?? "").includes("上下文已重建"), `断点文案：${(bp!.content ?? "").slice(0, 60)}`);
+    await api.invoke("smoke_mock_resume", { mode: "confirm" });
+    return "freshContext=true + 断点消息落库（修订 2→3）";
+  });
+  await t("CR-037 续接", "stale：resume 报错 → blocked（done 通报，绑定不动）", async () => {
+    await api.invoke("smoke_mock_resume", { mode: "stale" });
+    // 距上一确认轮 >3s：避开 REF_NOT_READY 竞态窗口，稳定命中 REF_STALE。
+    await new Promise((r) => setTimeout(r, 3200));
+    const events = await sendAndWait(resumeSessionId, "第四轮");
+    // 场景复位先于断言：即使断言失败也不污染后续用例。
+    await api.invoke("smoke_mock_resume", { mode: "confirm" });
+    const done = events.find((e) => e.type === "done") as Extract<api.ChatEvent, { type: "done" }>;
+    expect(done.blocked === true && done.reasonCode === "REF_STALE", `应 blocked REF_STALE，实际 ${JSON.stringify(done)}`);
+    const meta = await api.chatSessionGet(resumeSessionId);
+    expect(meta.binding?.state === "blocked", `绑定应为 blocked，实际 ${meta.binding?.state}`);
+    expect(meta.binding?.reasonCode === "REF_STALE", "阻塞原因应持久化");
+    expect(meta.binding?.expectedRevision === 3, "阻塞不递增修订");
+    // 草稿保留：发送失败的文本通过 update draft 校验写路径未被清空
+    await api.chatSessionUpdate({ id: resumeSessionId, draft: "未发送草稿保留" });
+    const withDraft = await api.chatSessionGet(resumeSessionId);
+    expect(withDraft.draft === "未发送草稿保留", "草稿保留");
+    return "blocked REF_STALE + 草稿保留";
+  });
+  await t("CR-037 续接", "confirm_fresh：CAS 清引用 + 断点卡落库（AC-06）", async () => {
+    await api.chatSessionConfirmFresh(resumeSessionId, 3, "REF_STALE");
+    const meta = await api.chatSessionGet(resumeSessionId);
+    expect(meta.binding?.state === "fresh", `确认后应为 fresh，实际 ${meta.binding?.state}`);
+    expect(meta.binding?.expectedRevision === 4, `确认应递增修订至 4，实际 ${meta.binding?.expectedRevision}`);
+    const msgs = await api.chatMessages(resumeSessionId);
+    const bp = msgs.filter((m) => m.role === "system" && (m.metaJson ?? "").includes("context-breakpoint"));
+    expect(bp.length >= 2, `应有两个断点（换线+重建），实际 ${bp.length}`);
+    // CAS 失配拒绝：旧 expectedRevision 重放
+    await expectError(api.chatSessionConfirmFresh(resumeSessionId, 3, "REF_STALE"), "绑定已变化", "CAS 失配应拒绝");
+    return "fresh + 断点卡 + CAS 拒绝重放（修订 3→4）";
+  });
+  await t("CR-037 续接", "confirm_fresh 后下一轮以全新上下文重建绑定", async () => {
+    const events = await sendAndWait(resumeSessionId, "重建后第一轮");
+    const done = events.find((e) => e.type === "done") as Extract<api.ChatEvent, { type: "done" }>;
+    expect(done.nativeResumed === false && !done.blocked, `重建后首轮应为 fresh/create，实际 ${JSON.stringify(done)}`);
+    const meta = await api.chatSessionGet(resumeSessionId);
+    expect(meta.binding?.state === "native", "重建后应回到 native");
+    expect(meta.binding?.expectedRevision === 5, `重建确认应递增至 5，实际 ${meta.binding?.expectedRevision}`);
+    return "fresh → native（修订 4→5）";
+  });
+  await t("CR-037 续接", "grok：首轮 create 直接发送；第二轮未确认被拒（UNSUPPORTED_CLI）", async () => {
+    const s = await api.chatSessionCreate({ ...(projectId ? { projectId } : {}), cliId: "grok", modelId: "smoke-model" });
+    const events = await sendAndWait(s.id, "grok 首轮");
+    expect(events.some((e) => e.type === "delta"), "grok 首轮应有 delta");
+    const meta = await api.chatSessionGet(s.id);
+    expect(meta.binding?.state === "freshPending", `grok 有历史且未确认应为 freshPending，实际 ${JSON.stringify(meta.binding)}`);
+    const msg = await expectError(sendAndWait(s.id, "grok 第二轮"), "BINDING_FRESH_REQUIRED", "未确认 grok 第二轮应被拒");
+    expect(msg.includes("UNSUPPORTED_CLI"), `错误应含 UNSUPPORTED_CLI：${msg.slice(0, 120)}`);
+    await api.chatSessionDelete(s.id);
+    return "首轮直发 + freshPending + 第二轮拒绝";
+  });
+  await t("CR-037 续接", "executor 会话不参与绑定（sessionRole 门控）", async () => {
+    const s = await api.chatSessionCreate({ ...(projectId ? { projectId } : {}), cliId: "claude", modelId: "smoke-model", featureId: "FEAT-001-DEMO" });
+    expect(s.sessionRole === "executor", "应为 executor 会话");
+    const events = await sendAndWait(s.id, "执行会话首轮");
+    const done = events.find((e) => e.type === "done") as Extract<api.ChatEvent, { type: "done" }>;
+    expect(!done.nativeResumed && !done.blocked && done.refFingerprint == null, "执行会话 done 不带绑定信息");
+    const meta = await api.chatSessionGet(s.id);
+    expect(meta.binding == null, `执行会话 binding 应为空，实际 ${JSON.stringify(meta.binding)}`);
+    // 绑定列保持空：executor 的 ConfirmCreate 被 sessionRole 门控归档
+    await api.chatSessionDelete(s.id);
+    return "binding=null + done 无绑定信息";
+  });
+  await t("CR-037 续接", "codex resume：mock confirm → nativeResumed=true", async () => {
+    const s = await api.chatSessionCreate({ ...(projectId ? { projectId } : {}), cliId: "codex", modelId: "smoke-model" });
+    const first = await sendAndWait(s.id, "codex 首轮");
+    const done1 = first.find((e) => e.type === "done") as Extract<api.ChatEvent, { type: "done" }>;
+    expect(!!done1.refFingerprint, "codex 首轮应绑定线程");
+    const second = await sendAndWait(s.id, "codex 第二轮");
+    const done2 = second.find((e) => e.type === "done") as Extract<api.ChatEvent, { type: "done" }>;
+    expect(done2.nativeResumed === true, `codex 第二轮应续接，实际 ${JSON.stringify(done2)}`);
+    await api.chatSessionDelete(s.id);
+    return "codex create→resume 通过";
+  });
+  await t("CR-037 续接", "非空会话切换 CLI 被拒（须另建会话，STORY-011 AC-05）", async () => {
+    const msg = await expectError(
+      api.chatSessionUpdate({ id: resumeSessionId, cliId: "codex" }),
+      "另建会话",
+      "非空会话原地换 CLI 应被拒"
+    );
+    // 空会话仍允许原地改
+    const empty = await api.chatSessionCreate({ ...(projectId ? { projectId } : {}), cliId: "claude", modelId: "smoke-model" });
+    await api.chatSessionUpdate({ id: empty.id, cliId: "codex" });
+    const got = await api.chatSessionGet(empty.id);
+    expect(got.cliId === "codex", "空会话原地换 CLI 应生效");
+    await api.chatSessionDelete(empty.id);
+    return msg.slice(0, 60);
+  });
+  // SMOKE_KEEP_DB=1：保留上次冒烟库，验证「重启后仍属原会话」（AC-05 跨重启）。
+  // 标记会话不带项目（全局），避免前一轮清理 delete_project 后项目悬空阻塞续接。
+  await t("CR-037 续接", "重启恢复：SMOKE_KEEP_DB 下原会话绑定与续接保持（AC-05）", async () => {
+    const keepDb = await api.invoke<boolean>("smoke_keep_db_flag").catch(() => false);
+    const list = await api.chatSessions();
+    let marker = list.find((s) => s.title === "CR037-续接保持");
+    // keep-db 下标记会话可能挂在前一轮已删除的项目上：删除重建为全局会话，重走两轮绑定。
+    if (marker && marker.projectId) {
+      const projects = await api.listProjects().catch(() => [] as api.Project[]);
+      if (!projects.some((p) => p.id === marker!.projectId)) {
+        await api.chatSessionDelete(marker.id).catch(() => {});
+        marker = undefined;
+      }
+    }
+    if (!marker) {
+      const s = await api.chatSessionCreate({ cliId: "claude", modelId: "smoke-model" });
+      await api.chatSessionUpdate({ id: s.id, title: "CR037-续接保持" });
+      await sendAndWait(s.id, "保持会话第一轮");
+      const second = await sendAndWait(s.id, "保持会话第二轮");
+      const done = second.find((e) => e.type === "done") as Extract<api.ChatEvent, { type: "done" }>;
+      expect(done.nativeResumed === true, "标记会话第二轮应续接");
+      if (!keepDb) return "已创建标记会话（SMOKE_KEEP_DB=1 重启后复验）";
+      const meta = await api.chatSessionGet(s.id);
+      expect(meta.binding?.state === "native", `标记会话绑定应 native，实际 ${meta.binding?.state}`);
+      return "keep-db 下标记会话重建并两轮绑定（上轮项目悬空，已重建）";
+    }
+    const meta = await api.chatSessionGet(marker.id);
+    expect(meta.binding?.state === "native", `重启后绑定应恢复 native，实际 ${meta.binding?.state}`);
+    expect(!!meta.binding?.refFingerprint, "重启后绑定应带脱敏指纹");
+    const third = await sendAndWait(marker.id, "重启后第三轮");
+    const done = third.find((e) => e.type === "done") as Extract<api.ChatEvent, { type: "done" }>;
+    expect(done.nativeResumed === true, `重启后第三轮应仍续接原线程，实际 ${JSON.stringify(done)}`);
+    return "重启后绑定恢复且第三轮 nativeResumed=true";
+  });
+  await t("CR-037 续接", "清理续接测试会话", async () => {
+    await api.chatAbort(resumeSessionId).catch(() => {});
+    await api.chatSessionDelete(resumeSessionId);
     return "ok";
   });
 
@@ -702,6 +1096,69 @@ async function suite(): Promise<void> {
     const grants = await api.kbGrants(projectId);
     expect(grants.length >= 1, "应有授权视图");
     return `${grants.length} 行`;
+  });
+  await t("CR-051 图标", "知识库 icon 保存与读取", async () => {
+    await api.kbSetIcon(kbId, "library");
+    let list = await api.kbList();
+    expect(list.find((l) => l.id === kbId)?.icon === "library", "应保存 library");
+    await api.kbSetIcon(kbId, null);
+    list = await api.kbList();
+    expect(list.find((l) => l.id === kbId)?.icon === null, "清空后应回来源默认");
+    await api.kbSetIcon(kbId, "shield");
+    return "保存/清空/回读通过";
+  });
+  await t("CR-051 图标", "知识库 icon 非法 id 拒绝", async () => {
+    // r6：rocket 已进入共用 50 白名单；非法样本改用未登记 id。
+    const msg = await expectError(api.kbSetIcon(kbId, "notAnIcon"), "非法知识库图标", "非法图标应被拒");
+    const list = await api.kbList();
+    expect(list.find((l) => l.id === kbId)?.icon === "shield", "拒绝后不应写入");
+    await api.kbSetIcon(kbId, null);
+    return msg;
+  });
+  await t("CR-051 图标", "知识库 icon+色卡成对保存与回读", async () => {
+    // r6：知识库与项目共用 50 图标；色卡成对保存、清空回默认青绿。
+    await api.kbSetIcon(kbId, "chartBar");
+    await api.kbSetIconColor(kbId, "sand");
+    let list = await api.kbList();
+    let row = list.find((l) => l.id === kbId);
+    expect(row?.icon === "chartBar" && row?.iconColor === "sand", "应成对保存 chartBar+sand");
+    await api.kbSetIconColor(kbId, null);
+    list = await api.kbList();
+    row = list.find((l) => l.id === kbId);
+    expect(row?.icon === "chartBar" && row?.iconColor === null, "清空色卡应写 NULL（展示层回默认青绿）");
+    const msg = await expectError(api.kbSetIconColor(kbId, "cyan"), "非法背景色卡", "非法色卡应被拒");
+    await api.kbSetIcon(kbId, null);
+    return "成对保存/清空/拒绝：" + msg;
+  });
+  await t("CR-051 图标", "kb_set_appearance 原子成对提交", async () => {
+    // 接手收尾补齐：一次调用同时写图标与色卡（原子，不留半更新）。
+    await api.kbSetAppearance(kbId, "chartBar", "sand");
+    let row = (await api.kbList()).find((l) => l.id === kbId);
+    expect(row?.icon === "chartBar" && row?.iconColor === "sand", "原子提交应成对落库");
+    await api.kbSetAppearance(kbId, null, null);
+    row = (await api.kbList()).find((l) => l.id === kbId);
+    expect(row?.icon === null && row?.iconColor === null, "原子清空应双列 NULL");
+    const msg = await expectError(api.kbSetAppearance(kbId, "notAnIcon", "sand"), "非法", "非法图标原子拒绝");
+    row = (await api.kbList()).find((l) => l.id === kbId);
+    expect(row?.icon === null && row?.iconColor === null, "拒绝后不留半更新");
+    return "原子成对/清空/拒绝：" + msg;
+  });
+  await t("CR-051 头像", "save_avatar 原子提交（图片+风格同事务）", async () => {
+    const tinyPng = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    const saved = await api.saveAvatar(tinyPng, "c");
+    expect(!!saved?.path, "原子保存应返回路径");
+    expect(await api.getAvatarStyle() === "c", "风格应随同一事务更新为 c");
+    const got = await api.getAvatarImage();
+    expect(got?.path === saved.path, "引用应可回读");
+    // 恢复默认 = data_url 传空串（清图 + 设 B）；传 null 语义为「保留图片只改风格」。
+    await api.saveAvatar("", "b");
+    expect(await api.getAvatarStyle() === "b", "恢复默认应清图并设 B");
+    expect((await api.getAvatarImage())?.path === null, "恢复默认后引用为 null");
+    const kept = await api.saveAvatar(tinyPng, "d");
+    expect(await api.getAvatarStyle() === "d" && !!kept?.path, "null 语义：保留图片只改风格");
+    await api.saveAvatar("", "b");
+    expect((await api.getAvatarImage())?.path === null, "收尾恢复默认");
+    return "save_avatar 原子提交/恢复默认/null 保留语义通过";
   });
 
   /* ---------- 服务器（错误路径，无真实主机） ---------- */
@@ -1010,6 +1467,37 @@ async function suite(): Promise<void> {
         "两次尝试均未出现真实工具调用与结果事件；事件=" + lastEvents.slice(0, 120));
       expect(lastReply.trim().length > 0, "工具调用后应有最终回复");
       return `工具=${(toolUse as { name?: string }).name ?? "?"} 回复=${JSON.stringify(lastReply.slice(0, 60))}`;
+    });
+
+    await t("真实供应商", "真实 claude 两轮原生续接（CR-037 AC-05：流内 session_id 一致确认）", async () => {
+      await api.invoke("smoke_set_tierflow_key", { key: liveKey });
+      await api.invoke("smoke_use_real_claude");
+      const s = await api.chatSessionCreate({
+        ...(projectId ? { projectId } : {}), cliId: "claude", providerId: liveProviderId, modelId: "tierflow", effort: "off",
+      } as { projectId?: string; cliId: string; providerId: string; modelId: string; effort: string });
+      let round1 = "";
+      let round2 = "";
+      let err = "";
+      try {
+        const first = await sendAndWait(s.id, "记住数字 47。只回复：已记住");
+        const done1 = first.find((e) => e.type === "done") as Extract<api.ChatEvent, { type: "done" }>;
+        expect(!!done1.refFingerprint, `首轮应绑定原线程，实际 ${JSON.stringify(done1)}`);
+        round1 = done1.refFingerprint!;
+        const meta1 = await api.chatSessionGet(s.id);
+        expect(meta1.binding?.state === "native", `首轮绑定应为 native，实际 ${meta1.binding?.state}`);
+        const second = await sendAndWait(s.id, "我刚才让你记住的数字是多少？只回复数字。");
+        const done2 = second.find((e) => e.type === "done") as Extract<api.ChatEvent, { type: "done" }>;
+        expect(done2.nativeResumed === true, `第二轮应确认续接（emittedRef==requested），实际 ${JSON.stringify(done2)}`);
+        round2 = done2.refFingerprint ?? "";
+        expect(round2 === round1, "两轮指纹应一致（同一线程）");
+        const msgs = await api.chatMessages(s.id);
+        const reply = (msgs.filter((m) => m.role === "assistant").pop()?.content ?? "").trim();
+        expect(/47/.test(reply), `续接后模型应记得 47，实际回复=${JSON.stringify(reply.slice(0, 80))}`);
+      } catch (e) { err = String(e); }
+      const meta = await api.chatSessionGet(s.id).catch(() => null);
+      await api.chatSessionDelete(s.id).catch(() => {});
+      expect(!err, "真实续接失败：" + err.slice(0, 200));
+      return `两轮续接通过（指纹 ${round1.slice(0, 8)}…）`;
     });
   }
 

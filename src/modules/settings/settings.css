@@ -214,3 +214,37 @@ html[data-theme="dark"] .set-modal::backdrop, html[data-theme="dark"] .set-sub-d
   .set-dialog-head, .set-dialog-body, .set-dialog-foot { padding-left: 16px; padding-right: 16px; }
   .set-dialog-foot { flex-wrap: wrap; }
 }
+
+/* ---------- CR-053：命令工具（Shell）分组（对照 docs/UI/cli-shell-design/index.html，复用设置卡令牌） ---------- */
+.set-modal, .set-sub-dialog { --set-danger-soft: #fbeaea; }
+html[data-theme="dark"] .set-modal, html[data-theme="dark"] .set-sub-dialog { --set-danger-soft: #332226; }
+.set-shell-group { border: 1px solid var(--set-line); border-radius: 8px; background: var(--set-surface); padding: 12px; display: grid; gap: 9px; min-width: 0; }
+.set-shell-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; row-gap: 5px; }
+.set-shell-h b { font-size: 12px; font-weight: 600; }
+.set-shell-h .spacer { flex: 1; }
+.set-shell-caption { font-size: 10.5px; color: var(--set-muted); white-space: nowrap; }
+.set-shell-opts { margin: 0; padding: 0; border: 0; min-width: 0; display: grid; gap: 5px; }
+.set-shell-opt { display: flex; align-items: flex-start; gap: 8px; padding: 8px 9px; border: 1px solid var(--set-line); border-radius: 6px; background: var(--set-surface); cursor: pointer; min-width: 0; }
+.set-shell-opt:hover { border-color: var(--set-line-strong); }
+.set-shell-opt.sel { border-color: var(--set-primary-line); background: var(--set-primary-soft); }
+.set-shell-opt.bad { border-color: var(--set-danger); background: var(--set-danger-soft); }
+.set-shell-opt.bad .set-shell-main b { color: var(--set-danger); }
+.set-shell-radio { position: absolute; width: 1px; height: 1px; opacity: 0; margin: 0; pointer-events: none; }
+.set-shell-opt:focus-within { outline: 2px solid var(--set-primary); outline-offset: 1px; }
+.set-shell-dot { flex: 0 0 auto; width: 13px; height: 13px; margin-top: 2px; border-radius: 50%; border: 1.5px solid var(--set-line-strong); background: var(--set-surface); position: relative; }
+.set-shell-opt.sel .set-shell-dot { border-color: var(--set-primary); }
+.set-shell-opt.sel .set-shell-dot::after { content: ""; position: absolute; inset: 2px; border-radius: 50%; background: var(--set-primary); }
+.set-shell-main { min-width: 0; flex: 1; }
+.set-shell-main b { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; line-height: 1.5; flex-wrap: wrap; }
+.set-shell-main small { display: block; margin-top: 1px; font-size: 10.5px; color: var(--set-muted); overflow-wrap: anywhere; line-height: 1.5; }
+.set-shell-readonly { display: flex; align-items: center; gap: 8px; padding: 8px 9px; border: 1px dashed var(--set-line); border-radius: 6px; background: var(--set-surface-2); font-size: 11.5px; color: var(--set-ink-2); flex-wrap: wrap; }
+.set-shell-readonly .mono { font-size: 10.5px; color: var(--set-muted); overflow-wrap: anywhere; }
+.set-shell-note { margin: 0; font-size: 10.5px; color: var(--set-muted); line-height: 1.6; display: flex; gap: 6px; }
+.set-shell-note .dot { flex: 0 0 auto; width: 5px; height: 5px; border-radius: 50%; background: var(--set-muted); margin-top: 6px; }
+.set-shell-note.warn { color: var(--set-danger); }
+.set-shell-note.warn .dot { background: var(--set-danger); }
+.set-shell-err { margin: 0; font-size: 11px; color: var(--set-danger); line-height: 1.6; }
+.set-shell-checking { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--set-muted); padding: 4px 0; }
+.set-shell-spinner { flex: 0 0 auto; width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--set-line); border-top-color: var(--set-primary); animation: set-shell-spin .8s linear infinite; }
+@keyframes set-shell-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .set-shell-spinner { animation: none; } }

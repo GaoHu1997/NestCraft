@@ -1,6 +1,7 @@
 import { Icon } from "@/components/icons";
 import { useEffect, useRef, useState } from "react";
 import { usePaneWidth, ResizeHandle, PaneToggle } from "@/components/pane-resize";
+import { TabMoreDropdown, TabMoreIcon, useTabOverflow } from "@/components/tab-overflow";
 import { Empty, Modal, renderMarkdown, useToast } from "@/components/ui";
 import {
   cancelOfficeClose, closeOfficeFile, copyOfficeFile, currentOfficeContent, filePath,
@@ -26,6 +27,10 @@ export function OfficeViewer({ projectId, visible = true }: { projectId: string;
   const s = st(projectId);
   const file = s.selectedFileId ? getOfficeFile(projectId, s.selectedFileId) : undefined;
   const opened = Array.from(new Set([...(s.openFileIds ?? []), ...(file ? [file.id] : [])]));
+  // CR-052 / UI-TAB-001：打开文件页签溢出统一走共享「更多」下拉，不出现横向滚动条。
+  const officeTabItems = opened.map(id => { const f = getOfficeFile(projectId, id); return { key: id, label: f?.name ?? id, active: id === file?.id }; });
+  const officeTabSig = officeTabItems.map(item => `${item.key}:${item.label}:${item.active ? 1 : 0}`).join("|");
+  const officeTabsOverflow = useTabOverflow({ tabSelector: ".office-open-tab", items: officeTabItems, deps: [officeTabSig] });
   return <section className="office-viewer office-main">
     <OfficeSessionNote projectId={projectId} />
     <div className="office-open-tabs" aria-label="打开的文件">
@@ -36,7 +41,9 @@ export function OfficeViewer({ projectId, visible = true }: { projectId: string;
           <button type="button" aria-label={`关闭 ${f.name}`} onClick={() => requestOfficeClose(projectId, () => closeOfficeFile(projectId, id), id)}><Icon name="x" size={12} /></button>
         </div> : null;
       })}
+      {opened.length > 0 && <button {...officeTabsOverflow.moreProps}><TabMoreIcon /></button>}
     </div>
+    {officeTabsOverflow.dropdownOpen && <TabMoreDropdown anchorRef={officeTabsOverflow.moreRef} items={officeTabItems} onPick={id => selectFile(projectId, id)} onClose={officeTabsOverflow.closeDropdown} />}
     {file ? <Viewer key={`${projectId}:${file.id}`} file={file} visible={visible} /> :
       <div className="office-empty"><h1>从一份资料开始</h1><p>从左侧添加资料或新建文档。编辑副本只有保存成功后才进入本会话成果。</p><small>合成仿真 · 未访问真实资料 · 内存修改重启不保留</small></div>}
     <OfficeCloseGuard projectId={projectId} visible={visible} />

@@ -5,8 +5,18 @@
 
 use crate::models::FileNode;
 use tauri::Manager;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
+
+#[path = "fs_performance.rs"]
+pub mod performance;
+#[path = "fs_guard.rs"]
+pub mod guard;
+#[path = "fs_resources.rs"]
+pub mod resources;
+#[path = "fs_document.rs"]
+pub mod document;
 
 /// 校验 target 必须位于 root 之下（canonicalize 后前缀匹配）。
 /// 相对路径按 root 解析；target 或其父目录不存在时按词法解析（不逃逸即可）。
@@ -101,14 +111,30 @@ pub fn fs_list_tree(root_uri: String, max_depth: Option<u32>) -> Result<Vec<File
 #[tauri::command]
 pub fn fs_read_file(root_uri: String, path: String) -> Result<String, String> {
     let p = ensure_under(Path::new(&root_uri), Path::new(&path))?;
-    std::fs::read_to_string(&p).map_err(|e| format!("读取失败：{}", e))
+    let meta = std::fs::metadata(&p).map_err(|e| format!("读取失败：{}", e))?;
+    if meta.len() > 1024 * 1024 { return Err("LEGACY_FILE_TOO_LARGE: 请使用窗口读取接口".into()); }
+    let file = guard::read_file(&p)?;
+    let mut reader = std::io::BufReader::with_capacity(64 * 1024, file);
+    let mut text = String::new();
+    use std::io::Read;
+    reader.read_to_string(&mut text).map_err(|e| format!("读取失败：{}", e))?;
+    Ok(text)
 }
 
 #[tauri::command]
 pub fn fs_write_file(root_uri: String, path: String, content: String) -> Result<(), String> {
+    if content.len() > 1024 * 1024 { return Err("LEGACY_FILE_TOO_LARGE: 请使用分块保存接口".into()); }
     let p = ensure_under(Path::new(&root_uri), Path::new(&path))?;
-    let tmp = p.with_extension(format!("{}", "tmp_write"));
-    std::fs::write(&tmp, &content).map_err(|e| e.to_string())?;
+    if let Ok(file) = guard::read_file(&p) {
+        let file_id = guard::identity(&file)?;
+        if guard::managed(&file_id) || guard::file_busy(&file_id) { return Err("BASELINE_REQUIRED: 文件由受管编辑器或保存任务占用".into()); }
+    }
+    let tmp = p.with_file_name(format!(".nestcraft-legacy-{}.tmp", uuid::Uuid::new_v4()));
+    let mut temp = guard::exclusive(&tmp, true)?;
+    use std::io::Write;
+    temp.write_all(content.as_bytes()).map_err(|e| e.to_string())?;
+    temp.sync_all().map_err(|e| e.to_string())?;
+    drop(temp);
     std::fs::rename(&tmp, &p).map_err(|e| format!("写入失败：{}", e))
 }
 
@@ -136,7 +162,9 @@ pub fn fs_search(root_uri: String, query: String, limit: Option<i64>) -> Result<
     if query.is_empty() {
         return Ok(vec![]);
     }
-    let root = std::fs::canonicalize(&root_uri).map_err(|e| e.to_string())?;
+    let rooted = guard::RootedPath::new(&root_uri, "", false)?;
+    rooted.verify()?;
+    let root = rooted.root.clone();
     let cap = limit.unwrap_or(200);
     let mut hits: Vec<SearchHit> = Vec::new();
     let q_lower = query.to_lowercase();
@@ -163,18 +191,20 @@ pub fn fs_search(root_uri: String, query: String, limit: Option<i64>) -> Result<
         if !TEXT_EXT.contains(&ext.as_str()) {
             continue;
         }
-        if let Ok(text) = std::fs::read_to_string(path) {
-            for (i, line) in text.lines().enumerate() {
-                if line.to_lowercase().contains(&q_lower) {
-                    hits.push(SearchHit {
-                        path: path.to_string_lossy().to_string(),
-                        line_no: (i + 1) as i64,
-                        line_text: line.chars().take(200).collect(),
-                    });
-                    if hits.len() >= cap as usize {
-                        break;
-                    }
-                }
+        let relative = match path.strip_prefix(&root) { Ok(v) => v.to_string_lossy().replace('\\', "/"), Err(_) => continue };
+        let file_pin = match guard::RootedPath::new(&root_uri, &relative, false) { Ok(v) => v, Err(_) => continue };
+        if file_pin.verify().is_err() { continue }
+        let file = match guard::read_file(&file_pin.path) { Ok(v) => v, Err(_) => continue };
+        let reader = BufReader::with_capacity(64 * 1024, file);
+        for (i, line) in reader.lines().enumerate() {
+            let line = match line { Ok(v) => v, Err(_) => continue };
+            if line.to_lowercase().contains(&q_lower) {
+                hits.push(SearchHit {
+                    path: path.to_string_lossy().to_string(),
+                    line_no: (i + 1) as i64,
+                    line_text: line.chars().take(200).collect(),
+                });
+                if hits.len() >= cap as usize { break; }
             }
         }
     }

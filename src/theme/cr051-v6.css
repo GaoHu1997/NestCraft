@@ -1,0 +1,183 @@
+
+/* ================= CR-051 r6：50 图标库、10 整块色卡、头像框与更换弹窗 =================
+   依据 UI-CR051-v6：色卡整块填充无文字；头像「框 → 悬停编辑 → 固定 680×660 弹窗 →
+   常驻取景框拖动裁剪」。滚动条遵守 UI-SCROLL-001：本段不新增常显滚动条样式。 */
+
+/* 10 个色卡：一块实色，不含外框、内块或文字。 */
+.cr51-color-blue   { background: #eaf1ff; color: #2b6cf6; }
+.cr51-color-teal   { background: #e8f7f3; color: #0b7d70; }
+.cr51-color-violet { background: #f0edfd; color: #6f5bd6; }
+.cr51-color-amber  { background: #fff4e2; color: #b76a00; }
+.cr51-color-green  { background: #e7f8ef; color: #1a9d5a; }
+.cr51-color-rose   { background: #fdeef1; color: #c2345a; }
+.cr51-color-indigo { background: #eef0ff; color: #4356c9; }
+.cr51-color-orange { background: #fff0e6; color: #c2410c; }
+.cr51-color-slate  { background: #eef1f5; color: #52627a; }
+.cr51-color-sand   { background: #f8f1e3; color: #8a6420; }
+
+html[data-theme='dark'] .cr51-color-blue   { background: #1e2a44; color: #8db3ff; }
+html[data-theme='dark'] .cr51-color-teal   { background: #17302b; color: #4fd1c5; }
+html[data-theme='dark'] .cr51-color-violet { background: #262238; color: #b9a8ff; }
+html[data-theme='dark'] .cr51-color-amber  { background: #2b2416; color: #e0a04a; }
+html[data-theme='dark'] .cr51-color-green  { background: #16281d; color: #4ccb83; }
+html[data-theme='dark'] .cr51-color-rose   { background: #331a20; color: #ff9ab0; }
+html[data-theme='dark'] .cr51-color-indigo { background: #1e2144; color: #97a3ff; }
+html[data-theme='dark'] .cr51-color-orange { background: #331b12; color: #f0906a; }
+html[data-theme='dark'] .cr51-color-slate  { background: #242a33; color: #a7b6c8; }
+html[data-theme='dark'] .cr51-color-sand   { background: #2b2519; color: #d8b06a; }
+
+/* 图标按分组展示：通用 16、办公 7、商业 8、内容 8、产品 8、生活 3。 */
+.cr51-picker-groups { display: grid; gap: 10px; width: 100%; }
+.cr51-picker-group { border: 1px solid var(--line-soft); border-radius: var(--r-md); background: var(--surface-2, var(--surface)); padding: 9px 10px 10px; }
+.cr51-picker-group-h { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; font-size: 10.5px; color: var(--muted); }
+.cr51-picker-group-h b { font-size: 11.5px; font-weight: 600; color: var(--ink-2); }
+.cr51-picker-group .cr51-picker { grid-template-columns: repeat(auto-fill, minmax(56px, 1fr)); gap: 6px; }
+.cr51-picker-group .cr51-picker-cell { padding: 6px 3px 5px; gap: 3px; }
+
+/* 色卡选择器：整块方形，选中为外环 + 白色对勾。 */
+.cr51-swatches { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.cr51-swatch {
+  position: relative; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 8px;
+  cursor: pointer; transition: box-shadow .12s ease;
+}
+.cr51-swatch:focus-visible { outline: none; box-shadow: var(--ring); }
+.cr51-swatch[aria-pressed='true'] { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--primary); }
+.cr51-swatch[aria-pressed='true']::after {
+  content: ''; position: absolute; inset: 0; background: center / 15px 15px no-repeat;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12.5 4.5 4.5L19 7'/%3E%3C/svg%3E");
+}
+.cr51-swatch-clear {
+  display: grid; place-items: center; background: var(--surface); color: var(--muted);
+  border: 1px dashed var(--line-strong);
+}
+.cr51-swatch-clear[aria-pressed='true'] { color: var(--primary-strong); border-color: var(--primary); }
+.cr51-swatch-clear::after { display: none; }
+
+.cr51-combo-preview { display: flex; align-items: center; gap: 10px; margin-top: 11px; padding: 9px 10px; border: 1px dashed var(--line-strong); border-radius: var(--r-md); background: var(--surface-2, var(--surface)); }
+
+/* 头像字段：头像框 + 悬停编辑角标。 */
+.cr51-avatar-field { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2, var(--surface)); }
+.cr51-avatar-field-main { flex: 1; min-width: 0; }
+.cr51-avatar-field-main b { display: block; font-size: 12.5px; }
+.cr51-avatar-field-main .set-caption { display: block; margin-top: 2px; }
+.cr51-avatar-frame { position: relative; flex: 0 0 auto; }
+.cr51-avatar-frame .cr51-avatar { width: 44px; height: 44px; }
+.cr51-avatar-edit {
+  position: absolute; right: -3px; bottom: -3px; width: 22px; height: 22px; border-radius: 50%;
+  display: grid; place-items: center; background: var(--surface); border: 1px solid var(--line-strong);
+  color: var(--ink-2); cursor: pointer; opacity: 0; transform: translateY(2px);
+  transition: opacity .15s ease, transform .15s ease, border-color .15s ease;
+}
+.cr51-avatar-frame:hover .cr51-avatar-edit,
+.cr51-avatar-frame:focus-within .cr51-avatar-edit { opacity: 1; transform: none; }
+.cr51-avatar-edit:hover { border-color: var(--primary); color: var(--primary-strong); }
+.cr51-avatar-edit:focus-visible { outline: none; box-shadow: var(--ring); opacity: 1; }
+
+/* 更换头像弹窗：固定 680×660，不随内容变化。 */
+.cr51-modal-mask {
+  position: fixed; inset: 0; z-index: 200; display: grid; place-items: center;
+  background: rgba(17, 24, 39, .42); padding: 20px;
+}
+.cr51-avatar-modal {
+  width: 680px; height: 660px; max-width: calc(100vw - 32px); max-height: calc(100vh - 40px);
+  display: flex; flex-direction: column; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow-pop, 0 12px 32px rgba(17,24,39,.18));
+  overflow: hidden; color: var(--ink);
+}
+.cr51-avatar-modal-h { display: flex; align-items: center; gap: 8px; padding: 13px 16px; border-bottom: 1px solid var(--line); flex: 0 0 auto; }
+.cr51-avatar-modal-h b { font-size: 14px; }
+.cr51-avatar-modal-h .btn { margin-left: auto; }
+.cr51-avatar-modal-b { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 18px; padding: 16px; overflow: auto; flex: 1; min-height: 0; align-content: start; }
+.cr51-avatar-modal-f { display: flex; align-items: center; gap: 8px; padding: 11px 16px; border-top: 1px solid var(--line); background: var(--surface-2, var(--surface)); flex: 0 0 auto; }
+.cr51-avatar-preview { display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 12px 10px; border: 1px solid var(--line-soft); border-radius: var(--r-md); background: var(--surface-2, var(--surface)); }
+.cr51-avatar-preview .cr51-avatar { width: 96px; height: 96px; }
+.cr51-avatar-preview .cr51-avatar img { width: 90%; height: 90%; }
+.cr51-avatar-preview .cr51-avatar.has-photo img { width: 100%; height: 100%; object-fit: cover; }
+.cr51-preview-label { font-size: 11.5px; font-weight: 600; color: var(--ink-2); text-align: center; }
+.cr51-avatar-preview .set-caption { text-align: center; }
+.cr51-avatar-choose { min-width: 0; display: grid; gap: 9px; align-content: start; }
+.cr51-block-h { display: flex; align-items: baseline; gap: 8px; }
+.cr51-block-h b { font-size: 12.5px; }
+
+.cr51-presets { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 7px; }
+.cr51-preset {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 7px 3px 5px;
+  border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface);
+  color: var(--ink-2); cursor: pointer;
+}
+.cr51-preset:hover { border-color: var(--line-strong); }
+.cr51-preset[aria-pressed='true'] { border-color: var(--primary); background: var(--primary-soft); box-shadow: inset 0 0 0 1px var(--primary); }
+.cr51-preset:focus-visible { outline: none; box-shadow: var(--ring); }
+.cr51-preset .cr51-avatar { width: 30px; height: 30px; pointer-events: none; }
+.cr51-preset span { font-size: 9.5px; color: var(--muted); }
+.cr51-preset-custom { border-style: dashed; justify-content: center; }
+.cr51-preset-plus { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: var(--surface-2, var(--surface)); color: var(--muted); }
+.cr51-preset[aria-pressed='true'] .cr51-preset-plus { background: var(--primary-soft); color: var(--primary-strong); }
+.cr51-preset-thumb { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; display: block; }
+
+/* 常驻取景框：框内即最终区域，框外半透明遮罩。 */
+.cr51-crop { display: grid; gap: 7px; padding: 9px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2, var(--surface)); }
+.cr51-crop-stage {
+  position: relative; width: 100%; height: 216px; display: grid; place-items: center;
+  background: #0d1218; border-radius: 6px; overflow: hidden; touch-action: none; cursor: grab;
+}
+.cr51-crop-stage:active { cursor: grabbing; }
+.cr51-crop-stage img {
+  position: absolute; left: 50%; top: 50%; transform-origin: center;
+  user-select: none; -webkit-user-drag: none; pointer-events: none; max-width: none;
+}
+.cr51-crop-mask {
+  position: absolute; left: 50%; top: 50%; width: 200px; height: 200px;
+  transform: translate(-50%, -50%); border-radius: 50%;
+  box-shadow: 0 0 0 9999px rgba(8, 12, 18, .64);
+  border: 2px solid rgba(255, 255, 255, .92); pointer-events: none;
+}
+.cr51-crop-mask.square { border-radius: 10px; }
+.cr51-crop-empty {
+  display: grid; place-items: center; min-height: 208px; border-radius: 6px;
+  background: var(--surface-3, var(--surface-2)); color: var(--muted);
+  font-size: 11px; text-align: center; padding: 16px;
+}
+.cr51-crop-hint { display: flex; align-items: center; gap: 5px; margin: 0; font-size: 10.5px; color: var(--muted); }
+.cr51-crop-row { display: flex; align-items: center; gap: 8px; margin: 0; }
+.cr51-crop-row input[type='range'] { flex: 1; accent-color: var(--primary); }
+.cr51-crop-row input[type='range']:disabled { cursor: not-allowed; }
+.cr51-crop-value { font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 34px; text-align: right; }
+.cr51-upload-error {
+  margin: 0; padding: 8px 10px; border: 1px solid #d93b3b; border-radius: 6px;
+  background: #fdeeee; color: #d93b3b; font-size: 11px;
+}
+html[data-theme='dark'] .cr51-upload-error { background: #331d1d; color: #ff7b76; border-color: #ff7b76; }
+
+@media (max-width: 700px) {
+  .cr51-avatar-modal-b { grid-template-columns: 1fr; }
+  .cr51-avatar-preview { flex-direction: row; justify-content: flex-start; }
+  .cr51-presets { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* CR-051 r6：顶栏/侧栏头像框的悬停编辑角标（30px 语境，与设置 44px 区分）。 */
+.nc-avatar-frame { display: inline-flex; }
+.nc-avatar-frame .cr51-avatar { width: 30px; height: 30px; }
+.nc-avatar-frame .cr51-avatar-edit { width: 18px; height: 18px; right: -2px; bottom: -2px; }
+.nc-side-avatar-frame { position: relative; display: flex; width: 100%; }
+.nc-side-avatar-frame .cr51-avatar-edit { width: 18px; height: 18px; right: -2px; bottom: -2px; }
+
+/* 与UI-CR051-v6一致：固定取景框、实时预览、完整色块。 */
+.cr51-avatar-field .cr51-avatar-frame .cr51-avatar { width:72px; height:72px; }
+.cr51-live-preview { display:block; width:96px; height:96px; border-radius:50%; }
+.cr51-live-preview.square { border-radius:10px; }
+.cr51-avatar.has-photo { overflow:hidden; }
+.cr51-avatar.has-photo img { width:100% !important; height:100% !important; object-fit:cover; filter:none !important; border-radius:inherit; }
+.cr51-preset[data-avatar-style=a] .cr51-avatar { background:transparent; border:0; box-shadow:none; border-radius:50%; }
+.cr51-preset[data-avatar-style=b] .cr51-avatar { background:var(--teal-soft); border:1px solid var(--teal-line); box-shadow:none; border-radius:50%; }
+.cr51-preset[data-avatar-style=c] .cr51-avatar { background:var(--teal-soft); border:1px solid var(--teal-line); box-shadow:none; border-radius:10px; }
+.cr51-preset[data-avatar-style=d] .cr51-avatar { background:#0f4c45; border:1px solid #ffffff24; box-shadow:none; border-radius:50%; }
+.cr51-preset[data-avatar-style=e] .cr51-avatar { background:var(--surface); border:0; box-shadow:0 0 0 1.5px #0f9f8f,0 0 0 3px #2b6cf648; border-radius:50%; }
+.cr51-preset[data-avatar-style=d] .cr51-avatar img { filter:brightness(0) invert(1); }
+.cr51-preset:not([data-avatar-style=d]) .cr51-avatar img { filter:none; }
+.cr51-preset[data-avatar-style=a] .cr51-avatar img { width:90%;height:90%; }
+.cr51-preset[data-avatar-style=b] .cr51-avatar img { width:74%;height:74%; }
+.cr51-preset[data-avatar-style=c] .cr51-avatar img,.cr51-preset[data-avatar-style=d] .cr51-avatar img,.cr51-preset[data-avatar-style=e] .cr51-avatar img { width:72%;height:72%; }
+.cr51-swatch:not(.cr51-swatch-clear) { background:currentColor; }
+.cr51-avatar-modal-h { min-height:52px; }
+.cr51-avatar-modal-f { min-height:56px; }

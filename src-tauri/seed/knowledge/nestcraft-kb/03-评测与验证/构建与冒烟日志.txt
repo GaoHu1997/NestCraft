@@ -1,0 +1,22 @@
+[2026-11-21T09:12:04Z] build start · target x86_64-pc-windows-msvc · profile release
+[2026-11-21T09:12:04Z] frontend: tsc --noEmit (no output = ok)
+[2026-11-21T09:12:31Z] frontend: vite build → dist/ (412 modules, 1.8s)
+[2026-11-21T09:12:33Z] cargo: compiling agent-workbench v0.0.1
+[2026-11-21T09:18:02Z] cargo: Finished `release` profile [optimized] target(s) in 5m 29s
+[2026-11-21T09:18:05Z] bundle: tauri build --no-bundle
+[2026-11-21T09:18:41Z] artifact: src-tauri/target/x86_64-pc-windows-msvc/release/NestCraft.exe (size 14.2 MB)
+[2026-11-21T09:18:42Z] build done · warnings 15 · errors 0
+
+[2026-11-21T09:31:10Z] smoke: TAURI_SMOKE=1 launch
+[2026-11-21T09:31:12Z] smoke: db initialized (workbench-smoke.db, fresh)
+[2026-11-21T09:31:13Z] smoke: ui suite start · 106 checks
+[2026-11-21T09:31:44Z] smoke: 首页渲染 · 导航四项 · 通过
+[2026-11-21T09:32:02Z] smoke: 项目管理 · 卡片与搜索 · 通过
+[2026-11-21T09:32:20Z] smoke: 知识库 · 目录树与 Markdown 预览 · 通过
+[2026-11-21T09:32:51Z] smoke: AI 侧栏 · 模型选择与引用 · 通过
+[2026-11-21T09:33:18Z] smoke: 设置 · 供应商保存与掩码 · 通过
+[2026-11-21T09:33:39Z] smoke: done · pass 106 · fail 0
+[2026-11-21T09:33:40Z] smoke: report written to docs/Test/smoke-report-local.md
+
+[2026-11-22T02:40:15Z] note: 示例项目随包安装（CR-057）在本日志之后加入，构建与冒烟需重新执行。
+[2026-11-22T02:40:15Z] note: 首次启动会在应用数据目录 examples/v1/ 下解压示例文件，并写入示例项目与知识库记录。

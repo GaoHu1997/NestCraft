@@ -6,6 +6,7 @@ import type { ToastKind } from "@/components/ui";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { AttachmentMeta, ChatMessage, ContextRef } from "@/api";
 import { requestLocate } from "@/modules/locate";
+import { ThinkingIndicator, formatElapsed } from "./ThinkingIndicator";
 
 /**
  * 消息流渲染（CR-034 / STORY-062）：
@@ -16,7 +17,7 @@ import { requestLocate } from "@/modules/locate";
  * - 思考块收起态显示内容规模提示（AC-13）。
  */
 
-export type UiRole = ChatMessage["role"] | "error";
+export type UiRole = ChatMessage["role"] | "error" | "subagent";
 
 export interface UiMessage {
   id: string;
@@ -33,6 +34,16 @@ export interface UiMessage {
   createdAt?: number;
   attachments?: AttachmentMeta[];
   streaming?: boolean;
+  /** CR-056：思考阶段耗时（毫秒）。未知时折叠态只显示字数，不编造时长。 */
+  thinkingMs?: number | null;
+  /** 来源标签：cli/model/agent 等，未知时由渲染层显示可读未知状态。 */
+  sourceLabel?: string | null;
+  producerId?: string | null;
+  producerTask?: string | null;
+  /** 产生这条内容的 CLI；子智能体未单独上报时继承父轮 CLI。 */
+  cli?: string | null;
+  /** CR-056：system 消息的 kind（context-breakpoint = 上下文断点卡）。 */
+  kind?: string | null;
 }
 
 export interface OfficeFileRef {
@@ -61,6 +72,11 @@ export function mkMsg(p: Partial<UiMessage> & Pick<UiMessage, "id" | "role">): U
     inputJson: null,
     refs: null,
     usage: null,
+    sourceLabel: null,
+    producerId: null,
+    producerTask: null,
+    thinkingMs: null,
+    cli: null,
     ...p,
   };
 }
@@ -84,6 +100,11 @@ export function fromChatMessage(m: ChatMessage): UiMessage {
     createdAt: m.createdAt,
     attachments: Array.isArray(meta.attachments) ? meta.attachments as AttachmentMeta[] : [],
     usage: u ? { input: u.inputTokens ?? 0, output: u.outputTokens ?? 0 } : null,
+    sourceLabel: typeof meta.sourceLabel === "string" ? meta.sourceLabel : typeof meta.cli === "string" ? meta.cli : null,
+    producerId: typeof meta.producerId === "string" ? meta.producerId : null,
+    producerTask: typeof meta.producerTask === "string" ? meta.producerTask : null,
+    kind: typeof meta.kind === "string" ? meta.kind : null,
+    thinkingMs: typeof meta.thinkingMs === "number" ? meta.thinkingMs : null,
   };
 }
 
@@ -449,10 +470,10 @@ export function MessageList(props: {
     <>
       <div className="chat-msgs" ref={boxRef} onScroll={onScroll}>
         {blocks.map((b, i) =>
-          "kind" in b && b.kind === "tool" ? (
+          "pair" in b ? (
             <ToolBlock key={`tb-${b.pair.toolId}-${i}`} pair={b.pair} />
           ) : (
-            <MessageRow key={(b as UiMessage).id} m={b as UiMessage} projectId={props.projectId} rootUri={props.rootUri} officeFiles={props.officeFiles} canLocate={canLocate} onImageOpen={(src, alt, el) => setZoom({ src, alt, back: el })} />
+            <MessageRow key={b.id} m={b} projectId={props.projectId} rootUri={props.rootUri} officeFiles={props.officeFiles} canLocate={canLocate} onImageOpen={(src, alt, el) => setZoom({ src, alt, back: el })} />
           )
         )}
         {props.stepsSlot}
@@ -481,12 +502,16 @@ function MessageRow(props: {
 }) {
   const { m } = props;
   const toast = useToast();
+  const [copied, setCopied] = useState(false);
+  const copyMessage = () => {
+    if (!m.content) return;
+    navigator.clipboard?.writeText(m.content).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1200); }).catch(() => toast("复制失败", "warn"));
+  };
   if (m.role === "user") {
     return (
       <div className="chat-msg user">
-        <span className="chat-who">我</span>
         <div className="chat-bubble">
-          <div className="chat-msg-name">我 · {messageTime(m.createdAt)}</div>
+          <div className="chat-msg-name chat-msg-time">{messageTime(m.createdAt)}</div>
           <div className="chat-bubble-user">
           {m.refs && m.refs.length > 0 && (
             <div className="chat-refs">
@@ -506,17 +531,14 @@ function MessageRow(props: {
     const empty = !m.content && !m.thinking;
     return (
       <div className="chat-msg assistant">
-        <span className="chat-who">AI</span>
         <div className="chat-bubble">
-          <div className="chat-msg-name">{m.model || "模型未上报"} · {messageTime(m.createdAt)}</div>
+          <div className="chat-msg-name chat-msg-time">{messageTime(m.createdAt)}</div>
         <div className="chat-card">
-          {m.thinking && (
-            <details className="chat-think">
-              <summary>
-                思考过程
-                <span className="chat-think-size">（{m.thinking.length} 字）</span>
-              </summary>
-              <div className="chat-think-body">{m.thinking}</div>
+          {m.streaming && <ThinkingIndicator since={m.createdAt} />}
+          {(m.thinking || (m.streaming && !m.content)) && (
+            <details className="chat-thinking-block">
+              <summary><span className="chat-thinking-mark">✦</span><span>{m.streaming ? "思考中…" : "思考"}</span><span className="chat-think-size">{m.thinkingMs != null ? `持续 ${formatElapsed(m.thinkingMs)}` : m.thinking ? `${m.thinking.length} 字` : "正在分析"}</span></summary>
+              <div className="chat-thinking-content">{m.thinking || "正在分析请求并准备下一步…"}</div>
             </details>
           )}
           {empty ? (
@@ -537,7 +559,28 @@ function MessageRow(props: {
               onImageOpen={props.onImageOpen}
             />
           )}
+          {!m.streaming && !!m.content && (
+            <div className="chat-msg-actions">
+              <button type="button" className="chat-msg-action" onClick={copyMessage} title="复制这条回复的正文">
+                <Icon name={copied ? "check" : "copy"} size={13} />
+                <span>{copied ? "已复制" : "复制"}</span>
+              </button>
+            </div>
+          )}
         </div>
+        </div>
+      </div>
+    );
+  }
+  if (m.role === "subagent") {
+    const hasOutput = !!m.content && m.content !== m.producerTask;
+    return (
+      <div className="chat-msg subagent">
+        <div className="chat-agent-event">
+          <div className="chat-agent-event-head"><Icon name="bot" size={15} /><span className="chat-agent-kind">General Purpose</span><span className="chat-agent-state">{m.sourceLabel || "状态未知"}</span><span className="chat-agent-time">{messageTime(m.createdAt)}</span></div>
+          <div className="chat-agent-task">{m.producerTask || "子智能体任务"}</div>
+          <div className="chat-agent-meta">{m.producerId || "agent-id 未知"}{m.cli ? ` · ${m.cli}` : ""}</div>
+          {hasOutput && <div className="chat-agent-output">{m.content}</div>}
         </div>
       </div>
     );
@@ -546,6 +589,25 @@ function MessageRow(props: {
     return (
       <div className="chat-msg">
         <div className="chat-card error">{m.content}</div>
+      </div>
+    );
+  }
+  // CR-037 SR-01：上下文断点卡（role=system 的 context-breakpoint 消息，跨重启可见）。
+  // 文案区分「上下文已重建 / 原线程不可续接」，与设计稿 chat-resume-design 一致。
+  if (m.role === "system" && m.kind === "context-breakpoint") {
+    const rebuilt = m.content.includes("上下文已重建");
+    return (
+      <div className="chat-msg">
+        <div className={`chat-breakpoint ${rebuilt ? "ok" : "dead"}`} role="note" aria-label="上下文断点">
+          <span className="chat-breakpoint-ico" aria-hidden>{rebuilt ? "↻" : "!"}</span>
+          <div className="chat-breakpoint-main">
+            <div className="chat-breakpoint-title">
+              {rebuilt ? "上下文已重建" : "原线程不可续接"}
+              <span className={`chat-breakpoint-tag ${rebuilt ? "good" : "bad"}`}>{rebuilt ? "fresh" : "blocked"}</span>
+            </div>
+            <div className="chat-breakpoint-reason">{m.content}</div>
+          </div>
+        </div>
       </div>
     );
   }

@@ -1,0 +1,177 @@
+/* CR-051 / UI-CR051-v1：内置图标与用户头像风格正式实现样式。
+   依据 docs/UI/icon-system 设计稿：文件类型色浅深各一套（形状双编码）、
+   项目/知识库图标砖、头像 5 种容器风格（品牌帆船 Logo，D 用 CSS 派生反白）。
+   滚动条行为遵守 UI-SCROLL-001：本文件不新增常显滚动条样式。 */
+
+:root {
+  /* 品牌薄荷承载（头像 B/C 风格底色与描边）。 */
+  --teal-soft: #e8f7f3;
+  --teal-line: #c9ebe2;
+  /* 文件类型色（浅色）。 */
+  --fic-folder: #d9982b;
+  --fic-text: #69737f;
+  --fic-md: #0b7d70;
+  --fic-pdf: #d14343;
+  --fic-word: #2b5fd9;
+  --fic-sheet: #1a9d5a;
+  --fic-slides: #c46a00;
+  --fic-image: #7a5af8;
+  --fic-archive: #a9762f;
+  --fic-code: #6f5bd6;
+  --fic-audio: #b14bad;
+  --fic-video: #c2410c;
+  --fic-unknown: #98a1ae;
+  --fic-project-code: #2b6cf6;
+  --fic-project-work: #b76a00;
+  --tile-blue: #eaf1ff;
+  --tile-amber: #fff4e2;
+  --tile-violet: #f0edfd;
+  --tile-green: #e7f8ef;
+}
+
+html[data-theme='dark'] {
+  --teal-soft: #17302b;
+  --teal-line: #2a4c46;
+  --fic-folder: #e8b95c;
+  --fic-text: #a7b0be;
+  --fic-md: #4fd1c5;
+  --fic-pdf: #ff8a80;
+  --fic-word: #8db3ff;
+  --fic-sheet: #4ccb83;
+  --fic-slides: #e0a04a;
+  --fic-image: #b9a8ff;
+  --fic-archive: #d8a15a;
+  --fic-code: #b9a8ff;
+  --fic-audio: #e8a6e8;
+  --fic-video: #f0906a;
+  --fic-unknown: #8a93a3;
+  --fic-project-code: #8db3ff;
+  --fic-project-work: #e0a04a;
+  --tile-blue: #1e2a44;
+  --tile-amber: #2b2416;
+  --tile-violet: #262238;
+  --tile-green: #16281d;
+}
+
+/* ---------------- 项目 / 知识库图标砖 ---------------- */
+/* 36×36 圆角 10（项目卡片）、26×26 圆角 7（侧栏当前项目与授权弹窗）、40×40（知识库卡片）。
+   底色沿用类型 tone 的 soft 值，图形用对应类型色；缩小时图形同步缩小，不改线宽。 */
+.cr51-tile {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  flex: 0 0 auto;
+  background: var(--tile-blue);
+  color: var(--fic-project-code);
+}
+.cr51-tile-work { background: var(--tile-amber); color: var(--fic-project-work); }
+.cr51-tile-sm { border-radius: 7px; }
+.cr51-tile-kb { width: 40px; height: 40px; background: var(--tile-blue); color: var(--primary-strong); }
+.cr51-tile .ui-icon { display: block; }
+
+/* ---------------- 图标选择器（项目 12 / 知识库 8 + 清空回默认） ---------------- */
+.cr51-picker { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; width: 100%; }
+.cr51-picker-cell {
+  display: grid;
+  place-items: center;
+  gap: 2px;
+  min-height: 46px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink-2);
+  cursor: pointer;
+  font: inherit;
+}
+.cr51-picker-cell:hover { border-color: var(--line-strong); color: var(--ink); background: var(--surface-2); }
+.cr51-picker-cell[aria-pressed='true'] {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+.cr51-picker-cell:focus-visible { outline: none; box-shadow: var(--ring); }
+.cr51-picker-name { font-size: 10px; color: var(--muted); line-height: 1.2; }
+.cr51-picker-cell[aria-pressed='true'] .cr51-picker-name { color: var(--primary-strong); }
+
+/* ---------------- 用户头像：品牌帆船 Logo + 5 种容器风格 ---------------- */
+/* 风格由最近祖先 [data-avatar-style]（App 根节点）承载，默认 A；三处位置共用同一段规则。 */
+.cr51-avatar {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid transparent;
+}
+.cr51-avatar img { width: 90%; height: 90%; object-fit: contain; display: block; }
+
+/* A 原彩透明（默认）。 */
+[data-avatar-style='a'] .cr51-avatar { background: transparent; border-color: transparent; }
+/* B 薄荷承载。 */
+[data-avatar-style='b'] .cr51-avatar { background: var(--teal-soft); border-color: var(--teal-line); }
+[data-avatar-style='b'] .cr51-avatar img { width: 74%; height: 74%; }
+/* C 圆角方砖（10px；小尺寸按比例收窄圆角）。 */
+[data-avatar-style='c'] .cr51-avatar { border-radius: 10px; background: var(--teal-soft); border-color: var(--teal-line); }
+[data-avatar-style='c'] .cr51-avatar img { width: 72%; height: 72%; }
+[data-avatar-style='c'] .cr51-avatar[style*='width: 24px'], [data-avatar-style='c'] .cr51-avatar[style*='width:24px'], [data-avatar-style='c'] .cr51-avatar[style*='width: 26px'], [data-avatar-style='c'] .cr51-avatar[style*='width:26px'] { border-radius: 7px; }
+/* D 墨青实底 + 派生单色反白（CSS filter，不重绘 Logo 形状、不加字母）。 */
+[data-avatar-style='d'] .cr51-avatar { background: #0f4c45; border-color: rgba(255, 255, 255, .14); }
+[data-avatar-style='d'] .cr51-avatar img { width: 72%; height: 72%; filter: brightness(0) invert(1); }
+html[data-theme='dark'] [data-avatar-style='d'] .cr51-avatar { background: #0b3e39; }
+/* E 双色光环（白底 + 1.5px 青环 + 1.5px 淡蓝外环；外环为阴影，不影响布局）。 */
+[data-avatar-style='e'] .cr51-avatar { background: var(--surface); border-color: transparent; box-shadow: 0 0 0 1.5px #0f9f8f, 0 0 0 3px rgba(43, 108, 246, .28); }
+html[data-theme='dark'] [data-avatar-style='e'] .cr51-avatar { box-shadow: 0 0 0 1.5px #4fd1c5, 0 0 0 3px rgba(91, 141, 255, .34); }
+[data-avatar-style='e'] .cr51-avatar img { width: 72%; height: 72%; }
+
+/* 顶栏头像按钮只作点击热区，容器视觉交给 .cr51-avatar。 */
+button.nc-avatar { background: transparent; border: 0; padding: 0; }
+.nc-side-user .cr51-avatar { width: 30px; height: 30px; }
+
+/* 设置 → 通用 → 界面外观：头像风格单选组。 */
+.cr51-avatar-group { display: flex; gap: 8px; flex-wrap: wrap; }
+.cr51-avatar-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px 4px 5px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-2);
+  cursor: pointer;
+  font: inherit;
+}
+.cr51-avatar-radio:hover { border-color: var(--line-strong); }
+.cr51-avatar-radio[aria-checked='true'] { border-color: var(--primary); background: var(--primary-soft); box-shadow: inset 0 0 0 1px var(--primary); color: var(--primary-strong); }
+.cr51-avatar-radio:focus-visible { outline: none; box-shadow: var(--ring); }
+.cr51-avatar-radio b { font-size: 11px; font-weight: 500; }
+
+/* ---------------- 知识库文件树 / 文档头类型色 ---------------- */
+/* 形状先于颜色：14 类符号轮廓独立；类型色只作辅助，浅深主题各自取值。 */
+.kb-tree-file.type-folder { color: var(--fic-folder); }
+.kb-tree-file.type-md { color: var(--fic-md); }
+.kb-tree-file.type-text { color: var(--fic-text); }
+.kb-tree-file.type-pdf { color: var(--fic-pdf); }
+.kb-tree-file.type-word { color: var(--fic-word); }
+.kb-tree-file.type-sheet { color: var(--fic-sheet); }
+.kb-tree-file.type-slides { color: var(--fic-slides); }
+.kb-tree-file.type-image { color: var(--fic-image); }
+.kb-tree-file.type-code { color: var(--fic-code); }
+.kb-tree-file.type-archive { color: var(--fic-archive); }
+.kb-tree-file.type-audio { color: var(--fic-audio); }
+.kb-tree-file.type-video { color: var(--fic-video); }
+.kb-tree-file.type-unknown { color: var(--fic-unknown); }
+.kb-tree-file.type-unknown svg { opacity: .92; }
+
+/* 文档头 20px 同符号同类型色；kb-crumb 内与其他元素垂直居中。 */
+.kb-crumb .kb-tree-file { display: inline-flex; align-items: center; }
+.kw-document-head .kb-crumb { gap: 6px; }
+
+/* 授权弹窗 / 库卡片的旧字母块样式不再作为默认显示；保留类避免历史样式引用报错。 */

@@ -11,8 +11,21 @@ export function effectiveEfforts(efforts?: EffortMap): string[] {
 export function supportsThinking(efforts?: EffortMap): boolean {
   return effectiveEfforts(efforts).some(k => k.toLowerCase() !== "off" && typeof efforts![k] === "string" && !!efforts![k]?.trim());
 }
-/** 已核验的后端 agent 路径；其它模式仍不可用，不新增 bypass。 */
+export type PermissionId = "default" | "plan" | "agent" | "auto" | "full";
 export function permissionSupported(cliId?: string | null): boolean { return cliId === "claude" || cliId === "codex"; }
+function permissionOptions(cliId: string | null | undefined) {
+  const known = cliId === "claude" || cliId === "codex";
+  return [
+    { id: "default" as const, name: "默认模式", desc: "保留 CLI 原生审批边界", enabled: known },
+    { id: "plan" as const, name: "规划模式", desc: cliId === "claude" ? "Claude plan：只读规划语义" : "Codex read-only sandbox：只读执行", enabled: known },
+    { id: "agent" as const, name: "代理模式", desc: cliId === "claude" ? "Claude acceptEdits：自动接受编辑" : "Codex workspace-write：保留沙箱", enabled: known },
+    { id: "auto" as const, name: "自动审批", desc: "当前版本未核验原生审查通道", enabled: false },
+    { id: "full" as const, name: "全自动", desc: "需要已核验隔离与托管策略", enabled: false },
+  ];
+}
+
+const PERMISSIONS = permissionOptions;
+
 function fmtCtx(n: number | null): string {
   if (n == null || !Number.isFinite(n) || n <= 0) return "—";
   if (n >= 1_000_000) return `${Number.isInteger(n / 1_000_000) ? n / 1_000_000 : (n / 1_000_000).toFixed(1)}M`;
@@ -22,23 +35,17 @@ function defaultEffort(m: ModelCandidate): string {
   const keys = effectiveEfforts(m.efforts);
   return m.defaultEffort && keys.includes(m.defaultEffort) ? m.defaultEffort : keys.find(k => k.toLowerCase() === "off") ?? keys[0] ?? "";
 }
-const PERMISSIONS = [
-  { id: "default", name: "默认模式", desc: "需要手动确认每个操作" },
-  { id: "plan", name: "规划模式", desc: "仅使用只读工具，生成计划后审批" },
-  { id: "agent", name: "代理模式", desc: "复用当前已验证的 CLI 原生执行策略" },
-  { id: "auto", name: "自动审批", desc: "提供商原生审查器处理审批" },
-  { id: "full", name: "全自动", desc: "绕过权限检查：本软件未开放" },
-];
 
 export function ModelPicker(props: {
   cliId: string | null;
   providerId: string | null;
   modelId: string | null;
   effort: string | null;
+  permissionId?: PermissionId;
   cliCandidates: SdkState[];
   models: ModelCandidate[];
   locked?: boolean;
-  onChange: (patch: { cliId?: string; providerId?: string; modelId?: string; effort?: string }) => void | Promise<void>;
+  onChange: (patch: { cliId?: string; providerId?: string; modelId?: string; effort?: string; permissionId?: PermissionId }) => void | Promise<void>;
 }) {
   const overlay = useChatOverlay();
   const cliRef = useRef<HTMLButtonElement>(null);
@@ -82,13 +89,15 @@ export function ModelPicker(props: {
   const effortLabel = effortStale ? `${selectedEffort}（失效）` : !curModel ? "未配置" : supportsThinking(curModel.efforts) ? selectedEffort || "未选择档位" : effortKeys.length ? selectedEffort || "不下发参数" : "无思考档位";
   const currentProvider = groups.find(g => g.id === provider) ?? groups[0];
   const rows = currentProvider?.models.filter(m => `${m.displayName} ${m.modelId}`.toLowerCase().includes(query.toLowerCase())) ?? [];
-  const supported = permissionSupported(props.cliId);
-  const nativePermission = props.cliId === "claude" ? "Claude acceptEdits：自动接受文件编辑，其他操作沿用原生边界" : props.cliId === "codex" ? "Codex 默认执行策略：保留原生沙箱与审批边界，未追加绕过参数" : "当前 CLI 权限映射未验证";
+  const currentPermission = props.permissionId ?? "default";
+  const permissions = PERMISSIONS(props.cliId);
+  const selectedPermission = permissions.find(p => p.id === currentPermission) ?? permissions[0];
+  const nativePermission = selectedPermission?.desc ?? "当前 CLI 权限映射未验证";
   return <>
     <button ref={cliRef} className={`chat-ctl-chip cli ${cliStale ? "stale" : ""}`} data-chat-overlay-trigger="cli" aria-haspopup="dialog" aria-controls={`${overlay.scopeId}-config-cli`} disabled={props.locked} aria-label={`切换 CLI：${props.cliId ?? "未配置"}`} title={props.locked ? "运行快照已锁定" : `切换 CLI：${props.cliId ?? "未配置"}${cliStale ? "（已失效）" : ""}`} aria-expanded={overlay.activeOverlay === "cli"} onClick={e => overlay.toggle("cli", e.currentTarget)}>
       <CliLogo id={props.cliId ?? "unknown"} size={16} />
     </button>
-    <button ref={permissionRef} className="chat-ctl-chip perm" data-chat-overlay-trigger="perm" aria-haspopup="dialog" aria-controls={`${overlay.scopeId}-config-perm`} disabled={props.locked} aria-label="权限模式" title={props.locked ? "运行快照已锁定" : nativePermission} aria-expanded={overlay.activeOverlay === "perm"} onClick={e => overlay.toggle("perm", e.currentTarget)}><ShieldIcon />{supported ? "代理模式" : "未验证"}</button>
+    <button ref={permissionRef} className="chat-ctl-chip perm" data-chat-overlay-trigger="perm" aria-haspopup="dialog" aria-controls={`${overlay.scopeId}-config-perm`} disabled={props.locked} aria-label="权限模式" title={props.locked ? "运行快照已锁定" : nativePermission} aria-expanded={overlay.activeOverlay === "perm"} onClick={e => overlay.toggle("perm", e.currentTarget)}><ShieldIcon />{selectedPermission?.name ?? "未配置"}</button>
     <button ref={modelRef} className={`chat-ctl-chip model ${modelStale || effortStale ? "stale" : ""}`} data-chat-overlay-trigger="model" aria-haspopup="dialog" aria-controls={`${overlay.scopeId}-config-model`} disabled={props.locked} aria-label="选择模型" title={props.locked ? "运行快照已锁定" : `${curModel?.displayName ?? props.modelId ?? "模型未配置"} · ${effortLabel}`} aria-expanded={overlay.activeOverlay === "model"} onClick={e => overlay.toggle("model", e.currentTarget)}>
       <span className="ellipsis">{curModel?.displayName ?? props.modelId ?? "未配置"}{modelStale ? "（失效）" : ""} · {effortLabel}</span>
     </button>
@@ -98,8 +107,8 @@ export function ModelPicker(props: {
       {props.locked && <div className="chat-menu-hint">运行快照已锁定，静止后才可修改。</div>}
     </ChatConfigPopup>}
     {overlay.activeOverlay === "perm" && <ChatConfigPopup name="perm" className="chat-perm-pop" label="权限模式"><div className="chat-pop-head">权限模式<button className="chat-iconbtn chat-pop-close" aria-label="关闭权限选择" onClick={() => overlay.close(true)}><Icon name="x" size={14} /></button></div>
-      {PERMISSIONS.map(p => <button className={`chat-menu-row perm ${p.id === "agent" && supported ? "sel" : ""}`} key={p.id} disabled={p.id !== "agent" || !supported || props.locked} title={p.id === "agent" ? nativePermission : "不可用：后端未提供已验证的此模式映射，未生效"} onClick={() => overlay.close(true)}><ShieldIcon /><span className="chat-menu-main"><b>{p.name}</b><span>{p.id === "agent" && supported ? nativePermission : `${p.desc} · 不可用，权限映射未验证`}</span></span>{p.id === "agent" && supported && <Icon name="check" size={14} />}</button>)}
-      <div className="chat-menu-hint">只允许当前已验证的 agent 路径；按钮文字不能改变后端权限。没有添加 bypass。</div>
+      {permissions.map(p => <button className={`chat-menu-row perm ${p.id === currentPermission ? "sel" : ""}`} key={p.id} disabled={!p.enabled || props.locked} title={p.enabled ? p.desc : `不可用：${p.desc}`} onClick={() => { if (p.enabled) void props.onChange({ permissionId: p.id }); overlay.close(true); }}><ShieldIcon /><span className="chat-menu-main"><b>{p.name}</b><span>{p.desc}{p.enabled ? "" : " · 暂未核验"}</span></span>{p.id === currentPermission && <Icon name="check" size={14} />}</button>)}
+      <div className="chat-menu-hint">权限语义由当前 CLI、版本证据和后端能力决定；不可用项不会静默回落。</div>
     </ChatConfigPopup>}
     {overlay.activeOverlay === "model" && <ChatConfigPopup name="model" className="chat-model-pop" label="选择模型">
       <div className="chat-pop-head">模型 <span>{curModel?.providerName ?? "未配置"} · {curModel?.displayName ?? props.modelId ?? "未配置"}</span><button className="chat-iconbtn chat-pop-close" aria-label="关闭模型选择" onClick={() => overlay.close(true)}><Icon name="x" size={14} /></button></div>

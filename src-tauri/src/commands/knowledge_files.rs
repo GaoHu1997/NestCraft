@@ -30,6 +30,13 @@ pub(super) fn dir_id(rel: &str) -> String { format!("d{}", fnv_bytes(rel.as_byte
 pub(super) fn markdown(path: &Path) -> bool {
     path.extension().and_then(|s| s.to_str()).map(|s| s.eq_ignore_ascii_case("md") || s.eq_ignore_ascii_case("markdown")).unwrap_or(false)
 }
+/// CR-030-D1：参与切片的文本格式（read_text 已支持，零新增解析器）。
+/// 其它格式（pdf/office/图片/未知）= metadata_only：文件名/路径可搜，正文不可搜。
+pub(super) fn indexable_text(path: &Path) -> bool {
+    path.extension().and_then(|s| s.to_str())
+        .map(|s| ["txt", "log", "text", "json", "csv"].iter().any(|e| s.eq_ignore_ascii_case(e)))
+        .unwrap_or(false)
+}
 pub(super) fn validate_name(name: &str) -> Result<(), String> {
     if name.is_empty() || name.len() > 240 || name.trim() != name || name.ends_with('.')
         || name == "." || name == ".." || name.starts_with(TEMP_PREFIX)
@@ -197,6 +204,12 @@ fn open_read(path: &Path) -> Result<File, String> {
     if link(&held) || !held.is_file() || link(&after) || identity(&before) != identity(&held) || identity(&held) != identity(&after) {
         return Err("文件在操作期间变化".into());
     }
+    Ok(file)
+}
+pub(super) fn open_snapshot(root: &mut SafeRoot, rel: &str) -> Result<File, String> {
+    let path = root.file(rel)?;
+    let file = open_read(&path)?;
+    root.verify()?;
     Ok(file)
 }
 fn limited_read(file: &mut File, limit: u64) -> Result<Vec<u8>, String> {

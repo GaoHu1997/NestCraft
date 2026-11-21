@@ -29,6 +29,9 @@ fn release_turn(running: &mut BTreeMap<String, RunningEntry>, session_id: &str, 
 }
 
 struct RunningTurn { session_id: String, turn_id: String }
+impl RunningTurn {
+    fn turn_id(&self) -> &str { &self.turn_id }
+}
 impl Drop for RunningTurn {
     fn drop(&mut self) {
         if let Ok(mut running) = RUNNING.lock() { release_turn(&mut running, &self.session_id, &self.turn_id); }
@@ -108,6 +111,24 @@ fn resolve_execution_feature(conn: &rusqlite::Connection, project_id: Option<&st
 }
 
 fn session_row(row: &rusqlite::Row) -> rusqlite::Result<SessionMeta> {
+    let session_role = row.get::<_, Option<String>>(16)?.unwrap_or_else(|| "ordinary".into());
+    // CR-037：绑定派生视图只含状态/原因/脱敏指纹/期望修订，原引用永不出后端。
+    let thread_ref: Option<String> = row.get(17)?;
+    let binding_revision: i64 = row.get(18)?;
+    let confirmed_turn_id: Option<String> = row.get(19)?;
+    let last_outcome: Option<String> = row.get(20)?;
+    let last_reason: Option<String> = row.get(21)?;
+    let message_count: i64 = row.get(12)?;
+    let binding = crate::commands::chat_binding::derive_view(
+        &session_role,
+        row.get::<_, Option<String>>(4)?.as_deref().unwrap_or(""),
+        thread_ref.as_deref(),
+        binding_revision,
+        confirmed_turn_id.as_deref(),
+        last_outcome.as_deref(),
+        last_reason.as_deref(),
+        message_count,
+    );
     Ok(SessionMeta {
         id: row.get(0)?,
         project_id: row.get(1)?,
@@ -121,15 +142,19 @@ fn session_row(row: &rusqlite::Row) -> rusqlite::Result<SessionMeta> {
         unread: row.get(9)?,
         created_at: row.get(10)?,
         updated_at: row.get(11)?,
-        message_count: row.get(12)?,
+        message_count,
         feature_id: row.get(13)?,
         feature_title: row.get(14)?,
         feature_source_hash: row.get(15)?,
-        session_role: row.get::<_, Option<String>>(16)?.unwrap_or_else(|| "ordinary".into()),
+        session_role,
+        binding,
     })
 }
 
-const SESSION_COLUMNS: &str = "s.id, s.projectId, s.serverId, s.title, s.cliId, s.providerId, s.modelId, s.effort, s.draft, s.unread, s.createdAt, s.updatedAt, (SELECT COUNT(*) FROM message m WHERE m.sessionId = s.id) AS cnt, s.featureId, s.featureTitle, s.featureSourceHash, s.sessionRole";
+const SESSION_COLUMNS: &str = "s.id, s.projectId, s.serverId, s.title, s.cliId, s.providerId, s.modelId, s.effort, s.draft, s.unread, s.createdAt, s.updatedAt, (SELECT COUNT(*) FROM message m WHERE m.sessionId = s.id) AS cnt, s.featureId, s.featureTitle, s.featureSourceHash, s.sessionRole, \
+    s.nativeThreadRef, s.nativeBindingRevision, s.nativeConfirmedTurnId, \
+    (SELECT t.outcome FROM execution_session_turn t WHERE t.sessionId = s.id ORDER BY t.createdAt DESC, t.rowid DESC LIMIT 1), \
+    (SELECT t.reasonCode FROM execution_session_turn t WHERE t.sessionId = s.id ORDER BY t.createdAt DESC, t.rowid DESC LIMIT 1)";
 
 // ---------- 会话 CRUD ----------
 
@@ -213,6 +238,25 @@ pub fn chat_session_update(
         && (cli_id.is_some() || provider_id.is_some() || model_id.is_some() || effort.is_some())
     {
         return Err("会话运行中或有待审操作，禁止修改执行配置".into());
+    }
+    // CR-037 / STORY-011 AC-05：非空会话（有消息或已有原生绑定）禁止原地换 CLI——
+    // 前端改为确认后另建会话；空会话维持原地修改。
+    if let Some(new_cli) = cli_id.as_deref() {
+        let (current_cli, msg_count, has_binding): (Option<String>, i64, i64) = conn.query_row(
+            "SELECT cliId,
+                    (SELECT COUNT(*) FROM message WHERE sessionId=?1),
+                    (SELECT COUNT(*) FROM session WHERE id=?1 AND (nativeThreadRef IS NOT NULL OR nativeConfirmedTurnId IS NOT NULL))
+             FROM session WHERE id=?1",
+            [&id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .map_err(|e| e.to_string())?;
+        if current_cli.as_deref() != Some(new_cli) && (msg_count > 0 || has_binding > 0) {
+            return Err(format!(
+                "会话已有 {} 条消息或原生绑定，切换 CLI 须另建会话（历史保留在原会话）",
+                msg_count
+            ));
+        }
     }
     // COALESCE：None 表示保持原值；draft 传空串即清空
     // CR-047：featureId/featureTitle/featureSourceHash/sessionRole 不在更新白名单内，绑定不可改。
@@ -345,7 +389,7 @@ pub async fn chat_send(
 
     // 所有启动校验均在持久化用户消息之前完成，失败保留前端草稿。
     let mut dispatch = DispatchHolder(crate::commands::dispatch::resolve(
-        &app, &cli_id, session.provider_id.as_deref(), &model_id, &effort,
+        &app, &cli_id, &session_id, session.provider_id.as_deref(), &model_id, &effort,
     )?);
     if dispatch.0.is_none() && session.provider_id.as_deref().map(|p| !p.is_empty()).unwrap_or(false) {
         return Err("会话绑定的供应商无法解析，请检查设置中的供应商/密钥/端点".into());
@@ -354,14 +398,67 @@ pub async fn chat_send(
         // dispatch 的旧目录暴露包括停用技能；仅允许本轮显式引用的正文注入。
         config.add_dirs.clear();
     }
+
+    // CR-037 / AC-05/06：普通会话的原生绑定解析（执行会话不绑定；解析失败在持久化用户消息前拒绝，
+    // 草稿保留）。原引用只存在于后端内存，错误信息只带原因码。
+    let turn_id = running_turn.turn_id().to_string();
+    let (requested_resume, turn_mode, compat_key) = {
+        let guard = db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        tx_debug(conn, "binding-resolve");
+        let cli_version: Option<String> = conn
+            .query_row("SELECT version FROM cli_sdk WHERE id=?1", [&cli_id], |r| r.get(0))
+            .ok()
+            .flatten();
+        let scope = match (&session.project_id, &session.server_id) {
+            (Some(p), _) => format!("project:{p}"),
+            (None, Some(s)) => format!("server:{s}"),
+            _ => "global".into(),
+        };
+        let provider_fp = match dispatch.0.as_ref().filter(|d| !d.display.provider_id.is_empty()) {
+            Some(d) => crate::commands::chat_binding::provider_fingerprint(&d.display.protocol, &d.display.base_url_host, &d.display.provider_id),
+            None => "external".into(),
+        };
+        let compat_key = crate::commands::chat_binding::compatibility_key(&cli_id, cli_version.as_deref().unwrap_or("unknown"), "headless", &provider_fp, &scope);
+        let current_grant_rev = crate::commands::chat_binding::grant_revision_snapshot(conn, session.project_id.as_deref())?;
+        let snapshot = crate::commands::chat_binding::load_binding(conn, &session_id)?;
+        let decision = crate::commands::chat_binding::resolve_binding(&snapshot, &cli_id, &compat_key, current_grant_rev, session.message_count > 0);
+        match decision {
+            crate::commands::chat_binding::BindingDecision::Send { mode, requested } => Ok((requested, mode, compat_key)),
+            crate::commands::chat_binding::BindingDecision::FreshPending { reason } => {
+                if session.session_role == "ordinary" {
+                    record_refused_row(conn, &session_id, &turn_id, "resume", snapshot.binding_revision, current_grant_rev, reason)?;
+                }
+                Err(format!(
+                    "BINDING_FRESH_REQUIRED|{}|{}|{}",
+                    reason,
+                    snapshot.binding_revision,
+                    crate::commands::chat_binding::reason_text(reason)
+                ))
+            }
+            crate::commands::chat_binding::BindingDecision::Blocked { reason } => {
+                if session.session_role == "ordinary" {
+                    record_refused_row(conn, &session_id, &turn_id, "resume", snapshot.binding_revision, current_grant_rev, reason)?;
+                }
+                Err(format!(
+                    "BINDING_BLOCKED|{}|{}|{}",
+                    reason,
+                    snapshot.binding_revision,
+                    crate::commands::chat_binding::reason_text(reason)
+                ))
+            }
+        }?
+    };
     if *abort_rx.borrow() { return Err("发送已停止".into()); }
-    let child = spawn_cli(&cli_id, &model_id, &effort, project_root.as_deref(), dispatch.0.as_ref(), payload.permission_id.as_deref())?;
+    let permission_id = payload.permission_id.clone();
+    let child = spawn_cli(&cli_id, &model_id, &effort, project_root.as_deref(), dispatch.0.as_ref(), permission_id.as_deref(), requested_resume.as_deref())?;
 
     // 持久化用户消息
     let msg_id = new_id("msg");
     {
         let guard = db::conn()?;
         let conn = guard.as_ref().ok_or("db not initialized")?;
+        tx_debug(conn, "before-user-msg");
         conn.execute(
             "INSERT INTO message (id, sessionId, role, content, refsJson, createdAt) VALUES (?1,?2,'user',?3,?4,?5)",
             rusqlite::params![
@@ -379,31 +476,321 @@ pub async fn chat_send(
 
     let session_id2 = session_id.clone();
     let cli_id2 = cli_id.clone();
+    let ordinary = session.session_role == "ordinary";
+    let binding_revision = {
+        let guard = db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        crate::commands::chat_binding::load_binding(conn, &session_id)?.binding_revision
+    };
+    let grant_revision = {
+        let guard = db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        crate::commands::chat_binding::grant_revision_snapshot(conn, session.project_id.as_deref())?
+    };
     tokio::spawn(async move {
         // RAII 在成功、错误、任务取消或 panic 时都只清理本代次。
         let _running_turn = running_turn;
         let _dispatch_holder = dispatch;
-        let result = run_cli_stream(child, abort_rx, &cli_id2, &prompt, &session_id2, &channel).await
-            .and_then(|out| { persist_assistant(&session_id2, &out)?; Ok(out) });
-        drop(_dispatch_holder);
-        drop(_running_turn);
-        match result {
-            Ok(out) => {
-                let _ = channel.send(serde_json::json!({ "type": "done", "sessionRef": out.session_ref }));
+        let max_attempts: i64 = 2;
+        let mut attempt: i64 = 0;
+        let mut current_child = child;
+        let result = loop {
+            let run = run_cli_stream(current_child, abort_rx.clone(), &cli_id2, &prompt, &session_id2, &channel).await;
+            match run {
+                Err(fail) if attempt < max_attempts && retry_reason(&fail).is_some() && !*abort_rx.borrow() => {
+                    attempt += 1;
+                    let delay_ms = 750_i64 * (1_i64 << (attempt - 1));
+                    let reason = retry_reason(&fail).unwrap_or("供应商暂时不可用");
+                    let _ = channel.send(serde_json::json!({
+                        "type": "retrying",
+                        "attempt": attempt,
+                        "maxAttempts": max_attempts,
+                        "delayMs": delay_ms,
+                        "reason": reason
+                    }));
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms as u64)).await;
+                    if *abort_rx.borrow() {
+                        break Err(fail);
+                    }
+                    match spawn_cli(&cli_id2, &model_id, &effort, project_root.as_deref(), _dispatch_holder.0.as_ref(), permission_id.as_deref(), requested_resume.as_deref()) {
+                        Ok(next) => { current_child = next; }
+                        Err(message) => break Err(StreamFailure { message, stderr: String::new(), timed_out: false }),
+                    }
+                }
+                other => break other,
             }
-            Err(e) => { let _ = channel.send(serde_json::json!({ "type": "error", "message": e })); }
+        };
+        drop(_dispatch_holder);
+        // CR-037：结算与消息持久化在同一连接窗口完成，且先于 RUNNING 释放与 done 事件。
+        let settle = match &result {
+            Ok(out) => {
+                if !out.aborted {
+                    match persist_and_settle(&session_id2, out, &turn_id, turn_mode, requested_resume.as_deref(), binding_revision, grant_revision, Some(compat_key.clone()), ordinary, cli_id2.as_str()) {
+                        Ok(done) => Some(done),
+                        Err(e) => { let _ = channel.send(serde_json::json!({ "type": "error", "message": e })); None }
+                    }
+                } else {
+                    match archive_turn(&session_id2, out, &turn_id, requested_resume.as_deref(), binding_revision, grant_revision, ordinary) {
+                        Ok(done) => Some(done),
+                        Err(e) => { let _ = channel.send(serde_json::json!({ "type": "error", "message": e })); None }
+                    }
+                }
+            }
+            Err(fail) => {
+                match failure_turn(&session_id2, fail, &turn_id, requested_resume.as_deref(), binding_revision, grant_revision, ordinary, cli_id2.as_str()) {
+                    Ok(Some(done)) => Some(done),
+                    Ok(None) => None,
+                    Err(e) => { let _ = channel.send(serde_json::json!({ "type": "error", "message": e })); None }
+                }
+            }
+        };
+        drop(_running_turn);
+        match (&result, settle) {
+            (_, Some(done)) => { let _ = channel.send(done); }
+            (Ok(_), None) => {}
+            (Err(fail), None) => { let _ = channel.send(serde_json::json!({ "type": "error", "message": fail.message.clone() })); }
         }
     });
     Ok(())
 }
 
-/// 只开放原适配器已使用的代理模式，不借菜单增加绕过审批或沙箱参数。
+/// 诊断：共享连接的事务状态（仅在 debug 输出；用于定位「事务内再开事务」）。
+fn tx_debug(conn: &rusqlite::Connection, tag: &str) {
+    #[cfg(debug_assertions)]
+    eprintln!("[chat] tx-state tag={} autocommit={}", tag, conn.is_autocommit());
+    let _ = conn;
+    let _ = tag;
+}
+
+/// done 事件载荷：只含轮次身份、判定结果与脱敏指纹；原引用永不发给前端。
+fn done_payload(turn_id: &str, result: &crate::commands::chat_binding::SettleResult) -> serde_json::Value {
+    serde_json::json!({
+        "type": "done",
+        "turnId": turn_id,
+        "nativeResumed": result.native_resumed,
+        "freshContext": result.fresh_context,
+        "blocked": result.outcome == "blocked",
+        "reasonCode": result.reason_code,
+        "refFingerprint": result.ref_fingerprint,
+    })
+}
+
+/// spawn 前被拒（freshPending / blocked）：登记 blocked 轮次行，供重启后恢复阻塞状态与审计。
+fn record_refused_row(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+    turn_id: &str,
+    mode: &str,
+    expected_binding_revision: i64,
+    grant_revision: i64,
+    reason: &str,
+) -> Result<(), String> {
+    let turn_seq: i64 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(turnSeq),0)+1 FROM execution_session_turn WHERE sessionId=?1",
+            [session_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO execution_session_turn (id,sessionId,turnSeq,mode,outcome,reasonCode,expectedBindingRevision,grantRevision,createdAt,settledAt)
+         VALUES (?1,?2,?3,?4,'blocked',?5,?6,?7,?8,?8)",
+        rusqlite::params![turn_id, session_id, turn_seq, mode, reason, expected_binding_revision, grant_revision, now_ms()],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 已停止轮：持久化既有部分输出 + 只写 archived 行（STOPPED），不改绑定。
+fn archive_turn(
+    session_id: &str,
+    out: &StreamOutcome,
+    turn_id: &str,
+    requested_resume: Option<&str>,
+    binding_revision: i64,
+    grant_revision: i64,
+    ordinary: bool,
+) -> Result<serde_json::Value, String> {
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("会话数据库未初始化")?;
+    let tx = conn.unchecked_transaction().map_err(|_| "回复保存失败，流式内容保留但未持久化".to_string())?;
+    insert_assistant_messages(&tx, session_id, out).map_err(|_| "回复保存失败，流式内容保留但未持久化".to_string())?;
+    if ordinary {
+        let mode = if requested_resume.is_some() { "resume" } else { "create" };
+        record_refused_row_tx(&tx, session_id, turn_id, mode, binding_revision, grant_revision, "STOPPED")?;
+    }
+    tx.commit().map_err(|_| "回复保存失败，流式内容保留但未持久化".to_string())?;
+    Ok(serde_json::json!({
+        "type": "done",
+        "turnId": turn_id,
+        "nativeResumed": false,
+        "freshContext": false,
+        "blocked": false,
+        "reasonCode": if ordinary { serde_json::Value::from("STOPPED") } else { serde_json::Value::Null },
+        "refFingerprint": serde_json::Value::Null,
+    }))
+}
+
+fn record_refused_row_tx(
+    tx: &rusqlite::Transaction,
+    session_id: &str,
+    turn_id: &str,
+    mode: &str,
+    expected_binding_revision: i64,
+    grant_revision: i64,
+    reason: &str,
+) -> Result<(), String> {
+    record_turn_row_tx(tx, session_id, turn_id, mode, "archived", expected_binding_revision, grant_revision, reason)
+}
+
+/// 轮次行写入（无 session 更新）：outcome 由调用方给定（archived / blocked）。
+fn record_turn_row_tx(
+    tx: &rusqlite::Transaction,
+    session_id: &str,
+    turn_id: &str,
+    mode: &str,
+    outcome: &str,
+    expected_binding_revision: i64,
+    grant_revision: i64,
+    reason: &str,
+) -> Result<(), String> {
+    let turn_seq: i64 = tx
+        .query_row(
+            "SELECT COALESCE(MAX(turnSeq),0)+1 FROM execution_session_turn WHERE sessionId=?1",
+            [session_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO execution_session_turn (id,sessionId,turnSeq,mode,outcome,reasonCode,expectedBindingRevision,grantRevision,createdAt,settledAt)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?9)",
+        rusqlite::params![turn_id, session_id, turn_seq, mode, outcome, reason, expected_binding_revision, grant_revision, now_ms()],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 正常完成轮：消息持久化 + 轮次判定 + CAS 绑定结算在同一事务窗口。
+/// 不支持续接的 CLI（grok）与执行会话一样不写轮次行（无线程可绑定）。
+fn persist_and_settle(
+    session_id: &str,
+    out: &StreamOutcome,
+    turn_id: &str,
+    mode: &'static str,
+    requested_resume: Option<&str>,
+    binding_revision: i64,
+    grant_revision: i64,
+    compat_key: Option<String>,
+    ordinary: bool,
+    cli_id: &str,
+) -> Result<serde_json::Value, String> {
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("会话数据库未初始化")?;
+    tx_debug(conn, "persist_and_settle-begin");
+    let tx = conn.unchecked_transaction().map_err(|_| "回复保存失败，流式内容保留但未持久化".to_string())?;
+    insert_assistant_messages(&tx, session_id, out).map_err(|_| "回复保存失败，流式内容保留但未持久化".to_string())?;
+    let payload = if ordinary && crate::commands::chat_binding::cli_supported(cli_id) {
+        let verdict = crate::commands::chat_binding::judge_turn(
+            requested_resume,
+            out.emitted_ref.as_deref(),
+            out.is_error,
+            true,
+            "",
+            None,
+        );
+        let plan = crate::commands::chat_binding::SettlePlan {
+            turn_id: turn_id.to_string(),
+            mode,
+            expected_binding_revision: binding_revision,
+            grant_revision,
+            current_compat_key: compat_key,
+            verdict,
+        };
+        let result = crate::commands::chat_binding::settle_turn(&tx, session_id, &plan)?;
+        done_payload(turn_id, &result)
+    } else {
+        serde_json::json!({
+            "type": "done",
+            "turnId": turn_id,
+            "nativeResumed": false,
+            "freshContext": false,
+            "blocked": false,
+            "reasonCode": serde_json::Value::Null,
+            "refFingerprint": serde_json::Value::Null,
+        })
+    };
+    tx.commit().map_err(|_| "回复保存失败，流式内容保留但未持久化".to_string())?;
+    Ok(payload)
+}
+
+/// 流失败轮：resume 失败带原生报错特征 → blocked（REF_STALE / REF_NOT_READY）并以 done 通报；
+/// 其余（超时/崩溃）→ archived 行 + error 事件（None）。
+fn failure_turn(
+    session_id: &str,
+    fail: &StreamFailure,
+    turn_id: &str,
+    requested_resume: Option<&str>,
+    binding_revision: i64,
+    grant_revision: i64,
+    ordinary: bool,
+    _cli_id: &str,
+) -> Result<Option<serde_json::Value>, String> {
+    if !ordinary || requested_resume.is_none() {
+        // 非绑定相关失败：不写轮次行（进程未产生任何上下文），按原错误路径报错。
+        return Ok(None);
+    }
+    let verdict = crate::commands::chat_binding::judge_turn(
+        requested_resume,
+        None,
+        false,
+        false,
+        &fail.stderr,
+        first_confirmed_settled_at(session_id)?,
+    );
+    match verdict {
+        crate::commands::chat_binding::Verdict::Blocked { reason } => {
+            let guard = db::conn()?;
+            let conn = guard.as_ref().ok_or("db not initialized")?;
+            let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+            record_turn_row_tx(&tx, session_id, turn_id, "resume", "blocked", binding_revision, grant_revision, reason)?;
+            tx.commit().map_err(|e| e.to_string())?;
+            Ok(Some(serde_json::json!({
+                "type": "done",
+                "turnId": turn_id,
+                "nativeResumed": false,
+                "freshContext": false,
+                "blocked": true,
+                "reasonCode": reason,
+                "refFingerprint": serde_json::Value::Null,
+            })))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// 首轮（最近一次 confirmed 轮）落定时间，用于 REF_NOT_READY 竞态窗口判定。
+fn first_confirmed_settled_at(session_id: &str) -> Result<Option<i64>, String> {
+    use rusqlite::OptionalExtension;
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    let t: Option<Option<i64>> = conn
+        .query_row(
+            "SELECT MAX(settledAt) FROM execution_session_turn WHERE sessionId=?1 AND outcome='confirmed'",
+            [session_id],
+            |r| r.get::<_, Option<i64>>(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    Ok(t.flatten())
+}
+
+/// 只开放当前适配器能生成明确原生参数的模式；未知或危险模式必须拒绝。
 fn validate_permission(cli_id: &str, permission_id: Option<&str>) -> Result<(), String> {
     if !matches!(cli_id, "claude" | "codex" | "grok") { return Err("未知 CLI".into()); }
     match permission_id {
-        None => Ok(()), // 历史请求不改变原生行为
-        Some("agent") if matches!(cli_id, "claude" | "codex") => Ok(()),
-        Some(_) => Err("当前 CLI 未核验该权限模式或缺少审批/隔离能力，发送已拒绝".into()),
+        None | Some("default") => Ok(()),
+        Some("plan" | "agent") if matches!(cli_id, "claude" | "codex") => Ok(()),
+        Some(_) => Err("当前 CLI/版本未核验该权限模式或缺少审批/隔离能力，发送已拒绝".into()),
     }
 }
 
@@ -475,6 +862,8 @@ fn build_prompt(app: &tauri::AppHandle, payload: &SendPayload, project_id: Optio
         None => None,
     };
     let mut parts: Vec<String> = Vec::new();
+    // CR-030-D1：知识引用改有界片段注入；同一轮同 (noteId,ordinal) 去重。
+    let mut seen_knowledge: std::collections::HashSet<(String, usize)> = std::collections::HashSet::new();
     for r in &payload.refs {
         if r.object_id.len() > 4096 || r.display.len() > 4096 || r.content.as_ref().map(|s| s.len() > MAX_REF_TEXT).unwrap_or(false) {
             return Err("引用标识或正文过长".into());
@@ -492,9 +881,19 @@ fn build_prompt(app: &tauri::AppHandle, payload: &SendPayload, project_id: Optio
                         .map_err(|_| "知识库不存在".to_string())?;
                     if enabled == 0 { return Err("知识库已停用".into()); }
                 }
-                let content = crate::commands::knowledge::gateway_read(project_id, lib, &r.object_id)?;
-                if content.len() > MAX_REF_TEXT { return Err("知识引用过长，请使用较小资料".into()); }
-                parts.push(format!("<knowledge source=\"{}\" note=\"{}\">\n{}\n</knowledge>", xml_attribute(&r.display), xml_attribute(&r.object_id), content));
+                // 有界读取：返回首块（≤4096 bytes）+ 完整出处；不再整篇注入。
+                let view = crate::commands::knowledge::gateway_read_chunk(project_id, lib, &r.object_id)?;
+                if !seen_knowledge.insert((r.object_id.clone(), view.ordinal)) { continue; }
+                if view.content.len() > MAX_REF_TEXT { return Err("知识引用过长，请使用较小资料".into()); }
+                parts.push(format!(
+                    "<knowledge library=\"{}\" note=\"{}\" revision=\"{}\" range=\"{}-{}\">\n{}\n</knowledge>",
+                    xml_attribute(lib),
+                    xml_attribute(&r.object_id),
+                    xml_attribute(&view.source_hash),
+                    view.start_byte,
+                    view.end_byte,
+                    view.content
+                ));
             }
             "skill" => {
                 let name = r.object_id.strip_prefix("skill:").unwrap_or(&r.object_id);
@@ -565,7 +964,36 @@ struct StreamOutcome {
     tool_uses: Vec<(String, String, String)>,  // id, name, input
     tool_results: Vec<(String, String, bool)>, // id, content, is_error
     usage: Option<(i64, i64, i64)>,
-    session_ref: Option<String>,
+    /// 流内适配器上报的线程/会话 id（emittedRef）。仅后端内存使用，不进日志与前端。
+    emitted_ref: Option<String>,
+    /// CR-037：本轮请求的 resume 引用（requestedResume）。
+    requested_resume: Option<String>,
+    /// claude result.is_error：exit 0 不可信，is_error 才能识别 API 失败轮。
+    is_error: bool,
+    /// 途中被停止（写 stdin 阶段或流中）。
+    aborted: bool,
+    /// CR-056：首段 thinking 的时间点，用于统计思考阶段耗时。
+    thinking_started: Option<std::time::Instant>,
+    /// CR-056：思考阶段耗时（毫秒），0 表示尚未确定。落库进 metaJson.thinkingMs。
+    thinking_ms: u64,
+}
+
+impl StreamOutcome {
+    /// 收到首段思考内容时开始计时。
+    fn mark_thinking(&mut self) {
+        if self.thinking_started.is_none() {
+            self.thinking_started = Some(std::time::Instant::now());
+        }
+    }
+
+    /// 思考阶段在首段正文出现时结束；重复调用只记录第一次。
+    fn mark_content(&mut self) {
+        if self.thinking_ms == 0 {
+            if let Some(t) = self.thinking_started {
+                self.thinking_ms = t.elapsed().as_millis() as u64;
+            }
+        }
+    }
 }
 
 impl Default for StreamOutcome {
@@ -576,9 +1004,21 @@ impl Default for StreamOutcome {
             tool_uses: vec![],
             tool_results: vec![],
             usage: None,
-            session_ref: None,
+            emitted_ref: None,
+            requested_resume: None,
+            is_error: false,
+            aborted: false,
+            thinking_started: None,
+            thinking_ms: 0,
         }
     }
+}
+
+/// 流失败的结构化错误：携带 stderr 摘要以识别原生 resume 报错（REF_STALE 竞态）。
+struct StreamFailure {
+    message: String,
+    stderr: String,
+    timed_out: bool,
 }
 
 fn spawn_cli(
@@ -588,8 +1028,11 @@ fn spawn_cli(
     cwd: Option<&str>,
     dispatch: Option<&crate::commands::dispatch::DispatchConfig>,
     permission_id: Option<&str>,
+    resume_ref: Option<&str>,
 ) -> Result<Child, String> {
     validate_permission(cli_id, permission_id)?;
+    // CR-053：命令工具设置读取 + 启动前复检；所选路径失效时阻止启动并提示改选「自动」，不静默回落。
+    let shell_setting = crate::commands::shell::prepare_launch(cli_id)?;
     // 优先使用 SDK 管理登记的可执行路径（安装/检测时记录），否则按 PATH 解析
     let registered: Option<String> = (|| {
         let guard = db::conn().ok()?;
@@ -605,20 +1048,32 @@ fn spawn_cli(
     })();
     let cli_bin: String = registered.unwrap_or_else(|| crate::util::resolve_command(cli_id));
     #[cfg(debug_assertions)]
-    eprintln!("[chat] spawn cli={} bin={}", cli_id, cli_bin);
-
-
+    eprintln!(
+        "[chat] spawn cli={} bin={} resume={}",
+        cli_id,
+        cli_bin,
+        resume_ref.map(crate::commands::chat_binding::fingerprint_ref).unwrap_or_else(|| "none".into())
+    );
 
     let mut cmd = match cli_id {
         "claude" => {
             let mut c = Command::new(&cli_bin);
+            let permission_mode = match permission_id {
+                Some("plan") => "plan",
+                Some("agent") => "acceptEdits",
+                _ => "default",
+            };
             c.arg("-p")
                 .arg("--output-format")
                 .arg("stream-json")
                 .arg("--verbose")
                 .arg("--include-partial-messages")
                 .arg("--permission-mode")
-                .arg("acceptEdits");
+                .arg(permission_mode);
+            // CR-037：原生续接——resume 引用只在后端内存出现，不进日志/前端。
+            if let Some(resume_ref) = resume_ref {
+                c.arg("--resume").arg(resume_ref);
+            }
             if !model_id.is_empty() {
                 c.arg("--model").arg(model_id);
             }
@@ -643,7 +1098,13 @@ fn spawn_cli(
         }
         "codex" => {
             let mut c = Command::new(&cli_bin);
-            c.arg("exec").arg("--json").arg("--skip-git-repo-check");
+            // CR-037：`codex exec resume <id>` 续接（同 CODEX_HOME store）；注意 resume 子命令在 flags 之前。
+            if let Some(resume_ref) = resume_ref {
+                c.arg("exec").arg("resume").arg(resume_ref);
+            } else {
+                c.arg("exec");
+            }
+            c.arg("--json").arg("--skip-git-repo-check");
             if !model_id.is_empty() {
                 c.arg("-m").arg(model_id);
             }
@@ -659,12 +1120,19 @@ fn spawn_cli(
             }
             c.arg("-c").arg("project_doc_max_bytes=65536");
             // 权限覆盖置于供应商覆盖之后，禁止旧 override 抢占显式模式。
-            if permission_id == Some("agent") {
-                c.arg("--sandbox").arg("workspace-write").arg("-c").arg("approval_policy=\"never\"");
+            match permission_id {
+                Some("plan") => {
+                    c.arg("--sandbox").arg("read-only").arg("-c").arg("approval_policy=\"never\"");
+                }
+                Some("agent") => {
+                    c.arg("--sandbox").arg("workspace-write").arg("-c").arg("approval_policy=\"never\"");
+                }
+                _ => {}
             }
             c
         }
         "grok" => {
+            // grok `--print --json` 单轮通道无线程概念（CR-037 本轮登记不支持原生续接）。
             let mut c = Command::new(&cli_bin);
             c.arg("--print").arg("--json");
             if !model_id.is_empty() {
@@ -698,6 +1166,10 @@ fn spawn_cli(
     // 不暴露全局受管 skills 目录（其中可能有停用项）。
     cmd.env_remove("AGENT_WORKBENCH_SKILLS");
 
+    // CR-053：在供应商环境注入与 strip_prefixes 之后注入命令工具环境（LLD-CR053 §5）。
+    // 只影响本次新启动的子进程；进行中的会话不受影响。codex/grok 与 auto 均不注入。
+    crate::commands::shell::inject_shell_env(cli_id, shell_setting.as_ref(), &mut cmd);
+
     cmd.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -719,6 +1191,17 @@ async fn write_stdin(child: &mut Child, prompt: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn retry_reason(fail: &StreamFailure) -> Option<&'static str> {
+    let text = format!("{}\n{}", fail.message, fail.stderr).to_ascii_lowercase();
+    if text.contains("429") || text.contains("rate limit") || text.contains("too many requests") || text.contains("resource exhausted") {
+        return Some("供应商限流 429");
+    }
+    if text.contains("502") || text.contains("503") || text.contains("504") || text.contains("temporarily unavailable") || text.contains("service unavailable") {
+        return Some("供应商暂时不可用");
+    }
+    None
+}
+
 async fn run_cli_stream(
     mut child: Child,
     mut abort_rx: watch::Receiver<bool>,
@@ -726,25 +1209,32 @@ async fn run_cli_stream(
     prompt: &str,
     session_id: &str,
     channel: &tauri::ipc::Channel<serde_json::Value>,
-) -> Result<StreamOutcome, String> {
+) -> Result<StreamOutcome, StreamFailure> {
     if *abort_rx.borrow() {
         let _ = child.kill().await;
-        return Ok(StreamOutcome { assistant_text: "[已停止]".into(), ..Default::default() });
+        return Ok(StreamOutcome { assistant_text: "[已停止]".into(), aborted: true, ..Default::default() });
     }
     let timeout_secs = if std::env::var_os("SMOKE_MOCKBIN").is_some() { 20 } else { 30 * 60 };
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
     tokio::select! {
-        result = write_stdin(&mut child, prompt) => { result?; }
+        result = write_stdin(&mut child, prompt) => {
+            result.map_err(|e| StreamFailure { message: e, stderr: String::new(), timed_out: false })?;
+        }
         _ = abort_rx.changed() => {
             let _ = child.kill().await;
-            return Ok(StreamOutcome { assistant_text: "[已停止]".into(), ..Default::default() });
+            return Ok(StreamOutcome { assistant_text: "[已停止]".into(), aborted: true, ..Default::default() });
         }
         _ = tokio::time::sleep_until(deadline) => {
             let _ = child.kill().await;
-            return Err("CLI 执行超时".into());
+            return Err(StreamFailure { message: "CLI 执行超时".into(), stderr: String::new(), timed_out: true });
         }
     }
-    let mut stdout = tokio::io::BufReader::new(child.stdout.take().ok_or("CLI 输出管道不可用")?);
+    let mut stdout = tokio::io::BufReader::new(
+        child
+            .stdout
+            .take()
+            .ok_or(StreamFailure { message: "CLI 输出管道不可用".into(), stderr: String::new(), timed_out: false })?,
+    );
     let stderr_shared = Arc::new(Mutex::new(String::new()));
     if let Some(mut err) = child.stderr.take() {
         use tokio::io::AsyncReadExt;
@@ -819,32 +1309,41 @@ async fn run_cli_stream(
     }
     if aborted {
         out.assistant_text.push_str("\n\n[已停止]");
+        out.aborted = true;
         return Ok(out);
     }
-    if timed_out { return Err("CLI 执行超时，未将部分输出标为成功".into()); }
-    // 等待退出码；不把 stderr（可能含凭证或私有正文）返回到 UI。
+    if timed_out { return Err(StreamFailure { message: "CLI 执行超时，未将部分输出标为成功".into(), stderr: String::new(), timed_out: true }); }
+    // 等待退出码；不把 stderr（可能含凭证或私有正文）返回到 UI，仅用于适配器报错特征识别。
     let _ = session_id;
     #[cfg(debug_assertions)]
     eprintln!(
-        "[chat] 流结束 assistant_len={} tool_uses={} session_ref={:?}",
+        "[chat] 流结束 assistant_len={} tool_uses={} emitted_ref={}",
         out.assistant_text.len(),
         out.tool_uses.len(),
-        out.session_ref
+        out.emitted_ref.as_deref().map(crate::commands::chat_binding::fingerprint_ref).unwrap_or_else(|| "none".into())
     );
     let status = tokio::select! {
-        status = child.wait() => status.map_err(|_| "CLI 等待退出失败".to_string())?,
+        status = child.wait() => status.map_err(|_| StreamFailure { message: "CLI 等待退出失败".into(), stderr: String::new(), timed_out: false })?,
         _ = abort_rx.changed() => {
             let _ = child.kill().await;
             out.assistant_text.push_str("\n\n[已停止]");
+            out.aborted = true;
             return Ok(out);
         }
         _ = tokio::time::sleep_until(deadline) => {
             let _ = child.kill().await;
-            return Err("CLI 执行超时".into());
+            return Err(StreamFailure { message: "CLI 执行超时".into(), stderr: String::new(), timed_out: true });
         }
     };
-    if status.success() { Ok(out) }
-    else { Err(format!("CLI 退出码 {}，执行未成功", status.code().unwrap_or(-1))) }
+    if status.success() {
+        Ok(out)
+    } else {
+        Err(StreamFailure {
+            message: format!("CLI 退出码 {}，执行未成功", status.code().unwrap_or(-1)),
+            stderr: stderr_shared.lock().unwrap().clone(),
+            timed_out: false,
+        })
+    }
 }
 
 /// 解析单行 CLI 输出并推送事件（claude stream-json / codex exec --json / 通用回退）。
@@ -862,7 +1361,7 @@ fn parse_cli_line(
         // ---------- claude stream-json ----------
         (_, "system") => {
             if let Some(sid) = v.get("session_id").and_then(|s| s.as_str()) {
-                out.session_ref = Some(sid.to_string());
+                out.emitted_ref = Some(sid.to_string());
             }
         }
         (_, "stream_event") => {
@@ -873,10 +1372,12 @@ fn parse_cli_line(
                 let dt = delta.get("type").and_then(|t| t.as_str()).unwrap_or("");
                 if dt == "text_delta" {
                     let text = delta.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                    out.mark_content();
                     out.assistant_text.push_str(text);
                     send(channel, serde_json::json!({ "type": "delta", "delta": text }));
                 } else if dt == "thinking_delta" {
                     let text = delta.get("thinking").and_then(|t| t.as_str()).unwrap_or("");
+                    out.mark_thinking();
                     out.thinking_text.push_str(text);
                     send(channel, serde_json::json!({ "type": "thinking", "delta": text }));
                 }
@@ -885,7 +1386,7 @@ fn parse_cli_line(
         (_, "assistant") => {
             let msg = v.get("message").cloned().unwrap_or(serde_json::Value::Null);
             if let Some(sid) = v.get("session_id").and_then(|s| s.as_str()) {
-                out.session_ref = Some(sid.to_string());
+                out.emitted_ref = Some(sid.to_string());
             }
             if let Some(blocks) = msg.get("content").and_then(|c| c.as_array()) {
                 for b in blocks {
@@ -933,14 +1434,19 @@ fn parse_cli_line(
             if let Some(u) = v.get("usage") {
                 out.usage = Some(extract_usage(u));
             }
+            // CR-037：exit 0 不可信；result.is_error 才是 API 失败轮的判定依据。
+            if v.get("is_error").and_then(|b| b.as_bool()).unwrap_or(false) {
+                out.is_error = true;
+            }
             if out.assistant_text.is_empty() {
                 if let Some(r) = v.get("result").and_then(|r| r.as_str()) {
+                    out.mark_content();
                     out.assistant_text = r.to_string();
                     send(channel, serde_json::json!({ "type": "delta", "delta": r }));
                 }
             }
             if let Some(sid) = v.get("session_id").and_then(|s| s.as_str()) {
-                out.session_ref = Some(sid.to_string());
+                out.emitted_ref = Some(sid.to_string());
             }
         }
         // ---------- codex exec --json ----------
@@ -951,6 +1457,7 @@ fn parse_cli_line(
                 "agent_message" => {
                     let text = item.get("text").and_then(|t| t.as_str()).unwrap_or("");
                     if !text.is_empty() && !out.assistant_text.contains(text) {
+                        out.mark_content();
                         out.assistant_text.push_str(text);
                         send(channel, serde_json::json!({ "type": "delta", "delta": text }));
                     }
@@ -962,6 +1469,7 @@ fn parse_cli_line(
                         .and_then(|t| t.as_str())
                         .unwrap_or("");
                     if !text.is_empty() {
+                        out.mark_thinking();
                         out.thinking_text.push_str(text);
                         send(channel, serde_json::json!({ "type": "thinking", "delta": text }));
                     }
@@ -985,7 +1493,7 @@ fn parse_cli_line(
         }
         (_, "thread.started") => {
             if let Some(tid) = v.get("thread_id").and_then(|t| t.as_str()) {
-                out.session_ref = Some(tid.to_string());
+                out.emitted_ref = Some(tid.to_string());
             }
         }
         (_, "error") => {
@@ -996,6 +1504,7 @@ fn parse_cli_line(
         _ => {
             if let Some(text) = v.get("text").or_else(|| v.get("content")).and_then(|t| t.as_str()) {
                 if !text.is_empty() && typ != "user" {
+                    out.mark_content();
                     out.assistant_text.push_str(text);
                     send(channel, serde_json::json!({ "type": "delta", "delta": text }));
                 }
@@ -1041,39 +1550,56 @@ fn extract_content_text(c: Option<&serde_json::Value>) -> String {
     }
 }
 
-fn persist_assistant(session_id: &str, out: &StreamOutcome) -> Result<(), String> {
-    let guard = db::conn()?;
-    let conn = guard.as_ref().ok_or("会话数据库未初始化")?;
-    persist_assistant_with_conn(conn, session_id, out)
-}
-
-fn persist_assistant_with_conn(conn: &rusqlite::Connection, session_id: &str, out: &StreamOutcome) -> Result<(), String> {
-    let transaction = conn.unchecked_transaction().map_err(|_| "回复保存失败，流式内容保留但未持久化".to_string())?;
+/// 消息落库（无事务）：由 persist_assistant_with_conn 或结算事务复用，禁止嵌套开事务。
+fn insert_assistant_messages(conn: &rusqlite::Connection, session_id: &str, out: &StreamOutcome) -> Result<(), rusqlite::Error> {
     let now = now_ms();
-    let save_error = |_| "回复保存失败，流式内容保留但未持久化".to_string();
     if !out.assistant_text.trim().is_empty() || !out.thinking_text.trim().is_empty() {
-        transaction.execute(
+        let mut meta = serde_json::json!({
+            "thinking": out.thinking_text,
+            "usage": out.usage.map(|(i,o,c)| serde_json::json!({"inputTokens":i,"outputTokens":o,"cacheReadTokens":c})),
+        });
+        // CR-056：思考阶段耗时只在真的记录到思考内容时写入，避免给出 0 秒的假时长。
+        if out.thinking_ms > 0 && !out.thinking_text.trim().is_empty() {
+            meta["thinkingMs"] = serde_json::json!(out.thinking_ms);
+        }
+        conn.execute(
             "INSERT INTO message (id,sessionId,role,content,metaJson,createdAt) VALUES (?1,?2,'assistant',?3,?4,?5)",
-            rusqlite::params![new_id("msg"), session_id, out.assistant_text, serde_json::json!({
-                "thinking": out.thinking_text,
-                "usage": out.usage.map(|(i,o,c)| serde_json::json!({"inputTokens":i,"outputTokens":o,"cacheReadTokens":c})),
-            }).to_string(), now],
-        ).map_err(save_error)?;
+            rusqlite::params![new_id("msg"), session_id, out.assistant_text, meta.to_string(), now],
+        )?;
     }
     for (tid, name, input) in &out.tool_uses {
-        transaction.execute(
+        conn.execute(
             "INSERT INTO message (id,sessionId,role,content,metaJson,createdAt) VALUES (?1,?2,'tool_use',?3,?4,?5)",
             rusqlite::params![new_id("msg"),session_id,name,serde_json::json!({"toolId":tid,"input":input}).to_string(),now],
-        ).map_err(save_error)?;
+        )?;
     }
     for (tid, content, is_error) in &out.tool_results {
-        transaction.execute(
+        conn.execute(
             "INSERT INTO message (id,sessionId,role,content,metaJson,createdAt) VALUES (?1,?2,'tool_result',?3,?4,?5)",
             rusqlite::params![new_id("msg"),session_id,content,serde_json::json!({"toolId":tid,"isError":is_error}).to_string(),now],
-        ).map_err(save_error)?;
+        )?;
     }
-    transaction.execute("UPDATE session SET updatedAt=?2 WHERE id=?1", rusqlite::params![session_id,now]).map_err(save_error)?;
-    transaction.commit().map_err(save_error)
+    conn.execute("UPDATE session SET updatedAt=?2 WHERE id=?1", rusqlite::params![session_id,now])?;
+    Ok(())
+}
+
+/// 独立事务版消息落库（现仅测试与回退路径使用；流式结算走 insert_assistant_messages）。
+#[cfg_attr(not(test), allow(dead_code))]
+fn persist_assistant_with_conn(conn: &rusqlite::Connection, session_id: &str, out: &StreamOutcome) -> Result<(), String> {
+    let transaction = conn
+        .unchecked_transaction()
+        .map_err(|e| {
+            eprintln!("[chat] 回复保存失败（开事务）：{e}");
+            format!("回复保存失败，流式内容保留但未持久化（{e}）")
+        })?;
+    insert_assistant_messages(&transaction, session_id, out).map_err(|e| {
+        eprintln!("[chat] 回复保存失败：{e}");
+        format!("回复保存失败，流式内容保留但未持久化（{e}）")
+    })?;
+    transaction.commit().map_err(|e| {
+        eprintln!("[chat] 回复保存失败（提交）：{e}");
+        format!("回复保存失败，流式内容保留但未持久化（{e}）")
+    })
 }
 
 #[cfg(test)]
@@ -1163,7 +1689,7 @@ mod tests {
         assert!(validate_permission("grok", None).is_ok());
         assert!(validate_permission("claude", Some("agent")).is_ok());
         assert!(validate_permission("codex", Some("agent")).is_ok());
-        for mode in ["plan", "auto", "default", "full", "bypassPermissions", ""] {
+        for mode in ["auto", "full", "bypassPermissions", ""] {
             assert!(validate_permission("claude", Some(mode)).is_err());
             assert!(validate_permission("codex", Some(mode)).is_err());
         }

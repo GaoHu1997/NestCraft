@@ -14,12 +14,57 @@ pub use sources::read_requirement_sources;
 pub use sources::__cmd__read_requirement_sources;
 pub use sources::__tauri_command_name_read_requirement_sources;
 
+/// CR-051 r6：项目与知识库共用的 50 个内置图标（6 组，可清空回类型默认）。
+pub const PROJECT_ICON_IDS: [&str; 50] = [
+    // 通用（16）
+    "code", "terminal", "globe", "database", "layers", "box", "wrench", "gauge", "bulb", "target",
+    "sparkles", "book", "bookOpen", "library", "shield", "users",
+    // 办公（7）
+    "briefcase", "building", "calendar", "clipboard", "presentation", "mail", "idBadge",
+    // 商业（8）
+    "chartBar", "chartLine", "chartPie", "wallet", "receipt", "cart", "tag", "scale",
+    // 内容（8）
+    "megaphone", "camera", "music", "video", "mic", "newspaper", "pen", "brush",
+    // 产品（8）
+    "rocket", "bug", "puzzle", "flag", "compass", "flask", "robot", "cloud",
+    // 生活（3）
+    "school", "heart", "star",
+];
+
+/// CR-051 r6：10 个背景色卡（与前端 ICON_COLORS 一致）。
+pub const ICON_COLOR_IDS: [&str; 10] = [
+    "blue", "teal", "violet", "amber", "green", "rose", "indigo", "orange", "slate", "sand",
+];
+
+/// 解析色卡更新请求：None=保持；null/空串=清空回默认；其余必须命中 10 色白名单。
+fn resolve_icon_color(raw: Option<Option<&str>>) -> Result<Option<Option<String>>, String> {
+    match raw {
+        None => Ok(None),
+        Some(None) => Ok(Some(None)),
+        Some(Some(value)) if value.trim().is_empty() => Ok(Some(None)),
+        Some(Some(value)) if ICON_COLOR_IDS.contains(&value) => Ok(Some(Some(value.to_string()))),
+        Some(Some(value)) => Err(format!("非法背景色卡 id：{}；仅支持 10 个内置色卡", value)),
+    }
+}
+
+/// 解析项目图标更新请求：None=保持不变；null/空串=清空回类型默认；其余必须命中白名单。
+/// 返回 `Option<Option<String>>`：None=不修改，Some(None)=清空，Some(Some(id))=设置。
+fn resolve_project_icon(raw: Option<Option<&str>>) -> Result<Option<Option<String>>, String> {
+    match raw {
+        None => Ok(None),
+        Some(None) => Ok(Some(None)),
+        Some(Some(value)) if value.trim().is_empty() => Ok(Some(None)),
+        Some(Some(value)) if PROJECT_ICON_IDS.contains(&value) => Ok(Some(Some(value.to_string()))),
+        Some(Some(value)) => Err(format!("非法项目图标 id：{}；仅支持内置 50 个图标", value)),
+    }
+}
+
 #[tauri::command]
 pub fn list_projects() -> Result<Vec<Project>, String> {
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
     let mut stmt = conn
-        .prepare("SELECT id, name, type, rootUri, createdAt, updatedAt FROM project ORDER BY updatedAt DESC")
+        .prepare("SELECT id, name, type, rootUri, icon, iconColor, createdAt, updatedAt FROM project ORDER BY updatedAt DESC")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |r| {
@@ -28,8 +73,10 @@ pub fn list_projects() -> Result<Vec<Project>, String> {
                 name: r.get(1)?,
                 kind: r.get(2)?,
                 root_uri: r.get(3)?,
-                created_at: r.get(4)?,
-                updated_at: r.get(5)?,
+                icon: r.get(4)?,
+                icon_color: r.get(5)?,
+                created_at: r.get(6)?,
+                updated_at: r.get(7)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -64,16 +111,24 @@ pub fn create_project(name: String, kind: String, root_uri: String) -> Result<Pr
         name,
         kind,
         root_uri: canonical.to_string_lossy().to_string(),
+        icon: None,
+        icon_color: None,
         created_at: now,
         updated_at: now,
     })
 }
 
 #[tauri::command]
-pub fn update_project(id: String, name: String, root_uri: Option<String>) -> Result<Project, String> {
+pub fn update_project(
+    id: String,
+    name: String,
+    root_uri: Option<String>,
+    icon: Option<Option<String>>,
+    icon_color: Option<Option<String>>,
+) -> Result<Project, String> {
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
-    update_project_inner(conn, &id, &name, root_uri.as_deref())
+    update_project_inner(conn, &id, &name, root_uri.as_deref(), icon.as_ref().map(|v| v.as_deref()), icon_color.as_ref().map(|v| v.as_deref()))
 }
 
 fn validated_project_name(name: &str) -> Result<&str, String> {
@@ -90,12 +145,21 @@ fn accessible_project_directory(root_uri: &str) -> Result<PathBuf, String> {
     Ok(canonical)
 }
 
-fn update_project_inner(conn: &rusqlite::Connection, id: &str, name: &str, root_uri: Option<&str>) -> Result<Project, String> {
+fn update_project_inner(
+    conn: &rusqlite::Connection,
+    id: &str,
+    name: &str,
+    root_uri: Option<&str>,
+    icon: Option<Option<&str>>,
+    icon_color: Option<Option<&str>>,
+) -> Result<Project, String> {
+    let icon_update = resolve_project_icon(icon)?;
+    let color_update = resolve_icon_color(icon_color)?;
     let name = validated_project_name(name)?;
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
     let mut project = tx.query_row(
-        "SELECT id, name, type, rootUri, createdAt, updatedAt FROM project WHERE id=?1", [id],
-        |r| Ok(Project { id: r.get(0)?, name: r.get(1)?, kind: r.get(2)?, root_uri: r.get(3)?, created_at: r.get(4)?, updated_at: r.get(5)? }),
+        "SELECT id, name, type, rootUri, icon, iconColor, createdAt, updatedAt FROM project WHERE id=?1", [id],
+        |r| Ok(Project { id: r.get(0)?, name: r.get(1)?, kind: r.get(2)?, root_uri: r.get(3)?, icon: r.get(4)?, icon_color: r.get(5)?, created_at: r.get(6)?, updated_at: r.get(7)? }),
     ).map_err(|_| "项目不存在".to_string())?;
     let duplicate: i64 = tx.query_row("SELECT COUNT(*) FROM project WHERE trim(name)=?1 AND id<>?2", [name, id], |r| r.get(0))
         .map_err(|e| e.to_string())?;
@@ -115,6 +179,18 @@ fn update_project_inner(conn: &rusqlite::Connection, id: &str, name: &str, root_
     project.updated_at = now_ms();
     tx.execute("UPDATE project SET name=?2, rootUri=?3, updatedAt=?4 WHERE id=?1",
         rusqlite::params![id, project.name, project.root_uri, project.updated_at]).map_err(|e| e.to_string())?;
+    // CR-051：icon／iconColor 只在显式传入时更新；absent 保持既有值，清空写 NULL 回默认。
+    // 旧项目（两列均为 NULL）保持原样显示，不在这里做任何批量映射。
+    if let Some(next_icon) = icon_update {
+        project.icon = next_icon.clone();
+        tx.execute("UPDATE project SET icon=?2 WHERE id=?1", rusqlite::params![id, project.icon])
+            .map_err(|e| e.to_string())?;
+    }
+    if let Some(next_color) = color_update {
+        project.icon_color = next_color.clone();
+        tx.execute("UPDATE project SET iconColor=?2 WHERE id=?1", rusqlite::params![id, project.icon_color])
+            .map_err(|e| e.to_string())?;
+    }
     tx.commit().map_err(|e| e.to_string())?;
     // 保留 ID/type/会话/授权及旧目录全部内容；索引由 read_requirements 再从新根重建。
     Ok(project)
@@ -320,23 +396,52 @@ mod tests {
         std::fs::create_dir_all(&new).unwrap();
         std::fs::write(old.join("user.txt"), "keep").unwrap();
         let conn = rusqlite::Connection::open_in_memory().unwrap();
-        conn.execute_batch("CREATE TABLE project(id TEXT PRIMARY KEY,name TEXT,type TEXT,rootUri TEXT,createdAt INTEGER,updatedAt INTEGER);
+        conn.execute_batch("CREATE TABLE project(id TEXT PRIMARY KEY,name TEXT,type TEXT,rootUri TEXT,icon TEXT,iconColor TEXT,createdAt INTEGER,updatedAt INTEGER);
             CREATE TABLE session(id TEXT,projectId TEXT);
             CREATE TABLE requirement_index(projectId TEXT,entityId TEXT);
             INSERT INTO requirement_index VALUES('p1','story');").unwrap();
-        conn.execute("INSERT INTO project VALUES('p1','one','code',?1,1,1),('p2','two','work',?1,1,1)", [old.to_string_lossy().as_ref()]).unwrap();
-        assert!(update_project_inner(&conn, "p1", "  ", None).is_err());
-        assert!(update_project_inner(&conn, "p1", " two ", None).is_err());
-        let renamed = update_project_inner(&conn, "p1", " renamed ", None).unwrap();
+        conn.execute("INSERT INTO project VALUES('p1','one','code',?1,NULL,NULL,1,1),('p2','two','work',?1,NULL,NULL,1,1)", [old.to_string_lossy().as_ref()]).unwrap();
+        assert!(update_project_inner(&conn, "p1", "  ", None, None, None).is_err());
+        assert!(update_project_inner(&conn, "p1", " two ", None, None, None).is_err());
+        let renamed = update_project_inner(&conn, "p1", " renamed ", None, None, None).unwrap();
         assert_eq!(renamed.name, "renamed");
         assert_eq!(renamed.root_uri, old.to_string_lossy());
-        let updated = update_project_inner(&conn, "p1", "renamed", Some(new.to_str().unwrap())).unwrap();
+        let updated = update_project_inner(&conn, "p1", "renamed", Some(new.to_str().unwrap()), None, None).unwrap();
         assert_eq!(updated.id, "p1");
         assert_eq!(updated.kind, "code");
         assert_eq!(updated.created_at, 1);
         assert_eq!(std::fs::read_to_string(old.join("user.txt")).unwrap(), "keep");
         assert_eq!(conn.query_row("SELECT COUNT(*) FROM requirement_index", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn project_icon_whitelist_clear_and_keep_semantics() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE project(id TEXT PRIMARY KEY,name TEXT,type TEXT,rootUri TEXT,icon TEXT,iconColor TEXT,createdAt INTEGER,updatedAt INTEGER);
+            CREATE TABLE session(id TEXT,projectId TEXT);").unwrap();
+        conn.execute("INSERT INTO project VALUES('p1','one','code','D:/x',NULL,NULL,1,1)", []).unwrap();
+        // 非法 id 服务端拒绝，不落库（r6 共享白名单后 rocket 已是成员；用未登记 id 验证）。
+        assert!(resolve_project_icon(Some(Some("notAnIcon"))).is_err());
+        assert!(update_project_inner(&conn, "p1", "one", None, Some(Some("notAnIcon")), None).is_err());
+        let stored: Option<String> = conn.query_row("SELECT icon FROM project WHERE id='p1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(stored, None);
+        // 白名单内 id 保存成功。
+        let set = update_project_inner(&conn, "p1", "one", None, Some(Some("briefcase")), None).unwrap();
+        assert_eq!(set.icon.as_deref(), Some("briefcase"));
+        // absent（None 外层）保持既有值不变。
+        let kept = update_project_inner(&conn, "p1", "one2", None, None, None).unwrap();
+        assert_eq!(kept.icon.as_deref(), Some("briefcase"));
+        // 显式清空（空串或 null）写 NULL，展示层回类型默认。
+        let cleared = update_project_inner(&conn, "p1", "one2", None, Some(Some("")), None).unwrap();
+        assert_eq!(cleared.icon, None);
+        let cleared2 = update_project_inner(&conn, "p1", "one2", None, Some(None), None).unwrap();
+        assert_eq!(cleared2.icon, None);
+        // 12 个白名单 id 全部可保存。
+        for id in PROJECT_ICON_IDS {
+            let saved = update_project_inner(&conn, "p1", "one2", None, Some(Some(id)), None).unwrap();
+            assert_eq!(saved.icon.as_deref(), Some(id));
+        }
     }
 
     #[test]
