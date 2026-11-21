@@ -128,6 +128,52 @@
 - status：porcelain v1 -z 解析 XY 列（冲突塌缩 U）；log：`\x1f`/`\x1e` 分隔 pretty-format；上游 ahead/behind：`rev-list --left-right --count upstream...HEAD`。
 - 网络操作仅 fetch/pull(--ff-only)/push，无 force/reset/clean（与 CR-006 边界一致）。
 
+### 3.7 NestCraft-owned HTTP MCP OAuth（后端增量已接入，完整实现未完成）
+
+模型供应商的第三方API密钥与HTTP MCP服务器OAuth是两类凭据：前者继续沿provider_key/secretRef注入模型请求，后者由NestCraft按`mcp_server`端点独立管理；不调用或复制CLI原生`claude mcp login`/`codex mcp login`凭据。参考实现只借provider home与OAuth机制边界，不复制远端issuer、scope或代码。
+
+传输范围：**仅 `stdio` 与 `http`**（`streamable-http` 是 HTTP 传输的规范名，按 http 处理）。SSE 与 WebSocket 传输不支持：SSE 属旧版 HTTP+SSE 规范，参考实现（ZCode／官方 SDK）也把 `type=sse` 标为 legacy 且其现代路径为 Streamable HTTP；本应用后端为 Rust、无等价内置 SDK，故不引入。后端 `mcp_save` 与工具发现对非 stdio/http 一律拒绝。
+
+首期只支持HTTP/streamable-http MCP。NestCraft启动授权时读取受保护资源/授权服务器元数据，生成随机state、PKCE verifier/challenge和本机随机loopback redirect，登记一次性`mcp_auth_attempt`；使用系统浏览器打开授权URL，回调只接受匹配state、服务器ID、redirect和有效期限的请求，成功后交换access/refresh token。token只写现有受管密钥存储并由`authCredentialRef`引用；SQLite不保存token正文、原始回调或client secret。刷新、撤权、端点/元数据变更、凭据缺失都更新显式authStatus并阻止未授权tools/list和派发。
+
+`mcp_discover_tools`与派发配置必须从NestCraft受管credentialRef读取token；连接结果分别记录`authenticated`与`discovered`，不能用tools/list成功代替授权。Claude/Codex只接收本次生成的HTTP MCP配置，不能读取用户全局MCP或原生OAuth profile；stdio仍沿现有启动参数路径，不伪造OAuth。
+
+#### 3.7.1 认证方式、Streamable HTTP 会话与 TLS 边界（2026-11-21 实测补充）
+
+真实服务核验发现两类缺陷并已修正：
+
+1. **Streamable HTTP 会话**：现代 MCP 服务在 `initialize` 响应中下发 `Mcp-Session-Id`，后续 `notifications/initialized` 与 `tools/list` 必须携带同一会话头；响应可能是 `text/event-stream`。原实现只发 `initialize` 与 `tools/list`、忽略会话头且仅取首条 data 行，对真实服务会失败。现按 `initialize → initialized → tools/list` 顺序执行，并解析 SSE 中的 result/error。
+2. **认证方式不止 OAuth**：`mcp_server.authMode ∈ oauth|bearer|none`。`oauth` 走 3.7 的授权与刷新；`bearer` 直接使用服务提供的静态令牌，写入受管密钥（引用 `mcp-bearer:<serverId>`），DB 只存引用与状态；`none` 不发送认证头，仅用于受控服务。静态令牌同样只用于工具发现与派发，不回显。
+
+TLS：客户端默认严格按系统根证书校验。仅当服务地址是 loopback（`127.0.0.1`／`localhost`／`::1`）的 HTTPS，且用户为该服务器显式开启“信任本机自签名证书”时，才对该连接放宽校验；其他主机传入该选项会被拒绝。该选项默认关闭，属本机开发场景的显式取舍，不是通用关闭校验。
+
+实测证据：对 `https://127.0.0.1:27124/mcp`（Obsidian Local REST API + MCP，静态 Bearer）以生产函数执行会话握手后成功发现 16 个工具。该服务提供的是静态令牌而非 OAuth，因此不能作为 OAuth 授权/刷新链路的外部验收证据。
+
+#### 3.7.2 独立安全审计后的加固与未决项（2026-11-21）
+
+已修：
+
+- `mcp_save` 曾在外层 DB `MutexGuard` 存活时再次 `db::conn()`，属不可重入自锁；现在处理受管密钥前显式结束 DB 锁作用域。
+- 回调 `state` 参数按字节解码，杜绝非法 `%` 序列在字符边界切片导致 panic；无 state 或不匹配的本地请求不再消耗一次性授权；接受连接设读超时，避免只连接不发送拖住回调线程。
+- 资源地址由前缀匹配改为主机精确匹配：明文 HTTP 仅允许 loopback；`localhost.attacker.example` 一类近似域名被拒绝。OAuth 元数据与令牌请求禁用自动重定向，放宽证书的校验器同时拒绝非 loopback `server_name`，避免经重定向绕过。
+- 令牌与资源地址绑定（`resource_url`）：端点变化后旧令牌立即失效并回到未授权。
+- OAuth 凭据引用按 `attempt_id` 唯一（`mcp-oauth:<serverId>:<attemptId>`）；回调以 `authStatus='pending'` 做 CAS，失败只清理本次引用，不再误删新代次。
+- 供应商密钥与 MCP 凭据共用同一把 `secrets.json` 文件锁，避免相互覆盖。
+- 前端不再二次 `window.open`（系统浏览器由后端打开），轮询在卸载后可安全收敛。
+- 启动回收：进程重启后，DB 中残留的 `pending` attempt 置 `expired`、对应 `mcp_server` 回到 `unauthenticated`（内存 verifier 与 loopback 监听已丢失，不可恢复）。
+- 删除或停用服务器：取消其 pending attempt、清空内存待回调状态，并删除该服务器拥有的受管凭据（含 `mcp-bearer:<id>` 与 DB 记录的 credentialRef）。
+- refresh 在网络往返后复核 `authStatus` 与 `authCredentialRef`；期间撤权、登出或换端点则丢弃本次刷新结果，不写回旧授权。
+
+未决（不得据现有证据声称安全完成）：
+
+- `mcp_auth_attempt` 仍无 server 外键与单活动 attempt 约束（当前靠应用层状态机保证）。
+- dispatch 仍可能用旧 URL 快照配合后读凭据，尚未做同一配置代次的原子快照。
+- 协议细节未覆盖：未发送 `MCP-Protocol-Version` 头、未处理 tools 分页、OAuth discovery 未解析 `WWW-Authenticate`、授权与交换未带 `resource` 参数。
+- 回调只做单次 `read`，合法分片请求可能被误拒；Windows 下受管密钥文件未建立专用 ACL 证明。
+- 真实 OAuth 授权服务器端到端仍未验证；正式软件与设计稿的同条件视觉对照仍未取得。
+
+桌面回调和系统浏览器打开、令牌刷新/撤销及并发锁是本增量的实现前置；无可靠回调或凭据写入失败时保持未授权并返回可重试错误。UI需覆盖未授权、待回调、已授权、过期、撤权、失败、登出和连接发现分离状态后才能修改正式界面。
+
 ## 4. UI 体系
 
 - 设计令牌：`src/theme/tokens.css`（与 CR-014 原型同源的浅/深两套变量）；`base.css` 通用组件类；模块 CSS 一律引用变量不写死色值。

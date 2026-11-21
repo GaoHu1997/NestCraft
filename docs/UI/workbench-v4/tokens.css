@@ -39,6 +39,27 @@
   --sidebar-w: 224px;
   --content-max: 1320px;
   --ease: cubic-bezier(.2, .8, .3, 1);
+
+  /* CR-051：文件类型色与图标砖承载底（浅色）。形状双编码，颜色只作辅助。 */
+  --fic-folder: #d9982b;
+  --fic-text: #69737f;
+  --fic-md: #0b7d70;
+  --fic-pdf: #d14343;
+  --fic-word: #2b5fd9;
+  --fic-sheet: #1a9d5a;
+  --fic-slides: #c46a00;
+  --fic-image: #7a5af8;
+  --fic-archive: #a9762f;
+  --fic-code: #6f5bd6;
+  --fic-audio: #b14bad;
+  --fic-video: #c2410c;
+  --fic-unknown: #98a1ae;
+  --fic-project-code: #2b6cf6;
+  --fic-project-work: #b76a00;
+  --tile-blue: #eaf1ff;
+  --tile-amber: #fff4e2;
+  --tile-violet: #f0edfd;
+  --tile-green: #e7f8ef;
 }
 
 html[data-theme="dark"] {
@@ -69,4 +90,63 @@ html[data-theme="dark"] {
   --shadow-pop: 0 16px 40px rgba(0, 0, 0, .55);
   --shadow-card: 0 1px 2px rgba(0, 0, 0, .25);
   --ring: 0 0 0 3px rgba(91, 141, 255, .22);
+
+  /* CR-051：文件类型色与图标砖承载底（深色）。 */
+  --fic-folder: #e8b95c;
+  --fic-text: #a7b0be;
+  --fic-md: #4fd1c5;
+  --fic-pdf: #ff8a80;
+  --fic-word: #8db3ff;
+  --fic-sheet: #4ccb83;
+  --fic-slides: #e0a04a;
+  --fic-image: #b9a8ff;
+  --fic-archive: #d8a15a;
+  --fic-code: #b9a8ff;
+  --fic-audio: #e8a6e8;
+  --fic-video: #f0906a;
+  --fic-unknown: #8a93a3;
+  --fic-project-code: #8db3ff;
+  --fic-project-work: #e0a04a;
+  --tile-blue: #1e2a44;
+  --tile-amber: #2b2416;
+  --tile-violet: #262238;
+  --tile-green: #16281d;
+}
+
+/* CR-051：品牌薄荷承载（头像 B/C 风格底色与描边）。 */
+:root {
+  --teal: #0f9f8f;
+  --teal-soft: #e8f7f3;
+  --teal-line: #c9ebe2;
+}
+html[data-theme="dark"] {
+  --teal: #4fd1c5;
+  --teal-soft: #17302b;
+  --teal-line: #2a4c46;
+}
+
+/* CR-051 r2/r6：10 个背景色卡（与软件 ICON_COLORS、设计稿 SWATCHES 同值；浅深各一套承载底与图形色）。 */
+:root {
+  --c51c-blue-soft: #eaf1ff;   --c51c-blue-strong: #2b6cf6;
+  --c51c-teal-soft: #e8f7f3;   --c51c-teal-strong: #0b7d70;
+  --c51c-violet-soft: #f0edfd; --c51c-violet-strong: #6f5bd6;
+  --c51c-amber-soft: #fff4e2;  --c51c-amber-strong: #b76a00;
+  --c51c-green-soft: #e7f8ef;  --c51c-green-strong: #1a9d5a;
+  --c51c-rose-soft: #fdeef1;   --c51c-rose-strong: #c2345a;
+  --c51c-indigo-soft: #eef0ff; --c51c-indigo-strong: #4356c9;
+  --c51c-orange-soft: #fff0e6; --c51c-orange-strong: #c2410c;
+  --c51c-slate-soft: #eef1f5;  --c51c-slate-strong: #52627a;
+  --c51c-sand-soft: #f8f1e3;   --c51c-sand-strong: #8a6420;
+}
+html[data-theme="dark"] {
+  --c51c-blue-soft: #1e2a44;   --c51c-blue-strong: #8db3ff;
+  --c51c-teal-soft: #17302b;   --c51c-teal-strong: #4fd1c5;
+  --c51c-violet-soft: #262238; --c51c-violet-strong: #b9a8ff;
+  --c51c-amber-soft: #2b2416;  --c51c-amber-strong: #e0a04a;
+  --c51c-green-soft: #16281d;  --c51c-green-strong: #4ccb83;
+  --c51c-rose-soft: #331a20;   --c51c-rose-strong: #ff9ab0;
+  --c51c-indigo-soft: #1e2144; --c51c-indigo-strong: #97a3ff;
+  --c51c-orange-soft: #331b12; --c51c-orange-strong: #f0906a;
+  --c51c-slate-soft: #242a33;  --c51c-slate-strong: #a7b6c8;
+  --c51c-sand-soft: #2b2519;   --c51c-sand-strong: #d8b06a;
 }

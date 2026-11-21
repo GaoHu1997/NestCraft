@@ -20,7 +20,7 @@
 | `execution_decision_gate` | id PK、projectId、gateKey、invocationId及Binding列、messageId FK、kind CHECK technical/business、state CHECK open/answered/escalated/resolved/timed_out/archived、responsibleRole、responsibleRef、openedAt、deadlineAt、resolvedAt可空、resolutionMessageId可空 FK、resolutionBasisJson（依据引用与修订）、createdAt/updatedAt；UNIQUE(projectId,gateKey)，同一分支同类型至多一个 open |
 | `execution_collab_receipt` | id PK、projectId、messageId FK、consumerScope、consumerKind CHECK coordinator/worker/ui/history、noticeHash、receivedAt、appliedAt可空、handlingOutcome CHECK applied/duplicate/unprocessed/archivedOnly、handlingRevision、stopGeneration可空；UNIQUE(projectId,consumerScope,messageId) |
 | `execution_collab_cursor` | id PK、projectId、consumerScope PK部分唯一、streamEpoch、lastSeq、authorizationRevision、protocolVersion、updatedAt；过期游标返回 CURSOR_EXPIRED |
-| `execution_rework_link` | id PK、projectId、originMessageId FK（退回指令）、parentInvocationId、childInvocationId、childGeneration、fromArtifactRevisionId可空 FK、toArtifactRevisionId可空 FK、acRefsJson、scopeLimitJson、roundNo、maxRounds、budgetReservationId可空、state CHECK requested/admitted/running/submitted/accepted/exhausted/cancelled、createdAt/updatedAt；UNIQUE(projectId,parentInvocationId,childInvocationId,roundNo) |
+| `execution_rework_link` | id PK、projectId、originMessageId FK（退回指令）、parentInvocationId、childInvocationId、childGeneration、fromArtifactRevisionId FK（定向返工必填）、toArtifactRevisionId可空 FK、acRefsJson、scopeLimitJson、roundNo、maxRounds、budgetReservationId可空、state CHECK requested/admitted/running/submitted/accepted/exhausted/cancelled、createdAt/updatedAt；UNIQUE(projectId,parentInvocationId,childInvocationId,roundNo) |
 | `execution_review_record` 既有表增量 | 不重建表；保留原人工评审／验收与 CR-031 stageQuality 字段，增加 `reviewKind=coordinatorTechnical` 子类型。该类型要求 origin=task、invocationId及完整Binding、artifactRevisionId FK、acManifestHash、designHash、consumedBaseline（适用集成时非空）、conclusion CHECK pass/rework/pending_human/blocked、reviewerRef、basisJson、evidenceRefsJson、decidedAt、validity CHECK current/invalidated、invalidatedReason可空、revision、createdAt。candidateArtifactRevisionId仅为旧接口名称，映射同一artifactRevisionId，不新增第二产物列 |
 
 约束要点（CR-041 文档修订，未迁移）：
@@ -28,13 +28,21 @@
 - 所有可变协作记录（message／gate／receipt／cursor／rework／review）显式具有非空 `revision`，初值1、成功更新递增；命令携带 `expectedRevision`。receipt.handlingRevision 只表示处理版本，不能替代记录CAS修订。
 - 审查字段按 reviewKind 条件校验：coordinatorTechnical 必须有同项目／同 Task 的候选产物与审查依据；stageQuality 的 designGate 继续允许无产物且必须有真实需求设计快照；人工验收仍要求有效产物、workflowRevision、decision/reason、actorAuthorizationRef与当前证据。不得因协调者技术通过生成业务验收。详见 [DB-CR031 §8.1](DB-CR031-事件审批与产物记录.md#81-stagereviewfinding)。
 - message 增加 `createdProjectSeq`（引用同事务登记的消息创建事件）；cursor.lastSeq 表示既有项目事件高水位，不用时间戳猜顺序。补读从事件流重放消息与状态变化，过滤后的空页仍返回扫描高水位，权限／epoch／裁剪规则继承 CR-031。
-- rework 增加 `sourceInvocationId`（被退回调用）及 `reworkScope CHECK(root,child)`；childInvocationId 是旧名称，表示准入后的替代调用。requested阶段替代调用可空，admitted起必须非空。child级要求同项目、同根／原Attempt／根fence；root级要求同项目同Task，但使用新Attempt／新rootInvocationId，sourceInvocationId追溯旧根，不套同根约束。parentInvocationId按原Binding定义为直接调用父，根级为空，不混作退回者身份；退回者由originMessageId定位。`UNIQUE(projectId,originMessageId)` 保证原退回指令幂等；子级返工不得修改根fence。
+- rework 增加 `sourceInvocationId`（被退回调用）及 `reworkScope CHECK(root,child)`；childInvocationId 是旧名称，表示准入后的替代调用。requested阶段替代调用可空，admitted起必须非空。child级要求同项目、同根／原Attempt／根fence；root级要求同项目同Task，但使用新Attempt／新rootInvocationId，sourceInvocationId追溯旧根，不套同根约束。parentInvocationId按原Binding定义为直接调用父，根级为空，不混作退回者身份；退回者由受检修订的产出记录确定，originMessageId 记录退回请求的来源。`UNIQUE(projectId,originMessageId)` 保证原退回指令幂等；子级返工不得修改根fence。
 
 - 消息的 `state` 与决策关口 `state` 分开：一条消息可以是 `answered` 但关口仍 `open`（例如答复被判定无依据）。
 - `execution_review_record.conclusion=pass` 不能单独放行依赖；必须同时满足既有证据门槛（DB-FEAT-019 的 artifact validity、evidence outcome、integration 结果）。
 - 返工链与既有 `execution_attempt`/`execution_artifact_revision` 关联，不复制产物正文。
 - 依据 JSON 只存引用（文件路径 + hash + 修订），不内嵌整份文档。
 - 时间 UTC epoch ms；hash 为 `sha256:<64hex>`；JSON 需 `json_valid` 与结构版本检查。
+
+### 2.1 交接和归因
+
+封存时给既有产物记录登记 `producerInvocationId`、`resultManifestId` 和 `contentHash`。前两项为同项目外键。按 `(projectId,artifactRevisionId)` 唯一解析。既有依赖消费关系登记 `(projectId,consumerInvocationId,artifactRevisionId)`、实际读取的 hash、基线与计划授权。交接引用限制接收调用访问。直投绑定冻结计划中的接收者。转发追加协调者的路由记录，并继承原 `candidate_done` 来源和已封存产物引用。两路登记相同的接收调用、授权与消费键。接收、ACK 与解析成功分别记录，只有解析并校验字节摘要后才写实际消费。旧产物缺来源时保留历史，定向返工显示阻塞。
+
+保留 `reviewKind=coordinatorTechnical` 兼容既有表和记录。新审查的 `reviewerRef` 记录实际评审主体，并补 `reviewerInvocationId`、`findingRefs` 和 `validationPlanHash`。大管家记为转发主体。跨 Task 的 B 提交 Finding，由产物的所属 Task 在本地验证流程登记审查。反馈关联真实消费、受检修订和基线，区分候选缺陷、验证器故障、环境故障和证据不足。历史归因缺失不补猜。
+
+准入时 `fromArtifactRevisionId` 必须指向当前候选，`sourceInvocationId` 取受检产物的产出记录。返工记录增加 `findingRefs`、`continuityMode`、原因码和恢复审计引用。继续使用 `UNIQUE(projectId,originMessageId)`，对 `(projectId,fromArtifactRevisionId,sourceInvocationId)` 添加只覆盖 requested/admitted/running/submitted 的条件唯一索引。新反馈归并到已有未结返工。短事务同时校验当前修订、作用域和预算，登记受影响候选阻断和启动意图。CLI 启动后登记实际结果，崩溃恢复先对账旧进程与副作用。迁移可证明的来源关系，缺值继续保留历史。回退关闭新写入并保留记录。
 
 ## 3. 事务与幂等
 

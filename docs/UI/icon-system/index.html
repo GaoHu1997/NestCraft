@@ -1,0 +1,908 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>CR-051 内置图标与用户头像风格 · 设计稿 · 栖造 NestCraft</title>
+  <link rel="icon" type="image/png" href="../brand-assets-v2/favicon.png">
+  <link rel="stylesheet" href="icon-system.css">
+</head>
+<body data-avatar-style="b">
+
+<!-- 设计稿自带图标 sprite：既有符号为 UI-ICON-001-v1 原定义副本，新增符号见 CR-051。 -->
+<svg class="sprite" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.2A2.2 2.2 0 0 1 5.2 5h3.5l2 2H19a2 2 0 0 1 2 2v8.8A2.2 2.2 0 0 1 18.8 20H5.2A2.2 2.2 0 0 1 3 17.8z"/></symbol>
+  <symbol id="folderOpen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.2A2.2 2.2 0 0 1 5.2 5h3.5l2 2H19a2 2 0 0 1 2 2v1H3z"/><path d="M3 10h18l-2.2 8.2A2 2 0 0 1 16.9 20H5.2A2.2 2.2 0 0 1 3 17.8z"/></symbol>
+  <symbol id="file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></symbol>
+  <symbol id="fileText" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></symbol>
+  <symbol id="filePdf" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M8.5 13.5h2a1.5 1.5 0 0 1 0 3h-2zM13.5 13.5h1.2a2 2 0 0 1 0 4h-1.2z"/></symbol>
+  <symbol id="fileWord" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H5v18h14V8l-5-5v5h5M8 12l2 6 2-5 2 5 2-6"/></symbol>
+  <symbol id="fileSheet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M8 13h8M8 17h8M11 13v4M14 13v4"/></symbol>
+  <symbol id="fileSlides" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H5v18h14V8l-5-5v5h5"/><rect x="8" y="12" width="8" height="6" rx="1"/></symbol>
+  <symbol id="fileCode" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H5v18h14V8l-5-5v5h5m-9 4-2 3 2 3m4-6 2 3-2 3"/></symbol>
+  <symbol id="fileArchive" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H5v18h14V8l-5-5v5h5M10 3v9m-1 0h2v5H9z"/></symbol>
+  <symbol id="image" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></symbol>
+  <symbol id="csv" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M8 13h3M8 17h3M14 13h2M14 17h2"/></symbol>
+  <symbol id="book" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.2A2.2 2.2 0 0 1 6.2 17H20"/><path d="M6.2 2H20v20H6.2A2.2 2.2 0 0 1 4 19.8V4.2A2.2 2.2 0 0 1 6.2 2z"/></symbol>
+  <symbol id="bookOpen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6.5C10.5 5 8.5 4.5 4 4.5v14c4.5 0 6.5.5 8 2 1.5-1.5 3.5-2 8-2v-14c-4.5 0-6.5.5-8 2z"/><path d="M12 6.5v14"/></symbol>
+  <symbol id="globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18z"/></symbol>
+  <symbol id="layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5"/><path d="m3 16.5 9 4.5 9-4.5"/></symbol>
+  <symbol id="code" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m8 7-5 5 5 5"/><path d="m16 7 5 5-5 5"/></symbol>
+  <symbol id="terminal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 17 6-5-6-5"/><path d="M12.5 19H20"/></symbol>
+  <symbol id="database" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5v13c0 1.7 3.6 3 8 3s8-1.3 8-3v-13"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></symbol>
+  <symbol id="box" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m21 8-9-5-9 5v8l9 5 9-5z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></symbol>
+  <symbol id="wrench" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4a6 6 0 0 0-7 8L3 17a2.8 2.8 0 0 0 4 4l5-5a6 6 0 0 0 8-7l-4 4-5-5z"/></symbol>
+  <symbol id="gauge" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21a9 9 0 1 1 9-9"/><path d="M12 12l5.2-3.6"/><circle cx="12" cy="12" r="1.6"/></symbol>
+  <symbol id="bulb" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8V16h7.2v-2.2A6 6 0 0 0 12 3z"/></symbol>
+  <symbol id="target" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><path d="M12 3.5v3M12 17.5v3M3.5 12h3M17.5 12h3"/></symbol>
+  <symbol id="sparkles" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 13.7 8l4.5 1.7-4.5 1.7L12 16l-1.7-4.6L5.8 9.7 10.3 8z"/><path d="M18.5 15.5 19.2 17l1.5.7-1.5.7-.7 1.5-.7-1.5-1.5-.7 1.5-.7z"/></symbol>
+  <symbol id="shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
+  <symbol id="grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+  <symbol id="more" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></symbol>
+  <symbol id="chevronRight" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></symbol>
+  <symbol id="chevronDown" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="7" cy="18" r="2"/></symbol>
+  <symbol id="search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+  <symbol id="x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+  <symbol id="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.5 4.5l1.5 1.5M18 18l1.5 1.5M2 12h2M20 12h2M4.5 19.5 6 18M18 6l1.5-1.5"/></symbol>
+  <symbol id="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.8 6.8 0 0 0 10.5 10.5z"/></symbol>
+  <symbol id="bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 6-2 7-2 7h16s-2-1-2-7"/><path d="M10.3 20a2 2 0 0 0 3.4 0"/></symbol>
+  <symbol id="refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.5A8 8 0 1 0 18 17"/><path d="M20 4v7.5h-7.5"/></symbol>
+  <symbol id="download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 20h16"/></symbol>
+  <symbol id="user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/></symbol>
+  <symbol id="users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 21a6.5 6.5 0 0 1 13 0"/><path d="M16 5.2a3.5 3.5 0 0 1 0 6.6"/><path d="M18 21a6.5 6.5 0 0 0-2-4.7"/></symbol>
+  <symbol id="link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1.5-1.5"/></symbol>
+  <symbol id="palette" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18h2a2 2 0 0 0 0-4h-1a2 2 0 0 1 0-4h4a4 4 0 0 0 4-4c0-3-4-6-9-6z"/><path d="M7 8h.01M12 6h.01M17 8h.01M6 13h.01"/></symbol>
+  <symbol id="info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></symbol>
+
+  <!-- CR-051 新增符号（7）：文件类型与容器语义，与既有 24×24、1.6px 描边一致。 -->
+  <symbol id="fileMarkdown" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H5v18h14V8l-5-5v5h5"/><path d="m7.9 12.2 1.6 2.9 1.6-2.9 1.6 2.9 1.6-2.9"/><path d="M12 16.4v3.2M10.4 18 12 19.6l1.6-1.6"/></symbol>
+  <symbol id="fileHtml" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H5v18h14V8l-5-5v5h5"/><path d="M9.6 12.6 7.6 15l2 2.4M14.4 12.6 16.4 15l-2 2.4M12.9 11.8l-1.8 6.4"/></symbol>
+  <symbol id="fileAudio" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H5v18h14V8l-5-5v5h5"/><circle cx="9.4" cy="17.6" r="1.6"/><circle cx="14.6" cy="16.4" r="1.6"/><path d="M11 17.6v-5.2l5.2-1.2v5.2"/></symbol>
+  <symbol id="fileVideo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H5v18h14V8l-5-5v5h5"/><path d="M10 13v5l4.2-2.5z"/></symbol>
+  <symbol id="fileUnknown" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H5v18h14V8l-5-5v5h5"/><path d="M9.4 12.4h5.2v5.2H9.4z" stroke-dasharray="1.8 2.2"/></symbol>
+  <symbol id="briefcase" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7.4" width="18" height="12.4" rx="2"/><path d="M9 7.4V6.2A2.2 2.2 0 0 1 11.2 4h1.6A2.2 2.2 0 0 1 15 6.2v1.2"/><path d="M3 12.6h18"/><path d="M10.4 12.6v2h3.2v-2"/></symbol>
+  <symbol id="library" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4.5h3.4v14.6H4zM9 4.5h3.4v14.6H9z"/><path d="m14.6 5.4 3.2.9-3 12.8-2.3-.6z"/><path d="M3 20.4h18"/></symbol>
+
+  <!-- CR-051 v2 扩充：办公、商业、内容、产品、生活等通用图标（33）。 -->
+  <symbol id="building" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="3" width="15" height="18" rx="1.6"/><path d="M8.5 7h2M13.5 7h2M8.5 11h2M13.5 11h2M8.5 15h2M13.5 15h2M10 21v-3.5h4V21"/></symbol>
+  <symbol id="calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 9.5h17M8 3v4M16 3v4M8 13h2.5M13.5 13H16M8 17h2.5"/></symbol>
+  <symbol id="clipboard" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4.5" width="14" height="16.5" rx="2"/><path d="M9 4.5V3.2h6v1.3M8.5 10h7M8.5 14h7M8.5 18h4"/></symbol>
+  <symbol id="presentation" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3.5" width="18" height="11.5" rx="1.6"/><path d="M12 15v5M8 20.5l4-5.5 4 5.5"/><path d="m7 11 3-3 2.5 2 3.5-3.5"/></symbol>
+  <symbol id="mail" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4.2 7 7.8 5.8L19.8 7"/></symbol>
+  <symbol id="idBadge" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10.5" r="2"/><path d="M6.5 16a2.8 2.8 0 0 1 5 0M14 9.5h4M14 12.5h4M14 15.5h3"/></symbol>
+  <symbol id="chartBar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16"/><rect x="6" y="12" width="3" height="6" rx="0.8"/><rect x="10.5" y="8" width="3" height="10" rx="0.8"/><rect x="15" y="4" width="3" height="14" rx="0.8"/></symbol>
+  <symbol id="chartLine" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16"/><path d="m5 16 4.5-4 3.5 2 5.5-7"/><circle cx="19" cy="6.5" r="1.3"/></symbol>
+  <symbol id="chartPie" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 9 9h-9z"/><path d="M14 3.4A9 9 0 0 1 20.6 10H14z"/></symbol>
+  <symbol id="wallet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><circle cx="17" cy="14.5" r="1.2"/></symbol>
+  <symbol id="receipt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6M9 16h3"/></symbol>
+  <symbol id="cart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h2l2.2 10.5h10.6l2.2-8H6"/><circle cx="9.5" cy="19" r="1.4"/><circle cx="17" cy="19" r="1.4"/></symbol>
+  <symbol id="tag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r="1.4"/></symbol>
+  <symbol id="scale" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M8 21h8M4 7h16"/><path d="M6 7 3 14h6zM18 7l3 7h-6z"/></symbol>
+  <symbol id="megaphone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5A1.5 1.5 0 0 1 4.5 9H7l9-3.5v13L7 15H4.5A1.5 1.5 0 0 1 3 13.5z"/><path d="M7 15v3a2 2 0 0 0 4 0v-1.2M19 9.5a3 3 0 0 1 0 5"/></symbol>
+  <symbol id="camera" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l1.6-2.2h6.8L17 8h3a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 20 20H4a1.5 1.5 0 0 1-1.5-1.5v-9A1.5 1.5 0 0 1 4 8z"/><circle cx="12" cy="13.5" r="3.4"/></symbol>
+  <symbol id="music" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.4"/><circle cx="16.5" cy="16" r="2.4"/></symbol>
+  <symbol id="video" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="12.5" height="12" rx="2"/><path d="m15.5 10.8 5.5-2.8v7.8l-5.5-2.8z"/></symbol>
+  <symbol id="mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="10" rx="3"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4M9 21h6"/></symbol>
+  <symbol id="newspaper" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h13v15H5.5A1.5 1.5 0 0 1 4 18.5z"/><path d="M17 8h2.5A1.5 1.5 0 0 1 21 9.5v9a1.5 1.5 0 0 1-1.5 1.5H17"/><path d="M7 9h7M7 12h7M7 15h4"/></symbol>
+  <symbol id="pen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l4.2-1L19 8.2a2.1 2.1 0 0 0-3-3L5.2 16z"/><path d="m14.5 6.5 3 3M5.2 16 4 20"/></symbol>
+  <symbol id="brush" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20c2.5 0 4-1.5 4-4l8-8 2 2-8 8c0 2.5-3.5 2-6 2z"/><path d="m16 6 2-2 2 2-2 2z"/></symbol>
+  <symbol id="rocket" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c4 2.4 6 6.4 6 10.8L15 16H9l-3-2.2C6 9.4 8 5.4 12 3z"/><circle cx="12" cy="9.5" r="2"/><path d="m9 16-1.5 4.5L11 18M15 16l1.5 4.5L13 18"/></symbol>
+  <symbol id="bug" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 9a3.5 3.5 0 0 1 7 0v5a3.5 3.5 0 0 1-7 0z"/><path d="M8.5 11H5M19 11h-3.5M8.5 14H5M19 14h-3.5M7.5 8 5.5 6M16.5 8l2-2M7.5 18l-2 2M16.5 18l2 2"/></symbol>
+  <symbol id="puzzle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6v3a2 2 0 1 0 4 0V3h2v6h-3a2 2 0 1 0 0 4h3v8h-8v-3a2 2 0 1 0-4 0v3H3v-8h3a2 2 0 1 0 0-4H3V3h6z"/></symbol>
+  <symbol id="flag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4"/><path d="M5 4h12.5l-2.2 4.5 2.2 4.5H5"/></symbol>
+  <symbol id="compass" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></symbol>
+  <symbol id="flask" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.8 3h10.4a2 2 0 0 0 1.8-3l-5-9V3"/><path d="M7.2 15h9.6"/></symbol>
+  <symbol id="robot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="11" rx="2"/><path d="M12 4v4M9 4h6"/><circle cx="9" cy="13" r="1.2"/><circle cx="15" cy="13" r="1.2"/><path d="M9.5 16.5h5"/></symbol>
+  <symbol id="cloud" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18h10a4 4 0 0 0 .6-8A6 6 0 0 0 6 11a3.5 3.5 0 0 0 1 7z"/></symbol>
+  <symbol id="school" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-5 9 5-9 5z"/><path d="M7 11.5V17c0 1.5 2.2 2.5 5 2.5s5-1 5-2.5v-5.5M21 9v6"/></symbol>
+  <symbol id="heart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20s-7-4.3-7-9a4 4 0 0 1 7-2.6A4 4 0 0 1 19 11c0 4.7-7 9-7 9z"/></symbol>
+  <symbol id="hand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 11V5.5a1.5 1.5 0 0 1 3 0V11"/><path d="M11 10.5V4a1.5 1.5 0 0 1 3 0v6.5"/><path d="M14 10.5V5.5a1.5 1.5 0 0 1 3 0V13"/><path d="M17 9.5a1.5 1.5 0 0 1 3 0V14a7 7 0 0 1-7 7h-1.5a6 6 0 0 1-4.7-2.3L4 15.2a1.6 1.6 0 0 1 2.4-2.1L8 15"/></symbol>
+  <symbol id="star" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></symbol>
+</svg>
+
+<header class="doc-head">
+  <div class="wrap">
+    <div class="brand-line">
+      <img src="../brand-assets-v2/logo-sail.png" alt="栖造">
+      <b>栖造</b><span>NESTCRAFT</span>
+      <span class="tag" style="margin-left:6px">设计资源 · 非产品页面</span>
+    </div>
+    <div class="doc-title">
+      <h1>内置图标与用户头像风格</h1>
+      <span class="tag blue">UI-CR051-v6</span>
+      <span class="tag">仅设计 · 待评审</span>
+      <span class="caption">2026-11-21</span>
+    </div>
+    <p class="doc-sub">
+      项目与知识库共用同一套 50 个图标（通用／办公／商业／内容／产品／生活 6 组），任意选择；背景色为 10 个整块填充的方形色卡，不显示文字；知识库文件树按文件夹与文件类型显示图形。
+      用户头像默认 B（薄荷承载）：头像框悬停出现编辑，点击打开弹窗选 5 种内置样式或「自定义」上传图片（≤200KB），弹窗固定尺寸，取景框常驻：选图后拖动摆放位置、缩放预览，框内即最终显示区域；已有头像重新打开也能继续调整，失败在弹窗内提示。旧项目保持原样，手动切换后才写入新组合。本页是设计稿，不修改正式软件或唯一业务原型。
+    </p>
+    <div class="doc-tools">
+      <button class="btn" id="theme-toggle" type="button"><svg class="ico ico-14"><use href="#moon"/></svg><span id="theme-label">深色预览</span></button>
+      <span class="caption">当前头像风格：<b id="current-style-label">A · 原彩透明</b></span>
+      <span class="spacer"></span>
+      <span class="caption">唯一业务原型入口不变：<a href="../仿真原型UI.html">仿真原型UI.html</a></span>
+    </div>
+  </div>
+</header>
+
+<nav class="doc-toc" aria-label="本页目录">
+  <div class="wrap">
+    <a href="#s01">01 现状与目标</a>
+    <a href="#s02">02 项目标识</a>
+    <a href="#s03">03 知识库标识</a>
+    <a href="#s04">04 文件树图标</a>
+    <a href="#s05">05 头像风格</a>
+    <a href="#s06">06 图标集与规格</a>
+    <a href="#s07">07 状态与可访问性</a>
+    <a href="#s08">08 边界与待确认</a>
+  </div>
+</nav>
+
+<main class="wrap">
+
+  <!-- ============ 01 ============ -->
+  <section class="sec" id="s01">
+    <div class="sec-head"><span class="no">01</span><h2>现状与目标</h2><span class="caption">问题来自当前唯一原型（workbench-v4）的实测截图</span></div>
+    <div class="note">
+      <svg class="ico ico-14"><use href="#bulb"/></svg>
+      <div>现状：项目卡片左侧是「BO / OP / RE」字母块；知识库卡片 3 个库共用同一个书本图形（当前原型中该图标未渲染，只留空方块）；知识库文件树只有文字与小号类型字，没有图形标识；顶栏与侧栏头像都是「LC」字母。</div>
+    </div>
+    <div class="compare" style="margin-top:14px">
+      <div class="compare-card">
+        <div class="cap"><span class="tag">现状</span><b>字母块 + 同款书本 + 无图标 + 字母头像</b></div>
+        <div style="display:grid;gap:8px">
+          <div class="mini-proj">
+            <span class="tile" style="background:var(--tile-blue);color:var(--primary-strong);font-weight:700;font-size:12px">BO</span>
+            <div class="meta"><b>预约服务</b><span>PRJ-1042 · 编码</span></div>
+          </div>
+          <div class="mini-kb">
+            <span class="tile lg" style="background:var(--surface-3);color:var(--muted-2)"></span>
+            <div class="meta"><b>研发手册</b><span>11 个文件 · 无图形标识</span></div>
+          </div>
+          <div class="mini-tree">
+            <div class="line plain">发布</div>
+            <div class="line plain" style="padding-left:18px">发布与回滚</div>
+            <div class="line plain" style="padding-left:18px">发布检查表</div>
+          </div>
+          <div class="mini-avatar-row">
+            <span class="tile" style="border-radius:50%;background:var(--teal-soft);color:var(--teal);font-weight:700;font-size:11px;border:1px solid var(--teal-line)">LC</span>
+            <div class="meta"><b>林澈</b><span>研发负责人 · 设置与账户</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="compare-card">
+        <div class="cap"><span class="tag green">设计后</span><b>类型图标 + 图形标识 + 文件类型图标 + 品牌头像</b></div>
+        <div style="display:grid;gap:8px">
+          <div class="mini-proj">
+            <span class="tile"><svg class="ico ico-20"><use href="#code"/></svg></span>
+            <div class="meta"><b>预约服务</b><span>PRJ-1042 · 编码</span></div>
+          </div>
+          <div class="mini-kb">
+            <span class="tile lg blue"><svg class="ico ico-20"><use href="#bookOpen"/></svg></span>
+            <div class="meta"><b>研发手册</b><span>11 个文件 · 本地目录</span></div>
+          </div>
+          <div class="mini-tree">
+            <div class="line"><svg class="ico" style="color:var(--fic-folder)"><use href="#folderOpen"/></svg>发布 <span class="caption">3</span></div>
+            <div class="line" style="padding-left:18px"><svg class="ico" style="color:var(--fic-md)"><use href="#fileMarkdown"/></svg>发布与回滚 <span class="caption">MD</span></div>
+            <div class="line" style="padding-left:18px"><svg class="ico" style="color:var(--fic-sheet)"><use href="#fileSheet"/></svg>发布记录 <span class="caption">XLSX</span></div>
+          </div>
+          <div class="mini-avatar-row">
+            <span class="avatar"><img src="../brand-assets-v2/logo-sail.png" alt=""></span>
+            <div class="meta"><b>林澈</b><span>研发负责人 · 设置与账户</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="split-3" style="margin-top:14px">
+      <div class="panel panel-pad">
+        <div class="block-title"><svg class="ico ico-14"><use href="#grid"/></svg>一眼可辨</div>
+        <p class="caption">形状先于颜色：编码/办公、文件夹、MD/PDF/Word/表格/幻灯片/图片/压缩包/音视频各有独立轮廓，色觉差异不影响识别。</p>
+      </div>
+      <div class="panel panel-pad">
+        <div class="block-title"><svg class="ico ico-14"><use href="#palette" /></svg>同一套语言</div>
+        <p class="caption">沿用既有 24×24、1.6px 描边、currentColor；颜色只换令牌，不换图形，深浅主题各自取值。</p>
+      </div>
+      <div class="panel panel-pad">
+        <div class="block-title"><svg class="ico ico-14"><use href="#user"/></svg>品牌归位</div>
+        <p class="caption">头像使用品牌帆船图形，5 种风格仅改变容器（透明/薄荷/方砖/墨青/双环），不重绘 Logo、不加字母。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 02 ============ -->
+  <section class="sec" id="s02">
+    <div class="sec-head"><span class="no">02</span><h2>项目卡片标识</h2><span class="caption">替换现有 <code class="mono">proj-avatar</code> 字母块</span></div>
+    <div class="split">
+      <div class="panel panel-pad">
+        <div class="block-title">卡片示例（1440 页面栅格，2 列展示）<span class="tag blue">36px 图标砖</span></div>
+        <div class="proj-demo">
+          <article class="proj-card" data-project-card="0">
+            <div class="proj-card-h">
+              <span class="tile" data-project-tile><svg class="ico ico-20"><use href="#code"/></svg></span>
+              <div class="proj-card-t"><b>预约服务</b><span>PRJ-1042 · 编码</span></div>
+            </div>
+            <p class="proj-card-desc">社区活动预约：时段容量、幂等下单、取消回补与交付追溯。</p>
+            <div class="proj-card-tags"><span class="tag">核心</span><span class="tag blue">进行中</span><span class="tag">5 个运行</span></div>
+            <div class="proj-card-foot"><div class="bar"><i style="width:27%"></i></div><span class="caption mono">3/11</span></div>
+          </article>
+          <article class="proj-card">
+            <div class="proj-card-h">
+              <span class="tile violet"><svg class="ico ico-20"><use href="#terminal"/></svg></span>
+              <div class="proj-card-t"><b>运维控制台</b><span>PRJ-1031 · 编码</span></div>
+            </div>
+            <p class="proj-card-desc">多主机连接、巡检任务与受限命令执行，含高风险审批。</p>
+            <div class="proj-card-tags"><span class="tag">基础设施</span><span class="tag blue">1 个运行</span></div>
+            <div class="proj-card-foot"><div class="bar"><i style="width:50%"></i></div><span class="caption mono">2/4</span></div>
+          </article>
+          <article class="proj-card">
+            <div class="proj-card-h">
+              <span class="tile work"><svg class="ico ico-20"><use href="#briefcase"/></svg></span>
+              <div class="proj-card-t"><b>市场研究资料</b><span>PRJ-1018 · 办公</span></div>
+            </div>
+            <p class="proj-card-desc">活动预约场景的竞品调研、访谈纪要与结论沉淀。</p>
+            <div class="proj-card-tags"><span class="tag">研究</span></div>
+            <div class="proj-card-foot"><div class="bar"><i style="width:33%"></i></div><span class="caption mono">1/3</span></div>
+          </article>
+          <article class="proj-card">
+            <div class="proj-card-h">
+              <span class="tile green"><svg class="ico ico-20"><use href="#briefcase"/></svg></span>
+              <div class="proj-card-t"><b>品牌与官网</b><span>PRJ-1009 · 办公</span></div>
+            </div>
+            <p class="proj-card-desc">命名、图形标志、官网信息架构与发布物料。</p>
+            <div class="proj-card-tags"><span class="tag">品牌</span></div>
+            <div class="proj-card-foot"><div class="bar"><i style="width:100%"></i></div><span class="caption mono">2/2</span></div>
+          </article>
+        </div>
+        <div class="hr"></div>
+        <div class="block-title">同一图标砖的复用位置</div>
+        <div class="split" style="gap:10px">
+          <div class="mock-side" style="padding:8px">
+            <div class="row" style="gap:8px">
+              <span class="tile sm"><svg class="ico ico-14"><use href="#code"/></svg></span>
+              <div><b style="display:block;font-size:11.5px">预约服务</b><span class="caption">feature/booking-idempotency</span></div>
+            </div>
+            <p class="caption" style="margin-top:6px">侧栏「当前项目」26px</p>
+          </div>
+          <div class="mock-side" style="padding:8px">
+            <div class="row" style="gap:8px">
+              <span class="tile sm work"><svg class="ico ico-14"><use href="#briefcase"/></svg></span>
+              <div><b style="display:block;font-size:11.5px">市场研究资料</b><span class="caption">PRJ-1018 · 陈雨</span></div>
+            </div>
+            <p class="caption" style="margin-top:6px">授权弹窗项目行 26px</p>
+          </div>
+        </div>
+        <div class="hr"></div>
+        <div class="block-title">同一项目的组合变化<span class="tag">图标 + 色卡</span></div>
+        <div class="combo-row">
+          <div class="combo-item"><span class="tile" style="--tile-bg:#eaf1ff;--tile-fg:#2b6cf6"><svg class="ico ico-20"><use href="#code"/></svg></span><div><b>code · 蓝</b><span>编码项目默认</span></div></div>
+          <div class="combo-item"><span class="tile" style="--tile-bg:#fff4e2;--tile-fg:#b76a00"><svg class="ico ico-20"><use href="#rocket"/></svg></span><div><b>rocket · 琥珀</b><span>上线 / 增长</span></div></div>
+          <div class="combo-item"><span class="tile" style="--tile-bg:#fdeef1;--tile-fg:#c2345a"><svg class="ico ico-20"><use href="#megaphone"/></svg></span><div><b>megaphone · 玫瑰</b><span>市场 / 推广</span></div></div>
+          <div class="combo-item"><span class="tile" style="--tile-bg:#eef0ff;--tile-fg:#4356c9"><svg class="ico ico-20"><use href="#chartBar"/></svg></span><div><b>chartBar · 靛蓝</b><span>数据 / 经营</span></div></div>
+        </div>
+        <p class="caption" style="margin-top:7px">同一项目换图标或色卡即换气质；保存的是「图标 + 色卡」组合，不是只存一个背景色。</p>
+      </div>
+      <div class="panel panel-pad">
+        <div class="block-title">编辑项目 · 图标 + 背景色<span class="tag">50 个图标 · 10 色卡</span></div>
+        <p class="caption" style="margin-bottom:10px">先选图标，再选背景色：图标与背景成对取色，二者一起构成项目标识。默认按类型推导（编码 <code class="mono">code</code>、办公 <code class="mono">briefcase</code>）；清空图标回到类型默认，清空背景回到默认蓝。</p>
+        <div id="project-icon-picker" class="icon-picker" role="group" aria-label="项目图标选择"></div>
+        <div class="block-title" style="margin-top:14px">背景色卡<span class="tag">10 个整块色卡 · 深浅各一套</span></div>
+        <div id="project-swatches" class="swatches" role="group" aria-label="项目背景色"></div>
+        <div class="combo">
+          <span class="tile combo-tile" data-combo-tile><svg class="ico ico-20"><use href="#code"/></svg></span>
+          <div><b>组合预览</b><span id="project-combo-text">code · 蓝</span></div>
+        </div>
+        <div class="hr"></div>
+        <div class="block-title">规格</div>
+        <ul class="spec-list">
+          <li><b>图标砖</b><span>36×36，圆角 10，图标 20×20，1.6px 描边；卡片内边距 16。</span></li>
+          <li><b>缩小版</b><span>侧栏与授权弹窗 26×26，圆角 7，图标 14×14，不改变图形。</span></li>
+          <li><b>组合</b><span>背景色卡决定承载底与图形色，深浅主题各一套；图标与背景成对保存，不单存背景。</span></li>
+          <li><b>默认</b><span>新建项目：编码 <code class="mono">code</code> + 蓝、办公 <code class="mono">briefcase</code> + 琥珀。旧项目保持现有显示不动，不做批量映射；用户手动改图标或色卡后才写入新组合。</span></li>
+          <li><b>回退</b><span>图标未登记 → 类型图标；色卡缺失 → 默认蓝；类型未知 → 首字母块（仅容错）。</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 03 ============ -->
+  <section class="sec" id="s03">
+    <div class="sec-head"><span class="no">03</span><h2>知识库卡片标识</h2><span class="caption">替换现有统一书本 / 空方块</span></div>
+    <div class="split">
+      <div class="panel panel-pad">
+        <div class="block-title">知识库列表（40px 图标砖）</div>
+        <div class="kb-demo">
+          <div class="kb-row" data-kb-card="0">
+            <span class="tile lg blue" data-kb-tile><svg class="ico ico-20"><use href="#bookOpen"/></svg></span>
+            <div class="kb-main"><b>研发手册</b><p>交付流程、接口约定与评审标准 · 林澈</p>
+              <div class="row" style="gap:5px;margin-top:5px"><span class="tag green">所有项目可用</span><span class="tag">本地目录</span></div>
+            </div>
+            <div class="kb-side"><span>11 篇</span><span>今天 09:20</span></div>
+          </div>
+          <div class="kb-row">
+            <span class="tile lg amber"><svg class="ico ico-20"><use href="#layers"/></svg></span>
+            <div class="kb-main"><b>竞品与用户研究</b><p>预约类产品的对比、访谈纪要与结论 · 陈雨</p>
+              <div class="row" style="gap:5px;margin-top:5px"><span class="tag blue">预约服务</span><span class="tag">本地 + 网页</span></div>
+            </div>
+            <div class="kb-side"><span>6 篇</span><span>昨天 17:05</span></div>
+          </div>
+          <div class="kb-row">
+            <span class="tile lg violet"><svg class="ico ico-20"><use href="#book"/></svg></span>
+            <div class="kb-main"><b>运维手册</b><p>主机巡检、发布与回滚步骤 · 周野</p>
+              <div class="row" style="gap:5px;margin-top:5px"><span class="tag">未授权</span><span class="tag">本地目录</span></div>
+            </div>
+            <div class="kb-side"><span>0 篇</span><span>11-18 14:12</span></div>
+          </div>
+        </div>
+        <div class="hr"></div>
+        <div class="block-title">来源类型 → 默认图标</div>
+        <table class="icon-table">
+          <thead><tr><th></th><th>来源</th><th>默认符号</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><svg class="ico ico-20" style="color:var(--primary-strong)"><use href="#bookOpen"/></svg></td><td>本地目录</td><td><code>bookOpen</code></td><td>扫描本机文件夹，原件不移动</td></tr>
+            <tr><td><svg class="ico ico-20" style="color:var(--warning)"><use href="#globe"/></svg></td><td>网页来源</td><td><code>globe</code></td><td>仅登记链接与抓取副本，不当作稳定原件</td></tr>
+            <tr><td><svg class="ico ico-20" style="color:var(--warning)"><use href="#layers"/></svg></td><td>本地 + 网页</td><td><code>layers</code></td><td>混合来源，视图内分别标注</td></tr>
+            <tr><td><svg class="ico ico-20" style="color:var(--ink-2)"><use href="#library"/></svg></td><td>未标注</td><td><code>library</code></td><td>新建或旧数据的中性默认</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="panel panel-pad">
+        <div class="block-title">编辑知识库 · 图标 + 背景色<span class="tag">与项目同一图标库（50）· 10 色卡</span></div>
+        <p class="caption" style="margin-bottom:10px">知识库不限制图标范围，和项目共用 50 个图标任选；选择即预览，图标与背景成对保存。清空回到来源默认（本地 <code class="mono">bookOpen</code>、网页 <code class="mono">globe</code>、组合 <code class="mono">layers</code>、未标注 <code class="mono">library</code>），背景回默认青绿。旧库保持原样，手动修改后才写入。</p>
+        <div id="kb-icon-picker" class="icon-picker" role="group" aria-label="知识库图标选择"></div>
+        <div class="block-title" style="margin-top:14px">背景色卡<span class="tag">10 色 · 深浅各一套</span></div>
+        <div id="kb-swatches" class="swatches" role="group" aria-label="知识库背景色"></div>
+        <div class="combo">
+          <span class="tile lg combo-tile" data-combo-kb><svg class="ico ico-20"><use href="#bookOpen"/></svg></span>
+          <div><b>组合预览</b><span id="kb-combo-text">bookOpen · 青绿</span></div>
+        </div>
+        <div class="hr"></div>
+        <div class="block-title">规格与规则</div>
+        <ul class="spec-list">
+          <li><b>图标砖</b><span>40×40，圆角 10，图标 20×20；库列表行高不变。</span></li>
+          <li><b>任意图标</b><span>与项目共用 50 个图标库，不再单独限制 16 个；同一图标可用于多个库。</span></li>
+          <li><b>旧库不动</b><span>旧知识库保持现有显示；只有用户手动改图标／色卡后才写入组合，不做批量迁移。</span></li>
+          <li><b>未授权库</b><span>图标正常显示，权限由标签与按钮表达，不用灰图标冒充。</span></li>
+          <li><b>不新增语义</b><span>图标只表达来源/主题，不表达可读性；解析失败仍以文件级状态呈现。</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 04 ============ -->
+  <section class="sec" id="s04">
+    <div class="sec-head"><span class="no">04</span><h2>知识库文件树图标</h2><span class="caption">文件夹 + 各类型文件的行首标识</span></div>
+    <div class="tree-demo">
+      <div class="panel panel-pad">
+        <div class="block-title">研发手册 · 库内文件树<span class="tag">16px 行首图标</span></div>
+        <div class="tree-box" data-scroll style="max-height:420px;overflow:auto">
+          <div class="tree-head"><svg class="ico ico-14"><use href="#book"/></svg>研发手册<span class="spacer"></span><span>11 个文件</span></div>
+
+          <div class="kw-row folder" style="--d:0">
+            <span class="caret" data-tree-toggle aria-expanded="true"><svg class="ico"><use href="#chevronDown"/></svg></span>
+            <svg class="ico f-ico" style="color:var(--fic-folder)"><use href="#folderOpen"/></svg>
+            <span class="kw-text"><span class="kw-name">发布</span></span><span class="count">3</span>
+          </div>
+          <div class="kw-children">
+            <div class="kw-row file" style="--d:1">
+              <span class="caret"></span>
+              <svg class="ico f-ico" style="color:var(--fic-md)"><use href="#fileMarkdown"/></svg>
+              <span class="kw-text"><span class="kw-name">发布与回滚</span><span class="kw-type">MD</span></span>
+              <span class="trail"><svg class="ico ico-14"><use href="#more"/></svg></span>
+            </div>
+            <div class="kw-row file" style="--d:1">
+              <span class="caret"></span>
+              <svg class="ico f-ico" style="color:var(--fic-md)"><use href="#fileMarkdown"/></svg>
+              <span class="kw-text"><span class="kw-name">发布检查表</span><span class="kw-type">MD</span></span>
+              <span class="trail"><svg class="ico ico-14"><use href="#more"/></svg></span>
+            </div>
+            <div class="kw-row file" style="--d:1">
+              <span class="caret"></span>
+              <svg class="ico f-ico" style="color:var(--fic-sheet)"><use href="#fileSheet"/></svg>
+              <span class="kw-text"><span class="kw-name">发布记录</span><span class="kw-type">XLSX</span></span>
+              <span class="trail"><svg class="ico ico-14"><use href="#more"/></svg></span>
+            </div>
+          </div>
+
+          <div class="kw-row folder" style="--d:0">
+            <span class="caret" data-tree-toggle aria-expanded="true"><svg class="ico"><use href="#chevronDown"/></svg></span>
+            <svg class="ico f-ico" style="color:var(--fic-folder)"><use href="#folderOpen"/></svg>
+            <span class="kw-text"><span class="kw-name">架构</span></span><span class="count">4</span>
+          </div>
+          <div class="kw-children">
+            <div class="kw-row file" style="--d:1">
+              <span class="caret"></span>
+              <svg class="ico f-ico" style="color:var(--fic-pdf)"><use href="#filePdf"/></svg>
+              <span class="kw-text"><span class="kw-name">架构评审记录</span><span class="kw-type">PDF</span></span>
+              <span class="trail"><svg class="ico ico-14"><use href="#more"/></svg></span>
+            </div>
+            <div class="kw-row file" style="--d:1">
+              <span class="caret"></span>
+              <svg class="ico f-ico" style="color:var(--fic-image)"><use href="#image"/></svg>
+              <span class="kw-text"><span class="kw-name">预约流程图</span><span class="kw-type">PNG</span></span>
+              <span class="trail"><svg class="ico ico-14"><use href="#more"/></svg></span>
+            </div>
+            <div class="kw-row file" style="--d:1" aria-selected="true">
+              <span class="caret"></span>
+              <svg class="ico f-ico" style="color:var(--fic-md)"><use href="#fileMarkdown"/></svg>
+              <span class="kw-text"><span class="kw-name">预约接口约定</span><span class="kw-type">MD</span></span>
+              <span class="trail"><svg class="ico ico-14"><use href="#more"/></svg></span>
+            </div>
+            <div class="kw-row file" style="--d:1">
+              <span class="caret"></span>
+              <svg class="ico f-ico" style="color:var(--fic-code)"><use href="#fileCode"/></svg>
+              <span class="kw-text"><span class="kw-name">示例请求</span><span class="kw-type">JSON</span></span>
+              <span class="trail"><svg class="ico ico-14"><use href="#more"/></svg></span>
+            </div>
+          </div>
+
+          <div class="kw-row folder" style="--d:0">
+            <span class="caret" data-tree-toggle aria-expanded="false"><svg class="ico"><use href="#chevronRight"/></svg></span>
+            <svg class="ico f-ico" style="color:var(--fic-folder)"><use href="#folder"/></svg>
+            <span class="kw-text"><span class="kw-name">概念</span></span><span class="count">2</span>
+          </div>
+          <div class="kw-children" hidden>
+            <div class="kw-row file" style="--d:1"><span class="caret"></span><svg class="ico f-ico" style="color:var(--fic-md)"><use href="#fileMarkdown"/></svg><span class="kw-text"><span class="kw-name">术语表</span><span class="kw-type">MD</span></span></div>
+            <div class="kw-row file" style="--d:1"><span class="caret"></span><svg class="ico f-ico" style="color:var(--fic-text)"><use href="#fileText"/></svg><span class="kw-text"><span class="kw-name">备忘</span><span class="kw-type">TXT</span></span></div>
+          </div>
+
+          <div class="kw-row folder" style="--d:0">
+            <span class="caret" data-tree-toggle aria-expanded="true"><svg class="ico"><use href="#chevronDown"/></svg></span>
+            <svg class="ico f-ico" style="color:var(--fic-folder)"><use href="#folderOpen"/></svg>
+            <span class="kw-text"><span class="kw-name">流程</span></span><span class="count">3</span>
+          </div>
+          <div class="kw-children">
+            <div class="kw-row file" style="--d:1"><span class="caret"></span><svg class="ico f-ico" style="color:var(--fic-md)"><use href="#fileMarkdown"/></svg><span class="kw-text"><span class="kw-name">研发交付指南</span><span class="kw-type">MD</span></span></div>
+            <div class="kw-row file" style="--d:1"><span class="caret"></span><svg class="ico f-ico" style="color:var(--fic-word)"><use href="#fileWord"/></svg><span class="kw-text"><span class="kw-name">交付清单</span><span class="kw-type">DOCX</span></span></div>
+            <div class="kw-row file" style="--d:1"><span class="caret"></span><svg class="ico f-ico" style="color:var(--fic-sheet)"><use href="#csv"/></svg><span class="kw-text"><span class="kw-name">统计</span><span class="kw-type">CSV</span></span></div>
+          </div>
+
+          <div class="kw-row folder" style="--d:0">
+            <span class="caret" data-tree-toggle aria-expanded="true"><svg class="ico"><use href="#chevronDown"/></svg></span>
+            <svg class="ico f-ico" style="color:var(--fic-folder)"><use href="#folderOpen"/></svg>
+            <span class="kw-text"><span class="kw-name">素材</span></span><span class="count">5</span>
+          </div>
+          <div class="kw-children">
+            <div class="kw-row file" style="--d:1"><span class="caret"></span><svg class="ico f-ico" style="color:var(--fic-slides)"><use href="#fileSlides"/></svg><span class="kw-text"><span class="kw-name">评审演示</span><span class="kw-type">PPTX</span></span></div>
+            <div class="kw-row file" style="--d:1"><span class="caret"></span><svg class="ico f-ico" style="color:var(--fic-code)"><use href="#fileHtml"/></svg><span class="kw-text"><span class="kw-name">页面说明</span><span class="kw-type">HTML</span></span></div>
+            <div class="kw-row file" style="--d:1"><span class="caret"></span><svg class="ico f-ico" style="color:var(--fic-archive)"><use href="#fileArchive"/></svg><span class="kw-text"><span class="kw-name">原始素材</span><span class="kw-type">ZIP</span></span></div>
+            <div class="kw-row file" style="--d:1"><span class="caret"></span><svg class="ico f-ico" style="color:var(--fic-audio)"><use href="#fileAudio"/></svg><span class="kw-text"><span class="kw-name">访谈录音</span><span class="kw-type">MP3</span></span></div>
+            <div class="kw-row file" style="--d:1"><span class="caret"></span><svg class="ico f-ico" style="color:var(--fic-video)"><use href="#fileVideo"/></svg><span class="kw-text"><span class="kw-name">演示录屏</span><span class="kw-type">MP4</span></span></div>
+            <div class="kw-row file" style="--d:1"><span class="caret"></span><svg class="ico f-ico" style="color:var(--fic-unknown)"><use href="#fileUnknown"/></svg><span class="kw-text"><span class="kw-name">未知格式</span><span class="kw-type">XYZ</span></span></div>
+          </div>
+        </div>
+        <p class="caption" style="margin-top:8px">文件夹默认展开态 <code class="mono">folderOpen</code>、收起态 <code class="mono">folder</code>；箭头仍只表示展开状态，不与文件夹图标合并。</p>
+      </div>
+      <div class="panel panel-pad">
+        <div class="block-title">文件打开后的文档头<span class="tag">20px 类型色</span></div>
+        <div class="doc-icon-demo">
+          <span class="big" style="background:var(--teal-soft);color:var(--fic-md)"><svg class="ico ico-24"><use href="#fileMarkdown"/></svg></span>
+          <div><b>研发交付指南</b><span>流程/交付.md · 只读阅读 · 4.2 KB</span></div>
+        </div>
+        <div class="doc-icon-demo" style="margin-top:8px">
+          <span class="big" style="background:var(--warning-soft);color:var(--fic-pdf)"><svg class="ico ico-24"><use href="#filePdf"/></svg></span>
+          <div><b>架构评审记录</b><span>架构/评审.pdf · 原件附件 · 只读</span></div>
+        </div>
+        <div class="hr"></div>
+        <div class="block-title">扩展名 → 图标映射（现行 + 本次新增）</div>
+        <table class="icon-table">
+          <thead><tr><th></th><th>扩展名</th><th>符号</th><th>类型色</th></tr></thead>
+          <tbody>
+            <tr><td><svg class="ico" style="color:var(--fic-md)"><use href="#fileMarkdown"/></svg></td><td>md / markdown / mdx</td><td><code>fileMarkdown</code> 新</td><td>青绿</td></tr>
+            <tr><td><svg class="ico" style="color:var(--fic-text)"><use href="#fileText"/></svg></td><td>txt / log / ini / conf / rtf</td><td><code>fileText</code></td><td>中性</td></tr>
+            <tr><td><svg class="ico" style="color:var(--fic-pdf)"><use href="#filePdf"/></svg></td><td>pdf</td><td><code>filePdf</code></td><td>红</td></tr>
+            <tr><td><svg class="ico" style="color:var(--fic-word)"><use href="#fileWord"/></svg></td><td>doc / docx / odt</td><td><code>fileWord</code></td><td>蓝</td></tr>
+            <tr><td><svg class="ico" style="color:var(--fic-sheet)"><use href="#fileSheet"/></svg></td><td>xls / xlsx / ods</td><td><code>fileSheet</code></td><td>绿</td></tr>
+            <tr><td><svg class="ico" style="color:var(--fic-sheet)"><use href="#csv"/></svg></td><td>csv / tsv</td><td><code>csv</code></td><td>绿</td></tr>
+            <tr><td><svg class="ico" style="color:var(--fic-slides)"><use href="#fileSlides"/></svg></td><td>ppt / pptx / odp</td><td><code>fileSlides</code></td><td>橙</td></tr>
+            <tr><td><svg class="ico" style="color:var(--fic-image)"><use href="#image"/></svg></td><td>png / jpg / gif / webp / svg</td><td><code>image</code></td><td>紫</td></tr>
+            <tr><td><svg class="ico" style="color:var(--fic-code)"><use href="#fileCode"/></svg></td><td>ts / js / py / json / yaml / css</td><td><code>fileCode</code></td><td>紫蓝</td></tr>
+            <tr><td><svg class="ico" style="color:var(--fic-code)"><use href="#fileHtml"/></svg></td><td>html / htm</td><td><code>fileHtml</code> 新</td><td>紫蓝</td></tr>
+            <tr><td><svg class="ico" style="color:var(--fic-archive)"><use href="#fileArchive"/></svg></td><td>zip / 7z / rar / tar / gz</td><td><code>fileArchive</code></td><td>棕</td></tr>
+            <tr><td><svg class="ico" style="color:var(--fic-audio)"><use href="#fileAudio"/></svg></td><td>mp3 / wav / m4a / flac</td><td><code>fileAudio</code> 新</td><td>紫</td></tr>
+            <tr><td><svg class="ico" style="color:var(--fic-video)"><use href="#fileVideo"/></svg></td><td>mp4 / mov / mkv / webm</td><td><code>fileVideo</code> 新</td><td>橘</td></tr>
+            <tr><td><svg class="ico" style="color:var(--fic-unknown)"><use href="#fileUnknown"/></svg></td><td>其它或无法识别</td><td><code>fileUnknown</code> 新</td><td>灰</td></tr>
+          </tbody>
+        </table>
+        <p class="caption" style="margin-top:8px">映射表是唯一来源；树上不再用「MD」「PDF」小字作为唯一类型标识，小字保留为辅助（11px）。未知扩展名不阻止上传与阅读元信息。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 05 ============ -->
+  <section class="sec" id="s05">
+    <div class="sec-head"><span class="no">05</span><h2>用户头像：Logo、5 种风格与更换弹窗</h2><span class="caption">替换顶栏 / 侧栏 / 设置中的字母头像</span></div>
+    <div class="panel panel-pad">
+      <div class="avatar-field">
+        <div>
+          <span class="avatar-frame show-edit" id="avatar-frame">
+            <span class="avatar" data-user-avatar><img src="../brand-assets-v2/logo-sail.png" alt="当前头像"></span>
+            <button class="avatar-edit" type="button" id="avatar-edit" aria-label="更换头像" title="更换头像"><svg class="ico ico-14"><use href="#camera"/></svg></button>
+          </span>
+          <span class="avatar-hint"><svg class="ico" style="width:12px;height:12px"><use href="#pen"/></svg>悬停头像出现编辑</span>
+        </div>
+        <div style="flex:1;min-width:220px">
+          <b style="font-size:14px">林澈</b>
+          <p class="caption">研发负责人 · lin.che@example.invalid（合成样例）</p>
+          <p class="caption" style="margin-top:3px">点击头像上的编辑按钮打开「更换头像」：先选 5 种内置样式，最后一格是「自定义」；选图后可缩放预览，校验失败在弹窗内提示并保留原头像。</p>
+        </div>
+        <div class="row" style="gap:8px"><span class="tag blue">默认 B</span><button class="btn sm primary" type="button" id="avatar-open">更换头像…</button></div>
+      </div>
+      <div class="hr"></div>
+      <div class="block-title">风格选择（点击立即预览整页）<span class="tag">保存后作用顶栏 / 侧栏 / 设置</span></div>
+      <div class="avatar-styles" id="avatar-styles" role="radiogroup" aria-label="头像风格">
+        <button class="avatar-style-card" type="button" data-style-btn="a" role="radio" aria-checked="false" aria-pressed="false">
+          <span class="avatar lg"><img src="../brand-assets-v2/logo-sail.png" alt=""></span>
+          <b>A · 原彩透明</b><span>无底色，图形本身即品牌；白底与深色都成立，适合大图展示。</span>
+        </button>
+        <button class="avatar-style-card" type="button" data-style-btn="b" role="radio" aria-checked="true" aria-pressed="true">
+          <span class="avatar lg"><img src="../brand-assets-v2/logo-sail.png" alt=""></span>
+          <b>B · 薄荷承载（默认）</b><span>圆形薄荷底 + 细边，小尺寸轮廓最稳，与现有品牌图标语言一致。</span>
+        </button>
+        <button class="avatar-style-card" type="button" data-style-btn="c" role="radio" aria-checked="false" aria-pressed="false">
+          <span class="avatar lg"><img src="../brand-assets-v2/logo-sail.png" alt=""></span>
+          <b>C · 圆角方砖</b><span>10px 圆角方底，与项目/知识库图标砖同语言，适合信息密集的侧栏。</span>
+        </button>
+        <button class="avatar-style-card" type="button" data-style-btn="d" role="radio" aria-checked="false" aria-pressed="false">
+          <span class="avatar lg"><img src="../brand-assets-v2/logo-sail.png" alt=""></span>
+          <b>D · 墨青实底</b><span>深青实底 + 帆船反白，辨识度最高；反白仅用于 Logo，上传照片保持原图。</span>
+        </button>
+        <button class="avatar-style-card" type="button" data-style-btn="e" role="radio" aria-checked="false" aria-pressed="false">
+          <span class="avatar lg"><img src="../brand-assets-v2/logo-sail.png" alt=""></span>
+          <b>E · 双色光环</b><span>1.5px 青环 + 1.5px 淡蓝外环 + 白底，最轻的强调；深色下环色自动提亮。</span>
+        </button>
+      </div>
+      <div class="hr"></div>
+      <div class="block-title">尺寸阶梯（24 / 30 / 34 / 44）</div>
+      <div class="row" style="gap:22px;flex-wrap:wrap">
+        <div class="sizes">
+          <div class="s"><span class="avatar xs"><img src="../brand-assets-v2/logo-sail.png" alt=""></span><span>24 小</span></div>
+          <div class="s"><span class="avatar"><img src="../brand-assets-v2/logo-sail.png" alt=""></span><span>30 顶栏/侧栏</span></div>
+          <div class="s"><span class="avatar md"><img src="../brand-assets-v2/logo-sail.png" alt=""></span><span>34 设置</span></div>
+          <div class="s"><span class="avatar lg"><img src="../brand-assets-v2/logo-sail.png" alt=""></span><span>44 资料/大图</span></div>
+        </div>
+        <span class="caption">Logo 内缩比例随风格固定（A 90%、B/C/D/E 72–76%）；上传照片时改为 100% 填满容器并等比裁剪，容器形状与边框不变。</span>
+      </div>
+      <div class="hr"></div>
+      <div class="block-title">更换头像弹窗<span class="tag">可操作演示</span></div>
+      <div class="note" style="margin-bottom:10px">
+        <svg class="ico ico-14"><use href="#bulb"/></svg>
+        <div>流程：① 悬停头像框出现编辑 → ② 点击打开弹窗，内置 5 种样式，最后一个格子是「自定义」 → ③ 选图后进入裁剪预览并可缩放 → ④ 格式／超过 200KB／读取失败在弹窗内提示并保留原头像 → ⑤ 应用后同步顶栏、侧栏、设置，取消不改。</div>
+      </div>
+      <div class="row"><button class="btn primary" type="button" id="avatar-open-2">打开「更换头像」弹窗</button><span class="caption">与设置页入口相同；图片仅本机预览，不上传网络。</span></div>
+      <div class="hr"></div>
+      <div class="block-title">三个实际位置</div>
+      <div class="split-3">
+        <div>
+          <div class="mock-topbar">
+            <span class="brand-mini"><img src="../brand-assets-v2/logo-sail.png" alt=""><b>栖造</b></span>
+            <span class="chip">个人工作台</span>
+            <span class="spacer"></span>
+            <span class="icon-btn"><svg class="ico ico-14"><use href="#bell"/></svg></span>
+            <span class="avatar" data-user-avatar><img src="../brand-assets-v2/logo-sail.png" alt="用户头像"></span>
+          </div>
+          <p class="caption" style="margin-top:5px">顶栏 30px，点击仍打开设置。</p>
+        </div>
+        <div>
+          <div class="mock-side">
+            <div class="u-row">
+              <span class="avatar" data-user-avatar><img src="../brand-assets-v2/logo-sail.png" alt=""></span>
+              <span class="u-meta"><b>林澈</b><span>研发负责人 · 设置与账户</span></span>
+              <svg class="ico ico-14" style="color:var(--muted)"><use href="#settings"/></svg>
+            </div>
+          </div>
+          <p class="caption" style="margin-top:5px">侧栏底部 30px，与名称、齿轮对齐。</p>
+        </div>
+        <div>
+          <div class="mock-side">
+            <div class="u-row" style="gap:10px">
+              <span class="avatar md" data-user-avatar><img src="../brand-assets-v2/logo-sail.png" alt=""></span>
+              <span class="u-meta"><b>林澈</b><span>lin.che@example.invalid</span></span>
+            </div>
+          </div>
+          <p class="caption" style="margin-top:5px">设置左栏 34px，信息与账户入口一致。</p>
+        </div>
+      </div>
+      <div class="hr"></div>
+      <div class="block-title">设置 → 通用 → 界面外观（新增区块）</div>
+      <div class="settings-mock">
+        <aside class="settings-nav">
+          <div class="set-user">
+            <span class="avatar md" data-user-avatar><img src="../brand-assets-v2/logo-sail.png" alt=""></span>
+            <div><b>林澈</b><span>lin.che@example.invalid</span></div>
+          </div>
+          <button class="s-item" aria-current="true"><svg class="ico ico-14"><use href="#settings"/></svg>通用</button>
+          <button class="s-item"><svg class="ico ico-14"><use href="#database"/></svg>模型管理</button>
+          <button class="s-item"><svg class="ico ico-14"><use href="#terminal"/></svg>SDK 与 CLI</button>
+          <button class="s-item"><svg class="ico ico-14"><use href="#layers"/></svg>能力 · Skill</button>
+          <button class="s-item"><svg class="ico ico-14"><use href="#box"/></svg>能力 · MCP</button>
+          <button class="s-item"><svg class="ico ico-14"><use href="#sparkles"/></svg>能力 · Tools</button>
+        </aside>
+        <div class="settings-body">
+          <h3>通用</h3>
+          <p class="s-desc">用户信息、界面外观、代码样式与服务器默认值。</p>
+          <div class="set-field">
+            <div class="f-label"><b>头像风格</b><span>作用于顶栏、侧栏与设置</span></div>
+            <div class="f-control">
+              <div class="avatar-radio-row" id="avatar-radio-row" role="radiogroup" aria-label="头像风格">
+                <button class="avatar-radio" type="button" data-style-radio="a" role="radio" aria-checked="false"><span class="avatar sm"><img src="../brand-assets-v2/logo-sail.png" alt=""></span><b>A 原彩</b></button>
+                <button class="avatar-radio" type="button" data-style-radio="b" role="radio" aria-checked="true"><span class="avatar sm"><img src="../brand-assets-v2/logo-sail.png" alt=""></span><b>B 薄荷</b></button>
+                <button class="avatar-radio" type="button" data-style-radio="c" role="radio" aria-checked="false"><span class="avatar sm"><img src="../brand-assets-v2/logo-sail.png" alt=""></span><b>C 方砖</b></button>
+                <button class="avatar-radio" type="button" data-style-radio="d" role="radio" aria-checked="false"><span class="avatar sm"><img src="../brand-assets-v2/logo-sail.png" alt=""></span><b>D 墨青</b></button>
+                <button class="avatar-radio" type="button" data-style-radio="e" role="radio" aria-checked="false"><span class="avatar sm"><img src="../brand-assets-v2/logo-sail.png" alt=""></span><b>E 双环</b></button>
+              </div>
+            </div>
+          </div>
+          <div class="set-field">
+            <div class="f-label"><b>头像</b><span>内置 5 种或自定义</span></div>
+            <div class="f-control"><button class="btn sm" type="button" id="avatar-open-settings">更换头像…</button><span class="caption">弹窗内可上传 ≤200KB</span></div>
+          </div>
+          <div class="set-field">
+            <div class="f-label"><b>主题</b><span>跟随系统 / 浅色 / 深色</span></div>
+            <div class="f-control"><button class="btn sm">跟随系统</button></div>
+          </div>
+          <div class="set-field">
+            <div class="f-label"><b>显示名称</b><span>用于会话与操作记录</span></div>
+            <div class="f-control"><span class="btn sm" style="min-width:180px;justify-content:flex-start">林澈</span></div>
+          </div>
+          <div class="set-field">
+            <div class="f-label"><b>保存</b><span>风格与主题同时生效</span></div>
+            <div class="f-control"><button class="btn sm primary" type="button">保存设置</button><span class="caption">取消不改已保存值</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 06 ============ -->
+  <section class="sec" id="s06">
+    <div class="sec-head"><span class="no">06</span><h2>图标集与规格</h2><span class="caption">在 UI-ICON-001-v1 上增量，不替代</span></div>
+    <div class="split">
+      <div class="panel panel-pad">
+        <div class="block-title">新增 41 个符号<span class="tag">7 文件类型 + 33 通用 + 1 拖动提示</span></div>
+        <div class="icon-grid" id="icon-new-grid"></div>
+        <div class="hr"></div>
+        <div class="block-title">文件类型与容器符号（7）</div>
+        <table class="icon-table">
+          <thead><tr><th></th><th>id</th><th>名称 / 用途</th></tr></thead>
+          <tbody>
+            <tr><td><svg class="ico" style="color:var(--fic-md)"><use href="#fileMarkdown"/></svg></td><td><code>fileMarkdown</code></td><td>Markdown 文档；知识库、编码 MD、需求/设计附件</td></tr>
+            <tr><td><svg class="ico" style="color:var(--fic-code)"><use href="#fileHtml"/></svg></td><td><code>fileHtml</code></td><td>HTML 文件；与 fileCode 区分「页面」与「脚本」</td></tr>
+            <tr><td><svg class="ico" style="color:var(--fic-audio)"><use href="#fileAudio"/></svg></td><td><code>fileAudio</code></td><td>音频原件；只做元信息检索</td></tr>
+            <tr><td><svg class="ico" style="color:var(--fic-video)"><use href="#fileVideo"/></svg></td><td><code>fileVideo</code></td><td>视频原件；只做元信息检索</td></tr>
+            <tr><td><svg class="ico" style="color:var(--fic-unknown)"><use href="#fileUnknown"/></svg></td><td><code>fileUnknown</code></td><td>未识别类型；不阻塞上传，不冒充可读</td></tr>
+            <tr><td><svg class="ico" style="color:var(--fic-project-work)"><use href="#briefcase"/></svg></td><td><code>briefcase</code></td><td>办公项目默认图标；也可用于项目图标选择</td></tr>
+            <tr><td><svg class="ico"><use href="#library"/></svg></td><td><code>library</code></td><td>知识库中性默认；档案盒/书架语义</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="panel panel-pad">
+        <div class="block-title">复用的既有符号<span class="tag">来自 icon-sprite.svg</span></div>
+        <div class="icon-grid" id="icon-reuse-grid"></div>
+        <div class="hr"></div>
+        <div class="block-title">尺寸与颜色</div>
+        <div class="sizes" style="margin-bottom:10px">
+          <div class="s"><svg class="ico ico-14"><use href="#fileMarkdown"/></svg><span>14 按钮/紧凑</span></div>
+          <div class="s"><svg class="ico"><use href="#fileMarkdown"/></svg><span>16 树/列表</span></div>
+          <div class="s"><svg class="ico ico-20"><use href="#fileMarkdown"/></svg><span>20 卡片/文档头</span></div>
+          <div class="s"><svg class="ico ico-24"><use href="#fileMarkdown"/></svg><span>24 详情/空态</span></div>
+        </div>
+        <ul class="spec-list">
+          <li><b>线宽</b><span>统一 1.6px，round cap/join，无填充；不因放大缩小改线宽。</span></li>
+          <li><b>着色</b><span>图形用 currentColor；类型色只在外层 <code class="mono">color</code> 上设置，浅深主题各一套令牌。</span></li>
+          <li><b>对比</b><span>类型色对白底/深底均 ≥ 3:1（图形元素），并以形状双编码。</span></li>
+          <li><b>不混用</b><span>官方 CLI 品牌图形（Claude/Codex/Grok）不套本套描边与颜色；头像不使用 CLI 图形。</span></li>
+          <li><b>禁止</b><span>不用 emoji、不用字母块、不用「PDF」文字块冒充图标；字母块仅作最后回退。</span></li>
+        </ul>
+      </div>
+    </div>
+    <div class="panel panel-pad" style="margin-top:14px">
+      <div class="block-title">可选图标清单<span class="tag">项目与知识库共用 50 · 6 组</span></div>
+      <p class="caption" style="margin-bottom:10px">按使用场景分组，不要求用户理解编码概念：办公、商业、内容、产品与生活都有对应图形；项目与知识库都可任选，同一图标可配任意色卡。</p>
+      <b style="font-size:12px">全部图标（50，6 组）</b>
+      <p class="caption" style="margin:3px 0 8px">新建项目默认编码 <code class="mono">code</code>、办公 <code class="mono">briefcase</code>；新建知识库默认按来源，均可覆盖。</p>
+      <div id="icon-project-grid" class="icon-groups"></div>
+    </div>
+  </section>
+
+  <!-- ============ 07 ============ -->
+  <section class="sec" id="s07">
+    <div class="sec-head"><span class="no">07</span><h2>状态与可访问性</h2><span class="caption">逐状态可见，不靠单一颜色</span></div>
+    <div class="state-grid">
+      <div class="state-card">
+        <b>默认 / 悬停</b>
+        <div class="state-demo">
+          <svg class="ico" style="color:var(--fic-md)"><use href="#fileMarkdown"/></svg>
+          <svg class="ico" style="color:var(--fic-md)"><use href="#fileMarkdown"/></svg>
+          <span class="caption">悬停行底色变化，图标不放大、不变色</span>
+        </div>
+        <p>树行 hover 只改行底色；图标尺寸与颜色保持，避免「动一下就跳」。</p>
+      </div>
+      <div class="state-card">
+        <b>选中</b>
+        <div class="state-demo">
+          <span class="kw-row file" style="--d:0;max-width:220px;min-height:32px" aria-selected="true"><svg class="ico f-ico" style="color:var(--fic-md)"><use href="#fileMarkdown"/></svg><span class="kw-text"><span class="kw-name">预约接口约定</span></span></span>
+        </div>
+        <p>选中行使用 primary-soft 底 + primary-strong 文字；图标仍保留类型色，不整行染成主色。</p>
+      </div>
+      <div class="state-card">
+        <b>未授权 / 禁用</b>
+        <div class="state-demo">
+          <span class="tile lg violet dim" style="--dim:1"><svg class="ico ico-20"><use href="#book"/></svg></span>
+          <span class="caption">未授权知识库：图标正常，动作按钮受限</span>
+        </div>
+        <p>图标不表达权限；「进入」可用，「管理授权」按角色限制，权限状态由标签与按钮说明。</p>
+      </div>
+      <div class="state-card">
+        <b>未知类型</b>
+        <div class="state-demo">
+          <svg class="ico" style="color:var(--fic-unknown)"><use href="#fileUnknown"/></svg>
+          <span class="caption">显示通用未知图标 + 原始扩展名</span>
+        </div>
+        <p>不猜测类型、不阻断上传；阅读页只展示元信息，并提示「未识别格式，不提供预览」。</p>
+      </div>
+      <div class="state-card">
+        <b>资源缺失 / 回退</b>
+        <div class="state-demo">
+          <svg class="ico" style="color:var(--ink-2)"><use href="#file"/></svg>
+          <span class="caption">通用文件 → 项目首字母块</span>
+        </div>
+        <p>图标 id 未登记时回退 <code class="mono">file</code>；项目图标完全缺失时回退现有字母块，不显示空白砖。</p>
+      </div>
+      <div class="state-card">
+        <b>图标 + 背景色组合</b>
+        <div class="state-demo">
+          <span class="tile" style="--tile-bg:#eaf1ff;--tile-fg:#2b6cf6"><svg class="ico ico-20"><use href="#building"/></svg></span>
+          <span class="tile" style="--tile-bg:#fff4e2;--tile-fg:#b76a00"><svg class="ico ico-20"><use href="#chartBar"/></svg></span>
+          <span class="tile" style="--tile-bg:#fdeef1;--tile-fg:#c2345a"><svg class="ico ico-20"><use href="#megaphone"/></svg></span>
+        </div>
+        <p>同一图标换色卡即换项目气质；背景与图形色成对取，禁止只换背景导致对比不足。</p>
+      </div>
+      <div class="state-card">
+        <b>上传失败 / 恢复默认</b>
+        <div class="state-demo">
+          <span class="upload-error-inline">超过 200KB</span>
+          <span class="caption">保留原头像并提示</span>
+        </div>
+        <p>格式、超过 200KB 或读取失败都不替换当前头像；「恢复默认 Logo」立即回到 B 风格品牌头像。</p>
+      </div>
+      <div class="state-card">
+        <b>键盘焦点</b>
+        <div class="state-demo">
+          <span class="btn sm" style="box-shadow:var(--ring);border-color:var(--primary)">C 方砖</span>
+          <span class="kbd">Tab</span><span class="kbd">Enter</span>
+        </div>
+        <p>图标选择器与头像风格均为可聚焦按钮/单选组，方向键或 Tab 切换，Enter/Space 选中，焦点环 3px。</p>
+      </div>
+    </div>
+    <div class="split" style="margin-top:14px">
+      <div class="panel panel-pad">
+        <div class="block-title">窄屏（360）</div>
+        <div class="narrow-demo">
+          <div class="proj-card" style="padding:11px">
+            <div class="proj-card-h">
+              <span class="tile" style="width:32px;height:32px;border-radius:9px"><svg class="ico ico-20"><use href="#code"/></svg></span>
+              <div class="proj-card-t"><b>预约服务</b><span>PRJ-1042 · 编码</span></div>
+            </div>
+            <div class="proj-card-foot"><div class="bar"><i style="width:27%"></i></div><span class="caption mono">3/11</span></div>
+          </div>
+          <p class="caption" style="margin-top:8px">窄屏图标砖缩到 32px、图标 20px 不变；名称省略号截断，不换行挤压图标。</p>
+        </div>
+      </div>
+      <div class="panel panel-pad">
+        <div class="block-title">可访问性与文案</div>
+        <ul class="spec-list">
+          <li><b>语义</b><span>装饰图标 <code class="mono">aria-hidden="true"</code>；文件/项目/知识库名称是文本，不依赖图标。</span></li>
+          <li><b>头像</b><span>按钮 <code class="mono">aria-label="用户头像，打开设置"</code>；风格组用 <code class="mono">role="radiogroup"</code>。</span></li>
+          <li><b>不报假状态</b><span>图标不承载「已保存/失败/授权」状态，这些仍由既有状态标签与文案表达。</span></li>
+          <li><b>语言</b><span>类型小字用大写扩展名（MD/PDF/DOCX），不本地化成「便携文档」等长文案。</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 08 ============ -->
+  <section class="sec" id="s08">
+    <div class="sec-head"><span class="no">08</span><h2>边界与待确认</h2><span class="caption">设计已出，未进入开发</span></div>
+    <div class="note warn">
+      <svg class="ico ico-14"><use href="#info"/></svg>
+      <div>本页只更新需求与设计资源：未修改 <code class="mono">docs/UI/workbench-v4/</code> 现有原型、未改 <code class="mono">src/</code> 正式源码、依赖或构建产物。按项目 AGENTS 默认边界，确认设计不等于编码授权。</div>
+    </div>
+    <div class="split" style="margin-top:14px">
+      <div class="panel panel-pad">
+        <div class="block-title">数据结论（设计层）</div>
+        <ul class="spec-list">
+          <li><b>项目</b><span>新增可选 <code class="mono">icon</code> 与 <code class="mono">icon_color</code>（色卡 id，成对保存）；空值按 kind 推导图标、按既有 tone 显示。旧数据不动、不自动映射，手动切换后才写入。</span></li>
+          <li><b>知识库</b><span>新增可选 <code class="mono">icon</code> 与 <code class="mono">icon_color</code>；默认按既有 <code class="mono">sourceKind</code> 推导，不新增来源枚举。</span></li>
+          <li><b>用户</b><span>新增 <code class="mono">avatar_style</code>（默认 <code class="mono">b</code>）与可选 <code class="mono">avatar_image</code>（本机文件引用 + hash，不存原图字节）；上传上限 200KB。</span></li>
+          <li><b>隐私</b><span>头像图片仅本机读取，不上传网络、不进入知识库/会话/审计；删除引用即恢复默认 Logo。</span></li>
+          <li><b>不持久化</b><span>文件类型图标由扩展名即时推导，不入库；图标映射表随程序版本走。</span></li>
+        </ul>
+        <p class="caption" style="margin-top:8px">以上字段为设计结论，正式实现时补 DB-FEAT-001 与迁移；本轮不建表、不改代码。</p>
+      </div>
+      <div class="panel panel-pad">
+        <div class="block-title">待确认（不阻塞设计评审）</div>
+        <ul class="spec-list">
+          <li><b>已定</b><span>头像默认 B、可上传（≤200KB）；项目与知识库共用 50 个图标任意选择；10 个整块填充的方形色卡、不显示文字；旧项目／旧库保持原样，手动切换才写入。</span></li>
+          
+          <li><b>Q10</b><span>200KB 是原始文件大小还是裁剪后大小？本稿按选择时的原始文件校验。</span></li>
+          <li><b>Q11</b><span>旧项目「保持原样」具体指沿用当前 tone 图标砖；是否需要在编辑弹窗里提供「恢复默认」入口？本稿只做手动选择，不做批量迁移。</span></li>
+        </ul>
+        <div class="hr"></div>
+        <div class="block-title">后续</div>
+        <p class="caption">Q10～Q11 答复后：登记现行设计版本与 hash → 补窄屏/键盘细则 → 仅在明确编码授权后按稿改原型与正式软件，并做同条件设计/软件视觉对照。</p>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<div class="modal-mask" id="avatar-modal" hidden>
+  <div class="avatar-modal" role="dialog" aria-modal="true" aria-labelledby="avatar-modal-title">
+    <div class="avatar-modal-h">
+      <b id="avatar-modal-title">更换头像</b>
+      <span class="caption">内置样式或自定义图片</span>
+      <button class="icon-btn" type="button" id="avatar-modal-close" aria-label="关闭"><svg class="ico ico-14"><use href="#x"/></svg></button>
+    </div>
+    <div class="avatar-modal-b">
+      <div class="avatar-preview-col">
+        <span class="avatar" id="avatar-draft-preview"><img src="../brand-assets-v2/logo-sail.png" alt="头像预览"></span>
+        <canvas class="avatar-canvas" id="avatar-preview-canvas" width="192" height="192" hidden aria-label="裁剪结果预览"></canvas>
+        <span class="preview-label" id="avatar-draft-note">B · 薄荷承载</span>
+        <span class="caption">应用后同步顶栏、侧栏与设置。</span>
+      </div>
+      <div class="avatar-choose">
+        <div class="block-title" style="margin:0">内置头像<span class="tag">5 种样式</span></div>
+        <div class="preset-grid" id="avatar-presets">
+          <button class="preset" type="button" data-preset="a" aria-pressed="false" title="A 原彩透明"><span class="avatar"><img src="../brand-assets-v2/logo-sail.png" alt=""></span><span>A</span></button>
+          <button class="preset" type="button" data-preset="b" aria-pressed="true" title="B 薄荷承载"><span class="avatar"><img src="../brand-assets-v2/logo-sail.png" alt=""></span><span>B</span></button>
+          <button class="preset" type="button" data-preset="c" aria-pressed="false" title="C 圆角方砖"><span class="avatar"><img src="../brand-assets-v2/logo-sail.png" alt=""></span><span>C</span></button>
+          <button class="preset" type="button" data-preset="d" aria-pressed="false" title="D 墨青实底"><span class="avatar"><img src="../brand-assets-v2/logo-sail.png" alt=""></span><span>D</span></button>
+          <button class="preset" type="button" data-preset="e" aria-pressed="false" title="E 双色光环"><span class="avatar"><img src="../brand-assets-v2/logo-sail.png" alt=""></span><span>E</span></button>
+          <button class="preset custom" type="button" data-preset="custom" aria-pressed="false" title="自定义图片"><span class="plus"><svg class="ico ico-14"><use href="#camera"/></svg></span><span>自定义</span></button>
+        </div>
+        <div class="crop" id="avatar-crop">
+          <div class="crop-stage" id="avatar-crop-stage" aria-label="拖动图片调整头像显示区域">
+            <img id="avatar-crop-img" alt="">
+            <div class="crop-mask" id="avatar-crop-mask"></div>
+          </div>
+          <div class="crop-empty" id="avatar-crop-empty" hidden>选择「自定义」并上传图片后，可在这里拖动调整</div>
+          <p class="crop-hint"><svg class="ico"><use href="#hand"/></svg><span id="avatar-crop-hint">框内就是最终显示区域，框外不会出现在头像里。</span></p>
+          <div class="crop-row">
+            <span class="caption">缩放</span>
+            <input type="range" id="avatar-zoom" min="100" max="300" value="100" aria-label="缩放头像" disabled>
+            <span class="value" id="avatar-zoom-value">100%</span>
+          </div>
+          <div class="crop-row">
+            <button class="btn sm" type="button" id="avatar-repick">选择图片</button>
+            <span class="caption" id="avatar-file-name">未选择文件</span>
+          </div>
+        </div>
+        <p class="upload-error" id="avatar-error" role="alert" hidden></p>
+        <p class="caption">PNG / JPG / WebP，≤200KB；建议 ≥256×256。图片只保存在本机，不上传网络、不进入知识库或会话。</p>
+        <input type="file" id="avatar-file" accept="image/png,image/jpeg,image/webp" hidden>
+      </div>
+    </div>
+    <div class="avatar-modal-f">
+      <button class="btn sm" type="button" id="avatar-reset">恢复默认 Logo</button>
+      <span class="spacer"></span>
+      <button class="btn" type="button" id="avatar-cancel">取消</button>
+      <button class="btn primary" type="button" id="avatar-apply">应用</button>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>UI-CR051-v6 · 内置图标、背景色与用户头像风格 · 2026-11-21 · 设计资源，不是产品页面，不是第二原型入口。</span>
+    <span>唯一业务原型：<a href="../仿真原型UI.html">docs/UI/仿真原型UI.html</a>（本次未改） · 图标基准：<a href="../文档/UI-ICON-001-平台图标与组件基准.md">UI-ICON-001</a> · 滚动条：UI-SCROLL-001（本页自身遵守）</span>
+    <span>本页自带 sprite 为既有符号副本 + 7 个新增符号；实施时并入 <code class="mono">workbench-v4/icon-sprite.svg</code>，不新增第二套图标源。</span>
+  </div>
+</footer>
+
+<script src="icon-system.js"></script>
+</body>
+</html>

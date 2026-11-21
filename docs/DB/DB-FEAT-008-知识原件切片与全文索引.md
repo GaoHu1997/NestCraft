@@ -1,5 +1,7 @@
 # DB-FEAT-008：知识原件切片与全文索引
 
+> CR-055 v2候选扩展（2026-11-21）：[目录与索引发布增量](DB-CR055-性能目录与索引发布设计.md)登记directory/control/job/库代实体与查询/GC协议。既有文件/修订/权限/定位模型继续；原§3/§5当前FTS同事务替换仍用于有界小增量。大对象拟改库代影子表发布，不能把staging/retired词项混入active BM25；旧大源失效时同库全文暂不可用是G-SEARCH待决，**确认前不生效、不迁移、不视为软件已实现**。逻辑大清单按块持久化与流式核验，不要求单个JSON/数组入内存。CR055模式启用后，原§3查询中的`f.publishedGeneration=c.parseGeneration`及文件`g.state='published'`判当前方式由`active库代 → kb_index_member → parseGeneration`替代，FTS/TOC/关系/read共用；源currentRevision独立核新鲜度。旧published字段只可作非权威兼容投影，启用前仍按原协议。小更新同事务改member/FTS/epoch，影子切换不逐文件改5万指针；共享chunk由所有member/在途引用决定回收。正式DDL须按实际P0表集与迁移版本合并校验，不能将两份候选DDL直接拼接执行。
+
 - 版本：DB-CR030-v1；状态：候选物理数据设计，**没有运行以下 DDL、建表、读取真实库或迁移数据**。
 - 依据：[CR-030](../PRD/CR-030-本地知识索引与按需引用.md)、[FEAT-008](../Plan/Feature/FEAT-008-项目知识授权与只读检索.md)；继承 [CR-028 存储边界](../PRD/CR-028-文件与数据库按职责存储.md)、[DB-FEAT-001](DB-FEAT-001-知识授权与工作台数据设计.md#cr-028文件与数据库分工现行增量)，仅细化知识原件／派生数据，不修改需求正文、模型设计或会话业务权威。
 - 唯一行为方案：[LLD-FEAT-008](../LLD/LLD-FEAT-008-本地知识索引与按需检索.md)；AC：[STORY-036 08～13](../Plan/Story/STORY-036-知识库正式实现.md#cr-030本地知识索引与按需引用)、[STORY-009 08～11](../Plan/Story/STORY-009-知识库项目授权与AI检索.md#cr-030本地知识索引与按需引用)、[STORY-014 08～10](../Plan/Story/STORY-014-服务器列表与知识库三栏阅读.md#cr-030本地知识索引与按需引用)；[测试映射](../Test/TEST-CR030-本地知识索引闭环验证.md)。
@@ -406,8 +408,50 @@ hash校验与数据库事务不保证文件系统和DB跨介质原子；source�
 
 仅检查候选schema、复合范围与行为不变量；没有执行SQL或性能测试。正式必须验证FTS5编译、literal短词、未授权库统计不影响授权排序、原件字节/耐久保存、两writer/fencing、所有异步故障点、source监控断档、cursor/预算原子性、legacy和原生线程拒绝、备份/WAL/派生清理。测试计划为[TEST-CR030](../Test/TEST-CR030-本地知识索引闭环验证.md)，实际本轮结果由[REPORT-CR030](../Test/REPORT-CR030-知识索引设计验证.md)登记；不得把文档存在写成schema已上线。
 
+## 8. P0 落地记录（2026-11-21，CR-030-D1）
+
+本节登记 CR-030-D1 P0 实际执行的迁移与表结构（已运行、已测试），与 §2 候选 DDL 的差异均为登记偏差。实现：`src-tauri/src/commands/kb_index.rs`、`db.rs::migrate`；验证见 [REPORT-CR030-D1](../Test/REPORT-CR030-D1-切片与全文索引实现.md)。
+
+实际执行 DDL（幂等，`migrate_cr030_knowledge_index`，末尾 `INSERT OR IGNORE INTO schema_version=2`）：
+
+```sql
+CREATE TABLE IF NOT EXISTS kb_library_state (
+    libraryId TEXT PRIMARY KEY REFERENCES knowledge_library(id),
+    partitionNo INTEGER NOT NULL UNIQUE CHECK(partitionNo > 0),
+    indexEpoch INTEGER NOT NULL DEFAULT 0 CHECK(indexEpoch >= 0),
+    tokenizerVersion TEXT NOT NULL DEFAULT 'local-bigram-hex-v1',
+    updatedAt INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS kb_chunk (
+    chunkKey INTEGER PRIMARY KEY,
+    libraryId TEXT NOT NULL,
+    noteId TEXT NOT NULL,
+    relativeUri TEXT NOT NULL,
+    parseGeneration TEXT NOT NULL,
+    sourceHash TEXT NOT NULL,
+    ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+    kind TEXT NOT NULL CHECK(kind IN ('body','metadata')),
+    startByte INTEGER NOT NULL CHECK(startByte >= 0),
+    endByte INTEGER NOT NULL CHECK(endByte >= startByte),
+    text TEXT NOT NULL,
+    title TEXT NOT NULL,
+    heading TEXT NOT NULL,
+    startLine INTEGER NOT NULL,
+    endLine INTEGER NOT NULL,
+    UNIQUE(libraryId,noteId,parseGeneration,ordinal)
+);
+CREATE INDEX IF NOT EXISTS idx_kb_chunk_note ON kb_chunk(libraryId, noteId, parseGeneration);
+```
+
+- 相对 §2 候选集的 P0 差异（偏差登记）：仅建 `kb_library_state`+`kb_chunk`；kb_access_epoch/kb_file/kb_revision/kb_generation/kb_outline_node/kb_relation/kb_index_lease/kb_scan_run/kb_operation/游标预算账本全部延后。`kb_chunk` 相对评审确认的最小列集**增设 `relativeUri TEXT NOT NULL`**：knowledge_note_index 仍仅登记 Markdown（前端 noteCount 语义不变），非 md 文件（切片文本+metadata_only）的命中显示与 fail-closed 校验落在 chunk 行。`monitorState/monitorEpoch/dictionaryHash` 等列延后；tokenizerVersion 落库为 `local-bigram-hex-v1`（无词典 P0）。
+- FTS 虚表不在本迁移创建：每库一张 `kb_fts_l<partitionNo>`（partitionNo 由 kb_library_state 单调分配、宿主生成表名、绝不拼输入），在该库首次发布时（分配 partitionNo 的事务内）`CREATE VIRTUAL TABLE IF NOT EXISTS … USING fts5(title_terms, heading_terms, body_terms, bigram_terms, tokenize='unicode61 remove_diacritics 0')`；普通 FTS5 表（应用侧 INSERT 词项行，rowid=chunkKey），不用 external content（按评审 D2 结论，分歧已在 LLD §11.1 说明）。词项格式 `w<utf8hex>`/`b<utf8hex>` 空格分隔 ASCII；bm25 权重 (8.0,4.0,1.0,0.2)。
+- 退役语义：发布/重建在**同一 SQLite 事务**内先 `DELETE FROM kb_fts_lN WHERE rowid IN (SELECT chunkKey FROM kb_chunk WHERE …)` 再 `DELETE FROM kb_chunk`（词项删除从 kb_chunk 存储行取精确值，禁止手工重建词项）；任一步失败整事务回滚（trigger 注入测试验证）。发布事务内 `indexEpoch++`，chunk.parseGeneration=发布时 epoch；检索按每篇 `MAX(CAST(parseGeneration))` 只取当前代。测试固定跑 `INSERT INTO t(t) VALUES('integrity-check')`。
+- 迁移验证：幂等重跑通过；CHECK（kind/partitionNo）与 FK（kb_library_state→knowledge_library）生效；schema_version=2 落库。metadata-only 行 `sourceHash=''`（空串，非字节摘要——未读原件字节），读取路径按 kind 拒绝正文。
+- 未在本迁移执行的项（按设计保留为后续）：FTS5 编译探针已在单测通过（bundled rusqlite）；存量数据回填不在迁移做，由检索前惰性回填按库内联完成（实测 120 文件 813ms）。
+
 ## 变更记录
 
 | 版本／日期 | 变更与依据 | 状态 |
 | --- | --- | --- |
 | DB-CR030-v1／2026-11-19 | 推荐方案的知识原件/不可变代/切片/分库FTS/授权游标预算与恢复闭环；只设计 | 新建候选设计，未实施／未迁移／未验收 |
+| DB-CR030-D1／2026-11-21 | CR-030-D1 P0 正式编码：kb_library_state/kb_chunk/kb_fts_lN 实际落地；§8 登记 DDL、退役/代际语义与偏差（kb_chunk 增 relativeUri；其余表延后） | 已迁移、已测试（cargo test 119/120，唯一失败属并行会话 r6 avatar）；待用户验收 |

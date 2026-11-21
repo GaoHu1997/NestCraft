@@ -1,5 +1,7 @@
 # DB-FEAT-001：知识授权与工作台数据设计
 
+> CR-051当前实施（2026-11-21）：project.iconColor／knowledge_library.iconColor幂等加列、旧NULL不回填；50共享图标与10色卡服务端校验；头像路径／hash／风格同事务提交，受管avatar目录限制。知识库kb_set_appearance原子保存组合；裁剪输出本机存储，200KB限制与格式签名验证。r2～r6已实施，见[接手收尾报告](../Test/REPORT-CR051-R6-接手收尾.md)，下文候选字段为历史设计，正式命名以本次实现记录为准。
+
 - 状态：下文 CR-005～012 为历史逻辑设计，并非全部物理表已经落地；CR-015 已实现本地 SQLite 与文件正文基础，实际代码见 [db.rs](../../src-tauri/src/db.rs)。2026-11-19 CR-028 增量为现行存储分工设计，新增原件登记／恢复字段未实施，本批不建表、不迁移、不访问真实数据库。
 - 关联：[需求汇总](../需求汇总.md)、[PRD-001](../PRD/PRD-001-个人Agent界面需求.md#cr-005项目知识授权与统一-ai-工作台)、[STORY-009](../Plan/Story/STORY-009-知识库项目授权与AI检索.md)、[STORY-010](../Plan/Story/STORY-010-需求树与详细文档预览.md)、[STORY-011](../Plan/Story/STORY-011-AI侧栏上下文与会话.md)、[STORY-012](../Plan/Story/STORY-012-统一配置与CLI能力适配.md)。
 - 决策：[ADR-001](../LLD/ADR-001-文档正文与统一能力网关.md)；接口/权限以 [LLD CR-005](../LLD/LLD-FEAT-001-仿真原型.md#cr-005项目知识授权需求树与统一-ai-工作台v24-设计基线) 为准。
@@ -42,7 +44,9 @@ schemaVersion: 1
 | knowledge_library | id TEXT PK，name TEXT，sourceKind TEXT，sourceRef TEXT，revision INTEGER，enabled INTEGER | sourceKind∈managed-directory/connector；sourceRef 对用户权限受限；无 public 默认 |
 | knowledge_note_index | libraryId TEXT，noteId TEXT，title TEXT，relativeUri TEXT，contentHash TEXT，sourceRevision TEXT，updatedAt INTEGER | PK(libraryId,noteId)；UNIQUE(libraryId,relativeUri)；外键 library；搜索索引分库，不泄露全库统计 |
 | project_library_grant | projectId TEXT，libraryId TEXT，readAllowed INTEGER，revision INTEGER，updatedAt INTEGER，actor TEXT | PK(projectId,libraryId)；FK project/library；无记录或 readAllowed=0 均拒绝；INDEX(libraryId,readAllowed)；授权事务提交后使缓存/令牌失效 |
-| model_config | id TEXT PK，provider TEXT，baseUrl TEXT，modelId TEXT，secretRef TEXT，reasoningJson TEXT，enabled INTEGER，revision INTEGER | secretRef 不含明文；provider/model 组合有稳定引用；schema校验 |
+| mcp_server | id TEXT PK，name TEXT，transport TEXT，command/args/env/url，enabled INTEGER，toolsJson TEXT，authStatus TEXT，authCredentialRef TEXT?，authServerMetadataJson TEXT?，authRevision INTEGER，createdAt INTEGER | name唯一；transport∈stdio/http；HTTP授权状态∈unauthenticated/pending/authenticated/expired/revoked/error；authCredentialRef只指向受管密钥文件，不存access/refresh token；端点或授权服务器元数据变化递增authRevision并使旧授权失效；stdio不得伪造OAuth状态 |
+| mcp_auth_attempt | id TEXT PK，mcpServerId TEXT，stateHash TEXT，pkceChallenge TEXT，redirectUri TEXT，authorizationServer TEXT，expiresAt INTEGER，status TEXT，createdAt/updatedAt INTEGER | status∈pending/completed/failed/expired/cancelled；state只存hash；一次性state与mcpServerId绑定，过期/完成后不可重用；不得存原始回调URL或token |
+| mcp_server 认证扩展 | 增列 `authMode TEXT NOT NULL DEFAULT 'oauth'`（oauth/bearer/none）、`allowInsecureLocalTls INTEGER NOT NULL DEFAULT 0`；静态令牌存受管密钥 `mcp-bearer:<id>`，DB 只存 `authCredentialRef` | 默认 oauth 保持 fail-closed；`allowInsecureLocalTls` 仅对 loopback HTTPS 生效，非 loopback 保存即拒绝；端点或认证方式变化时清除旧凭据并回到 unauthenticated |
 | cli_adapter | id TEXT PK，version TEXT，enabled INTEGER，installState TEXT，capabilityMatrixJson TEXT，verifiedAt INTEGER? | CLI ID 唯一；矩阵按版本+运行模式，未知标未验证 |
 | capability_config | id TEXT PK，kind TEXT，sourceRef TEXT，schemaJson TEXT，risk TEXT，enabled INTEGER，secretRef TEXT?，revision INTEGER | kind∈tool/resource/prompt/skill/client-command；同名显示来源；INDEX(kind,enabled)；权限拒绝优先 |
 | setting_default | scope TEXT，key TEXT，valueRef TEXT，revision INTEGER | PK(scope,key)；scope 为 global/project ID，默认CLI与会话CLI分离；引用有效性校验 |
@@ -61,6 +65,14 @@ schemaVersion: 1
 3. 授权：事务修改 grant 与 revision；运行中撤权取消相关提案、清掉可发送引用正文/缓存、吊销短期令牌。历史展示不假称内容已收回；旧 CLI 线程无法清理时停止并另建。
 4. 配置：注册表是唯一源；生成受管短期配置需带引用和版本。运行模型快照不被中途换模型，安全开关最新值优先。适配器不得写入用户原生配置。
 5. 附件与历史：上传中/失败不作为 ready；恢复重新校验对象、权限和解析状态。项目附件不可恢复到其他项目；删除会话不越界删除共用原文件，本轮不实施自动清理。
+
+### CR-037 普通会话的持久绑定
+
+复用可空的 `session.nativeThreadRef` 存受保护引用句柄。增加 `nativeCompatibilityKey TEXT?`（CLI、模式、适配器兼容代次、后端实例与账号／profile 及作用域的服务端规范键）、`nativeGrantRevision INTEGER?`、`nativeBindingRevision INTEGER NOT NULL DEFAULT 0`、`nativeConfirmedTurnId TEXT?`。用 `session.id` 查询，同时复检普通会话与项目或主机归属。旧记录保留 NULL。
+
+`execution_session_turn` 持久化 `nativeResumed/freshContext/blocked`、脱敏引用指纹和原因码，与当前会话绑定在同一短事务校验所属活动 turn、代次、停止状态、授权修订及 `nativeBindingRevision`。首轮建线程或确认 fresh 后 CAS 更新引用。写入串行，视图切换不更改代次。迟到、已停止和撤权回调只归档。绑定失效时显示原因并保留草稿。备份后增加可空字段并启用新写入，回退关闭续接入口并保留记录。
+
+2026-11-21 迁移已实现并验证（见 [REPORT-CR037-侧栏原生续接实现](../Test/REPORT-CR037-侧栏原生续接实现.md)）：session 五个绑定列与 `execution_session_turn` 幂等迁移、旧记录 NULL/0 保留；`project_library_grant.revision` 同事务递增、撤权保留历史行；CAS 失配只归档不覆盖、executor 会话门控均有单测（cargo test 96/96）。
 
 ## 4. 迁移、备份与恢复
 
@@ -166,3 +178,19 @@ schemaVersion: 1
 - 知识原件、解析 generation、chunk／locator／relation／FTS 当前唯一数据设计见 [DB-FEAT-008](DB-FEAT-008-知识原件切片与全文索引.md)；实现流程与工具预算见 [LLD-FEAT-008](../LLD/LLD-FEAT-008-本地知识索引与按需检索.md)，检验映射见 [TEST-CR030](../Test/TEST-CR030-本地知识索引闭环验证.md)。所有人可管理库，AI授权仍只使用本文件中既有 `project_library_grant` 唯一源，不能重建权限或通过索引元数据扩权。
 - 以上候选DDL尚未运行；未定迁移版本／平台组件能力／真实库schema，未读取用户资料，未执行构建、迁移、备份或性能测试。CR-030当前仅文档设计授权。
 
+
+
+## CR-051：图标、色卡与头像偏好（r1 已实现；r2 追加待实现）
+
+- 关联 [CR-051](../PRD/CR-051-内置图标与用户头像风格.md)／[STORY-069](../Plan/Story/STORY-069-内置图标与用户头像风格.md)／[UI-CR051](../UI/文档/UI-CR051-内置图标与头像风格.md)。**r1 已落地**：`project.icon`、`knowledge_library.icon` 加列迁移与 `ui.avatarStyle` 设置（见 [REPORT-CR051-正式软件实现](../Test/REPORT-CR051-正式软件实现.md) §1.2，迁移幂等、旧库 NULL 保留）。**r2 追加字段（`icon_color`、`avatar_image`）尚未实现**，本节保留设计结论。
+- **（2026-11-21 追加）r2～r6 已实施**：`project.iconColor`／`knowledge_library.iconColor` 幂等加列、`ui.avatarImage`＋`ui.avatarImageHash`（本机受管引用，不存原图字节）、`ui.avatarStyle` 缺省改 `b`；图标 50 共用白名单与 10 色卡服务端校验；`kb_set_appearance`／`save_avatar` 原子成对提交；`avatar_image_data` 读取已应用头像的 data URL 供弹窗重开继续调整。实施证据见 [REPORT-CR051-R6-接手收尾](../Test/REPORT-CR051-R6-接手收尾.md) 与 [REPORT-CR051-正式软件实现](../Test/REPORT-CR051-正式软件实现.md) 的「r2～r6 收敛记录」；本节标题与下文「待实现」措辞为历史原文，以本行与顶部实施注记为准。
+- 复用既有字段：`project.type`（code/work）推导项目默认图标；`knowledge_library.sourceKind`（managed-directory/connector）推导知识库默认图标；`setting_default` 承载本机显示偏好。不新增来源枚举。
+- 显示字段（r1 已落地；r2 追加待实现）：
+  1. `project.icon TEXT?`：**r1 已落地**，内置图标 id（12 个白名单）；NULL 时按 type 推导；不参与权限或运行语义。**r2／r3 拟扩为 50 个（6 组）并与知识库共用白名单**，旧 12 个值继续有效；旧项目不改，手动切换才写新值。
+  2. `knowledge_library.icon TEXT?`：**r1 已落地**，内置图标 id（8 个白名单）；NULL 时按 sourceKind 推导。**r2／r3 拟与项目共用 50 个**；旧库不改。
+  3. `setting_default` 的 `key='ui.avatarStyle'`：**r1 已落地**（a–e，缺省 a）；**r2／r3 拟改缺省为 b**，并新增 `key='ui.avatarImage'`（本机文件引用 + hash，不存原图字节；上传 ≤200KB）——两者均待实现。
+  4. **r2／r3 拟新增（未实现）**：`project.icon_color`、`knowledge_library.icon_color`（10 色卡白名单），与 icon 成对保存；NULL 时**沿用现有 tone／图标显示、不自动映射**，手动切换才写入。
+- 不新增：文件类型表或扩展名索引（图标由扩展名即时推导，随程序版本发布）；知识库「混合来源」字段（由多来源组合在展示层推导，若后续需要再单独评审）。
+- 兼容与回退：旧记录保持 NULL，读取时推导默认，不做批量回填；非法／未登记图标 id 回退到类型图标，类型未知回退到字母块；迁移前备份，回退只需停用新读取逻辑，不改旧数据。
+- 验证边界：r1 已执行加列迁移、白名单与旧数据 NULL 验证（见下条）；r2 新增字段（icon_color／avatar_image）尚未迁移，需另行验证旧库 NULL、非法值、图片引用失效及深浅主题。
+- 2026-11-21 迁移已实现并验证（见 REPORT-CR051-正式软件实现.md）：`project.icon`／`knowledge_library.icon` 加列幂等且旧数据 NULL 保留；icon 白名单（项目 12／知识库 8）非法 id 服务端拒绝；`ui.avatarStyle` 缺省 a、非法值按 a 显示；单测 cargo test 66/66，TAURI_SMOKE 冒烟通过。

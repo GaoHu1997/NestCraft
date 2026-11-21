@@ -24,12 +24,16 @@
 .req-row-more { width:22px; flex:0 0 22px; display:grid; place-items:center; opacity:.5; }
 .req-row-more:hover { opacity:1; color:var(--primary); }
 .req-tree-foot { flex:0 0 auto; padding:9px 12px; font-size:10px; line-height:1.6; color:var(--muted); border-top:1px solid var(--line-soft); }
-.req-tabs { display:flex; height:40px; flex:0 0 40px; overflow:auto hidden; background:var(--surface-2); border-bottom:1px solid var(--line-soft); }
-.req-tab { display:flex; align-items:center; flex:0 0 auto; min-width:100px; max-width:240px; padding:0 6px 0 10px; gap:8px; border-right:1px solid var(--line-soft); border-top:2px solid transparent; color:var(--muted); }
+/* UI-CR052：内部文档页签单行紧凑——28px 高，编号弱化在前、标题省略在后，只留一行信息。
+   溢出不在页签条内滚动，由 tab-overflow.js 在末尾给出「更多」下拉。 */
+.req-tabs { display:flex; align-items:stretch; height:28px; flex:0 0 28px; overflow:hidden; background:var(--surface-2); border-bottom:1px solid var(--line-soft); }
+.req-tab { display:flex; align-items:center; flex:0 0 auto; height:27px; min-width:92px; max-width:196px; padding:0 4px 0 8px; gap:5px; border-right:1px solid var(--line-soft); border-top:2px solid transparent; color:var(--muted); }
 .req-tab.on { color:var(--primary); background:var(--surface); border-top-color:var(--primary); }
-.req-tab > button[role=tab] { text-align:left; min-width:0; overflow:hidden; font-size:10px; }
-.req-tab > button[role=tab] span { display:block; max-width:165px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
-.req-tab-close { flex:0 0 18px; height:24px; display:grid; place-items:center; }
+.req-tab > button[role=tab] { display:flex; align-items:center; align-self:stretch; gap:5px; min-width:0; overflow:hidden; font-size:11px; line-height:1; text-align:left; }
+.req-tab > button[role=tab] .req-tab-key { flex:0 0 auto; font-style:normal; font:10px/1 var(--mono); color:var(--muted); }
+.req-tab.on > button[role=tab] .req-tab-key { color:var(--primary); }
+.req-tab > button[role=tab] .req-tab-title { display:block; min-width:0; max-width:132px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
+.req-tab-close { flex:0 0 16px; width:16px; height:16px; display:grid; place-items:center; border-radius:3px; }
 .req-tab-close:hover { background:var(--surface-3); }
 .req-toolbar { display:flex; align-items:center; gap:6px; height:40px; flex:0 0 40px; padding:0 10px; border-bottom:1px solid var(--line-soft); overflow:auto hidden; }
 .req-toolbar .btn { white-space:nowrap; font-size:11px; }

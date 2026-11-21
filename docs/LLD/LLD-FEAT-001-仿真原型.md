@@ -1,5 +1,35 @@
 # LLD-FEAT-001：可操作仿真原型
 
+> CR-051 r2～r6当前实施：用户已授权，采用UI-CR051-v6；原型保留同一入口，正式React补齐固定弹窗／实时裁剪／共享图标色卡。使用save_avatar与kb_set_appearance原子接口，旧命令兼容。UI-SCROLL-001适用头像正文与图标选择正文，滚动后显示／停止隐藏已有动态证据。实际文件、测试和限制见[接手收尾报告](../Test/REPORT-CR051-R6-接手收尾.md)，不再沿用旧「等待编码授权」状态。
+
+## CR-052：页签紧凑与溢出下拉（仅当前原型）
+
+- 关联：[CR-052](../PRD/CR-052-页签紧凑与溢出下拉.md)、[STORY-064 AC-48～51](../Plan/Story/STORY-064-主界面按评审意见重构.md#cr-052页签紧凑与溢出下拉)、[UI-CR052-v1](../UI/文档/UI-CR052-页签紧凑与溢出下拉.md)。只调整`workbench-v4`页签相关设计资源。
+- 当前事实：需求内部页签为40px双行（类型/编号 + 标题），四条页签条靠`overflow:auto`横向滚动容纳溢出项。无需新增依赖，现有DOM与`data-act`事件足够。
+- 选定方案：
+  1. `requirements-workspace.css`把`.req-tabs`压到28px、`.req-tab`单行（编号`<em class="req-tab-key">`＋标题`<span class="req-tab-title">`），关闭按钮16px；`requirements-workspace.js`对应调整页签模板。
+  2. 新增`tab-overflow.css`／`tab-overflow.js`，以配置表登记四类页签条（`.tabbar`、`.ws-tabs`、`.req-tabs`、`.office-open-tabs`），统一：`overflow:hidden`、放不下时末尾插入`.tab-more`、点击生成`#tab-more-pop`悬浮下拉。
+  3. 收缩算法保序且优先保留选中项：选中项先占额度，其余从前往后填充至可用宽（容器宽 − 26px），其余`hidden`；溢出数量写入图标`aria-label`。
+  4. 下拉项通过`data-index`映射回原页签元素，触发其原有`button.click()`，不另建切换逻辑；外部点击／再次点击／`Escape`关闭；`resize`后重算。
+  5. 项目页签条把页签包进`.ws-tab-scroll`宿主，右侧固定AI入口不受收缩影响。
+  6. 「更多」图标使用内联SVG，避免`sprite`在file://下加载失败。
+- 数据／权限／兼容：纯展示层，DB不适用；不改页签业务含义、store状态、导航或权限。`hidden`只影响显示，页签元素仍在DOM中，原有事件绑定不变。
+- 步骤与文件边界：`requirements-workspace.css`、`requirements-workspace.js`、新增`tab-overflow.css`／`tab-overflow.js`、`index.html`挂载；不触碰`base.css`（CR-049正在修改）。
+- 验证：[REPORT-CR052](../Test/REPORT-CR052-页签设计验证.md)。检查四类页签条高度与溢出、无横向滚动、下拉切换、浅深主题与窄屏。
+- 恢复：删除新增两文件、撤回`index.html`挂载与`requirements-workspace`页签样式即可，不影响其他CR。2026-11-21 CR-052，28px与92–196px为可逆设计默认，不声称用户已指定或验收。
+
+## CR-049：滚动条按需显示（仅当前原型）
+
+- 关联：[CR-049](../PRD/CR-049-滚动条仅在滚动时显示.md)、[STORY-064 AC-40～43](../Plan/Story/STORY-064-主界面按评审意见重构.md#cr-049滚动条按滚动状态显隐)、[UI-CR049-v1](../UI/文档/UI-CR049-滚动条按需显示.md)。本节只调整当前`workbench-v4`设计资源，不更新以下历史原型。
+- 当前事实：`base.css`滑块常着色；整页与弹窗动态生成。沿用现有布局与主题，不引入第三方依赖，现有实现足以支持本次局部细化，无需新参考项目。
+- 选定方案：共享CSS默认透明、仅`.scrollbar-active`容器滑块使用`--muted-2`，活动滑块悬停使用`--muted`；同时定义标准`scrollbar-color`和WebKit伪元素。不切换overflow、scrollbar-width或宽高，不为隐藏而删除滚动条占位；永久隐藏横条保留现有规则。
+- 共享`scrollbar.js`在入口加载，document捕获阶段被动监听scroll，规范化文档根目标；实际有溢出的目标独立计时，最后事件后700ms移除活动class。不绑定每页控件、不修改业务store、不调用render；Map只保留尚未到期的容器，pagehide清理计时器及class，动态卸载目标至多保留700ms。
+- 数据／权限／兼容：纯瞬时内存，DB不适用；无持久化、网络、CLI或文件读写。监听不取消默认事件，textarea／contenteditable的光标、选区、撤销及自动保存保持原机制。当前无iframe，跨文档／原生插件不在覆盖承诺内。
+- 步骤与文件边界：先登记需求／AC和本方案，再修改`docs/UI/workbench-v4/base.css`、新增`scrollbar.js`并在该目录`index.html`加载；不触碰已改动的requirements-workspace或正式源码。设计实际检查后登记版本、hash及索引；正式开发另需授权与采用版本准入。
+- 验证：[REPORT-CR049](../Test/REPORT-CR049-滚动条设计验证.md)。检查初始隐藏、实际滚动、连续重置、停止隐藏、嵌套／动态容器、浅深／窄屏、编辑与占位不变；截图不能使用hide-scrollbars启动选项。正式软件功能／视觉对照本次不执行。
+- 恢复：只撤回本次CSS规则和新增脚本挂载，不回滚任何其他CR或用户改动；不涉及发布／迁移。2026-11-21 CR-049，700ms为可逆默认，不声称用户已指定或验收。
+
+
 - 当前方案：v3.0 设置中心、模型供应商与 CLI SDK 见 CR-012，仿真验证中，尚未用户验收。历史：v2.7（CR005～007/009）仿真技术验证通过，结果见REPORT-003；下列开篇为CR002历史基线，有冲突以后续章节为准。真实产品服务未接通，CR008视觉候选独立待选。
 - 关联：[PRD-001](../PRD/PRD-001-个人Agent界面需求.md) CR-002、[STORY-004](../Plan/Story/STORY-004-可操作仿真原型.md)、[UI-FEAT-001](../UI/文档/UI-FEAT-001-界面设计.md)。
 - 现状：v2 只切换预制页面，工作区导航、状态和审批未连接；沿用已确认的信息架构、项目类型和需求八状态，重写原型视图、事件和演示状态。旧图片与源码保留历史，不作为评审入口。已有设计足够，无需为原型引入参考源码或第三方运行依赖。
@@ -198,3 +228,19 @@ CR-005原工具表只记录当时的list/search/read/read_many设计；不能误
 - **办公交互**：现有 Office 预览变为办公默认页，目录区分源资料和生成产物；助手根据所选资料的固定内容解读或生成 PPT、Word 仿真预览，提案冻结来源和内容，批准才新增产物并定位到预览、拒绝保持原列表。生成产物显示来源；空内容、不可用工具与无选择给出明确反馈。不能读写真实 Office，不做导入和导出。
 - **数据**：新增字段只存在会话对象，不需要数据库及迁移；重置回到新样例。沿用原生导航、按钮、确认卡与响应式分栏。按 STORY-008 执行新流程和原有回归，对照桌面/窄视口；回退将原型和对应测试一起还原，兼容入口不需要生产发布。
 
+
+
+## CR-051：内置图标与头像风格（r1 已实现；r2 增量仅设计）
+
+- 关联：[CR-051](../PRD/CR-051-内置图标与用户头像风格.md)、[STORY-069](../Plan/Story/STORY-069-内置图标与用户头像风格.md)、[UI-CR051-v2](../UI/文档/UI-CR051-内置图标与头像风格.md)、[设计稿](../UI/icon-system/index.html)。**r1 已按授权实现**：原型 7 符号／12／8 选 1／5 风格／内联 sprite，软件加列与白名单命令、`ui.avatarStyle`、React 组件及 `src/theme/cr051.css`（证据见 [REPORT-CR051-正式软件实现](../Test/REPORT-CR051-正式软件实现.md)）。**r2／r3 增量（共用 50 图标、10 个纯色块色卡与组合保存、默认 B、头像上传 ≤200KB、旧项目不动）尚未实现**，下列方案为后续实施计划。
+- 现状与根因：`core.js` 的 `icon()` 生成 `<use href="./icon-sprite.svg#id">`；以 `file://` 直接打开原型时外部 sprite 不渲染，知识库书本与文件类型图标整片消失，只剩空方块和文字（现状截图已证实）。项目卡使用 `p.key.slice(0,2)` 字母块，头像使用 `initials`，与图标系统无关。
+- 选定方案（授权后实施）：
+  1. `icon-sprite.svg` 新增 7 个符号（`fileMarkdown`／`fileHtml`／`fileAudio`／`fileVideo`／`fileUnknown`／`briefcase`／`library`），保持 24×24、1.6px、round cap/join。
+  2. `tokens.css` 增加 `--fic-*` 文件类型色与 `--tile-*` 承载底；`pages.css` 增加 `.icon-tile.36/.26`、`.f-ico`、`.avatar-style-*` 等类，不新开视觉语言。
+  3. `screens-home.js`／`screens-more.js`／`core.js` 的项目标识统一走 `projectIcon(p)`（icon → kind 默认 → 字母块）；授权弹窗与侧栏复用同一函数。
+  4. `knowledge-workspace.js` 的 `fileIcon` 扩为 14 类映射表并导出为单一常量；文件夹固定 `folder`／`folderOpen`，展开箭头独立；文档头复用同一符号。
+  5. 头像组件抽成 `avatarHtml(style, size)`，5 风格由 `data-avatar-style` 驱动；D 风格反白采用派生的白色单色资源，不重绘 Logo；风格存 `setting_default ui.avatarStyle`。
+  6. sprite 加载改为内联或构建期注入，并保留 `file` 回退；不得依赖外部 `<use>` 在 `file://` 下可用。
+- 数据与权限：按 [DB-FEAT-001 CR-051](../DB/DB-FEAT-001-知识授权与工作台数据设计.md) 增加可选 `project.icon`／`knowledge_library.icon` 与 `ui.avatarStyle`；不新增来源枚举、不改授权与索引；图标不授予任何访问。
+- 文件边界与并行：只涉及上述原型资源与后续正式软件对应模块；不触碰 `requirements-workspace.*`、`tab-overflow.*`、`scrollbar.js` 等 CR-049／CR-052 并行文件；共享 sprite 与 tokens 由本任务统一追加，避免并行代理同时改写。
+- 验证计划：先复用本批[设计稿实测](../Test/REPORT-CR051-内置图标与头像设计验证.md)的场景与阈值；授权后按同视口、主题、样例数据补设计／软件成对截图，重点验证图标真实渲染、14 类映射、5 风格同步与未知／缺失回退，不接受「DOM 有 svg 元素」作为可见性证据。

@@ -1,5 +1,7 @@
 # LLD-FEAT-008：本地知识索引与按需检索
 
+> CR-055 v2候选增量（2026-11-21，仅设计）：[性能数据设计](../DB/DB-CR055-性能目录与索引发布设计.md)细化大规模处理。本文件§3.3/§6的严格新鲜度、按库BM25、授权及小增量原事务保留；超过旧删除＋新插入载荷上限的对象，拟以独立库代影子FTS＋短指针CAS替代大事务，变化文件仅重解析但FTS构建为O(全库)。若旧大源失效，候选G-SEARCH使同库全文暂不可用而不是WHERE过滤旧词项。**用户未确认G-SEARCH前，替代条款不激活、不得实施或视为已实现**；要求同库持续可搜必须另设排名设计并复审。大manifest/结构/映射须分页落盘，§3.1的逻辑JSON清单不要求一次载入；AI命中源完整hash仍保留，时钟按[TEST-CR055](../Test/TEST-CR055-性能基准与故障验收.md)分层，不能用300ms省略校验。CR055模式启用后，§3.3的文件published指针查询由`activeIndexGeneration → kb_index_member → parseGeneration`统一替代，搜索/outline/relations/read/引用均不得绕过member；kb_file.currentSourceRevision仍用于源新鲜度。旧published字段只可兼容投影，启用前仍按原协议。封存base摘要与小增量epoch/审计链分离，避免每次更新重算全库清单。原历史/§11 P0事实不改写。
+
 - 版本：LLD-CR030-v1；状态：设计中，待评审；本轮没有解析器、FTS5、迁移、正式工具或真实性能结果。
 - 依据：[CR-030](../PRD/CR-030-本地知识索引与按需引用.md)；唯一业务归属 [FEAT-008](../Plan/Feature/FEAT-008-项目知识授权与只读检索.md)，阅读关联 [FEAT-009](../Plan/Feature/FEAT-009-知识库目录与正文阅读.md)。
 - AC 唯一源：[STORY-036 AC-08～13](../Plan/Story/STORY-036-知识库正式实现.md#cr-030本地知识索引与按需引用)、[STORY-009 AC-08～11](../Plan/Story/STORY-009-知识库项目授权与AI检索.md#cr-030本地知识索引与按需引用)、[STORY-014 AC-08～10](../Plan/Story/STORY-014-服务器列表与知识库三栏阅读.md#cr-030本地知识索引与按需引用)；本文不重复维护 AC 正文。
@@ -182,8 +184,74 @@ metadata-only 对象可以按名称和元数据发现，结果注明 `contentUna
 - 外部绑定源存在通知丢失和读取竞争；只保证受检快照，不承诺没有未检测修改。不能验证严格读取的平台先不开放该模式AI，不因为管理页能打开就宣称隔离可信。
 - UI纯演示不能证明实际SQLite/字节硬限/监控/线程清理／权限／故障恢复；实际证据统一记录到[REPORT-CR030](../Test/REPORT-CR030-知识索引设计验证.md)，未来按[测试计划](../Test/TEST-CR030-本地知识索引闭环验证.md)逐项补测。
 
+## 11. P0 实现记录（2026-11-21，CR-030-D1）
+
+本节登记 CR-030-D1（切片 + SQLite FTS5，不引入向量）正式编码后的实际落地与设计偏差。实现位置：`src-tauri/src/commands/kb_index.rs`（切片/词项/发布/检索/网关）、`knowledge.rs`（三入口/搜索/网关命令）、`knowledge_files.rs::indexable_text`、`db.rs`（迁移接线）、`chat.rs`（注入）；验证与数字见 [REPORT-CR030-D1](../Test/REPORT-CR030-D1-切片与全文索引实现.md)、[IPC 冒烟](../Test/smoke-report-cr030-d1.md)。
+
+### 11.1 实际落地表集与 FTS 形态
+
+- P0 最小表集：`kb_library_state(libraryId PK REFERENCES knowledge_library, partitionNo UNIQUE>0, indexEpoch, tokenizerVersion, updatedAt)` + `kb_chunk(chunkKey INTEGER PK, libraryId, noteId, relativeUri, parseGeneration, sourceHash, ordinal, kind('body'|'metadata'), startByte, endByte, text, title, heading, startLine, endLine, UNIQUE(libraryId,noteId,parseGeneration,ordinal))`；迁移 `migrate_cr030_knowledge_index`（CREATE IF NOT EXISTS，末尾 `INSERT OR IGNORE schema_version=2`），不动 knowledge_library。复用 knowledge_note_index 作文件登记（仍仅 Markdown，前端 noteCount 语义不变）。
+- FTS 表形态按评审 D2 结论执行：**普通 FTS5 表（应用侧 INSERT 词项行，rowid=chunkKey，退役按 kb_chunk 存储行取精确 rowid 集 DELETE），不用 external content**——两评审分歧（D1 建议外挂内容表 vs D2 应用侧写入）按 D2 执行；每库一张 `kb_fts_l<partitionNo>`（partitionNo 由 kb_library_state 单调分配、宿主代码生成表名、绝不拼输入），四列 title/heading/body/bigram_terms，bm25 权重 (8.0,4.0,1.0,0.2) ASC，detail=full；FTS 表在该库首次发布时（分配 partitionNo 处）创建，不在启动迁移建；测试固定执行 `integrity-check`。FTS5 运行时探针（实现会话第一条 cargo test）通过。
+- 评审 D1 建议的 FTS 列名与 kb_chunk 列名不匹配的 snippet 隐患，通过「检索 JOIN kb_chunk 取 text/title/heading 生成片段（归一化 1:1 字符映射定位）」消除，不使用 FTS5 snippet 函数。
+
+### 11.2 实际切片与词项参数
+
+- 切片范围：md/markdown + txt/log/text/json/csv 走切片（read_text 既有能力，零新增解析器）；pdf/docx/xlsx/图片/未知 = metadata_only（kind='metadata'，text 空、startByte=endByte=0，文件名/路径可搜，AI read 显式 `METADATA_ONLY` 拒绝）。文本读取失败沿用既有显式失败语义（invalid UTF-8 阻断扫描，不静默降级）。
+- 参数：目标块 2048 UTF-8 bytes、硬顶 4096、无重叠连续覆盖、标题面包屑进 heading 列（不进正文 offset）、受保护区间（围栏代码状态机、MD 表格）整段保护 + 超长强制续分、相邻小块合并（coalesceTiny，仅相邻区间）；**不做 CRLF 归一化**——offset=同一次 read_text 内容的原始字节（gateway_read 可按相同路径重建），行号按该内容计。
+- Validator 最小集（byte 口径）：①0 块拒绝降级（空文件/空内容落 metadata 兜底块）；②单块 >2×目标降级；③maxLen>硬顶先续分（bug 检出），续分后仍超限才失败；④<50 bytes 非尾块占比>1/4 且>2 降级；⑤全员远小于目标（<1/4 目标且≥4 块）哨兵降级。md 两层链：主导标题层级（DominantHeadingLevel）→段落递归→字符边界 force-split；txt/json/csv 一层（段落/行）→force-split。
+- 词项管线（无词典 P0 简化）：unicode61 不切中文，词项 hex 化——四列存 `w<utf8hex>`（拉丁/数字/其它文字整词）/`b<utf8hex>`（Han 相邻二字组）空格分隔 ASCII；CJK 判定用 Han 区间表（U+4E00–9FFF、U+3400–4DBF、U+F900–FAFF、扩展 B–F），分隔符=空白/标点/符号类别，按 char 边界处理；归一化=全角 ASCII 折叠+拉丁小写（1:1 字符映射，保证片段定位回原文）；**单字查询走受限扫描路径（护栏 1000 行/4MiB + incomplete 标记），不用 `单字*` 前缀**；bigram AND 命中统一经归一化原文子串核验去掉偶然分散组合（同时拦截 hex 同形碰撞）。索引与查询同一 Rust 函数同一版本，`tokenizerVersion='local-bigram-hex-v1'` 落库。
+
+### 11.3 发布、检索与网关的实际行为
+
+- 三个既有入口同步扩展：saved_note→publish_note 同事务追加切片+chunk/词项替换+indexEpoch++；upload_selected 文本格式同路径 publish；kb_scan 文件 I/O 与切片在事务外完成、单短事务发布整库 chunk/FTS/epoch++。失败沿用 index_error 语义，不静默回退读原件。
+- 代际：发布事务内 indexEpoch++，chunk.parseGeneration=发布 epoch；检索经每篇 `MAX(CAST(parseGeneration))` 子查询只取当前代 + 删除式退役（历史代行不保留，登记偏差 §11.4）；gateway 校验 chunk.sourceHash ↔ note_index.contentHash，否则 `SOURCE_CHANGED`。
+- 惰性回填：kb_search/gateway_search 对无状态库（kb_library_state 缺失或 epoch=0）先按库内联完整重建再检索；失败该库显式退出本轮（eprintln + 不参与），其它库正常；锁序=MUTATION 先于 DB 连接（与保存路径一致，防死锁）。实测首搜回填 120 文件=813ms（<2s，暂不后台化）。
+- 搜索只查派生索引不读原件；维持每文件一条命中（多 chunk 取最高分）；人类 kb_search ≤100 条（KnowledgeHit 结构不变，snippet=最高分 chunk ≤400 码点片段）；AI gateway_search ≤5 条、metadata 命中登记 `contentUnavailable:true`、单字护栏登记 `incomplete:true`；跨已授权库按确定性 RRF（常数 60）合并，不比较跨库 raw BM25。登记表路径 fail-closed 校验保留（穿越路径使该库搜索显式失败）。
+- gateway_read 有界契约：AI knowledge.read 改结构化响应（整块 ≤4096 + 完整出处 + nextCursor=`noteId:下一ordinal:sourceHash`）；续读校验 hash/授权/越界；maxBytes 仅向下收窄；单次完整 JSON ≤8192 bytes（fit_response 字符边界收缩，metadata 永不截断，最小 envelope 装不下显式 `BUDGET_EXCEEDED`）；人类 kb_read 保持整篇不动；chat.rs 注入换片段读取，模板加 libraryId/revision/range 属性，同轮同 (noteId,ordinal) 去重，MAX_REF_TEXT 64KiB 保留为最终硬拒。
+
+### 11.4 已知偏差（相对 §3–§8 完整设计）
+
+1. 无版本化中文词典/最大正向匹配（`w` 仅拉丁/数字/其它文字整词）；无 NFC/繁简转换（归一化=全角折叠+小写）。
+2. 代际账本简化：无 kb_generation/kb_file/kb_revision/lease/fence/CAS（单连接单写者）；历史代不保留（删除式退役）；relation/outline/游标账本/scan_run/预算轮账本/每轮 32KiB 累计全部延后。
+3. nextCursor 为 ordinal 粒度：maxBytes/预算收缩后块内剩余不可续读（byte 粒度游标随 K4 实施）。
+4. 每轮 32KiB 累计账本与新鲜度监控（freshness unknown/绑定源 SHA-256 终读校验）本轮不做；gateway 校验=chunk.sourceHash↔contentHash+游标 hash。
+5. kb_chunk 增设 relativeUri 列（设计列集之外）：为保持 note_index 仅登记 Markdown 而落 chunk 行，供命中显示与 fail-closed 校验。
+
+## 12. CR-055 v4–v9 索引物理优化（2026-11-22 实施记录）
+
+依据用户 2026-11-22「索引空间/时间要达标，修改吧」与[10GiB 基准](../Test/BENCH-CR055-真实索引基准.md)，对 FTS 词项与表形态做了五轮实测优化。完整取舍与未决项见[索引发布设计 §8](../DB/DB-CR055-性能目录与索引发布设计.md)。
+
+| 变更 | 之前 | 之后 | 依据 |
+| --- | --- | --- | --- |
+| 词项编码 | `hex_term`（`%02x`，汉字二字组 6 字节 → 13 字节） | `index_term` 直出 UTF-8 字面 | 去 hex 是空间下降的主要来源之一 |
+| tokenizer 版本 | `local-bigram-hex-v1` | `local-utf8-v2` | 新旧词项不同构，必须升版 |
+| FTS 内容存储 | 普通 fts5（自带 `%_content` 副本） | `content=''` + `contentless_delete=1` | 去掉一份词项副本，同时保留按 rowid 删除 |
+| 详细度 | 默认（full） | **`detail=full`**（曾试 `detail=column`，已撤回） | `detail=column` 下 `bm25()` 恒为 0，相关性排序静默失效，且多 token 词项会触发 phrase 报错 |
+| 批次 | 64 行 / 256 KiB | 512 行 / 2 MiB，单行独立 64 KiB 护栏 | 批次数下降约 8× |
+| 词项计算 | 每 chunk 重算 title/heading | 按 `relative + U+001F + title + heading` 缓存 | 同文件内 title/heading 词项相同 |
+| 段合并 | `automerge=2` | `automerge=8`，发布前 `optimize` 一次（失败写 `kb_snap_job.error`） | 逐段频繁合并是主要时间开销之一 |
+| 检索文本 | 每 chunk 存 `text + 512 字节 lookahead` | 归一化结果与原文完全相同时存空串（读取回退） | 减少重复（实测命中率低，保留为无损优化） |
+
+### 12.1 版本闸门（升级安全）
+
+升级后既有索引的词项与当前查询不同构，若不处理会静默 0 命中。已加两处闸门并在发布路径保持可重建：
+
+- 快照路径：`kb_snap_generation.tokenizerVersion` 不匹配 → `SNAPSHOT_REBUILD_REQUIRED`。
+- 旧 P0 检索路径：`kb_library_state.tokenizerVersion` 不匹配 → `INDEX_REBUILD_REQUIRED`。
+- **发布路径不拒绝**：`ensure_partition_tx` 只保证表存在、**不改版本**（它被单篇替换路径共用）；单篇替换由 `require_current_tokenizer_tx` 显式拒绝；只有整库替换在全部词项重写后才把版本刷成当前值。否则旧库会“先被拒绝、又无法发布”，永远无法重建。
+
+### 12.2 实测结论
+
+空间（库大小 ÷ 已处理源字节）：基线 **7.5×** → `detail=column` 时期 **3.68–3.72×** → 当前 `detail=full` **3.92×**。时间（release）按 v7/v9 进度外推约 130–180 分钟，未达标。
+
+**2× 空间预算在现行参数下不可达**：`SEARCH_OVERLAP=512` 是 128 字符查询的最小 lookahead，FTS 词项本身约 1.16× 源。要进一步降必须改方案参数（lookahead 改读取时拼接、chunk 目标 4096、或索引不自包含正文），均需评审确认。
+
+### 12.3 未验证
+
+真实 Tauri IPC 端到端、10GiB 完整完工时间与最终库大小、旧库升级后“单篇保存被拒 → 用户重建索引”的完整 UX、非拉丁脚本在应用层的端到端检索。
 ## 变更记录
 
 | 版本／日期 | 依据／范围 | 结果 |
 | --- | --- | --- |
 | LLD-CR030-v1／2026-11-19 | 用户要求推荐方式调整需求／设计、逻辑闭环；复用现有知识与阅读Story | 新方案文档，设计中；无编码／迁移／运行授权，未实现与验收 |
+| LLD-CR030-D1／2026-11-21 | 用户 2026-11-21「我更正了需求和设计，你需要对照进行开发和调整」=编码授权；CR-030-D1 切片+FTS5 P0 | §11 P0 实现记录：表集/FTS 形态（应用侧写入，按评审 D2）/切片参数/词项管线/三入口/有界网关/惰性回填落地；cargo test 119/120（唯一失败属并行会话 r6 avatar）；npm build 被并行会话 r6 前端阻塞；偏差与遗留登记 §11.4；待用户验收 |

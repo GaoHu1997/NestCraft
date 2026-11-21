@@ -1,0 +1,26 @@
+{
+  "version": "UI-CR055-FEAT007-v1",
+  "kind": "design-only",
+  "checkedAt": "2026-11-21T07:42:24.641Z",
+  "browser": "157.0.4341.60",
+  "sha256": "546617b045cb7d2f453ed87d119a999c059807398be91691838cf36ed9b26fe3",
+  "checks": [
+    "visible tree rows bounded",
+    "scroll activates own container",
+    "scroll idle hidden after 700ms",
+    "selection and input retained",
+    "window explicit readonly",
+    "window return retains draft",
+    "search cancel feedback",
+    "partial results explicit",
+    "state loading renders",
+    "state empty renders",
+    "state error renders",
+    "state save-error renders",
+    "state opening renders",
+    "state window renders",
+    "no page horizontal overflow",
+    "no page errors"
+  ],
+  "errors": []
+}

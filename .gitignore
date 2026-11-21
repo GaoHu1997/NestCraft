@@ -3,6 +3,8 @@ docs/参考/
 
 # 测试文档、截图与验证证据：按用户 2026-11-20 要求不提交
 docs/Test/
+docs/UI/workbench-v4/evidence/
+scripts/cr055-editor-evidence/
 
 # 临时调研、草稿与过程文件（规则见 AGENTS.md §3 / §10）
 docs/tmp/
@@ -23,6 +25,9 @@ dist-release/
 # 冒烟测试的编译产物（mockbin/*.cs 源码入库，exe/cmd 本地生成）
 mockbin/*.exe
 mockbin/*.cmd
+
+# 浏览器自动化冒烟／设计检查的临时用户目录
+.tmp-chrome*/
 
 # 操作系统与编辑器临时文件
 .DS_Store

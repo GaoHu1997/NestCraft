@@ -2,16 +2,21 @@
 
 - 类型：用户故事（正式实现）
 - 所属 Feature：[FEAT-013 统一设置入口与菜单](../Feature/FEAT-013-统一设置入口与菜单.md)
-- 来源与确认依据：CR-014 AC-14 + CR-015；逻辑对照 skill/mcp 面板参考（REF-002-8）
+- 来源与确认依据：CR-014 AC-14 + CR-015；2026-11-21用户明确要求Skill/MCP/Tool全部由NestCraft管理，补充HTTP MCP OAuth生命周期；逻辑对照 skill/mcp 面板参考（REF-002-8）及固定版本机制核验
 - 关联：CR-014 AC-14；验证见 REPORT-008。
-- 状态：开发完成，技术验证通过，待用户验收
-- 目标：作为使用者，我希望全局统一管理 Skill/MCP/Tool（不按项目区分），含创建、启停、工具发现。
-- 本次包含：Skill 受管目录+SKILL.md、命名正则与重复名拒绝；MCP stdio/http 配置与最小 JSON-RPC 客户端 tools/list 发现；内置 Tool 注册表与风险等级；设置中心三个页签 UI。
-- 不包含：MCP 工具调用执行链（会话侧，后续故事）、OAuth。
+- 状态：验证中（后端与SettingsMcp正式实现已接入；真实OAuth与设计/软件视觉对照待验证；独立安全审计发现的残留项见LLD §3.7.2）
+- 目标：作为使用者，我希望全局统一管理 Skill/MCP/Tool（不按项目区分），含创建、启停、工具发现和HTTP MCP授权生命周期。
+- 本次包含：Skill 受管目录+SKILL.md、命名正则与重复名拒绝；MCP stdio/http 配置、HTTP MCP OAuth授权/刷新/撤权与最小 JSON-RPC 客户端 tools/list 发现；内置 Tool 注册表与风险等级；设置中心三个页签 UI。
+- 不包含：MCP 工具调用执行链（会话侧，后续故事）、CLI原生`claude mcp login`/`codex mcp login`凭据托管、stdio OAuth（stdio按环境变量/启动参数管理）、SSE 与 WebSocket 传输（本 Story 只支持 stdio 与 HTTP；`streamable-http` 作为 HTTP 的规范名按 http 处理）。
 - 验收标准：
   - AC-STORY-031-01：Skill 名称不符合 ^[a-z0-9]+(-[a-z0-9]+)*$ 或重复名时报错，不产生目录。
   - AC-STORY-031-02：MCP 重复名拒绝；stdio 缺 command、http 缺 url 报错。
   - AC-STORY-031-03：测试连接返回工具清单或明确错误。
-- 方案：LLD-FEAT-002 §2；实现位置 src-tauri/src/commands/capabilities.rs
-- 验证结果：编译通过；MCP 发现待真实服务器冒烟。
+  - AC-STORY-031-04：给定HTTP MCP服务器，当用户从NestCraft发起授权，则使用资源/授权服务器元数据与PKCE完成一次性回调；仅匹配state/redirect的回调可交换令牌，超时、拒绝、重放和跨服务器回调均不生效。
+  - AC-STORY-031-05：给定已授权HTTP MCP，当测试连接或派发前校验时，NestCraft按服务器端点读取受管令牌并区分未授权、待回调、已授权、过期、撤权、连接失败；tools/list成功不单独推断已授权。
+  - AC-STORY-031-06：给定撤权、刷新令牌失效、配置/端点变化或凭据丢失，当再次测试/派发时阻止未经授权请求，旧令牌不继续使用；登出删除受管凭据引用，不能修改CLI用户profile。
+  - AC-STORY-031-07：给定使用静态 Bearer 的 HTTP MCP，当在 NestCraft 选择“静态令牌”并填写令牌后，令牌只写入受管密钥、保存后不回显；工具发现按 `initialize → notifications/initialized → tools/list` 顺序沿用同一 `Mcp-Session-Id`，未带会话头或未初始化时不得报告发现成功。
+  - AC-STORY-031-08：给定 loopback HTTPS MCP（自签名证书），仅当用户为该服务器显式开启“信任本机自签名证书”时放宽该校验；非 loopback 地址启用即拒绝，且客户端不跟随重定向以免绕过校验。
+- 方案：LLD-FEAT-002 §3.7（OAuth增量）及原§2；后端实现位置为 src-tauri/src/commands/capabilities.rs、src-tauri/src/commands/dispatch.rs、src-tauri/src/db.rs，命令/API契约同步于 src-tauri/src/lib.rs、src/api/index.ts；正式UI仍待可视设计准入
+- 验证结果：`cargo check -q`通过；OAuth/迁移/回收/URL策略/SSE解析测试通过（oauth_tests 6 passed，mcp_oauth 2 passed，真实MCP用例默认ignored）；`npm run build`通过；UI原型六态/浅深色/1440/390/认证字段离线检查通过；对真实本地MCP（静态Bearer）以生产函数完成会话握手并发现16个工具；未运行真实OAuth授权服务，正式软件视觉对照和OAuth端到端仍未验证；完整`cargo test --lib`另有1项并行知识库上传用例失败，非本Story范围
 - 验收结论及依据：待验收

@@ -1,6 +1,5 @@
-/* AI 侧栏：无标题头、可拖拽、历史浮层、@// 菜单、CLI/权限/模型、统计、子智能体与后台任务。
-   CR-042：顶部智能体/后台改为下拉悬浮框；历史为覆盖式浮层；模型能力图标与生图过滤；
-   三统计移到输入框下方并右对齐各自控件；分步骤执行显示等宽折叠框。 */
+/* AI 侧栏：UI-CR056-v1 当前设计基线。无标题头、可拖拽、历史浮层、@// 菜单、会话目标/任务、CLI/权限/模型、统计、子智能体与后台任务。
+   继承 CR-042 的浮层与步骤结构，补齐输入上下文菜单、目标/任务状态、稳定消息身份、CLI/权限能力证据和模型思考档位联动。 */
 window.AIPanel = (function () {
   "use strict";
   const { D, esc, icon, store, toast, openDialog, closeDialog, dlgShell } = UI;
@@ -10,15 +9,29 @@ window.AIPanel = (function () {
   const statusText = s => s === "success" ? "成功" : s === "failed" ? "失败" : s === "pending" ? "待处理" : "已读";
 
   function message(m, idx) {
+    if (m.role === "continuity-break") {
+      const cli = D.settings.clis.find(item => item.id === m.cli)?.name || m.cli;
+      return `<div class="cr037-break" role="note"><b>原生上下文断点</b><span>${esc(cli)} · ${esc(m.previousRef || "原引用缺失")} → ${esc(m.sessionRef)}</span><span>以上聊天记录保留。后续请求从新上下文开始。</span></div>`;
+    }
     const tools = (m.tools || []).map(t => `<div class="tool">
       <span class="t-ico">${icon(t.name === "fs.read" ? "file" : t.name === "fs.write" ? "edit" : t.name === "code-search" ? "search" : "terminal", "ico-14")}</span>
       <span class="t-main"><span class="t-head"><span class="t-name">${esc(t.name)}</span><span class="t-state ${t.state === "完成" ? "done" : "run"}">${esc(t.state)}</span></span>
         <div class="t-arg">${esc(t.arg)}</div><div class="t-detail">${esc(t.detail)}</div></span></div>`).join("");
     const approval = m.approval ? `<div class="approval"><b>${esc(m.approval.title)}</b><p>${esc(m.approval.detail)}</p>
       <div class="acts"><button class="btn primary" data-act="ai-approve" data-idx="${idx}">允许一次</button><button class="btn" data-act="ai-deny" data-idx="${idx}">拒绝</button><button class="btn ghost" data-act="ai-show-cmd" data-idx="${idx}">查看命令</button></div></div>` : "";
-    if (m.role === "user") return `<div class="msg user"><span class="who">${esc(D.user.initials)}</span><div class="bubble"><div class="m-name">${esc(D.user.name)} · ${esc(m.time)}</div><div class="text">${esc(m.text)}</div></div></div>`;
-    return `<div class="msg assistant"><span class="who">AI</span><div class="bubble"><div class="m-name">${esc(D.ai.modelCatalog.current.model)} · ${esc(m.time)}</div>
-      <div class="text">${UI.md(m.text).replace(/^<p>|<\/p>$/g, "")}</div>${tools}${approval}${window.OfficeAI ? OfficeAI.messageExtra(m) : ""}</div></div>`;
+    if (m.role === "user") return `<div class="msg user"><div class="msg-body"><div class="msg-time">${esc(m.time)}</div><div class="msg-user-block">${esc(m.text)}</div></div></div>`;
+    return `<div class="msg assistant"><div class="msg-body"><div class="msg-time">${esc(m.time)}</div>
+      ${m.thinking ? `<details class="msg-think"><summary><span class="mt-mark">${icon("sparkles", "ico-12")}</span><span>思考</span><span class="mt-meta">持续 ${esc(m.thinkMs || "6 秒")}</span></summary><div class="mt-body">${esc(m.thinking)}</div></details>` : ""}
+      <div class="text">${UI.md(m.text).replace(/^<p>|<\/p>$/g, "")}</div>${tools}${approval}${window.OfficeAI ? OfficeAI.messageExtra(m) : ""}
+      <div class="msg-acts"><button class="msg-act" data-act="ai-copy" data-idx="${idx}">${icon("copy", "ico-12")}复制</button></div></div></div>`;
+  }
+
+  /** 运行态：logo 粒子打散重组 + 工作中… + 运行时长（C56-06A） */
+  function workingRow() {
+    return `<div class="msg assistant working"><div class="msg-body"><div class="msg-working" role="status" aria-live="polite">
+      <span class="mw-logo" aria-hidden="true">${cliLogo(store.aiCli, 16)}</span>
+      <span class="mw-label">工作中…</span><span class="mw-time" data-act="ai-working-tick">${esc(store.aiWorkElapsed || "0 秒")}</span>
+    </div></div></div>`;
   }
 
   /* ---------------- 历史：覆盖在 AI 侧栏左侧的浮层，不参与布局 ---------------- */
@@ -37,7 +50,8 @@ window.AIPanel = (function () {
       <div class="drop-h"><b>子智能体</b><span class="caption">${D.ai.subagents.length} 个 · 仅本会话</span></div>
       <div class="drop-list">${D.ai.subagents.length ? D.ai.subagents.map(a => `<div class="agent-row">
         ${cliLogo(a.cli, 24)}<span class="ar-main"><b class="ellipsis">${esc(a.title)}</b><span>${esc(a.model)} · ${esc(a.duration)} · ${esc(a.tokens)}</span></span>
-        <span class="tag ${a.status === "失败" ? "red" : a.status === "待确认" ? "amber" : "green"}">${esc(a.status)}</span></div>`).join("") : '<div class="drop-empty">本会话没有子智能体。</div>'}</div>
+        <span class="tag ${a.status === "失败" ? "red" : a.status === "待确认" ? "amber" : "green"}">${esc(a.status)}</span>
+        ${window.CR037?.agentLink(a) || ""}</div>`).join("") : '<div class="drop-empty">本会话没有子智能体。</div>'}</div>
       <div class="drop-f">合成演示 · 不调用真实 CLI</div>
     </div>`;
   }
@@ -259,6 +273,7 @@ window.AIPanel = (function () {
           <button class="ai-count" data-act="ai-background" aria-expanded="${store.aiTop === "bg"}">${icon("terminal", "ico-14")}${D.ai.background.length} 后台任务${icon("chevronDown", "ico-12")}</button>
           ${store.aiTop === "bg" ? aiTopPop() : ""}
         </div>
+        ${!window.OfficeAI?.isActive() ? '<button class="ai-cr037-trigger" data-act="ai-cr037" title="打开 CR-037 协作续接演示">CR-037</button>' : ""}
         <span class="spacer"></span>
         ${activeSession()?.sessionRole === "executor" && activeSession()?.featureId ? `<span class="ai-scope-tag" title="执行特性：${esc(activeSession().featureTitle || activeSession().featureId)}；本会话仅实现该特性" aria-label="执行特性 ${esc(activeSession().featureId)}，单特性执行会话">FEAT · <b>${esc(activeSession().featureId)}</b></span>` : ""}
         <button class="icon-btn" data-act="ai-new" title="新会话" aria-label="新会话">${icon("plus")}</button>
@@ -266,10 +281,11 @@ window.AIPanel = (function () {
       <div class="ai-fade"></div>
       <div class="ai-scroll" id="ai-scroll">
         ${msgs.length ? msgs.map(message).join("") : `<div class="ai-empty"><span class="mark">${icon("sparkles", "ico-20")}</span><b>新会话</b><p>说清目标与范围，我会先核对证据再动手。</p></div>`}
-        ${store.aiBusy ? `<div class="msg assistant"><span class="who">AI</span><div class="bubble"><div class="m-name">${esc(D.ai.modelCatalog.current.model)}</div><div class="text muted">正在读取上下文并生成…</div></div></div>` : ""}
+        ${store.aiBusy ? workingRow() : ""}
         ${store.aiQueue.length ? `<div class="ai-queued">${icon("clock", "ico-14")}已排队 ${store.aiQueue.length} 条，当前完成后发送</div>` : ""}
         ${stepsBlock()}
         ${window.OfficeAI ? OfficeAI.extra(OfficeAI.projectId()) : ""}
+        ${window.CR037?.chatCard() || ""}
       </div>
       <div class="ai-composer-wrap">
         ${store.aiMenu ? menuHtml() : ""}
@@ -297,6 +313,7 @@ window.AIPanel = (function () {
     if (window.OfficeAI && OfficeAI.switchSession(id)) return;
     const s = D.ai.sessions.find(x => x.id === id);
     if (!s) return;
+    window.CR037?.beforeSwitchSession(s);
     store.aiSession = id;
     store.aiMessages = s.messages.length ? s.messages : [];
     s.status = "read";
@@ -364,6 +381,7 @@ window.AIPanel = (function () {
   }
 
   function send() {
+    if (window.CR037?.send()) return;
     const text = (store.aiInput || "").trim();
     if (!text) {
       if (store.aiBusy) { store.aiGen++; store.aiBusy = false; activeSession().status = "failed"; UI.render(); toast("已停止本次生成"); }

@@ -4,7 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
-  <meta http-equiv="refresh" content="0; url=workbench-v4/index.html">
+  <script>
+    // 固定唯一公开入口；显式 design 参数只选择已登记的内部场景资源。
+    const scene = new URLSearchParams(location.search).get('design');
+    const resources = { 'cr055-editor': 'performance-editor/index.html', 'cr055-knowledge': 'performance-knowledge/index.html' };
+    location.replace(Object.prototype.hasOwnProperty.call(resources, scene) ? resources[scene] : 'workbench-v4/index.html');
+  </script>
+  <noscript><meta http-equiv="refresh" content="0; url=workbench-v4/index.html"></noscript>
   <title>仿真原型UI · 栖造 NestCraft</title>
   <link rel="icon" type="image/png" href="brand-assets-v2/favicon.png">
 </head>

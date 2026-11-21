@@ -1,6 +1,137 @@
 /* 核心：状态、图标、Markdown、外壳、窗口与弹层。纯设计稿仿真，不联网、不调用真实 CLI。 */
 window.UI = (function () {
   "use strict";
+  /* CR-051 规则 6：file:// 直接打开原型时外部 sprite 的 <use> 整片失效（现状截图已证实）。
+     按设计说明的「内联 sprite」实施方式，这里注入与 icon-sprite.svg 同步的内联副本，
+     icon() 改用同文档引用（#id），http 与 file:// 下都可见。
+     icon-sprite.svg 仍是唯一维护来源；修改符号后必须重新生成本段
+     （本段来源 hash：92dd13b1ea39，与 UI-CR051 原型同步记录一致）。 */
+  const SPRITE_INLINE = `<title>UI-ICON-001-v1</title>
+<symbol id="home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V21h13V9.5"/><path d="M9.5 21v-6h5v6"/></symbol>
+<symbol id="grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+<symbol id="folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.2A2.2 2.2 0 0 1 5.2 5h3.5l2 2H19a2 2 0 0 1 2 2v8.8A2.2 2.2 0 0 1 18.8 20H5.2A2.2 2.2 0 0 1 3 17.8z"/></symbol>
+<symbol id="folderOpen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.2A2.2 2.2 0 0 1 5.2 5h3.5l2 2H19a2 2 0 0 1 2 2v1H3z"/><path d="M3 10h18l-2.2 8.2A2 2 0 0 1 16.9 20H5.2A2.2 2.2 0 0 1 3 17.8z"/></symbol>
+<symbol id="book" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.2A2.2 2.2 0 0 1 6.2 17H20"/><path d="M6.2 2H20v20H6.2A2.2 2.2 0 0 1 4 19.8V4.2A2.2 2.2 0 0 1 6.2 2z"/></symbol>
+<symbol id="server" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></symbol>
+<symbol id="settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="7" cy="18" r="2"/></symbol>
+<symbol id="search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+<symbol id="plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+<symbol id="chevronDown" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></symbol>
+<symbol id="chevronRight" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></symbol>
+<symbol id="chevronLeft" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"/></symbol>
+<symbol id="chevronUp" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 15 6-6 6 6"/></symbol>
+<symbol id="arrowLeft" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></symbol>
+<symbol id="arrowUp" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></symbol>
+<symbol id="play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5.5v13l10.5-6.5z"/></symbol>
+<symbol id="pause" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5v14M15 5v14"/></symbol>
+<symbol id="refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.5A8 8 0 1 0 18 17"/><path d="M20 4v7.5h-7.5"/></symbol>
+<symbol id="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></symbol>
+<symbol id="alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4.5M12 17h.01"/><path d="M10.3 3.9 2.6 18a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></symbol>
+<symbol id="clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+<symbol id="user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/></symbol>
+<symbol id="users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 21a6.5 6.5 0 0 1 13 0"/><path d="M16 5.2a3.5 3.5 0 0 1 0 6.6"/><path d="M18 21a6.5 6.5 0 0 0-2-4.7"/></symbol>
+<symbol id="sparkles" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 13.7 8l4.5 1.7-4.5 1.7L12 16l-1.7-4.6L5.8 9.7 10.3 8z"/><path d="M18.5 15.5 19.2 17l1.5.7-1.5.7-.7 1.5-.7-1.5-1.5-.7 1.5-.7z"/></symbol>
+<symbol id="terminal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 17 6-5-6-5"/><path d="M12.5 19H20"/></symbol>
+<symbol id="file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></symbol>
+<symbol id="fileText" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></symbol>
+<symbol id="filePdf" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M8.5 13.5h2a1.5 1.5 0 0 1 0 3h-2zM13.5 13.5h1.2a2 2 0 0 1 0 4h-1.2z"/></symbol>
+<symbol id="fileSheet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M8 13h8M8 17h8M11 13v4M14 13v4"/></symbol>
+<symbol id="image" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></symbol>
+<symbol id="csv" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M8 13h3M8 17h3M14 13h2M14 17h2"/></symbol>
+<symbol id="git" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.6"/><circle cx="6" cy="18" r="2.6"/><circle cx="18" cy="8" r="2.6"/><path d="M6 8.6v6.8M18 10.6v1a4.4 4.4 0 0 1-4.4 4.4H8.6"/></symbol>
+<symbol id="code" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m8 7-5 5 5 5"/><path d="m16 7 5 5-5 5"/></symbol>
+<symbol id="database" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5v13c0 1.7 3.6 3 8 3s8-1.3 8-3v-13"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></symbol>
+<symbol id="layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5"/><path d="m3 16.5 9 4.5 9-4.5"/></symbol>
+<symbol id="cpu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 3v2M14 3v2M10 19v2M14 19v2M3 10h2M3 14h2M19 10h2M19 14h2"/></symbol>
+<symbol id="send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2.5 10.5 13.5"/><path d="M21.5 2.5 14.8 21l-4.3-7.5L3 9.2z"/></symbol>
+<symbol id="paperclip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m20.5 12.5-8.2 8.2a4.8 4.8 0 0 1-6.8-6.8l8.2-8.2a3.2 3.2 0 0 1 4.6 4.6l-8 8a1.6 1.6 0 0 1-2.3-2.3l7.3-7.3"/></symbol>
+<symbol id="panelRight" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></symbol>
+<symbol id="panelLeft" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></symbol>
+<symbol id="history" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="13.5" height="16" rx="2.5"/><path d="M6.5 8.5h6.5M6.5 12h6.5M6.5 15.5h4"/><path d="M20.5 7.5v9.5a3 3 0 0 1-3 3H6.5"/></symbol>
+<symbol id="gauge" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21a9 9 0 1 1 9-9"/><path d="M12 12l5.2-3.6"/><circle cx="12" cy="12" r="1.6"/></symbol>
+<symbol id="eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 12S6.2 5.8 12 5.8 21.4 12 21.4 12 17.8 18.2 12 18.2 2.6 12 2.6 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+<symbol id="bulb" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8V16h7.2v-2.2A6 6 0 0 0 12 3z"/></symbol>
+<symbol id="steps" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 5.6 1.4 1.4L7.4 4.5"/><circle cx="4.6" cy="12" r="1.2"/><circle cx="4.6" cy="18" r="1.2"/></symbol>
+<symbol id="dots" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></symbol>
+<symbol id="edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></symbol>
+<symbol id="trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></symbol>
+<symbol id="filter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18M6.5 12h11M10 19h4"/></symbol>
+<symbol id="download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 21h16"/></symbol>
+<symbol id="upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21V9"/><path d="m7 14 5-5 5 5"/><path d="M4 3h16"/></symbol>
+<symbol id="shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
+<symbol id="key" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M17 3h4v4"/></symbol>
+<symbol id="external" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></symbol>
+<symbol id="box" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m21 8-9-5-9 5v8l9 5 9-5z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></symbol>
+<symbol id="link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1.5-1.5"/></symbol>
+<symbol id="bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8"/><path d="M10.3 21a2 2 0 0 0 3.4 0"/></symbol>
+<symbol id="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.5 4.5l1.5 1.5M18 18l1.5 1.5M2 12h2M20 12h2M4.5 19.5 6 18M18 6l1.5-1.5"/></symbol>
+<symbol id="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.8 6.8 0 0 0 10.5 10.5z"/></symbol>
+<symbol id="branch" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v12"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></symbol>
+<symbol id="stop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+<symbol id="lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
+<symbol id="globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18z"/></symbol>
+<symbol id="zap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></symbol>
+<symbol id="inbox" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13 6 5h12l2 8"/><path d="M4 13v6h16v-6h-5l-1.5 3h-3L9 13z"/></symbol>
+<symbol id="list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></symbol>
+<symbol id="target" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><path d="M12 3.5v3M12 17.5v3M3.5 12h3M17.5 12h3"/></symbol>
+<symbol id="message" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3v-7a8 8 0 1 1 18-4z"/></symbol>
+<symbol id="more" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></symbol>
+<symbol id="menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+<symbol id="drag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5h.01M9 12h.01M9 19h.01M15 5h.01M15 12h.01M15 19h.01"/></symbol>
+<symbol id="sliders" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h9M17 18h3"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="15" cy="18" r="2"/></symbol>
+<symbol id="bookOpen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6.5C10.5 5 8.5 4.5 4 4.5v14c4.5 0 6.5.5 8 2 1.5-1.5 3.5-2 8-2v-14c-4.5 0-6.5.5-8 2z"/><path d="M12 6.5v14"/></symbol>
+<symbol id="printer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 8V3h10v5"/><rect x="4" y="8" width="16" height="8" rx="2"/><path d="M7 16h10v5H7z"/></symbol>
+<symbol id="minimize" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/></symbol>
+<symbol id="maximize" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="1"/></symbol>
+<symbol id="restore" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5V3h12v12h-2"/><rect x="3" y="9" width="12" height="12" rx="1"/></symbol>
+<symbol id="close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+<symbol id="error" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8 8 8 8M16 8l-8 8"/></symbol>
+<symbol id="info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></symbol>
+<symbol id="help" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 8a2.5 2.5 0 0 1 5 0c0 2-2.5 2-2.5 4M12 17h.01"/></symbol>
+<symbol id="copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V3H3v13h5"/></symbol>
+<symbol id="save" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3h13l4 4v14H3V3z"/><path d="M7 3v6h9V3M7 21v-8h10v8"/></symbol>
+<symbol id="undo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m8 4-5 5 5 5M3 9h11a6 6 0 0 1 0 12"/></symbol>
+<symbol id="redo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m16 4 5 5-5 5M21 9H10a6 6 0 0 0 0 12"/></symbol>
+<symbol id="arrowRight" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m-7-7 7 7-7 7"/></symbol>
+<symbol id="arrowDown" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14m-7-7 7 7 7-7"/></symbol>
+<symbol id="folderPlus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5h6l2 2h10v13H3zM12 10v7m-3-3.5h6"/></symbol>
+<symbol id="filePlus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H5v18h14V8l-5-5v5h5M12 11v7m-3-3.5h6"/></symbol>
+<symbol id="fileWord" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H5v18h14V8l-5-5v5h5M8 12l2 6 2-5 2 5 2-6"/></symbol>
+<symbol id="fileSlides" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H5v18h14V8l-5-5v5h5"/><rect x="8" y="12" width="8" height="6" rx="1"/></symbol>
+<symbol id="fileCode" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H5v18h14V8l-5-5v5h5m-9 4-2 3 2 3m4-6 2 3-2 3"/></symbol>
+<symbol id="fileArchive" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H5v18h14V8l-5-5v5h5M10 3v9m-1 0h2v5H9z"/></symbol>
+<symbol id="filterOff" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18M7 12h10M10 19h4M3 3l18 18"/></symbol>
+<symbol id="sort" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4v16m-3-3 3 3 3-3M13 5h8M13 10h6M13 15h4"/></symbol>
+<symbol id="expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9V3h6M15 3h6v6M21 15v6h-6M9 21H3v-6"/></symbol>
+<symbol id="collapse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v6H3M21 9h-6V3M15 21v-6h6M3 15h6v6"/></symbol>
+<symbol id="layout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12"/></symbol>
+<symbol id="alignLeft" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v16M8 6h12M8 12h8M8 18h12"/></symbol>
+<symbol id="alignCenter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M4 6h16M7 12h10M4 18h16"/></symbol>
+<symbol id="alignRight" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 4v16M4 6h12M8 12h8M4 18h12"/></symbol>
+<symbol id="palette" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18h2a2 2 0 0 0 0-4h-1a2 2 0 0 1 0-4h4a4 4 0 0 0 4-4c0-3-4-6-9-6z"/><path d="M7 8h.01M12 6h.01M17 8h.01M6 13h.01"/></symbol>
+<symbol id="checkCircle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m7 12 3 3 7-7"/></symbol>
+<symbol id="loader" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 1-9 9"/></symbol>
+<symbol id="shieldCheck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM8 12l3 3 5-6"/></symbol>
+<symbol id="unlock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 7-2.6"/></symbol>
+<symbol id="gitMerge" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="4" r="2"/><circle cx="18" cy="4" r="2"/><circle cx="18" cy="20" r="2"/><path d="M18 6v12M6 6v3a7 7 0 0 0 7 7h5"/></symbol>
+<symbol id="gitCommit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M2 12h6M16 12h6"/></symbol>
+<symbol id="command" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7V5a2 2 0 1 0-2 2h10a2 2 0 1 0-2-2v14a2 2 0 1 0 2-2H7a2 2 0 1 0 2 2z"/></symbol>
+<symbol id="workflow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="15" y="15" width="6" height="6" rx="1"/><path d="M9 6h6a3 3 0 0 1 3 3v6M6 9v9h9"/></symbol>
+<symbol id="bot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="14" rx="3"/><path d="M12 3v4M8 12h.01M16 12h.01M8 17h8"/></symbol>
+<symbol id="wrench" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4a6 6 0 0 0-7 8L3 17a2.8 2.8 0 0 0 4 4l5-5a6 6 0 0 0 8-7l-4 4-5-5z"/></symbol>
+<!-- CR-051 新增符号（7）：24×24、1.6px 描边、round cap/join，与设计稿 icon-system 内联 sprite path 一致。 -->
+<symbol id="fileMarkdown" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H5v18h14V8l-5-5v5h5"/><path d="m7.9 12.2 1.6 2.9 1.6-2.9 1.6 2.9 1.6-2.9"/><path d="M12 16.4v3.2M10.4 18 12 19.6l1.6-1.6"/></symbol>
+<symbol id="fileHtml" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H5v18h14V8l-5-5v5h5"/><path d="M9.6 12.6 7.6 15l2 2.4M14.4 12.6 16.4 15l-2 2.4M12.9 11.8l-1.8 6.4"/></symbol>
+<symbol id="fileAudio" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H5v18h14V8l-5-5v5h5"/><circle cx="9.4" cy="17.6" r="1.6"/><circle cx="14.6" cy="16.4" r="1.6"/><path d="M11 17.6v-5.2l5.2-1.2v5.2"/></symbol>
+<symbol id="fileVideo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H5v18h14V8l-5-5v5h5"/><path d="M10 13v5l4.2-2.5z"/></symbol>
+<symbol id="fileUnknown" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H5v18h14V8l-5-5v5h5"/><path d="M9.4 12.4h5.2v5.2H9.4z" stroke-dasharray="1.8 2.2"/></symbol>
+<symbol id="briefcase" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7.4" width="18" height="12.4" rx="2"/><path d="M9 7.4V6.2A2.2 2.2 0 0 1 11.2 4h1.6A2.2 2.2 0 0 1 15 6.2v1.2"/><path d="M3 12.6h18"/><path d="M10.4 12.6v2h3.2v-2"/></symbol>
+<symbol id="library" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4.5h3.4v14.6H4zM9 4.5h3.4v14.6H9z"/><path d="m14.6 5.4 3.2.9-3 12.8-2.3-.6z"/><path d="M3 20.4h18"/></symbol>`;
+  if (!document.getElementById("cr051-inline-sprite")) {
+    document.body.insertAdjacentHTML("afterbegin",
+      `<svg id="cr051-inline-sprite" aria-hidden="true" focusable="false" style="position:absolute;width:0;height:0;overflow:hidden">${SPRITE_INLINE}</svg>`);
+  }
   const D = window.DEMO;
   const $ = (sel, root) => (root || document).querySelector(sel);
   const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
@@ -119,13 +250,20 @@ window.UI = (function () {
     command: '<path d="M9 7V5a2 2 0 1 0-2 2h10a2 2 0 1 0-2-2v14a2 2 0 1 0 2-2H7a2 2 0 1 0 2 2z"/>',
     workflow: '<rect x="3" y="3" width="6" height="6" rx="1"/><rect x="15" y="15" width="6" height="6" rx="1"/><path d="M9 6h6a3 3 0 0 1 3 3v6M6 9v9h9"/>',
     bot: '<rect x="3" y="7" width="18" height="14" rx="3"/><path d="M12 3v4M8 12h.01M16 12h.01M8 17h8"/>',
-    wrench: '<path d="M14 4a6 6 0 0 0-7 8L3 17a2.8 2.8 0 0 0 4 4l5-5a6 6 0 0 0 8-7l-4 4-5-5z"/>'
+    wrench: '<path d="M14 4a6 6 0 0 0-7 8L3 17a2.8 2.8 0 0 0 4 4l5-5a6 6 0 0 0 8-7l-4 4-5-5z"/>',
+    fileMarkdown: '<path d="M14 3H5v18h14V8l-5-5v5h5"/><path d="m7.9 12.2 1.6 2.9 1.6-2.9 1.6 2.9 1.6-2.9"/><path d="M12 16.4v3.2M10.4 18 12 19.6l1.6-1.6"/>',
+    fileHtml: '<path d="M14 3H5v18h14V8l-5-5v5h5"/><path d="M9.6 12.6 7.6 15l2 2.4M14.4 12.6 16.4 15l-2 2.4M12.9 11.8l-1.8 6.4"/>',
+    fileAudio: '<path d="M14 3H5v18h14V8l-5-5v5h5"/><circle cx="9.4" cy="17.6" r="1.6"/><circle cx="14.6" cy="16.4" r="1.6"/><path d="M11 17.6v-5.2l5.2-1.2v5.2"/>',
+    fileVideo: '<path d="M14 3H5v18h14V8l-5-5v5h5"/><path d="M10 13v5l4.2-2.5z"/>',
+    fileUnknown: '<path d="M14 3H5v18h14V8l-5-5v5h5"/><path d="M9.4 12.4h5.2v5.2H9.4z" stroke-dasharray="1.8 2.2"/>',
+    briefcase: '<rect x="3" y="7.4" width="18" height="12.4" rx="2"/><path d="M9 7.4V6.2A2.2 2.2 0 0 1 11.2 4h1.6A2.2 2.2 0 0 1 15 6.2v1.2"/><path d="M3 12.6h18"/><path d="M10.4 12.6v2h3.2v-2"/>',
+    library: '<path d="M4 4.5h3.4v14.6H4zM9 4.5h3.4v14.6H9z"/><path d="m14.6 5.4 3.2.9-3 12.8-2.3-.6z"/><path d="M3 20.4h18"/>'
   };
-  const iconAliases = { project: "folder", knowledge: "book", library: "book", directory: "folder", fileExcel: "fileSheet", filePpt: "fileSlides", fileDoc: "fileWord", warning: "alert", success: "checkCircle", delete: "trash", externalLink: "external", windowMinimize: "minimize", windowMaximize: "maximize", windowRestore: "restore", windowClose: "close" };
+  const iconAliases = { project: "folder", knowledge: "book", directory: "folder", fileExcel: "fileSheet", filePpt: "fileSlides", fileDoc: "fileWord", warning: "alert", success: "checkCircle", delete: "trash", externalLink: "external", windowMinimize: "minimize", windowMaximize: "maximize", windowRestore: "restore", windowClose: "close", markdown: "fileMarkdown", html: "fileHtml" };
   function icon(name, cls) {
     const canonical = Object.prototype.hasOwnProperty.call(P, name) ? name : iconAliases[name];
     const missing = !canonical;
-    return `<svg class="ico ${esc(cls || "")}${missing ? " icon-missing" : ""}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ${missing ? `role="img" aria-label="缺失图标：${esc(name)}" data-missing-icon="${esc(name)}"` : 'aria-hidden="true"'}>${missing ? `<title>缺失图标：${esc(name)}</title>` : ""}<use href="./icon-sprite.svg#${canonical || "error"}"></use></svg>`;
+    return `<svg class="ico ${esc(cls || "")}${missing ? " icon-missing" : ""}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ${missing ? `role="img" aria-label="缺失图标：${esc(name)}" data-missing-icon="${esc(name)}"` : 'aria-hidden="true"'}>${missing ? `<title>缺失图标：${esc(name)}</title>` : ""}<use href="#${canonical || "error"}"></use></svg>`;
   }
   function cliLogo(id, size) {
     const known = ["claude", "codex", "grok"].includes(id);
@@ -133,7 +271,88 @@ window.UI = (function () {
     const status = known ? "官方资源加载中；失败标记未就绪" : id === "dsh" ? "无可核验的独立官方 CLI 标志 · not available" : "官方图标资源未就绪";
     return `<span class="cli-logo cli-brand ${known ? "asset-pending" : "asset-unavailable"}" style="width:${px}px;height:${px}px" title="${esc(id + " · " + status)}" aria-label="${esc(id + " · " + status)}" data-cli-brand="${esc(id)}">${known ? `<img src="./brand-icons/${id}.svg" alt="${esc(id)} 官方品牌标志" data-cli-asset="${esc(id)}">` : icon("error", "ico-14")}<span class="sr-only">${esc(status)}</span></span>`;
   }
-  const fileIcon = type => icon(type === "pdf" ? "filePdf" : type === "xlsx" ? "fileSheet" : type === "png" ? "image" : type === "csv" ? "csv" : "fileText", "ico-14");
+  /* CR-051：扩展名 → 图标符号 + 类型色令牌（与 UI-CR051 §5.2 映射表唯一来源一致）。 */
+  const FILE_TYPE_META = {
+    md: { i: "fileMarkdown", c: "var(--fic-md)" }, markdown: { i: "fileMarkdown", c: "var(--fic-md)" }, mdx: { i: "fileMarkdown", c: "var(--fic-md)" },
+    txt: { i: "fileText", c: "var(--fic-text)" }, log: { i: "fileText", c: "var(--fic-text)" }, ini: { i: "fileText", c: "var(--fic-text)" }, conf: { i: "fileText", c: "var(--fic-text)" }, rtf: { i: "fileText", c: "var(--fic-text)" },
+    pdf: { i: "filePdf", c: "var(--fic-pdf)" },
+    doc: { i: "fileWord", c: "var(--fic-word)" }, docx: { i: "fileWord", c: "var(--fic-word)" }, odt: { i: "fileWord", c: "var(--fic-word)" },
+    xls: { i: "fileSheet", c: "var(--fic-sheet)" }, xlsx: { i: "fileSheet", c: "var(--fic-sheet)" }, ods: { i: "fileSheet", c: "var(--fic-sheet)" },
+    csv: { i: "csv", c: "var(--fic-sheet)" }, tsv: { i: "csv", c: "var(--fic-sheet)" },
+    ppt: { i: "fileSlides", c: "var(--fic-slides)" }, pptx: { i: "fileSlides", c: "var(--fic-slides)" }, odp: { i: "fileSlides", c: "var(--fic-slides)" },
+    png: { i: "image", c: "var(--fic-image)" }, jpg: { i: "image", c: "var(--fic-image)" }, jpeg: { i: "image", c: "var(--fic-image)" }, gif: { i: "image", c: "var(--fic-image)" }, webp: { i: "image", c: "var(--fic-image)" }, svg: { i: "image", c: "var(--fic-image)" },
+    ts: { i: "fileCode", c: "var(--fic-code)" }, js: { i: "fileCode", c: "var(--fic-code)" }, py: { i: "fileCode", c: "var(--fic-code)" }, json: { i: "fileCode", c: "var(--fic-code)" }, yaml: { i: "fileCode", c: "var(--fic-code)" }, yml: { i: "fileCode", c: "var(--fic-code)" }, css: { i: "fileCode", c: "var(--fic-code)" },
+    html: { i: "fileHtml", c: "var(--fic-code)" }, htm: { i: "fileHtml", c: "var(--fic-code)" },
+    zip: { i: "fileArchive", c: "var(--fic-archive)" }, "7z": { i: "fileArchive", c: "var(--fic-archive)" }, rar: { i: "fileArchive", c: "var(--fic-archive)" }, tar: { i: "fileArchive", c: "var(--fic-archive)" }, gz: { i: "fileArchive", c: "var(--fic-archive)" },
+    mp3: { i: "fileAudio", c: "var(--fic-audio)" }, wav: { i: "fileAudio", c: "var(--fic-audio)" }, m4a: { i: "fileAudio", c: "var(--fic-audio)" }, flac: { i: "fileAudio", c: "var(--fic-audio)" },
+    mp4: { i: "fileVideo", c: "var(--fic-video)" }, mov: { i: "fileVideo", c: "var(--fic-video)" }, mkv: { i: "fileVideo", c: "var(--fic-video)" }, webm: { i: "fileVideo", c: "var(--fic-video)" }
+  };
+  function fileMeta(type) {
+    const t = String(type || "").toLowerCase().replace(/^\./, "");
+    return FILE_TYPE_META[t] || { i: "fileUnknown", c: "var(--fic-unknown)" };
+  }
+  function fileIcon(type, cls) {
+    const m = fileMeta(type);
+    return `<svg class="ico ${esc(cls || "ico-14")}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="color:${m.c}" aria-hidden="true"><use href="#${m.i}"></use></svg>`;
+  }
+  /* CR-051：品牌帆船头像（5 种容器风格由 body[data-avatar-style] 承载）。
+     r6：默认 B；store.avatarPhoto 有值时显示自定义照片（容器按当前风格，等比裁剪填充）。 */
+  const AVATAR_IMG = "../brand-assets-v2/logo-sail.png";
+  const AVATAR_LABELS = { a: "A 原彩透明", b: "B 薄荷承载", c: "C 圆角方砖", d: "D 墨青实底", e: "E 双色光环" };
+  const avatarImg = (alt, photo) => {
+    const p = photo === undefined ? (store && store.avatarPhoto) || null : photo;
+    return p
+      ? `<img src="${esc(p)}" alt="${esc(alt || "")}" class="has-photo" draggable="false">`
+      : `<img src="${AVATAR_IMG}" alt="${esc(alt || "")}" draggable="false">`;
+  };
+  const avatarHtml = (cls, alt) => `<span class="avatar ${esc(cls || "")}${store && store.avatarPhoto ? " has-photo" : ""}">${avatarImg(alt, store && store.avatarPhoto)}</span>`;
+  /* CR-051 r2/r6：项目与知识库共用 50 个图标（6 组）与 10 个背景色卡；旧 12/8 白名单值均为其子集，
+     旧项目/旧库按既有 tone 原样显示，不做批量映射（手动切换后才写入新组合）。 */
+  const ICON_GROUPS = [
+    { name: "通用", hint: "类型 / 技术 / 资料 / 目标", icons: ["code", "terminal", "globe", "database", "layers", "box", "wrench", "gauge", "bulb", "target", "sparkles", "book", "bookOpen", "library", "shield", "users"] },
+    { name: "办公", hint: "组织 / 计划 / 沟通", icons: ["briefcase", "building", "calendar", "clipboard", "presentation", "mail", "idBadge"] },
+    { name: "商业", hint: "数据 / 财务 / 经营", icons: ["chartBar", "chartLine", "chartPie", "wallet", "receipt", "cart", "tag", "scale"] },
+    { name: "内容", hint: "市场 / 媒体 / 创作", icons: ["megaphone", "camera", "music", "video", "mic", "newspaper", "pen", "brush"] },
+    { name: "产品", hint: "研发 / 上线 / 探索", icons: ["rocket", "bug", "puzzle", "flag", "compass", "flask", "robot", "cloud"] },
+    { name: "生活", hint: "学习 / 收藏 / 关怀", icons: ["school", "heart", "star"] }
+  ];
+  const PROJECT_ICON_IDS = ICON_GROUPS.flatMap(g => g.icons);
+  const KB_ICON_IDS = PROJECT_ICON_IDS;
+  const ICON_COLORS = [
+    { id: "blue", soft: "#eaf1ff", strong: "#2b6cf6", darkSoft: "#1e2a44", darkStrong: "#8db3ff" },
+    { id: "teal", soft: "#e8f7f3", strong: "#0b7d70", darkSoft: "#17302b", darkStrong: "#4fd1c5" },
+    { id: "violet", soft: "#f0edfd", strong: "#6f5bd6", darkSoft: "#262238", darkStrong: "#b9a8ff" },
+    { id: "amber", soft: "#fff4e2", strong: "#b76a00", darkSoft: "#2b2416", darkStrong: "#e0a04a" },
+    { id: "green", soft: "#e7f8ef", strong: "#1a9d5a", darkSoft: "#16281d", darkStrong: "#4ccb83" },
+    { id: "rose", soft: "#fdeef1", strong: "#c2345a", darkSoft: "#331a20", darkStrong: "#ff9ab0" },
+    { id: "indigo", soft: "#eef0ff", strong: "#4356c9", darkSoft: "#1e2144", darkStrong: "#97a3ff" },
+    { id: "orange", soft: "#fff0e6", strong: "#c2410c", darkSoft: "#331b12", darkStrong: "#f0906a" },
+    { id: "slate", soft: "#eef1f5", strong: "#52627a", darkSoft: "#242a33", darkStrong: "#a7b6c8" },
+    { id: "sand", soft: "#f8f1e3", strong: "#8a6420", darkSoft: "#2b2519", darkStrong: "#d8b06a" }
+  ];
+  const ICON_COLOR_LABELS = { blue: "蓝", teal: "青绿", violet: "紫", amber: "琥珀", green: "绿", rose: "玫瑰", indigo: "靛蓝", orange: "橘", slate: "石板", sand: "沙金" };
+  const TONE_TILE = {
+    blue: ["var(--tile-blue)", "var(--fic-project-code)"],
+    violet: ["var(--tile-violet)", "var(--violet)"],
+    amber: ["var(--tile-amber)", "var(--fic-project-work)"],
+    green: ["var(--tile-green)", "var(--success)"]
+  };
+  function registeredIcon(id) { return id && Object.prototype.hasOwnProperty.call(P, id) ? id : null; }
+  function registeredColor(id) { return id && ICON_COLORS.some(c => c.id === id) ? id : null; }
+  /** 色卡 id → [承载底, 图形色]（CSS 变量对，浅深主题各自取值）；未登记 id 返回 null。 */
+  function iconColorPair(id) {
+    const c = registeredColor(id);
+    return c ? ["var(--c51c-" + c + "-soft)", "var(--c51c-" + c + "-strong)"] : null;
+  }
+  function projIconId(p) { return registeredIcon(p && p.icon) || (p && p.kind === "work" ? "briefcase" : "code"); }
+  function projTile(p, cls, icoCls) {
+    // r3：手动切换才写入 iconColor；旧项目（无 iconColor）沿用既有 tone 原样显示。
+    const [bg, fg] = iconColorPair(p && p.iconColor) || TONE_TILE[(p && p.tone) || "blue"] || TONE_TILE.blue;
+    return `<span class="proj-icon-tile ${esc(cls || "")}" style="background:${bg};color:${fg}" aria-hidden="true">${icon(projIconId(p), icoCls || "ico-20")}</span>`;
+  }
+  function kbIconId(lib, fallback) { return registeredIcon(lib && lib.icon) || fallback || "library"; }
+  /** 知识库图标砖色卡：自选优先，未设置回默认青绿（色卡缺失回默认色，不允许只改底色）。 */
+  function kbTileColor(lib) { return iconColorPair(lib && lib.iconColor) || iconColorPair("teal"); }
 
   /* ---------------- Markdown ---------------- */
   function inline(s) {
@@ -186,9 +405,16 @@ window.UI = (function () {
   // 原型只仿真状态变化，不联网、不替换程序。
   const updateParam = new URLSearchParams(window.location.search).get("update");
   const themeParam = new URLSearchParams(window.location.search).get("theme");
+  const avatarParam = new URLSearchParams(window.location.search).get("avatar");
   const updatePhaseList = ["available", "downloading", "ready", "applying"];
   const store = {
     theme: ["light", "dark"].includes(themeParam) ? themeParam : (localStorage.getItem("wb4-theme") || "light"),
+    // CR-051：头像风格 a–e；r6 默认 B。URL 参数 avatar= 便于逐风格截图（演示用途）。
+    avatarStyle: ["a", "b", "c", "d", "e"].includes(avatarParam) ? avatarParam : (localStorage.getItem("wb4-avatar-style") || "b"),
+    avatarDraft: null,
+    // r2：自定义头像照片（data URL，仅内存演示；正式软件存本机文件引用，不上传网络）。
+    avatarPhoto: null,
+    projectIconDraft: null,
     updatePhase: updateParam === "hidden" ? "hidden" : updatePhaseList.includes(updateParam) ? updateParam : "available",
     updateProgress: updateParam === "downloading" ? 42 : updateParam === "ready" ? 100 : 0,
     updateVersion: "0.2.0",
@@ -279,6 +505,7 @@ window.UI = (function () {
     userMenu: false
   };
   document.documentElement.setAttribute("data-theme", store.theme);
+  document.body.dataset.avatarStyle = store.avatarStyle;
 
   const toast = (msg, iconName) => {
     const wrap = $("#toasts");
@@ -447,7 +674,10 @@ window.UI = (function () {
         ${updateBadge()}
         <button class="icon-btn" data-act="theme" title="切换主题">${icon(dark ? "sun" : "moon")}</button>
         <button class="icon-btn" data-act="notify" title="通知">${icon("bell")}</button>
-        <button class="avatar" data-act="open-settings" title="${esc(D.user.name)}">${esc(D.user.initials)}</button>
+        <span class="avatar-frame top-avatar">
+          <button class="avatar" data-act="open-settings" title="${esc(D.user.name)}" aria-label="用户头像，打开设置">${avatarImg()}</button>
+          <button class="avatar-edit" type="button" data-act="avatar-edit" aria-label="更换头像" title="更换头像">${icon("camera", "ico-14")}</button>
+        </span>
       </div>
       <span class="top-sep window-sep"></span>
       <div class="window-controls" aria-label="窗口控制（仿真）">
@@ -471,7 +701,7 @@ window.UI = (function () {
       <div class="nav-group">
         <div class="nav-label">当前项目</div>
         <button class="side-project" data-act="open-project" data-id="${p.id}">
-          <span class="p-avatar proj-avatar ${p.tone}">${esc(p.key.slice(0, 2))}</span>
+          ${projTile(p, "sm", "ico-14")}
           <span class="p-meta"><b>${esc(p.name)}</b><span>${esc(p.branch || "工作区")}</span></span>
         </button>
       </div>
@@ -481,25 +711,40 @@ window.UI = (function () {
         ${navItem("design", "layers", "设计资料")}
       </div>
       <div class="side-foot">
-        <button class="side-user merged" data-act="open-settings" title="设置与账户">
-          <span class="avatar teal">${esc(D.user.initials)}</span>
-          <span class="u-meta"><b>${esc(D.user.name)}</b><span>${esc(D.user.role)} · 设置与账户</span></span>
-          <span class="u-gear">${icon("settings", "ico-14")}</span>
-        </button>
+        <span class="avatar-frame side-avatar">
+          <button class="side-user merged" data-act="open-settings" title="设置与账户">
+            <span class="avatar">${avatarImg()}</span>
+            <span class="u-meta"><b>${esc(D.user.name)}</b><span>${esc(D.user.role)} · 设置与账户</span></span>
+            <span class="u-gear">${icon("settings", "ico-14")}</span>
+          </button>
+          <button class="avatar-edit" type="button" data-act="avatar-edit" aria-label="更换头像" title="更换头像">${icon("camera", "ico-14")}</button>
+        </span>
       </div>
     </aside>`;
   }
+  /* UI-CR050（方案 E）：窗口页签条按需出现。
+     只有首页、没有打开对象时不渲染整条；打开对象后在内容区顶部出现 40px 胶囊条，
+     首页与对象同规格，末尾「全部窗口」下拉兜底溢出；首页固定不可关闭。 */
   function tabbar() {
     const home = store.windows.find(w => w.id === "home");
-    const tabs = [home, ...store.windows.filter(w => w.kind !== "home")].filter(Boolean);
-    return `<nav class="tabbar" aria-label="首页与打开的对象">
-      ${tabs.map(w => {
-        const label = w.id === "home" ? "首页" : (w.title || w.refId);
-        return `<div class="wtab ${w.id === "home" ? "home-tab" : "object-tab"} ${store.active === w.id ? "active" : ""}">
-          <button class="wtab-focus" data-act="switch-window" data-id="${esc(w.id)}" aria-current="${store.active === w.id ? "page" : "false"}" title="${esc(label)}${w.reopened ? " · 已恢复对象视图" : ""}">${icon(w.id === "home" ? "home" : w.kind === "project" ? "folder" : w.kind === "library" ? "book" : "server", "ico-14")}<span class="ellipsis">${esc(label)}</span></button>
-          ${w.id === "home" ? "" : `<button class="w-close" data-act="close-window" data-id="${esc(w.id)}" aria-label="关闭 ${esc(label)}">${icon("close", "ico-14")}</button>`}
-        </div>`;
-      }).join("")}
+    const objects = store.windows.filter(w => w.kind !== "home");
+    if (!home || !objects.length) return "";
+    const tab = (w, isHome) => {
+      const label = isHome ? "首页" : (w.title || w.refId);
+      const iconName = isHome ? "home" : w.kind === "project" ? "folder" : w.kind === "library" ? "book" : "server";
+      const current = store.active === w.id;
+      return `<div class="wtab ${isHome ? "home-tab" : "object-tab"} ${current ? "active" : ""}" role="presentation">
+        <button class="wtab-focus" data-act="switch-window" data-id="${esc(w.id)}" role="tab" aria-selected="${current}" aria-current="${current ? "page" : "false"}" title="${esc(label)}${w.reopened ? " · 已恢复对象视图" : ""}">${icon(iconName, "ico-14")}<span class="ellipsis">${esc(label)}</span></button>
+        ${isHome ? "" : `<button class="w-close" data-act="close-window" data-id="${esc(w.id)}" aria-label="关闭 ${esc(label)}">${icon("close", "ico-12")}</button>`}
+      </div>`;
+    };
+    return `<nav class="tabbar" aria-label="窗口页签">
+      ${tab(home, true)}
+      <span class="wtab-sep" aria-hidden="true"></span>
+      ${objects.map(w => tab(w, false)).join("")}
+      <button class="tabbar-all" data-act="window-tabs-menu" aria-haspopup="menu" aria-expanded="false" title="全部窗口">
+        ${icon("layers", "ico-14")}<span class="tabbar-all-label">全部窗口</span><span class="tabbar-all-n">${objects.length + 1}</span>
+      </button>
     </nav>`;
   }
 
@@ -528,6 +773,9 @@ window.UI = (function () {
     const ae = document.activeElement;
     const focusId = ae && ae.id ? ae.id : null;
     const selStart = focusId && ae.selectionStart != null ? ae.selectionStart : null;
+    const selEnd = selStart != null ? ae.selectionEnd : null;
+    const selDirection = selStart != null ? ae.selectionDirection : null;
+    const editorScroll = selStart != null ? [ae.scrollTop, ae.scrollLeft] : null;
     const content = $(".content");
     const scrollTop = content ? content.scrollTop : 0;
     const win = activeWindow();
@@ -545,8 +793,11 @@ window.UI = (function () {
     document.body.classList.toggle("ai-open", showAI);
     document.body.classList.toggle("object-detail", win.kind !== "home");
     if (win.kind !== "home") document.body.classList.remove("nav-open");
-    $("#app").innerHTML = topbar() + tabbar() +
-      `<div class="body">${win.kind === "home" ? sidebar() : ""}<div class="main"><div class="workarea"><div class="content ${win.kind === "project" ? "workspace" : ""}" id="content">${main}</div>${showAI && window.AIPanel ? AIPanel.render() : ""}</div></div></div>` +
+    const windowTabs = tabbar();
+    document.body.classList.toggle("has-window-tabs", Boolean(windowTabs));
+    document.body.classList.toggle("no-window-tabs", !windowTabs);
+    $("#app").innerHTML = topbar() +
+      `<div class="body">${win.kind === "home" ? sidebar() : ""}<div class="main">${windowTabs}<div class="workarea"><div class="content ${win.kind === "project" ? "workspace" : ""}" id="content">${main}</div>${showAI && window.AIPanel ? AIPanel.render() : ""}</div></div></div>` +
       (["minimized", "closed"].includes(store.windowState) ? `<div class="window-simulation" role="status"><b>${store.windowState === "closed" ? "窗口已模拟关闭" : "窗口已模拟最小化"}</b><span>浏览器、对象状态与任务均未关闭</span><button class="btn primary" data-act="window-restore">${icon("restore", "ico-14")}还原原型</button></div>` : "");
     const newContent = $("#content");
     if (newContent) newContent.scrollTop = restoreView ? (win.viewStates?.scroll?.["#content"]?.[0] || 0) : scrollTop;
@@ -555,7 +806,16 @@ window.UI = (function () {
     if (win.kind === "server" && $("#term-input")) $("#term-input").value = store.termInput || "";
     renderedWindowId = win.id; restoreView = false;
     captureView(win, false);
-    if (focusId) { const el = document.getElementById(focusId); if (el) { el.focus(); try { if (selStart != null) el.setSelectionRange(selStart, selStart); } catch (e) { /* noop */ } } }
+    if (focusId) {
+      const el = document.getElementById(focusId);
+      if (el) {
+        el.focus({ preventScroll: true });
+        if (editorScroll && typeof el.setSelectionRange === "function") {
+          try { el.setSelectionRange(selStart, selEnd, selDirection); } catch { /* input type does not support selection */ }
+          [el.scrollTop, el.scrollLeft] = editorScroll;
+        }
+      }
+    }
     if (window.PaneResize) window.PaneResize.afterRender();
     if (window.AIPanel && window.AIPanel.afterRender) window.AIPanel.afterRender();
     const oldMenu = document.getElementById("req-menu");
@@ -573,7 +833,7 @@ window.UI = (function () {
     if (host) host.outerHTML = window.AIPanel.menuHtml();
   }
 
-  return { D, $, $$, esc, icon, iconNames: Object.keys(P), iconAliases, cliLogo, fileIcon, md, toc, store, render, openWindow, switchWindow, closeWindow, windowControl, activeWindow, toast, openDialog, openSubDialog, closeDialog, closeSubDialog, closeTopDialog, dlgShell, renderReqMenu, renderAIMenu };
+  return { D, $, $$, esc, icon, iconNames: Object.keys(P), iconAliases, cliLogo, fileIcon, fileMeta, avatarImg, avatarHtml, AVATAR_LABELS, projIconId, projTile, kbIconId, kbTileColor, iconColorPair, registeredIcon, registeredColor, ICON_GROUPS, ICON_COLORS, ICON_COLOR_LABELS, PROJECT_ICON_IDS, KB_ICON_IDS, md, toc, store, render, openWindow, switchWindow, closeWindow, windowControl, activeWindow, toast, openDialog, openSubDialog, closeDialog, closeSubDialog, closeTopDialog, dlgShell, renderReqMenu, renderAIMenu };
 })();
 
 

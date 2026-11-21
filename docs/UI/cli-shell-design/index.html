@@ -1,0 +1,556 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>CLI 命令工具选择 · UI-CR053-v1 设计评审</title>
+<link rel="icon" type="image/png" href="../brand-assets-v2/favicon.png">
+<link rel="stylesheet" href="../task-workbench/theme-tokens.css">
+<style>
+/* UI-CR053-v1：CLI 命令工具（Shell）选择的独立评审页。
+   只使用 theme-tokens.css 的现行令牌；本页不是唯一业务原型入口，也不代表正式软件。 */
+*{box-sizing:border-box}
+[hidden]{display:none !important}
+html,body{margin:0;min-height:100%}
+body{font:13px/1.6 var(--font-title);color:var(--ink);background:var(--base)}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer;background:none;border:0;padding:0}
+a{color:var(--accent)}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+
+/* 按需滚动条：只在实际滚动时着色（UI-SCROLL-001） */
+*{scrollbar-width:thin;scrollbar-color:transparent transparent}
+.scrollbar-active{scrollbar-color:var(--muted) transparent}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:transparent;border:3px solid transparent;background-clip:content-box;border-radius:8px}
+.scrollbar-active::-webkit-scrollbar-thumb{background:var(--muted);background-clip:content-box}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ---------- 评审控制条（非产品 UI；?chrome=0 隐藏） ---------- */
+.review{border-bottom:1px solid var(--line);background:var(--paper);padding:10px 18px;display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center}
+.review .rb-t{display:flex;align-items:baseline;gap:8px;margin-right:auto;min-width:0}
+.review .rb-t b{font-size:12px;padding:1px 7px;border-radius:4px;background:var(--soft);color:var(--accent);font-weight:600}
+.review .rb-t span{font-size:11.5px;color:var(--muted)}
+.review .rb-g{display:flex;align-items:center;gap:6px}
+.review .rb-g>i{font-style:normal;font-size:11px;color:var(--muted)}
+.review .seg{display:inline-flex;border:1px solid var(--line);border-radius:var(--radius-ctl);overflow:hidden;background:var(--paper)}
+.review .seg button{height:24px;padding:0 9px;font-size:11px;color:var(--muted);border-right:1px solid var(--line)}
+.review .seg button:last-child{border-right:0}
+.review .seg button[aria-pressed="true"]{background:var(--soft);color:var(--accent);font-weight:600}
+.review .tip{font-size:11px;color:var(--muted)}
+details.spec{margin:0 18px 0;padding:0 0 12px;border-bottom:1px solid var(--line-soft)}
+details.spec summary{cursor:pointer;font-size:11.5px;color:var(--muted);padding:8px 0}
+details.spec .spec-body{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;font-size:11.5px;color:var(--muted)}
+details.spec h4{margin:0 0 4px;font-size:11.5px;color:var(--ink)}
+details.spec ul{margin:0;padding-left:16px}
+details.spec table{border-collapse:collapse;width:100%}
+details.spec th,details.spec td{border:1px solid var(--line);padding:4px 6px;text-align:left;font-weight:400}
+details.spec th{background:var(--panel-2);color:var(--ink);font-weight:600}
+
+/* ---------- 舞台与窗口 ---------- */
+.stage{padding:26px 18px 44px;display:flex;justify-content:center;align-items:flex-start}
+.app-window{width:1040px;max-width:100%;border:1px solid var(--line);border-radius:10px;background:var(--base);box-shadow:var(--shadow-md);overflow:hidden}
+.titlebar{height:40px;display:flex;align-items:center;gap:10px;padding:0 12px;background:var(--paper);border-bottom:1px solid var(--line)}
+.titlebar .mark{width:20px;height:20px;border-radius:5px;display:grid;place-items:center;background:var(--accent);color:var(--accent-ink);font-size:10px;font-weight:700}
+.titlebar .brand{display:flex;align-items:baseline;gap:6px;font-weight:650}
+.titlebar .brand small{font-size:9.5px;color:var(--muted);letter-spacing:.06em}
+.titlebar .drag{flex:1}
+.titlebar .wbtn{width:34px;height:24px;display:grid;place-items:center;border-radius:4px;color:var(--muted);font-size:12px}
+.titlebar .wbtn:hover{background:var(--hover-bg);color:var(--ink)}
+
+/* ---------- 设置弹窗 ---------- */
+.settings{display:grid;grid-template-columns:196px minmax(0,1fr);height:700px;max-height:calc(100vh - 150px);min-height:520px;background:var(--paper)}
+.set-menu{border-right:1px solid var(--line);background:var(--nav);padding:14px 10px;display:flex;flex-direction:column;gap:2px;overflow:auto}
+.set-menu .m-label{font-size:10.5px;color:var(--muted);padding:6px 10px 4px}
+.set-menu button{display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;border-radius:var(--radius-ctl);color:var(--ink-2, var(--ink));font-size:12.5px;text-align:left}
+.set-menu button .ico{width:14px;height:14px;flex:0 0 auto;stroke:currentColor;fill:none;stroke-width:1.6}
+.set-menu button.on{background:var(--nav-active-bg);color:var(--nav-active-ink);font-weight:600}
+.set-main{min-width:0;display:flex;flex-direction:column;min-height:0;position:relative}
+.set-head{flex:0 0 auto;padding:16px 22px 0}
+.set-head h1{margin:0;font-size:17px;font-weight:650}
+.set-head p{margin:3px 0 0;font-size:11.5px;color:var(--muted)}
+.set-tabs{flex:0 0 auto;display:flex;gap:20px;padding:12px 22px 0;border-bottom:1px solid var(--line)}
+.set-tabs button{height:34px;font-size:12.5px;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px}
+.set-tabs button[aria-selected="true"]{color:var(--ink);font-weight:600;border-bottom-color:var(--accent)}
+.set-scroll{flex:1;min-height:0;overflow-y:auto;padding:16px 22px 24px;display:flex;flex-direction:column;gap:12px}
+.set-intro{margin:0;font-size:11.5px;color:var(--muted);line-height:1.65}
+
+/* ---------- CLI 卡片 ---------- */
+.cli-card{border:1px solid var(--line);border-radius:var(--radius-card);background:var(--paper);flex:0 0 auto}
+.cli-head{display:flex;align-items:center;gap:10px;padding:10px 12px;min-height:52px}
+.cli-logo{width:28px;height:28px;border-radius:7px;display:grid;place-items:center;font-size:11px;font-weight:700;flex:0 0 auto;background:var(--soft);color:var(--accent)}
+.cli-logo.codex{background:var(--purple-bg);color:var(--purple)}
+.cli-logo.grok{background:var(--tag-bg);color:var(--tag-ink)}
+.cli-id{min-width:0;flex:1}
+.cli-id b{display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600}
+.cli-id small{display:block;color:var(--muted);font-size:10.5px;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cli-meta{display:flex;align-items:center;gap:8px;flex:0 0 auto;font-size:10.5px;color:var(--muted)}
+.cli-toggle{width:26px;height:26px;display:grid;place-items:center;border-radius:5px;color:var(--muted);font-size:10px}
+.cli-toggle:hover{background:var(--hover-bg);color:var(--ink)}
+.tag{display:inline-flex;align-items:center;padding:0 6px;height:17px;border-radius:4px;font-size:10px;font-weight:600;background:var(--tag-bg);color:var(--tag-ink);white-space:nowrap}
+.tag.good{background:var(--good-bg, #e9f8ef);color:var(--good-ink)}
+.tag.warn{background:var(--warn-bg);color:var(--warn-deep)}
+.tag.beta{background:var(--purple-bg);color:var(--purple)}
+[data-theme="dark"] .tag.good{background:#1e2f24;color:#7fd39a}
+
+.switch{position:relative;width:34px;height:20px;border-radius:999px;background:var(--accent);flex:0 0 auto}
+.switch i{position:absolute;top:2px;left:16px;width:16px;height:16px;border-radius:50%;background:var(--switch-knob)}
+.switch.off{background:var(--switch-off)}
+.switch.off i{left:2px}
+
+.cli-body{border-top:1px solid var(--line-soft);padding:12px;display:flex;flex-direction:column;gap:12px}
+.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.field{display:flex;flex-direction:column;gap:4px;min-width:0}
+.field>label{font-size:10.5px;color:var(--muted)}
+.field .hint{font-size:10px;color:var(--muted)}
+.input,.select{height:30px;border:1px solid var(--input-line);border-radius:var(--radius-ctl);background:var(--paper);padding:0 8px;font-size:12px;color:var(--ink);min-width:0;width:100%}
+.input[disabled],.select[disabled]{opacity:.6;cursor:not-allowed}
+.chips{display:flex;flex-wrap:wrap;gap:5px}
+.chip{height:24px;padding:0 8px;border:1px solid var(--chip-line);border-radius:999px;background:var(--chip-bg);font-size:10.5px;color:var(--ink-2, var(--ink))}
+.chip.on{background:var(--soft);border-color:var(--accent-line);color:var(--accent);font-weight:600}
+.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+/* ---------- 命令工具分组 ---------- */
+.shell-group{border:1px solid var(--line);border-radius:var(--radius-card);background:var(--panel-2, var(--paper));padding:10px 11px;display:flex;flex-direction:column;gap:9px}
+.shell-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.shell-h b{font-size:11.5px;font-weight:600}
+.shell-h .spacer{flex:1}
+.shell-h .caption{font-size:10px;color:var(--muted)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;height:26px;padding:0 9px;border:1px solid var(--input-line);border-radius:var(--radius-ctl);background:var(--paper);font-size:11px;color:var(--ink-2, var(--ink));font-weight:500}
+.btn:hover{background:var(--hover-bg)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+.btn.primary:hover{background:var(--accent-dark)}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.btn.sm{height:24px;font-size:10.5px;padding:0 8px}
+
+.shell-opts{display:flex;flex-direction:column;gap:5px}
+.opt{display:flex;align-items:flex-start;gap:8px;padding:7px 8px;border:1px solid var(--line);border-radius:var(--radius-ctl);background:var(--paper);cursor:pointer}
+.opt:hover{border-color:var(--hover-line)}
+.opt.sel{border-color:var(--accent-line);background:var(--soft)}
+.opt .radio{width:13px;height:13px;border-radius:50%;border:1.5px solid var(--input-line);flex:0 0 auto;margin-top:2px;position:relative;background:var(--paper)}
+.opt.sel .radio{border-color:var(--accent)}
+.opt.sel .radio::after{content:"";position:absolute;inset:2px;border-radius:50%;background:var(--accent)}
+.opt .o-main{min-width:0;flex:1}
+.opt .o-main b{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;line-height:1.5}
+.opt .o-main small{display:block;margin-top:1px;font:10px/1.5 var(--mono);color:var(--muted);overflow-wrap:anywhere}
+.opt.bad{border-color:var(--danger-line);background:var(--danger-bg)}
+.opt.bad .radio{border-color:var(--danger)}
+.opt.bad .o-main b{color:var(--danger-deep)}
+.opt.disabled{opacity:.55;cursor:not-allowed}
+
+.shell-note{margin:0;font-size:10.5px;color:var(--muted);line-height:1.6;display:flex;gap:6px}
+.shell-note .dot{flex:0 0 auto;width:5px;height:5px;border-radius:50%;background:var(--muted);margin-top:6px}
+.shell-note.warn{color:var(--warn-deep)}
+.shell-note.warn .dot{background:var(--warn-dot, var(--warn))}
+.shell-note.error{color:var(--danger-deep)}
+.shell-note.error .dot{background:var(--bad-dot, var(--danger))}
+
+.readonly{display:flex;align-items:center;gap:8px;padding:7px 8px;border:1px dashed var(--line);border-radius:var(--radius-ctl);background:var(--card-bg, var(--paper));font-size:11px;color:var(--ink-2, var(--ink))}
+.readonly code{font:10.5px var(--mono);color:var(--muted)}
+.readonly .lock{margin-left:auto;font-size:10px;color:var(--muted)}
+
+.card-foot{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:2px}
+.card-foot .msg{font-size:10.5px;color:var(--muted)}
+.card-foot .spacer{flex:1}
+
+/* 检测中骨架 */
+.checking{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);padding:5px 0}
+.spinner{width:12px;height:12px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--accent);animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spinner{animation:none}}
+
+/* 保存提示 */
+.toast{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);background:var(--toast-bg);color:var(--toast-ink);font-size:11px;padding:6px 12px;border-radius:6px;box-shadow:var(--shadow-md);opacity:0;pointer-events:none;transition:opacity .15s}
+.toast.show{opacity:1}
+
+/* 390 窄屏：单列、隐藏设置菜单、弹窗全宽 */
+.app-window[data-w="390"]{width:390px;border-radius:8px}
+.app-window[data-w="390"] .settings{grid-template-columns:minmax(0,1fr);height:720px}
+.app-window[data-w="390"] .set-menu{display:none}
+.app-window[data-w="390"] .set-head{padding:14px 16px 0}
+.app-window[data-w="390"] .set-tabs{padding:10px 16px 0;gap:14px}
+.app-window[data-w="390"] .set-scroll{padding:14px 16px 20px;gap:10px}
+.app-window[data-w="390"] .form-grid{grid-template-columns:minmax(0,1fr)}
+.app-window[data-w="390"] .cli-meta .pkg{display:none}
+.app-window[data-w="390"] .opt{padding:7px}
+.app-window[data-w="390"] .set-scroll{padding:12px 12px 18px}
+.app-window[data-w="390"] .shell-h .btn{width:100%;justify-content:center}
+.app-window[data-w="390"] .cli-id b{flex-wrap:wrap}
+.app-window[data-w="390"] .shell-h .caption{margin-left:0}
+.app-window[data-w="390"] .review{display:none}
+
+/* 评审页在小屏下也保持可操作 */
+@media (max-width:900px){
+  .review{padding:8px 12px;gap:6px 10px}
+  .review .rb-t span{display:none}
+  .stage{padding:12px 8px 26px}
+  .settings{height:auto;max-height:none;min-height:620px}
+}
+@media (max-width:520px){
+  .stage{padding:8px 5px 20px}
+  .app-window,.app-window[data-w="390"]{width:100%;max-width:100%;border-radius:6px}
+  .app-window .settings{height:calc(100vh - 168px);min-height:520px}
+  .review{padding:8px 10px}
+  .review .rb-t{width:100%}
+  .review .rb-g{width:100%;justify-content:flex-start;flex-wrap:wrap}
+  .review .seg{flex-wrap:wrap}
+  .review .seg button{padding:0 7px}
+  .review .tip{width:100%}
+  .set-scroll{padding:12px 12px 18px}
+  .shell-h .btn{width:100%;justify-content:center}
+  .cli-id b{flex-wrap:wrap}
+}
+.app-window,.settings,.set-main,.set-scroll,.cli-card,.cli-body,.shell-group,.set-head,.set-tabs,.set-menu{min-width:0}
+.shell-h{row-gap:5px}
+</style>
+</head>
+<body>
+
+<div class="review" id="reviewBar">
+  <div class="rb-t"><b>UI-CR053-v1</b><span>CLI 命令工具（Shell）选择 · 设计评审稿，不是软件截图</span></div>
+  <div class="rb-g"><i>主题</i><span class="seg" data-seg="theme"><button data-v="light" aria-pressed="true">浅色</button><button data-v="dark">深色</button></span></div>
+  <div class="rb-g"><i>视口</i><span class="seg" data-seg="width"><button data-v="1440" aria-pressed="true">1440</button><button data-v="1024">1024</button><button data-v="390">390</button></span></div>
+  <div class="rb-g"><i>场景</i><span class="seg" data-seg="state"><button data-v="default" aria-pressed="true">默认</button><button data-v="pwsh">指定 pwsh</button><button data-v="missing">路径失效</button><button data-v="checking">检测中</button><button data-v="saved">已保存</button></span></div>
+  <span class="tip">点卡片标题展开；Ctrl/⌘+K 可聚焦场景说明</span>
+</div>
+
+<details class="spec" id="specNotes">
+  <summary>设计说明与状态覆盖（评审用，非产品 UI）</summary>
+  <div class="spec-body">
+    <div><h4>场景</h4><ul><li>S-01 默认：三个 CLI 均为「自动」，未改任何设置。</li><li>S-02 指定 PowerShell 7：Claude Code 选中已检测的 7.6.10。</li><li>S-03 路径失效：选中项被卸载后重新检测，行内报错且禁止保存。</li><li>S-04 检测中：候选与保存禁用，避免半检测状态被提交。</li><li>S-05 已保存：底部提示只影响之后的新会话。</li></ul></div>
+    <div><h4>能力分层（不得跨层宣称）</h4><table><tr><th>CLI</th><th>可控程度</th></tr><tr><td>Claude Code</td><td>可选工具类型与 Git Bash 路径；PowerShell 仅识别固定位置</td></tr><tr><td>Codex</td><td>实验性：环境变量传递，语义待实测</td></tr><tr><td>Grok CLI</td><td>仅展示检测结果，未发现可配置项</td></tr></table></div>
+    <div><h4>交互规则</h4><ul><li>选择不即时生效，点卡片「保存」后写入；检测中与失效时保存禁用。</li><li>重新检测只刷新候选，不自动改选。</li><li>窄屏 390 单列；深色沿用主题令牌。</li><li>设置区滚动条按 UI-SCROLL-001：实际滚动才显示。</li></ul></div>
+    <div><h4>边界</h4><ul><li>本页不代表正式软件已实现，不接真实 CLI、不读写设置。</li><li>路径与版本为设计样例，非用户环境承诺。</li></ul></div>
+  </div>
+</details>
+
+<div class="stage">
+  <div class="app-window" id="appWindow" data-w="1440">
+    <div class="titlebar">
+      <span class="mark" aria-hidden="true">栖</span>
+      <span class="brand">栖造<small lang="en">NESTCRAFT</small></span>
+      <span class="drag"></span>
+      <span class="wbtn" aria-hidden="true">—</span>
+      <span class="wbtn" aria-hidden="true">▢</span>
+      <span class="wbtn" aria-hidden="true">×</span>
+    </div>
+    <div class="settings">
+      <aside class="set-menu" aria-label="设置菜单">
+        <span class="m-label">设置</span>
+        <button><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.3 1a7 7 0 0 0-1.7-1L14.5 3h-5l-.4 2.6a7 7 0 0 0-1.7 1l-2.3-1-2 3.4L5 10.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 1.7 1l.4 2.6h5l.4-2.6a7 7 0 0 0 1.7-1l2.3 1 2-3.4-2-1.5c.1-.3.1-.7.1-1Z"/></svg>通用</button>
+        <button><svg class="ico" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></svg>编辑器</button>
+        <button><svg class="ico" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/></svg>服务器</button>
+        <button><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>会话</button>
+        <button class="on" aria-current="page"><svg class="ico" viewBox="0 0 24 24"><path d="M4 6h16v12H4z"/><path d="m8 10 2 2-2 2"/></svg>SDK 与 CLI</button>
+        <button><svg class="ico" viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/></svg>工具</button>
+        <button><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>智能体</button>
+      </aside>
+
+      <section class="set-main">
+        <header class="set-head">
+          <h1>SDK 与 CLI</h1>
+          <p>管理 CLI 的安装、模型与执行环境。命令工具只影响 CLI 内部执行命令时使用的 Shell。</p>
+        </header>
+        <div class="set-tabs" role="tablist">
+          <button role="tab" aria-selected="true">CLI 管理</button>
+          <button role="tab" aria-selected="false">SDK 管理</button>
+        </div>
+
+        <div class="set-scroll" id="setScroll">
+          <p class="set-intro">NestCraft 以参数数组直接启动 CLI，不经过 Shell。下列「命令工具」决定 CLI 内部执行命令时使用的 Shell；每个 CLI 的可控程度不同，界面按实际支持标注，不把仅展示当成已生效。</p>
+
+          <!-- Claude Code -->
+          <article class="cli-card" data-cli="claude">
+            <div class="cli-head">
+              <span class="cli-logo">CC</span>
+              <div class="cli-id">
+                <b>Claude Code <span class="tag good">已安装</span></b>
+                <small>@anthropic-ai/claude-code · 2.1.318</small>
+              </div>
+              <div class="cli-meta"><span class="pkg">路径已登记</span><span class="switch" role="switch" aria-checked="true" aria-label="启用 Claude Code"><i></i></span></div>
+              <button class="cli-toggle" aria-expanded="true" aria-label="折叠 Claude Code 配置">▾</button>
+            </div>
+            <div class="cli-body">
+              <div class="form-grid">
+                <div class="field"><label>默认模型</label><select class="select"><option>沿用会话选择</option><option>DeepSeek · V4.1</option></select></div>
+                <div class="field"><label>思考等级</label><select class="select"><option>沿用会话选择</option><option>高</option></select></div>
+              </div>
+              <div class="field"><label>最低任务难度</label><select class="select"><option>未配置</option><option>中</option><option>高</option></select><span class="hint">仅保存偏好；任务调度门槛尚未接入。</span></div>
+              <div class="field"><label>任务类型</label><div class="chips"><span class="chip on">仓库探索</span><span class="chip">方案设计</span><span class="chip on">代码定位</span><span class="chip">测试验证</span></div></div>
+              <div class="field"><label>权限模式</label><select class="select"><option>默认</option><option>规划</option><option>代理</option></select><span class="hint">仅保存偏好；不改变原生 CLI 审批或绕过执行门禁。</span></div>
+
+              <div class="shell-group">
+                <div class="shell-h"><b>命令工具（Shell）</b><span class="tag" data-role="cap">可指定类型</span><span class="spacer"></span><span class="caption" data-role="checkedAt">检测于 21:04</span><button class="btn sm" data-act="redetect">重新检测</button></div>
+                <div class="shell-opts" data-role="opts">
+                  <label class="opt sel"><span class="radio"></span><span class="o-main"><b>自动（CLI 默认）</b><small>由 Claude Code 自行选择；优先固定位置的 PowerShell 7</small></span></label>
+                  <label class="opt"><span class="radio"></span><span class="o-main"><b>PowerShell 7 <span class="tag good">检测到</span></b><small>C:\Program Files\PowerShell\7\pwsh.exe · 7.6.10</small></span></label>
+                  <label class="opt"><span class="radio"></span><span class="o-main"><b>Windows PowerShell 5.1</b><small>C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe</small></span></label>
+                  <label class="opt"><span class="radio"></span><span class="o-main"><b>Git Bash</b><small>C:\Program Files\Git\bin\bash.exe · 2.50.1</small></span></label>
+                </div>
+                <p class="shell-note"><span class="dot"></span><span>Claude Code 只从固定绝对位置识别 PowerShell（不查 PATH）；本版不支持自定义安装路径。选择 Git Bash 时以 CLAUDE_CODE_GIT_BASH_PATH 指定 bash.exe。</span></p>
+                <p class="shell-note warn" data-role="missingNote" hidden><span class="dot"></span><span>所选命令工具已不存在：请重新检测或改选「自动」。保存已禁用，不会静默回落到其他 Shell。</span></p>
+                <div class="checking" data-role="checking" hidden><span class="spinner"></span>正在检测命令工具与版本…</div>
+              </div>
+
+              <div class="card-foot"><button class="btn primary" data-act="save" data-role="save">保存</button><span class="msg" data-role="footMsg">偏好保存后仅影响之后的新会话。</span></div>
+            </div>
+          </article>
+
+          <!-- Codex -->
+          <article class="cli-card" data-cli="codex">
+            <div class="cli-head">
+              <span class="cli-logo codex">CX</span>
+              <div class="cli-id">
+                <b>Codex <span class="tag good">已安装</span> <span class="tag beta">实验性</span></b>
+                <small>@openai/codex · 0.166.0</small>
+              </div>
+              <div class="cli-meta"><span class="pkg">路径已登记</span><span class="switch" role="switch" aria-checked="true" aria-label="启用 Codex"><i></i></span></div>
+              <button class="cli-toggle" aria-expanded="false" aria-label="展开 Codex 配置">▸</button>
+            </div>
+            <div class="cli-body" hidden>
+              <div class="form-grid">
+                <div class="field"><label>默认模型</label><select class="select"><option>沿用会话选择</option></select></div>
+                <div class="field"><label>思考等级</label><select class="select"><option>沿用会话选择</option></select></div>
+              </div>
+              <div class="shell-group">
+                <div class="shell-h"><b>命令工具（Shell）</b><span class="tag beta">实验性</span><span class="spacer"></span><span class="caption">检测于 21:04</span><button class="btn sm" data-act="redetect">重新检测</button></div>
+                <div class="shell-opts">
+                  <label class="opt sel"><span class="radio"></span><span class="o-main"><b>自动（CLI 默认）</b><small>由 Codex 自行选择</small></span></label>
+                  <label class="opt"><span class="radio"></span><span class="o-main"><b>PowerShell 7</b><small>C:\Program Files\PowerShell\7\pwsh.exe · 7.6.10</small></span></label>
+                  <label class="opt"><span class="radio"></span><span class="o-main"><b>Windows PowerShell 5.1</b><small>C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe</small></span></label>
+                  <label class="opt"><span class="radio"></span><span class="o-main"><b>Git Bash</b><small>C:\Program Files\Git\bin\bash.exe</small></span></label>
+                </div>
+                <p class="shell-note warn"><span class="dot"></span><span>Codex 通过环境变量传递 Shell 选择，语义待实测；实测通过前不承诺生效，保存只记录偏好。派发时会带 --ignore-user-config，用户 config.toml 里的相关配置不会生效。</span></p>
+              </div>
+              <div class="card-foot"><button class="btn primary" data-act="save">保存</button><span class="msg">偏好保存后仅影响之后的新会话。</span></div>
+            </div>
+          </article>
+
+          <!-- Grok -->
+          <article class="cli-card" data-cli="grok">
+            <div class="cli-head">
+              <span class="cli-logo grok">GK</span>
+              <div class="cli-id">
+                <b>Grok CLI <span class="tag good">已安装</span></b>
+                <small>@xai-official/grok · 1.0.77</small>
+              </div>
+              <div class="cli-meta"><span class="pkg">路径已登记</span><span class="switch" role="switch" aria-checked="true" aria-label="启用 Grok CLI"><i></i></span></div>
+              <button class="cli-toggle" aria-expanded="false" aria-label="展开 Grok CLI 配置">▸</button>
+            </div>
+            <div class="cli-body" hidden>
+              <div class="shell-group">
+                <div class="shell-h"><b>命令工具（Shell）</b><span class="tag">仅展示</span><span class="spacer"></span><span class="caption">检测于 21:04</span><button class="btn sm" data-act="redetect">重新检测</button></div>
+                <div class="readonly"><span>自动（CLI 默认）</span><code>C:\Program Files\PowerShell\7\pwsh.exe · 7.6.10</code><span class="lock">已检测</span></div>
+                <p class="shell-note"><span class="dot"></span><span>Grok CLI 未提供 Shell 配置项，本版只展示检测结果，不提供选择，也不伪造「已切换」。</span></p>
+              </div>
+              <div class="card-foot"><button class="btn primary" data-act="save" disabled>保存</button><span class="msg">该 CLI 无可保存的命令工具设置。</span></div>
+            </div>
+          </article>
+        </div>
+        <div class="toast" id="toast" role="status">命令工具偏好已保存；仅对之后的新会话生效</div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var SCENARIOS = { "default": "默认", "pwsh": "指定 pwsh", "missing": "路径失效", "checking": "检测中", "saved": "已保存" };
+  var state = { theme: "light", width: "1440", scenario: "default" };
+  var root = document.documentElement;
+  var win = document.getElementById("appWindow");
+  var toast = document.getElementById("toast");
+  var toastTimer = 0;
+
+  function qs(sel, ctx) { return (ctx || document).querySelector(sel); }
+  function qsa(sel, ctx) { return Array.prototype.slice.call((ctx || document).querySelectorAll(sel)); }
+
+  function parse() {
+    var p = new URLSearchParams(location.search);
+    state.theme = p.get("theme") === "dark" ? "dark" : "light";
+    state.width = ["1440", "1024", "390"].indexOf(p.get("w")) >= 0 ? p.get("w") : "1440";
+    state.scenario = SCENARIOS[p.get("state")] ? p.get("state") : "default";
+    if (p.get("chrome") === "0") {
+      document.getElementById("reviewBar").hidden = true;
+      document.getElementById("specNotes").hidden = true;
+    }
+  }
+
+  function syncSeg() {
+    qsa("[data-seg]").forEach(function (seg) {
+      var key = seg.getAttribute("data-seg");
+      var val = key === "theme" ? state.theme : key === "width" ? state.width : state.scenario;
+      qsa("button", seg).forEach(function (b) { b.setAttribute("aria-pressed", String(b.getAttribute("data-v") === val)); });
+    });
+  }
+
+  function setBusy(card, busy) {
+    qsa("input,select,button,.opt", card).forEach(function (el) {
+      if (busy) { el.dataset.wasDisabled = el.disabled ? "1" : ""; el.disabled = true; }
+      else if (el.dataset.wasDisabled === "") { el.disabled = false; el.dataset.wasDisabled = ""; }
+    });
+  }
+
+  function applyScenario() {
+    var claude = qs('.cli-card[data-cli="claude"]');
+    var codex = qs('.cli-card[data-cli="codex"]');
+    var opts = qsa(".opt", claude);
+    var checking = qs('[data-role="checking"]', claude);
+    var missing = qs('[data-role="missingNote"]', claude);
+    var save = qs('[data-role="save"]', claude);
+    var footMsg = qs('[data-role="footMsg"]', claude);
+    var checkedAt = qs('[data-role="checkedAt"]', claude);
+
+    // 复位
+    opts.forEach(function (o) { o.classList.remove("sel", "bad", "disabled"); });
+    opts[0].classList.add("sel");
+    checking.hidden = true;
+    missing.hidden = true;
+    save.disabled = false;
+    footMsg.textContent = "偏好保存后仅影响之后的新会话。";
+    checkedAt.textContent = "检测于 21:04";
+    setBusy(claude, false);
+
+    if (state.scenario === "pwsh") {
+      opts[0].classList.remove("sel");
+      opts[1].classList.add("sel");
+      footMsg.textContent = "只启用 PowerShell 工具；路径不可自定义。";
+    } else if (state.scenario === "missing") {
+      opts[0].classList.remove("sel");
+      opts[1].classList.add("sel", "bad");
+      missing.hidden = false;
+      save.disabled = true;
+      footMsg.textContent = "所选命令工具不可用，保存已禁用。";
+      checkedAt.textContent = "检测于 21:07";
+      qs("small", opts[1]).textContent = "C:\\Program Files\\PowerShell\\7\\pwsh.exe · 未找到";
+    } else if (state.scenario === "checking") {
+      checking.hidden = false;
+      opts.forEach(function (o) { o.classList.add("disabled"); });
+      save.disabled = true;
+      setBusy(claude, true);
+      save.disabled = true;
+      footMsg.textContent = "检测完成后才能保存。";
+      checkedAt.textContent = "正在检测…";
+    } else if (state.scenario === "saved") {
+      opts[0].classList.remove("sel");
+      opts[1].classList.add("sel");
+      footMsg.textContent = "已保存 · 21:09";
+      showToast();
+    }
+    // codex 卡片仅默认态，保持展开按钮可操作
+    if (state.scenario === "saved") { codex.classList.add("saved-hint"); }
+  }
+
+  function showToast() {
+    toast.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toast.classList.remove("show"); }, 1800);
+  }
+
+  function render() {
+    root.setAttribute("data-theme", state.theme);
+    win.setAttribute("data-w", state.width);
+    syncSeg();
+    applyScenario();
+  }
+
+  qsa("[data-seg] button").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var key = b.parentElement.getAttribute("data-seg");
+      state[key === "theme" ? "theme" : key === "width" ? "width" : "scenario"] = b.getAttribute("data-v");
+      toast.classList.remove("show");
+      render();
+    });
+  });
+
+  qsa(".cli-toggle").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var card = btn.closest(".cli-card");
+      var body = qs(".cli-body", card);
+      var open = btn.getAttribute("aria-expanded") === "true";
+      btn.setAttribute("aria-expanded", String(!open));
+      btn.textContent = open ? "▸" : "▾";
+      body.hidden = open;
+    });
+  });
+
+  qsa('.cli-card[data-cli="claude"] .opt').forEach(function (opt) {
+    opt.addEventListener("click", function () {
+      if (opt.classList.contains("disabled")) return;
+      qsa('.cli-card[data-cli="claude"] .opt').forEach(function (o) { o.classList.remove("sel"); });
+      opt.classList.add("sel");
+      var tx = qs("b", opt).textContent;
+      var footMsg = qs('[data-role="footMsg"]');
+      footMsg.textContent = tx.indexOf("自动") === 0 ? "自动：由 CLI 自行选择，NestCraft 不注入 Shell 参数。" : "已选择 " + tx.replace(/\s+/g, " ").trim() + "；点保存后写入偏好。";
+    });
+  });
+
+  qsa('[data-act="redetect"]').forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var card = btn.closest(".cli-card");
+      var group = btn.closest(".shell-group");
+      var note = qs('[data-role="checking"]', card);
+      var save = qs('[data-role="save"]', card);
+      var foot = qs('[data-role="footMsg"]', card);
+      var times = qs('[data-role="checkedAt"]', card);
+      if (!note) {
+        btn.disabled = true; btn.textContent = "检测中…";
+        setTimeout(function () { btn.disabled = false; btn.textContent = "重新检测"; }, 900);
+        return;
+      }
+      note.hidden = false;
+      save.disabled = true;
+      foot.textContent = "检测完成后才能保存。";
+      if (times) times.textContent = "正在检测…";
+      btn.disabled = true; btn.textContent = "检测中…";
+      setTimeout(function () {
+        note.hidden = true;
+        btn.disabled = false; btn.textContent = "重新检测";
+        save.disabled = false;
+        foot.textContent = "检测完成；未改选。";
+        if (times) times.textContent = "检测于 " + new Date().toTimeString().slice(0, 5);
+      }, 900);
+    });
+  });
+
+  qs('[data-act="save"]').addEventListener("click", function () {
+    if (this.disabled) return;
+    var foot = qs('[data-role="footMsg"]');
+    foot.textContent = "已保存 · " + new Date().toTimeString().slice(0, 5);
+    showToast();
+  });
+
+  // 设置区滚动条按需显示（UI-SCROLL-001）
+  var scroller = document.getElementById("setScroll");
+  var hideTimer = 0;
+  scroller.addEventListener("scroll", function () {
+    scroller.classList.add("scrollbar-active");
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(function () { scroller.classList.remove("scrollbar-active"); }, 700);
+  }, { passive: true });
+
+  window.addEventListener("keydown", function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      document.getElementById("specNotes").open = true;
+      document.getElementById("specNotes").scrollIntoView({ block: "nearest" });
+    }
+  });
+
+  function focusSection() {
+    var p = new URLSearchParams(location.search);
+    if (p.get("focus") !== "shell") return;
+    var scroller = document.getElementById("setScroll");
+    var group = document.querySelector('.cli-card[data-cli="claude"] .shell-group');
+    if (!scroller || !group) return;
+    scroller.scrollTop = Math.max(0, group.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop - 8);
+  }
+
+  parse();
+  render();
+  focusSection();
+})();
+</script>
+</body>
+</html>

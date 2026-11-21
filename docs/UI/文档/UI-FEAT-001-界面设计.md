@@ -283,6 +283,10 @@ Agent 工作台
 - 模型设置：供应商行卡（拖柄、名称、自定义、状态点、开关、编辑、删除）；编辑区四页签；供应商页密钥表 + 显示名称 + 协议分段 + API 地址；模型页折叠行 + 恢复默认/获取可用/自动获取（仿真）+ 模态 + 思考档位 + 映射 + 默认强度 + 上下文窗口与最大输出；高级页请求头与请求伪装；指纹页逐模型检测与折叠结果。
 - SDK 管理：registry 输入、全部重新检测、内置子代理只读提示、三个可展开 CLI 版本卡（版本箭头、徽章、目标版本、当前/卸载/重检、路径）。
 - Skill/MCP/Tool：开关后不加文字，保留无障碍名称；Skill 与 MCP 支持创建并校验必填与重名。
+- MCP OAuth增量（UI-STORY-031-OAUTH-v1，设计资源与SettingsMcp正式交互已接入，视觉对照待验证）：HTTP MCP行与同一设置弹窗内的设计夹具覆盖未授权／待浏览器回调／已授权／过期／撤权／连接失败；正式界面沿现有MCP二级弹窗提供“授权”“撤销授权”，授权中显示可重试状态，不展示token、state或原始回调。`stdio`不显示OAuth操作。工具发现结果与授权状态分开显示，HTTP未授权禁止测试/派发。资源位于唯一 `workbench-v4` 入口的「设置 → 能力 · MCP」，正式实现位置为 `src/modules/settings/SettingsMcp.tsx`；真实OAuth端到端和同条件设计/软件视觉证据仍待验证。
+  - HTTP 认证字段（同版本）：配置弹窗内按认证方式切换——OAuth 显示授权/撤销；静态令牌显示 Bearer 输入（`type=password`，保存后不回显，已有令牌留空表示保留）；无认证不发送认证头。loopback HTTPS 地址额外显示“信任本机自签名证书”开关，默认关闭，非 loopback 地址不显示该开关；文案说明仅本机回环放宽。列表状态按认证方式区分显示 `OAuth：…`、`静态令牌：…` 或 `无认证`，静态令牌不显示 OAuth 授权按钮。
+  - 设计资源：`workbench-v4/index.html` SHA256=`BFA7C2399CB9C1E7E67CB8ABF5C639AAB32D13E75CE4C5C386DCD79E0DDBF10E`；`mcp-oauth.css` SHA256=`91496D456F22CD0EA7573CAAC8956CEDD08F2E4F38005A3B776A59E5D289478F`；`screens-more.js` SHA256=`E8175845A71FF89EC45E07534F99B9E7C0819B2A455E8751DE7C88017A079AD7`；`main.js` SHA256=`488849DF257000E3A3FFDB9B0C4B26ADCEF4E24CB53844770ABF911820616F64`。
+  - 离线检查：`node docs/Test/story031-oauth-design-check.mjs`；报告 [story031-oauth-design-report.json](../../Test/story031-oauth-design-report.json)，截图 [1440浅色](../../Test/screenshots/story031-oauth/story031-oauth-1440-light.png)、[390浅色](../../Test/screenshots/story031-oauth/story031-oauth-390-light.png)、[1440深色](../../Test/screenshots/story031-oauth/story031-oauth-1440-dark.png)；六态、授权信息保护、浅深色和窄屏无横向溢出通过。
 
 ### 验证
 

@@ -56,10 +56,13 @@
     return allDocs(lib).some(d => d.id !== except && String(d.path).normalize("NFC").toLocaleLowerCase() === key) || [...directories(lib)].some(p => p.normalize("NFC").toLocaleLowerCase() === key);
   }
   function markdownName(name) { return /\.(md|markdown)$/i.test(name) ? name : name + ".md"; }
+  /* CR-051：文件树图标改用 core 的 14 类扩展名映射（符号 + 类型色令牌）；未知扩展名显示 fileUnknown，不阻止上传。 */
   function fileIcon(d) {
     const t = typeOf(d);
-    return icon(isImage(d) ? "image" : t === "pdf" ? "filePdf" : ["xlsx", "xls"].includes(t) ? "fileSheet" : ["docx", "doc"].includes(t) ? "fileWord" : ["ppt", "pptx"].includes(t) ? "fileSlides" : ["zip", "7z", "rar"].includes(t) ? "fileArchive" : "fileText", "ico-14");
+    const fallback = isMD(d) ? "md" : isImage(d) ? "png" : t;
+    return UI.fileIcon(fallback, "ico-14");
   }
+  const fico = (d, cls) => `<span style="color:${UI.fileMeta(isMD(d) ? "md" : isImage(d) ? "png" : typeOf(d)).c}">${UI.fileIcon(isMD(d) ? "md" : isImage(d) ? "png" : typeOf(d), cls || "ico-14")}</span>`;
   // Safe, deliberately small Markdown viewer: no HTML, external fetch, image load,
   // clickable arbitrary URL, active content, or local path from user input.
   function inline(text) {
@@ -103,14 +106,14 @@
   function folderEditor(parent, depth, st) {
     const f = st.folderInput;
     if (!f || f.parent !== parent) return "";
-    return `<div class="kw-folder-editor" style="--kw-depth:${depth}">${icon("folder", "ico-14")}<div><input id="kw-folder-name" class="input" aria-label="新文件夹名称" aria-invalid="${Boolean(f.error)}" aria-describedby="kw-folder-help" value="${esc(f.name)}" placeholder="文件夹名"><small id="kw-folder-help" class="${f.error ? "kw-error-text" : ""}">${esc(f.error || "Enter 确认 · Escape 取消")}</small></div><button class="icon-btn" data-act="kw-folder-cancel" aria-label="取消新建文件夹">${icon("x", "ico-14")}</button></div>`;
+    return `<div class="kw-folder-editor" style="--kw-depth:${depth}"><span style="color:var(--fic-folder);display:inline-flex">${icon("folder", "ico-14")}</span><div><input id="kw-folder-name" class="input" aria-label="新文件夹名称" aria-invalid="${Boolean(f.error)}" aria-describedby="kw-folder-help" value="${esc(f.name)}" placeholder="文件夹名"><small id="kw-folder-help" class="${f.error ? "kw-error-text" : ""}">${esc(f.error || "Enter 确认 · Escape 取消")}</small></div><button class="icon-btn" data-act="kw-folder-cancel" aria-label="取消新建文件夹">${icon("x", "ico-14")}</button></div>`;
   }
   function treeHtml(lib, st) {
     const q = String(store.kbQuery || "").trim().toLocaleLowerCase(), docs = allDocs(lib), folders = directories(lib);
     const folderRow = (path, depth, searching) => {
       const collapsed = st.collapsed.has(path), open = st.menu?.path === path;
       return `<div class="kw-folder-row ${st.selectedFolder === path ? "selected" : ""}" style="--kw-depth:${depth}" data-folder="${esc(path)}">
-        <button class="kw-folder-toggle" data-act="kw-folder-toggle" data-path="${esc(path)}" aria-expanded="${!collapsed}" title="${esc(path)}">${icon(collapsed ? "chevronRight" : "chevronDown", "ico-14")}${icon("folder", "ico-14")}<span class="ellipsis">${esc(searching ? path : path.split("/").pop())}</span></button>
+        <button class="kw-folder-toggle" data-act="kw-folder-toggle" data-path="${esc(path)}" aria-expanded="${!collapsed}" title="${esc(path)}">${icon(collapsed ? "chevronRight" : "chevronDown", "ico-14")}<span style="color:var(--fic-folder);display:inline-flex">${icon(collapsed ? "folder" : "folderOpen", "ico-14")}</span><span class="ellipsis">${esc(searching ? path : path.split("/").pop())}</span></button>
         <span class="kw-row-actions ${open ? "visible" : ""}"><button class="icon-btn" data-act="kw-folder-menu" data-path="${esc(path)}" aria-label="在 ${esc(path)} 新建" aria-haspopup="menu" aria-expanded="${open}">${icon("plus", "ico-14")}</button><button class="icon-btn" data-act="kw-folder-menu" data-path="${esc(path)}" aria-label="${esc(path)} 更多操作" aria-haspopup="menu">${icon("more", "ico-14")}</button></span>
         ${open ? `<div class="kw-folder-menu" role="menu"><button role="menuitem" data-act="kw-new-md" data-parent="${esc(path)}">${icon("filePlus", "ico-14")}新建下级 MD</button><button role="menuitem" data-act="kw-new-folder" data-parent="${esc(path)}">${icon("folderPlus", "ico-14")}新建下级文件夹</button></div>` : ""}</div>`;
     };
@@ -124,7 +127,7 @@
       const files = docs.filter(d => parentOf(d.path) === parent);
       return folderEditor(parent, depth, st) + dirs.map(path => folderRow(path, depth, false) + (st.collapsed.has(path) ? "" : `<div class="kw-tree-children">${walk(path, depth + 1) || `<div class="kw-empty-folder" style="--kw-depth:${depth + 1}">空目录 · 行尾＋添加内容</div>`}</div>`)).join("") + files.map(d => `<div style="--kw-depth:${depth}">${fileButton(lib, d, st, false)}</div>`).join("");
     };
-    return `<div class="kw-root-row"><button data-act="kw-root" title="选择知识库根目录">${icon("folderOpen", "ico-14")}库根目录</button><button class="icon-btn" data-act="kw-new-folder" data-parent="" aria-label="在库根目录新建文件夹">${icon("folderPlus", "ico-14")}</button><button class="icon-btn" data-act="kw-collapse-all" aria-label="收起全部目录">${icon("collapse", "ico-14")}</button></div>${walk("", 0)}${!docs.length && !folders.size && !st.folderInput ? `<div class="kw-empty"><b>知识库为空</b><p>本人可以直接新建或演示上传。AI 项目尚未获授权不影响管理。</p></div>` : ""}`;
+    return `<div class="kw-root-row"><button data-act="kw-root" title="选择知识库根目录"><span style="color:var(--fic-folder);display:inline-flex">${icon("folderOpen", "ico-14")}</span>库根目录</button><button class="icon-btn" data-act="kw-new-folder" data-parent="" aria-label="在库根目录新建文件夹">${icon("folderPlus", "ico-14")}</button><button class="icon-btn" data-act="kw-collapse-all" aria-label="收起全部目录">${icon("collapse", "ico-14")}</button></div>${walk("", 0)}${!docs.length && !folders.size && !st.folderInput ? `<div class="kw-empty"><b>知识库为空</b><p>本人可以直接新建或演示上传。AI 项目尚未获授权不影响管理。</p></div>` : ""}`;
   }
   const uploads = [
     { key: "md", name: "演示说明.md", type: "md", title: "演示说明", bytes: 180, body: "# 演示说明\n\n此正文是 CR-045 合成上传夹具，不来自本机文件。\n\n## 使用范围\n\n仅在设计稿内存演示阅读、编辑与保存。" },
@@ -168,13 +171,14 @@
   function docHtml(lib, st, v) {
     const { draft, doc, text, mode }=v, editing=mode==='edit', readable=draft || (isMD(doc)&&text!==null);
     const key=st.current, id=liveId(lib,key), title=draft?.title||doc?.title||'知识工作区';
+    const headGlyph=(doc||draft)?fico(doc||(draft?{type:'md'}:null),'ico-20'):'';
     const live=readable?LiveDoc.render(id,text,{
       readOnly:!editing,
       write:(body)=> { const d=state(lib).drafts.get(key); if(!d)return {ok:false,error:'没有可写缓冲'}; d.body=body;return saveDraft(lib,key,d); },
       onChange:body=>{const d=state(lib).drafts.get(key);if(d)d.body=body; updateTOC(lib,key,body);},
       onSaved:()=>{const root=document.querySelector('.knowledge-workspace');if(root?.dataset.library===lib){root.querySelector('.kb-docs').innerHTML=treeHtml(lib,state(lib));}}
     }):preview(doc,st,text);
-    return '<div class="kw-document-head"><button class="icon-btn kw-tree-mobile" data-act="kw-toggle-tree" aria-label="打开知识文件树">'+icon('panelLeft','ico-14')+'</button><div class="crumb"><span>'+esc(title)+'</span></div><span class="spacer"></span>'+(readable?'<div class="seg" role="tablist" aria-label="文档视图"><button data-act="kw-mode" data-mode="read" aria-selected="'+(!editing)+'">阅读</button><button data-act="kw-mode" data-mode="edit" aria-selected="'+editing+'">编辑</button></div>':'')+'</div>'+
+    return '<div class="kw-document-head"><button class="icon-btn kw-tree-mobile" data-act="kw-toggle-tree" aria-label="打开知识文件树">'+icon('panelLeft','ico-14')+'</button><span class="kw-doc-ico">'+headGlyph+'</span><div class="crumb"><span>'+esc(title)+'</span></div><span class="spacer"></span>'+(readable?'<div class="seg" role="tablist" aria-label="文档视图"><button data-act="kw-mode" data-mode="read" aria-selected="'+(!editing)+'">阅读</button><button data-act="kw-mode" data-mode="edit" aria-selected="'+editing+'">编辑</button></div>':'')+'</div>'+
       '<div class="kw-toolbar"><span class="ellipsis">'+esc(doc?.path||draft?.parent||'库根目录')+'</span><span class="spacer"></span><span class="caption">'+(readable?(editing?'所见即所得 · 自动保存':'只读阅读 · 防止误改'):'原件阅读')+'</span>'+(draft?.isNew?'<button class="btn sm" data-act="kw-cancel">放弃未创建文档</button>':'')+'</div>'+
       '<div class="kw-memory-note">合成设计 · 自动保存仅更新页面样例，不写磁盘。阅读视图不可修改正文；切入编辑后直接在排版内输入。</div>'+errorPanel(draft)+confirmHtml(st)+
       '<div class="kw-scroll kb-article-body" data-kw-scroll data-kw-current="'+esc(key||'')+'">'+(draft?.isNew?'<div class="kw-editor"><label for="kw-title">文件名 · Enter或失焦确认后自动创建</label><input id="kw-title" class="kw-title input" value="'+esc(draft.title)+'" placeholder="未命名.md"></div>':'')+live+

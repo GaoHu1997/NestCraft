@@ -406,6 +406,7 @@
       UI.closeSubDialog(); store.settingsTab = "mcp"; S().refreshSettings(); toast("已添加 MCP " + name);
     },
     "mcp-toggle": el => { const m = D.settings.mcp[Number(el.dataset.idx)]; if (m) { m.on = !m.on; S().refreshSettings(); } },
+    "mcp-oauth-demo": el => { const labels = { unauthenticated: "未授权", pending: "待浏览器回调", authenticated: "已授权", expired: "已过期", revoked: "已撤权", error: "连接失败" }; toast("设计演示：HTTP MCP状态 · " + (labels[el.dataset.state] || "未知")); },
     "tool-toggle": el => { const t = D.settings.tools[Number(el.dataset.idx)]; if (t) { t.on = !t.on; S().refreshSettings(); } },
 
     /* ---------- AI ---------- */
@@ -437,6 +438,7 @@
     "ai-steps-toggle": () => { store.aiStepsOpen = !store.aiStepsOpen; render(); },
     "ai-send": () => AIPanel.send(),
     "ai-approve": el => AIPanel.approve(Number(el.dataset.idx), true),
+    "ai-copy": el => { const m = store.aiMessages[Number(el.dataset.idx)]; const w = navigator.clipboard; if (w && m) w.writeText(m.text).then(() => toast("已复制这条回复"), () => toast("复制失败", "alert")); else toast("当前环境不支持复制", "alert"); },
     "ai-deny": el => AIPanel.approve(Number(el.dataset.idx), false),
     "ai-show-cmd": () => openDialog(dlgShell("待审批命令", "逐次确认，不记忆放行", `<pre class="mono" style="padding:12px;background:var(--surface-2);border:1px solid var(--line);border-radius:6px">pnpm vitest run tests/capacity-rollback.spec.ts\n\n工作目录：D:/work/booking-service\n风险：写入测试文件\n超时：120s</pre>`, `<button class="btn" data-act="close-dialog">关闭</button>`, "modal-sm")),
     "ai-stat": el => { store.aiPop = store.aiPop === el.dataset.stat ? null : el.dataset.stat; store.aiMenu = null; store.aiTop = null; render(); },
@@ -732,6 +734,14 @@
 
   window.__actions = actions;
   if (!D.settings.general.sendMode) D.settings.general.sendMode = "queue";
+  // CR-056：`?demo=ai` 直接打开项目窗口并展开 AI 侧栏，便于逐状态截图；默认行为不变。
+  const demoParam = new URLSearchParams(window.location.search).get("demo");
+  if (demoParam === "ai") {
+    const pid = D.requirements.find(r => r.kind === "story")?.project || D.projects[0]?.id;
+    if (pid) { UI.openWindow("project", pid, D.projects.find(p => p.id === pid)?.name || pid); store.aiOpen = true; }
+    // 截图用：top=1 停在与在顶部，便于查看完整时间线；默认贴底跟随最新消息。
+    if (new URLSearchParams(window.location.search).get("top") === "1") store.aiStick = false;
+  }
   render();
 })();
 

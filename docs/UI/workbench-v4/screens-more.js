@@ -1,12 +1,15 @@
 /* 知识库、服务器、设置。 */
 (function () {
   "use strict";
-  const { D, esc, icon, store, toast, openDialog, openSubDialog, closeDialog, dlgShell, md, toc, fileIcon } = UI;
+  const { D, esc, icon, store, toast, openDialog, openSubDialog, closeDialog, dlgShell, md, toc, fileIcon, projTile, kbIconId, avatarHtml, avatarImg, KB_ICON_IDS, AVATAR_LABELS, ICON_GROUPS, ICON_COLORS, ICON_COLOR_LABELS } = UI;
+  const iconColorPair = UI.iconColorPair;
   const Screens = window.Screens;
 
   const libById = id => D.knowledge.libraries.find(l => l.id === id) || D.knowledge.libraries[0];
   const docById = (libId, docId) => (D.knowledge.docs[libId] || []).find(d => d.id === docId);
   const isGranted = lib => lib.allProjects || (lib.grantedTo || []).length > 0;
+  /* CR-051：演示夹具的来源推导默认（本地 bookOpen / 本地+网页 layers）；用户自选后保存 lib.icon，清空回推导。 */
+  const KB_SOURCE_DEFAULT = { "KB-01": "bookOpen", "KB-02": "layers", "KB-03": "book" };
 
   /* ================= 知识库 ================= */
   function knowledgePage() {
@@ -17,10 +20,11 @@
         <button class="btn primary" data-act="toast" data-msg="演示：新建知识库">${icon("plus", "ico-14")}新建知识库</button></div></div>
       <div class="stack">
         ${D.knowledge.libraries.map(lib => `<div class="card kb-card">
-          <span class="kb-icon ${lib.tone}">${icon("book", "ico-20")}</span>
+          <span class="kb-icon ${lib.iconColor ? "" : esc(lib.tone || "blue")}" ${lib.iconColor ? `style="background:${iconColorPair(lib.iconColor)[0]};color:${iconColorPair(lib.iconColor)[1]}"` : ""} data-kb-tile="${esc(lib.id)}">${icon(kbIconId(lib, KB_SOURCE_DEFAULT[lib.id] || "library"), "ico-20")}</span>
           <div class="kb-main"><b>${esc(lib.name)}</b><p>${esc(lib.desc)} · ${esc(lib.owner)}</p>
             <div class="kb-tags">${lib.allProjects ? `<span class="tag green">所有项目可用</span>` : lib.grantedTo.length ? lib.grantedTo.map(p => `<span class="tag blue">${esc((D.projects.find(x => x.id === p) || {}).name || p)}</span>`).join("") : `<span class="tag gray">未授权</span>`}</div></div>
           <div class="kb-side"><span>${(D.knowledge.docs[lib.id] || []).length} 篇</span><span>${esc(lib.updated)}</span>
+            <button class="btn sm" data-act="kb-icon-open" data-id="${lib.id}" title="选择内置图标">${icon("palette", "ico-14")}图标</button>
             <button class="btn sm" data-act="kb-grant-open" data-id="${lib.id}">${isGranted(lib) ? "管理授权" : "授权"}</button>
             <button class="btn sm primary" data-act="open-kb" data-id="${lib.id}">进入</button></div>
         </div>`).join("")}
@@ -33,7 +37,7 @@
     const lib = libById(libId);
     const body = `<div class="grant-box">
       <div class="caption">选择可以访问该知识库的项目，可多选；也可以对所有项目开放（含以后新建的项目）。</div>
-      <div class="grant-list">${D.projects.map(p => `<label class="grant-row"><input type="checkbox" data-grant-project="${p.id}" ${lib.grantedTo.includes(p.id) ? "checked" : ""}><span class="proj-avatar ${p.tone}" style="width:26px;height:26px;font-size:10px">${esc(p.key.slice(0, 2))}</span><span class="g-main"><b>${esc(p.name)}</b><span>${esc(p.id)} · ${esc(p.owner)}</span></span></label>`).join("")}</div>
+      <div class="grant-list">${D.projects.map(p => `<label class="grant-row"><input type="checkbox" data-grant-project="${p.id}" ${lib.grantedTo.includes(p.id) ? "checked" : ""}>${projTile(p, "sm", "ico-14")}<span class="g-main"><b>${esc(p.name)}</b><span>${esc(p.id)} · ${esc(p.owner)}</span></span></label>`).join("")}</div>
       <label class="grant-all"><span><b>所有项目开放</b><span class="caption">新建项目自动获得访问权</span></span><span class="switch" data-act="grant-all" aria-checked="${lib.allProjects}"></span></label>
       <div class="note-box">${icon("shield", "ico-14")} 授权只授予只读检索，不授予写入、命令执行或未授权目录访问。</div>
     </div>`;
@@ -112,7 +116,7 @@
     const g = D.settings.general;
     return `<div class="settings-dialog">
       <aside class="set-nav">
-        <div class="set-user"><span class="avatar teal" style="width:34px;height:34px;font-size:12px">${esc(D.user.initials)}</span><div><b>${esc(g.profile.name)}</b><span>${esc(g.profile.email)}</span></div></div>
+        <div class="set-user">${avatarHtml("md", "")}<div><b>${esc(g.profile.name)}</b><span>${esc(g.profile.email)}</span></div></div>
         <div class="set-nav-list">${SET_NAV.map(([k, label, ic]) => `<button class="s-item" aria-selected="${tab === k}" data-act="settings-tab" data-tab="${k}">${icon(ic, "ico-14")}${label}</button>`).join("")}</div>
         <div class="set-nav-f"><span class="caption">UI-CR036-v4 · 演示</span><button class="btn sm" data-act="close-dialog">关闭</button></div>
       </aside>
@@ -129,6 +133,10 @@
   function setContent(tab) {
     const g = D.settings.general;
     if (tab === "general") {
+      const current = store.avatarDraft || store.avatarStyle || "b";
+      const avatarRadio = `<div class="avatar-radio-row" role="radiogroup" aria-label="头像风格">
+        ${["a", "b", "c", "d", "e"].map(s => `<button class="avatar-radio" type="button" role="radio" aria-checked="${current === s}" data-act="avatar-style-pick" data-id="${s}">${avatarHtml("sm", "")}<b>${esc((UI.AVATAR_LABELS[s] || s).replace(/^[a-e] /, ""))}</b></button>`).join("")}
+      </div>`;
       return `<div class="set-section"><h3>用户基本信息</h3>
         <div class="set-field"><div class="f-label"><b>显示名称</b><span>用于会话与操作记录</span></div><div class="f-control"><input class="input" id="gen-name" value="${esc(g.profile.name)}"></div></div>
         <div class="set-field"><div class="f-label"><b>邮箱</b><span>仅占位，不发送邮件</span></div><div class="f-control"><input class="input" id="gen-email" value="${esc(g.profile.email)}"></div></div>
@@ -142,9 +150,16 @@
         <div class="set-field"><div class="f-label"><b>默认端口 / 用户</b><span>新建主机时的默认值</span></div><div class="f-control row"><input class="input" style="width:100px" id="gen-port" value="${g.server.port}"><input class="input" style="width:140px" id="gen-user" value="${esc(g.server.defaultUser)}"></div></div>
         <div class="set-field"><div class="f-label"><b>默认认证</b><span>密钥文件 / 密码 / 跳板机</span></div><div class="f-control"><select class="select" id="gen-auth"><option ${g.server.auth === "密钥文件" ? "selected" : "selected"}>密钥文件</option><option>密码</option><option>跳板机</option></select></div></div>
         <div class="set-field"><div class="f-label"><b>高风险命令确认</b><span>逐次确认，不记忆放行</span></div><div class="f-control"><button class="switch" aria-checked="${g.server.confirmDanger}" data-act="toast" data-msg="演示：高风险确认已开启"></button></div></div></div>
+      <div class="set-section"><h3>界面外观</h3>
+        <div class="set-field"><div class="f-label"><b>头像</b><span>悬停头像出现编辑；内置 5 种样式或自定义图片（PNG / JPG / WebP，≤200KB）。应用后顶栏、侧栏与设置三处同步</span></div><div class="f-control"><span class="avatar-field">
+          <span class="avatar-frame"><span class="avatar" style="width:72px;height:72px">${avatarImg("")}</span><button class="avatar-edit" type="button" data-act="avatar-edit" aria-label="更换头像" title="更换头像">${icon("camera", "ico-14")}</button></span>
+          <button class="btn sm" type="button" data-act="avatar-edit">更换头像…</button>
+        </span></div></div>
+        <div class="set-field"><div class="f-label"><b>头像风格</b><span>品牌帆船 Logo；作用于顶栏、侧栏与设置，保存后三处同步</span></div><div class="f-control">${avatarRadio}</div></div>
+        <div class="set-field"><div class="f-label"><b>预览</b><span>当前风格下的三处头像（点击上方立即预览整页）</span></div><div class="f-control"><span class="row" style="gap:10px">${avatarHtml("xs", "")}${avatarHtml("", "")}${avatarHtml("md", "")}<span class="caption">24 / 30 / 34px</span></span></div></div></div>
       <div class="set-section"><h3>会话</h3>
         <div class="set-field"><div class="f-label"><b>生成中再次发送</b><span>立即发送会打断当前生成，排队等当前完成</span></div><div class="f-control"><div class="seg"><button data-act="set-send-mode" data-mode="immediate" aria-selected="${(g.sendMode || "queue") === "immediate"}">立即发送</button><button data-act="set-send-mode" data-mode="queue" aria-selected="${(g.sendMode || "queue") === "queue"}">排队</button></div></div></div></div>
-      <div class="set-actions"><button class="btn primary" data-act="settings-save">保存设置</button><span class="caption">保存后立即作用于设计稿</span></div>`;
+      <div class="set-actions"><button class="btn primary" data-act="settings-save">保存设置</button><span class="caption">保存后立即作用于设计稿；取消恢复已保存风格</span></div>`;
     }
     if (tab === "models") {
       return `<div class="row between" style="margin-bottom:14px"><span class="caption">${D.settings.providers.length} 个供应商 · 点击卡片展开配置</span><button class="btn sm primary" data-act="provider-new">${icon("plus", "ico-14")}新建供应商</button></div>
@@ -232,11 +247,28 @@
         <span class="cap-main"><b>${esc(s.name)} <span class="mono muted" style="font-size:11px">/${esc(s.slug)}</span></b><span>${esc(s.desc)} · 来源 ${esc(s.source)} · ${esc(s.updated)}</span></span>
         <button class="switch" aria-checked="${s.on}" data-act="skill-toggle" data-idx="${i}"></button></div>`).join("")}</div>`;
   }
+  function mcpOauthPreview() {
+    const states = [
+      ["unauthenticated", "未授权", "HTTP MCP尚未完成授权；连接测试与派发保持阻止。", "授权"],
+      ["pending", "待浏览器回调", "已打开系统浏览器，等待一次性loopback回调；超时可重试。", "等待回调"],
+      ["authenticated", "已授权", "NestCraft持有受管凭据；工具发现与派发分别显示结果。", "撤销授权"],
+      ["expired", "已过期", "刷新令牌失效或凭据过期；旧令牌不再使用。", "重新授权"],
+      ["revoked", "已撤权", "本地凭据已删除，远端撤销结果不影响当前配置。", "重新授权"],
+      ["error", "连接失败", "metadata、回调、令牌交换或tools/list失败；不展示原始凭据。", "查看失败原因"]
+    ];
+    return `<section class="mcp-oauth-preview" aria-label="HTTP MCP OAuth状态演示"><h4>HTTP MCP 授权状态覆盖 · 设计夹具</h4><p class="caption">授权由NestCraft管理；token、state、原始回调和CLI用户profile不显示。stdio MCP不显示OAuth操作。</p><div class="mcp-oauth-grid">${states.map(([key, label, desc, action]) => `<article class="mcp-oauth-state ${key}"><b>${label}</b><p>${desc}</p><div class="mcp-oauth-actions"><button class="btn sm" data-act="mcp-oauth-demo" data-state="${key}">${action}</button>${key === "authenticated" ? `<button class="btn sm" data-act="toast" data-msg="设计演示：连接结果与授权状态分开">发现工具</button>` : ""}</div></article>`).join("")}</div>
+      <div class="set-section" style="margin-top:14px"><h4 style="margin:0 0 6px;font-size:13px">HTTP 认证方式（MCP 配置内）</h4>
+        <div class="set-field"><div class="f-label"><b>认证方式</b><span>OAuth：NestCraft 完成浏览器授权；静态令牌：直接使用服务提供的 Bearer；无认证：仅限受控服务</span></div><div class="f-control"><select class="select" aria-label="MCP认证方式"><option>OAuth</option><option>静态令牌</option><option>无认证</option></select></div></div>
+        <div class="set-field"><div class="f-label"><b>Bearer 令牌</b><span>仅写入受管密钥，保存后不回显；不在列表、日志或错误中展示</span></div><div class="f-control"><input class="input" type="password" aria-label="MCP Bearer令牌" placeholder="保存后不回显"></div></div>
+        <div class="set-field"><div class="f-label"><b>信任本机自签名证书</b><span>仅 loopback（127.0.0.1／localhost／::1）的 HTTPS 可开启，默认关闭；其他主机始终校验证书</span></div><div class="f-control"><button class="switch" aria-checked="false" aria-label="信任本机自签名证书"></button></div></div>
+        <p class="caption">静态令牌连接不需要 OAuth 回调；工具发现仍使用同一受管令牌。</p>
+      </div></section>`;
+  }
   function mcpList() {
     return `<div class="row between" style="margin-bottom:12px"><span class="caption">${D.settings.mcp.length} 个服务器</span><div class="row"><button class="btn sm" data-act="mcp-import">${icon("upload", "ico-14")}导入</button><button class="btn sm primary" data-act="mcp-add">${icon("plus", "ico-14")}添加 MCP</button></div></div>
       <div class="card">${D.settings.mcp.map((m, i) => `<div class="cap-row"><span class="sdk-logo" style="width:32px;height:32px">${icon("box", "ico-16")}</span>
         <span class="cap-main"><b>${esc(m.name)}</b><span>${esc(m.transport)} · <span class="mono">${esc(m.target)}</span> · ${m.tools} 个工具</span></span>
-        <span class="status ${m.on ? "green" : "gray"}">${m.on ? "已连接" : "已停用"}</span><button class="switch" aria-checked="${m.on}" data-act="mcp-toggle" data-idx="${i}"></button></div>`).join("")}</div>`;
+        <span class="status ${m.on ? "green" : "gray"}">${m.on ? "已启用 · 工具发现独立显示" : "已停用"}</span><button class="switch" aria-checked="${m.on}" data-act="mcp-toggle" data-idx="${i}"></button></div>`).join("")}</div>${mcpOauthPreview()}`;
   }
   function toolList() {
     return `<div class="card"><table class="table"><thead><tr><th>工具</th><th>风险</th><th>说明</th><th>今日调用</th><th>状态</th></tr></thead><tbody>
@@ -365,6 +397,418 @@
       ${mode === "import" ? `<div class="form-row"><label>配置文件</label><input class="input" id="mc-file" value="D:/config/mcp.json"></div>` : ""}
     </div>`, `<button class="btn" data-act="close-sub">取消</button><button class="btn primary" data-act="mcp-save" data-mode="${mode}">${mode === "import" ? "导入" : "添加"}</button>`));
   }
+
+  /* ================= CR-051 r2/r6：知识库图标选择器（与项目共用 50 个、6 组，10 色卡成对保存） ================= */
+  function kbIconModal(libId) {
+    const lib = libById(libId);
+    const draft = store.kbIconDraft || { libId, value: lib.icon || "", color: lib.iconColor || "" };
+    store.kbIconDraft = draft.libId === libId ? draft : { libId, value: lib.icon || "", color: lib.iconColor || "" };
+    const value = store.kbIconDraft.value;
+    const colorValue = store.kbIconDraft.color;
+    const pair = iconColorPair(colorValue);
+    const picker = `<div class="picker kb-icon-picker" role="group" aria-label="知识库图标选择（50 选 1，分 6 组，可留空）">
+      ${ICON_GROUPS.map(g => `<div class="picker-group"><div class="picker-group-h"><b>${esc(g.name)}</b><span>${esc(g.hint)}</span></div><div class="picker-group-grid">${g.icons.map(ic => `<button type="button" class="picker-cell" aria-pressed="${value === ic}" data-act="kb-icon-pick" data-id="${ic}" title="${ic}">${icon(ic, "ico-20")}<span class="picker-name">${ic}</span></button>`).join("")}</div></div>`).join("")}
+      <button type="button" class="picker-cell picker-clear" aria-pressed="${!value}" data-act="kb-icon-clear" title="清空回来源默认">${icon("x", "ico-14")}<span class="picker-name">默认</span></button>
+    </div>
+    <div class="swatches" role="group" aria-label="知识库背景色（10 选 1，可回默认色）">
+      ${ICON_COLORS.map(sw => `<button type="button" class="swatch" style="background:var(--c51c-${esc(sw.id)}-strong)" aria-pressed="${colorValue === sw.id}" aria-label="背景色 ${esc(ICON_COLOR_LABELS[sw.id] || sw.id)}" data-act="kb-color-pick" data-id="${esc(sw.id)}" title=" "></button>`).join("")}
+      <button type="button" class="swatch swatch-clear" aria-pressed="${!colorValue}" aria-label="背景色回默认" data-act="kb-color-clear" title="背景色回默认">${icon("undo", "ico-14")}</button>
+    </div>
+    <div class="row" style="margin-top:10px;gap:10px"><span class="kb-icon" ${pair ? `style="background:${pair[0]};color:${pair[1]}"` : `style="background:var(--c51c-teal-soft);color:var(--c51c-teal-strong)"`}>${icon(value || KB_SOURCE_DEFAULT[lib.id] || "library", "ico-20")}</span><span class="caption">预览：清空图标回来源默认（本地 bookOpen、网页 globe、组合 layers、未标注 library），清空背景回默认青绿。</span></div>`;
+    openDialog(dlgShell("知识库图标", esc(lib.name), picker,
+      `<button class="btn" data-act="close-dialog">取消</button><button class="btn primary" data-act="kb-icon-save" data-id="${esc(lib.id)}">保存图标</button>`, "modal-lg"));
+  }
+
+  /* main.js 只分发它认识的动作；CR-051 新动作与图标落库用捕获阶段监听实现，避免改动 main.js。 */
+  document.addEventListener("click", e => {
+    const open = e.target.closest("[data-act='kb-icon-open']");
+    const pick = e.target.closest("[data-act='kb-icon-pick']");
+    const clear = e.target.closest("[data-act='kb-icon-clear']");
+    const colorPick = e.target.closest("[data-act='kb-color-pick']");
+    const colorClear = e.target.closest("[data-act='kb-color-clear']");
+    const saveIcon = e.target.closest("[data-act='kb-icon-save']");
+    const avatarEdit = e.target.closest("[data-act='avatar-edit']");
+    const stylePick = e.target.closest("[data-act='avatar-style-pick']");
+    const saveSettings = e.target.closest("[data-act='settings-save']");
+    const close = e.target.closest("[data-act='close-dialog']");
+    if (open) { e.preventDefault(); e.stopPropagation(); kbIconModal(open.dataset.id); return; }
+    if (pick || clear) {
+      e.preventDefault();
+      e.stopPropagation();
+      const libId = store.kbIconDraft?.libId;
+      store.kbIconDraft = { libId, value: clear ? "" : pick.dataset.id, color: store.kbIconDraft?.color || "" };
+      kbIconModal(libId);
+      return;
+    }
+    if (colorPick || colorClear) {
+      e.preventDefault();
+      e.stopPropagation();
+      const libId = store.kbIconDraft?.libId;
+      store.kbIconDraft = { libId, value: store.kbIconDraft?.value || "", color: colorClear ? "" : colorPick.dataset.id };
+      kbIconModal(libId);
+      return;
+    }
+    if (saveIcon) {
+      e.preventDefault();
+      e.stopPropagation();
+      const lib = libById(saveIcon.dataset.id);
+      const value = store.kbIconDraft && store.kbIconDraft.libId === saveIcon.dataset.id ? store.kbIconDraft.value : "";
+      const color = store.kbIconDraft && store.kbIconDraft.libId === saveIcon.dataset.id ? store.kbIconDraft.color : "";
+      lib.icon = value || undefined;
+      lib.iconColor = color || undefined;
+      store.kbIconDraft = null;
+      closeDialog();
+      toast("知识库图标已保存" + (value ? "：" + value + (color ? " · " + (ICON_COLOR_LABELS[color] || color) : "") : "（回来源默认）"));
+      UI.render();
+      return;
+    }
+    if (avatarEdit) {
+      e.preventDefault();
+      e.stopPropagation();
+      AvatarModals.open();
+      return;
+    }
+    if (stylePick) {
+      e.preventDefault();
+      e.stopPropagation();
+      store.avatarStyleDraft = stylePick.dataset.id;
+      document.body.dataset.avatarStyle = stylePick.dataset.id;
+      refreshSettings();
+      return;
+    }
+    if (saveSettings) {
+      if (store.avatarStyleDraft) {
+        store.avatarStyle = store.avatarStyleDraft;
+        try { localStorage.setItem("wb4-avatar-style", store.avatarStyle); } catch { /* 私有模式忽略 */ }
+        document.body.dataset.avatarStyle = store.avatarStyle;
+        store.avatarStyleDraft = null;
+      }
+      return;
+    }
+    if (close) {
+      if (store.avatarStyleDraft) {
+        document.body.dataset.avatarStyle = store.avatarStyle;
+        store.avatarStyleDraft = null;
+      }
+      store.kbIconDraft = null;
+      return;
+    }
+  }, true);
+
+  /* ================= CR-051 r4～r6：更换头像弹窗（固定 680×660、取景框常驻、拖动摆放、缩放 100–300%）
+     交互与 docs/UI/icon-system 设计稿同源：5 内置样式 + 最后一格「自定义」；选图后取景框内即最终显示区域，
+     框外遮罩，拖动摆放、缩放；报错在弹窗内呈现并保留原头像；应用同步三处，取消不改；恢复默认回 B Logo。
+     已应用的照片重新打开仍可继续拖动/缩放（draft.photo 直接来自 store.avatarPhoto）。 ================= */
+  const AVATAR_LOGO = "../brand-assets-v2/logo-sail.png";
+  const AVATAR_MAX_BYTES = 200 * 1024;
+  const AVATAR_FRAME = 200;
+  const AVATAR_SKINS = {
+    a: { bg: "transparent", border: "0", radius: "50%", filter: "brightness(0) invert(0)", shadow: "none", img: "88%" },
+    b: { bg: "var(--teal-soft)", border: "1px solid var(--teal-line)", radius: "50%", filter: "none", shadow: "none", img: "74%" },
+    c: { bg: "var(--teal-soft)", border: "1px solid var(--teal-line)", radius: "10px", filter: "none", shadow: "none", img: "72%" },
+    d: { bg: "#0f4c45", border: "1px solid rgba(255,255,255,.14)", radius: "50%", filter: "brightness(0) invert(1)", shadow: "none", img: "72%" },
+    e: { bg: "var(--surface)", border: "0", radius: "50%", filter: "none", shadow: "0 0 0 1.5px #0f9f8f, 0 0 0 3px rgba(43,108,246,.28)", img: "72%" }
+  };
+  function styleAvatarEl(av, styleId, hasPhoto) {
+    const skin = AVATAR_SKINS[styleId] || AVATAR_SKINS.b;
+    const img = av.querySelector("img");
+    av.style.background = skin.bg;
+    av.style.border = skin.border;
+    av.style.borderRadius = skin.radius;
+    av.style.boxShadow = skin.shadow;
+    if (img) {
+      img.style.filter = hasPhoto ? "none" : skin.filter;
+      img.style.width = hasPhoto ? "100%" : skin.img;
+      img.style.height = hasPhoto ? "100%" : skin.img;
+      img.style.objectFit = hasPhoto ? "cover" : "contain";
+    }
+  }
+  const AvatarModals = {
+    draft: null,
+    open() {
+      this.draft = { style: store.avatarStyle || "b", photo: store.avatarPhoto || null, zoom: 100, offset: { x: 0, y: 0 }, natural: null, scale: 1, mode: store.avatarPhoto ? "custom" : "builtin" };
+      const mask = document.createElement("div");
+      mask.className = "modal-mask";
+      mask.id = "avatar-modal";
+      mask.innerHTML = `<div class="avatar-modal" role="dialog" aria-modal="true" aria-labelledby="avatar-modal-title">
+        <div class="avatar-modal-h"><b id="avatar-modal-title">更换头像</b><span class="caption">内置样式或自定义图片（≤200KB）</span><button class="icon-btn" type="button" data-act="avatar-modal-close" aria-label="关闭">${icon("x", "ico-14")}</button></div>
+        <div class="avatar-modal-b">
+          <div class="avatar-preview-col">
+            <span class="avatar" id="avatar-draft-preview"><img src="${AVATAR_LOGO}" alt="头像预览"></span>
+            <canvas class="avatar-canvas" id="avatar-preview-canvas" width="192" height="192" hidden aria-label="裁剪结果实时预览"></canvas>
+            <span class="preview-label" id="avatar-draft-note"></span>
+            <span class="caption">应用后同步顶栏、侧栏与设置</span>
+          </div>
+          <div class="avatar-choose">
+            <div class="preset-grid" id="avatar-presets">
+              ${["a", "b", "c", "d", "e"].map(s => `<button class="preset" type="button" data-preset="${s}" aria-pressed="false" title="${esc(AVATAR_LABELS[s] || s)}"><span class="avatar"><img src="${AVATAR_LOGO}" alt=""></span><span>${s.toUpperCase()}</span></button>`).join("")}
+              <button class="preset custom" type="button" data-preset="custom" aria-pressed="false" title="自定义图片"><span class="plus">${icon("camera", "ico-14")}</span><span>自定义</span></button>
+            </div>
+            <div class="crop" id="avatar-crop">
+              <div class="crop-stage" id="avatar-crop-stage" aria-label="拖动图片调整头像显示区域">
+                <img id="avatar-crop-img" alt="">
+                <div class="crop-mask" id="avatar-crop-mask"></div>
+              </div>
+              <div class="crop-empty" id="avatar-crop-empty" hidden>选择「自定义」并上传图片后，可在这里拖动调整</div>
+              <p class="crop-hint">${icon("hand")}<span id="avatar-crop-hint">框内就是最终显示区域，框外不会出现在头像里。</span></p>
+              <div class="crop-row"><span class="caption">缩放</span><input type="range" id="avatar-zoom" min="100" max="300" step="1" value="100" aria-label="缩放头像"><span class="value" id="avatar-zoom-value">100%</span></div>
+              <div class="crop-row"><button class="btn sm" type="button" id="avatar-repick">选择图片</button><span class="caption" id="avatar-file-name">未选择文件</span></div>
+            </div>
+            <p class="upload-error" id="avatar-error" hidden role="alert"></p>
+            <span class="caption">PNG / JPG / WebP，≤200KB；建议 ≥256×256。图片只保存在本机，不上传网络、不进入知识库或会话。</span>
+            <input type="file" id="avatar-file" accept="image/png,image/jpeg,image/webp" hidden>
+          </div>
+        </div>
+        <div class="avatar-modal-f"><button class="btn" type="button" id="avatar-reset">恢复默认 Logo</button><span class="spacer"></span><button class="btn" type="button" data-act="avatar-modal-close">取消</button><button class="btn primary" type="button" id="avatar-apply">应用</button></div>
+      </div>`;
+      document.body.appendChild(mask);
+      this.mask = mask;
+      this.bind();
+      this.render();
+      if (this.draft.photo) this.loadNatural(this.draft.photo);
+      const closeBtn = mask.querySelector("[data-act='avatar-modal-close']");
+      if (closeBtn) closeBtn.focus();
+    },
+    close() {
+      if (this.mask) { this.mask.remove(); this.mask = null; }
+      this.draft = null;
+      document.removeEventListener("keydown", this.onKey);
+    },
+    showError(msg) { const el = this.mask && this.mask.querySelector("#avatar-error"); if (el) { el.textContent = msg; el.hidden = false; } },
+    clearError() { const el = this.mask && this.mask.querySelector("#avatar-error"); if (el) el.hidden = true; },
+    bind() {
+      const mask = this.mask;
+      mask.addEventListener("click", e => {
+        if (e.target === mask || e.target.closest("[data-act='avatar-modal-close']")) { e.stopPropagation(); this.close(); }
+      });
+      this.onKey = ev => { if (ev.key === "Escape") this.close(); };
+      document.addEventListener("keydown", this.onKey);
+      mask.querySelector("#avatar-presets").addEventListener("click", e => {
+        const b = e.target.closest("[data-preset]");
+        if (!b || !this.draft) return;
+        this.clearError();
+        const id = b.dataset.preset;
+        if (id === "custom") {
+          this.draft.mode = "custom";
+          this.render();
+          mask.querySelector("#avatar-file").click();
+        } else {
+          this.draft.mode = "builtin";
+          this.draft.style = id;
+          this.draft.photo = null;
+          this.draft.natural = null;
+          this.draft.zoom = 100;
+          this.draft.offset = { x: 0, y: 0 };
+          mask.querySelector("#avatar-file-name").textContent = "未选择文件";
+          this.render();
+        }
+      });
+      mask.querySelector("#avatar-zoom").addEventListener("input", ev => {
+        if (!this.draft || this.draft.mode !== "custom" || !this.draft.photo) return;
+        this.draft.zoom = Number(ev.target.value);
+        mask.querySelector("#avatar-zoom-value").textContent = this.draft.zoom + "%";
+        this.layoutCrop();
+        this.drawPreview();
+      });
+      mask.querySelector("#avatar-repick").addEventListener("click", () => { this.clearError(); mask.querySelector("#avatar-file").click(); });
+      mask.querySelector("#avatar-file").addEventListener("change", ev => {
+        if (!this.draft) return;
+        this.clearError();
+        const file = ev.target.files && ev.target.files[0];
+        if (!file) return;
+        if (!/^image\/(png|jpeg|webp)$/.test(file.type)) { this.showError("不支持的文件类型。请选择 PNG、JPG 或 WebP 图片；当前头像保持不变。"); ev.target.value = ""; return; }
+        if (file.size > AVATAR_MAX_BYTES) { this.showError("图片超过 200KB。请压缩后再上传；当前头像保持不变。"); ev.target.value = ""; return; }
+        const reader = new FileReader();
+        reader.onerror = () => this.showError("读取图片失败，当前头像保持不变。请重试或选择其他文件。");
+        reader.onload = () => {
+          this.draft.mode = "custom";
+          this.draft.photo = String(reader.result);
+          this.draft.zoom = 100;
+          this.draft.offset = { x: 0, y: 0 };
+          this.draft.natural = null;
+          mask.querySelector("#avatar-file-name").textContent = file.name + " · " + Math.max(1, Math.round(file.size / 1024)) + "KB";
+          this.render();
+          this.loadNatural(this.draft.photo);
+        };
+        reader.readAsDataURL(file);
+      });
+      mask.querySelector("#avatar-reset").addEventListener("click", () => {
+        if (!this.draft) return;
+        this.clearError();
+        this.draft.mode = "builtin";
+        this.draft.style = "b";
+        this.draft.photo = null;
+        this.draft.zoom = 100;
+        this.draft.offset = { x: 0, y: 0 };
+        this.draft.natural = null;
+        mask.querySelector("#avatar-file").value = "";
+        mask.querySelector("#avatar-file-name").textContent = "未选择文件";
+        this.render();
+      });
+      const stage = mask.querySelector("#avatar-crop-stage");
+      stage.addEventListener("pointerdown", e => {
+        if (!this.draft || this.draft.mode !== "custom" || !this.draft.photo) return;
+        this.dragging = { x: e.clientX, y: e.clientY, ox: this.draft.offset.x, oy: this.draft.offset.y };
+        stage.setPointerCapture(e.pointerId);
+      });
+      stage.addEventListener("pointermove", e => {
+        if (!this.dragging || !this.draft) return;
+        this.draft.offset.x = this.dragging.ox + (e.clientX - this.dragging.x);
+        this.draft.offset.y = this.dragging.oy + (e.clientY - this.dragging.y);
+        this.layoutCrop();
+        this.drawPreview();
+      });
+      const endDrag = () => { this.dragging = null; };
+      stage.addEventListener("pointerup", endDrag);
+      stage.addEventListener("pointercancel", endDrag);
+      mask.querySelector("#avatar-apply").addEventListener("click", () => this.apply());
+    },
+    loadImage(src) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error("图片无法解码"));
+        img.src = src;
+      });
+    },
+    async loadNatural(src) {
+      try {
+        const img = await this.loadImage(src);
+        if (!this.draft || this.draft.photo !== src) return;
+        this.draft.natural = { w: img.naturalWidth, h: img.naturalHeight };
+        this.layoutCrop();
+        this.drawPreview();
+      } catch (err) {
+        this.showError("图片无法解码，请重新选择；当前头像保持不变。");
+      }
+    },
+    layoutCrop() {
+      const draft = this.draft;
+      const cropImg = this.mask && this.mask.querySelector("#avatar-crop-img");
+      if (!draft || !draft.natural || !cropImg) return;
+      const n = draft.natural;
+      const scale = Math.max(AVATAR_FRAME / n.w, AVATAR_FRAME / n.h) * (draft.zoom / 100);
+      const W = n.w * scale, H = n.h * scale;
+      const limX = Math.max(0, (W - AVATAR_FRAME) / 2), limY = Math.max(0, (H - AVATAR_FRAME) / 2);
+      draft.offset.x = Math.max(-limX, Math.min(limX, draft.offset.x));
+      draft.offset.y = Math.max(-limY, Math.min(limY, draft.offset.y));
+      draft.scale = scale;
+      cropImg.style.width = W + "px";
+      cropImg.style.height = H + "px";
+      cropImg.style.transform = "translate(-50%,-50%) translate(" + draft.offset.x + "px," + draft.offset.y + "px)";
+      const maskEl = this.mask.querySelector("#avatar-crop-mask");
+      if (maskEl) maskEl.classList.toggle("square", draft.style === "c");
+    },
+    drawPreview() {
+      const draft = this.draft;
+      const cropImg = this.mask && this.mask.querySelector("#avatar-crop-img");
+      const canvas = this.mask && this.mask.querySelector("#avatar-preview-canvas");
+      if (!draft || !draft.natural || !draft.photo || !cropImg || !canvas) return;
+      const n = draft.natural;
+      const scale = draft.scale || Math.max(AVATAR_FRAME / n.w, AVATAR_FRAME / n.h);
+      const W = n.w * scale, H = n.h * scale;
+      const sx = ((W - AVATAR_FRAME) / 2 - draft.offset.x) / scale;
+      const sy = ((H - AVATAR_FRAME) / 2 - draft.offset.y) / scale;
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(cropImg, sx, sy, AVATAR_FRAME / scale, AVATAR_FRAME / scale, 0, 0, canvas.width, canvas.height);
+    },
+    async apply() {
+      const draft = this.draft;
+      if (!draft) return;
+      this.clearError();
+      try {
+        if (draft.mode === "custom" && draft.photo && draft.natural) {
+          const n = draft.natural;
+          const scale = draft.scale || Math.max(AVATAR_FRAME / n.w, AVATAR_FRAME / n.h) * (draft.zoom / 100);
+          const W = n.w * scale, H = n.h * scale;
+          const sx = ((W - AVATAR_FRAME) / 2 - draft.offset.x) / scale;
+          const sy = ((H - AVATAR_FRAME) / 2 - draft.offset.y) / scale;
+          const img = this.mask.querySelector("#avatar-crop-img");
+          const source = img && img.complete && img.naturalWidth ? img : await this.loadImage(draft.photo);
+          const size = 256;
+          const canvas = document.createElement("canvas");
+          canvas.width = size;
+          canvas.height = size;
+          canvas.getContext("2d").drawImage(source, sx, sy, AVATAR_FRAME / scale, AVATAR_FRAME / scale, 0, 0, size, size);
+          store.avatarPhoto = canvas.toDataURL("image/png");
+        } else {
+          store.avatarPhoto = null;
+        }
+        store.avatarStyle = draft.style;
+        try { localStorage.setItem("wb4-avatar-style", draft.style); } catch { /* 私有模式忽略 */ }
+        document.body.dataset.avatarStyle = draft.style;
+        store.avatarDraft = null;
+        this.close();
+        UI.render();
+        toast("头像已应用" + (store.avatarPhoto ? "（自定义图片）" : "") + "：风格 " + draft.style.toUpperCase());
+      } catch (err) {
+        this.showError("头像处理失败，请重新选择图片；当前头像保持不变。");
+      }
+    },
+    render() {
+      const draft = this.draft;
+      const mask = this.mask;
+      if (!draft || !mask) return;
+      mask.querySelectorAll("#avatar-presets [data-preset]").forEach(b => {
+        const id = b.dataset.preset;
+        const selected = id === "custom" ? draft.mode === "custom" : draft.mode === "builtin" && draft.style === id;
+        b.setAttribute("aria-pressed", String(selected));
+        if (id === "custom") {
+          b.innerHTML = draft.photo
+            ? `<img class="preset-thumb" src="${draft.photo}" alt=""><span>自定义</span>`
+            : `<span class="plus">${icon("camera", "ico-14")}</span><span>自定义</span>`;
+        } else {
+          const av = b.querySelector(".avatar");
+          if (av) styleAvatarEl(av, id, false);
+        }
+      });
+      const hasPhoto = draft.mode === "custom" && Boolean(draft.photo);
+      const preview = mask.querySelector("#avatar-draft-preview");
+      const img = preview.querySelector("img");
+      if (img) img.src = hasPhoto ? draft.photo : AVATAR_LOGO;
+      preview.hidden = hasPhoto;
+      styleAvatarEl(preview, draft.style, hasPhoto);
+      const canvas = mask.querySelector("#avatar-preview-canvas");
+      if (canvas) {
+        canvas.hidden = !hasPhoto;
+        canvas.classList.toggle("square", draft.style === "c");
+      }
+      mask.querySelector("#avatar-draft-note").textContent = hasPhoto ? "自定义图片 · 容器 " + draft.style.toUpperCase() : (AVATAR_LABELS[draft.style] || draft.style);
+      const noPhotoCustom = draft.mode === "custom" && !draft.photo;
+      const stage = mask.querySelector("#avatar-crop-stage");
+      const empty = mask.querySelector("#avatar-crop-empty");
+      if (stage) stage.hidden = noPhotoCustom;
+      if (empty) empty.hidden = !noPhotoCustom;
+      const cropWrap = mask.querySelector("#avatar-crop");
+      if (cropWrap) cropWrap.classList.toggle("is-disabled", !hasPhoto);
+      const zoomInput = mask.querySelector("#avatar-zoom");
+      if (zoomInput) {
+        zoomInput.disabled = !hasPhoto;
+        zoomInput.value = String(draft.zoom);
+      }
+      mask.querySelector("#avatar-zoom-value").textContent = draft.zoom + "%";
+      mask.querySelector("#avatar-crop-hint").textContent = hasPhoto
+        ? "拖动图片调整位置；框内就是最终显示区域，框外不会出现在头像里。"
+        : draft.mode === "builtin"
+          ? "内置样式使用品牌 Logo，无需裁剪；切换「自定义」可上传图片并调整。"
+          : "上传图片后可在这里拖动调整。";
+      mask.querySelector("#avatar-repick").textContent = hasPhoto ? "重新选择" : "选择图片";
+      mask.querySelector("#avatar-crop-mask").classList.toggle("square", draft.style === "c");
+      const cropImg = mask.querySelector("#avatar-crop-img");
+      if (hasPhoto) {
+        if (cropImg.getAttribute("src") !== draft.photo) cropImg.src = draft.photo;
+        if (draft.natural) { this.layoutCrop(); this.drawPreview(); }
+      } else if (cropImg) {
+        cropImg.src = AVATAR_LOGO;
+        cropImg.style.width = "150px";
+        cropImg.style.height = "150px";
+        cropImg.style.objectFit = "contain";
+        cropImg.style.transform = "translate(-50%, -50%)";
+        draft.scale = 1;
+      }
+    }
+  };
 
   Screens.knowledgePage = knowledgePage;
   Screens.serversPage = serversPage;

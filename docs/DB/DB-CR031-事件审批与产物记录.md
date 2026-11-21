@@ -1,5 +1,7 @@
 # DB-CR031：事件审批与产物记录
 
+> 2026-11-21设计细化：[DB-CR047](DB-CR047-工作包义务与检查点.md)补齐工作包／义务／检查点及父续行数据；其§5给execution_job增加continuation种类与独立target字段，§5.1定义新根恢复成果输入，§5.2显式扩展execution_file_commit的workPackage种类／component／owner唯一键。原Binding、effect和预算权威保持，原闭集按上述受限增量扩展；当前r3独立逻辑评审通过、未迁移，不另建第二运行账本。
+
 - 关联：[CR-031需求/WP](../PRD/CR-031-受管执行可靠性需求与实施分解.md)、[LLD-CR031 r2](../LLD/LLD-CR031-受管执行可靠性契约.md)、[TEST-CR031](../Test/TEST-CR031-受管执行可靠性验证.md)、[审查闭环](../Test/REPORT-CR031-需求设计审查.md)。
 - 继承：[DB-FEAT-019](DB-FEAT-019-任务执行数据设计.md)、[DB-FEAT-001](DB-FEAT-001-知识授权与工作台数据设计.md)、[CR026计划](../LLD/LLD-CR026-有效执行计划与能力编译.md)、[CR028存储分工](../PRD/CR-028-文件与数据库按职责存储.md)。
 - 文档r2，2026-11-19，按审查修正；只设计，未读写正式workbench.db、未写迁移源码、未运行测试/迁移/业务。逻辑schemaVersion=1未发布草稿；物理user_version实施时读取实际迁移登记后分配。已有源数据/历史验收不覆盖。
@@ -73,6 +75,10 @@ accepted receipt+event与根/子绑定原子登记；每promptEnded以(projectId
 父/根Agent链同项目无环，父计划缩权在创建子Plan时验证；预算在原ledger原子预留至rootBudgetRef，不复制独立总额。多个并行子调用不改变根当前Attempt指针。
 
 Process唯一(supervisorId,runnerEpoch,pid,startIdentity)，回调比binding，PID不单独作身份。stopConfirmed需监督器证明无writer；进程已spawn但登记失败立即停止并保留恢复intent。Job无Process可为内部消费/存储，不虚构PID。
+
+### CR-037 原执行者的原生绑定
+
+`execution_native_resume_binding` 为逻辑增量，按 `(projectId,invocationId,invocationGeneration)` 主键保存原执行者引用。包含 `agentId TEXT`、`featureId TEXT`、`nativeRefHandle TEXT`、`cliId TEXT`、`adapterCompatibilityKey TEXT`、`executionMode TEXT`、`backendNamespaceKey TEXT`、`grantHash TEXT`、`confirmedAt INTEGER`、`bindingState TEXT`、`revision INTEGER`。复合外键核对同项目调用、执行者和稳定 Feature 归属。`bindingState` 取 usable/expired/revoked，续接前复检权限和兼容性。句柄指向受保护存储。旧 Attempt 引用保留供旧根上下文兼容。子返工按受检产物的产出调用查各自绑定。写入须匹配 fence、generation、stopGeneration 和已确认的适配器结果。旧回调仅归档，旧记录留空且不猜线程。
 
 ### 4.1 activeKey与资源锁释放矩阵
 

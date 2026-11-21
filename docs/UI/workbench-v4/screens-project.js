@@ -143,6 +143,7 @@
         ${t.mission ? `<div class="mission-box">${icon("target", "ico-14")}<span>${esc(t.mission)}</span></div>` : ""}
         ${t.reason ? `<div class="note-box">${icon("alert", "ico-14")} ${esc(t.reason)}</div>` : ""}
         ${childTable}
+        ${window.CR037?.taskCard(t) || ""}
         <div class="run-steps">${t.steps.map(s => `<div class="step ${s.state === "active" ? "active" : s.state}"><div class="s-line"><span class="s-dot">${s.state === "done" ? icon("check", "ico-14") : ""}</span><span class="s-bar"></span></div><div><div class="s-name">${esc(s.name)}</div><div class="s-time">${esc(s.time)}</div></div></div>`).join("")}</div>
         <div class="divider"></div>
         <div><div class="row between" style="margin-bottom:6px"><b style="font-size:12px">产物</b><span class="caption">${t.artifacts.length} 个文件</span></div>

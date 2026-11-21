@@ -1,0 +1,15 @@
+/* UI-CR-STORY031：NestCraft-owned HTTP MCP OAuth设计状态覆盖。仅原型资源。 */
+.mcp-oauth-preview{margin-top:16px;padding:16px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface-2)}
+.mcp-oauth-preview h4{margin:0 0 4px;font-size:13px}
+.mcp-oauth-preview>p{margin:0 0 12px}
+.mcp-oauth-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.mcp-oauth-state{min-height:112px;padding:10px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--paper)}
+.mcp-oauth-state b{display:block;font-size:12px;margin-bottom:4px}
+.mcp-oauth-state p{margin:0;color:var(--muted);font-size:11px;line-height:1.45}
+.mcp-oauth-state .mcp-oauth-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.mcp-oauth-state.pending{border-color:var(--warn-line);background:var(--warn-bg)}
+.mcp-oauth-state.authenticated{border-color:var(--ok-line);background:var(--ok-bg)}
+.mcp-oauth-state.expired,.mcp-oauth-state.revoked,.mcp-oauth-state.error{border-color:var(--danger-line);background:var(--danger-bg)}
+.mcp-oauth-state.unauthenticated{border-color:var(--input-line)}
+@media (max-width:760px){.mcp-oauth-grid{grid-template-columns:1fr 1fr}}
+@media (max-width:480px){.mcp-oauth-grid{grid-template-columns:1fr}.mcp-oauth-preview{padding:12px}}

@@ -1,5 +1,7 @@
 # DB-FEAT-019：任务执行数据设计
 
+> 2026-11-21设计增量：[DB-CR047§2.2](DB-CR047-工作包义务与检查点.md#22-源变更重确认关联新批次和替代task)规定源变化重确认创建关联新批次／替代Task，仅受影响Story执行，旧快照和Task归属不可变、独立兄弟继续；新增替代关系与Task.budgetRootTaskId，沿同一逻辑根预算累计，不清零。本文UNIQUE(batchId,storyId)及原Task.snapshotId约束保持，增量r3独立逻辑评审通过，未迁移。
+
 > CR-031现行r2以[事件审批与产物记录](DB-CR031-事件审批与产物记录.md)细化：完整InvocationBinding/普通sessionTurn、根调用每Attempt唯一而子Job共享父Attempt、子generation不改Task fence/currentAttemptId；暂停/可恢复blocked保activeKey，资源锁另判；原seq全局主键与项目cursor、内部Parent结果与外部通知、最终参数/effect去重和报告封存。本文Attempt/Task为业务根权威，子工作不得创建同Task并行Attempt。普通会话的资源/effect/budget按r2明确扩来源，不造Task；完整正文文件职责沿CR-028。[需求/WP与G-PLAN](../PRD/CR-031-受管执行可靠性需求与实施分解.md)、[契约](../LLD/LLD-CR031-受管执行可靠性契约.md)、[测试](../Test/TEST-CR031-受管执行可靠性验证.md)；只文档，表/迁移均未实施。
 
 - 关联：[PRD-002](../PRD/PRD-002-需求派发与自主执行.md)、FEAT-018～020 / STORY-038～043、[ADR-003](../LLD/ADR-003-任务执行权威与调度边界.md)。

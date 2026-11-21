@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>窗口页签条候选设计 · 栖造 NestCraft</title>
+  <link rel="icon" type="image/png" href="../brand-assets-v2/favicon.png">
+  <style>
+    :root{
+      --ink:#1f2329;--ink-2:#4e5969;--muted:#86909c;--muted-2:#a4abb5;
+      --line:#e6e8eb;--line-soft:#eff1f3;--surface:#fff;--bg:#f5f6f8;
+      --primary:#2b6cf6;--primary-soft:#eef3ff;--primary-line:#c9dafd;--primary-strong:#1f5ee6;
+      --font:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+      --mono:ui-monospace,"SF Mono","Cascadia Code",Consolas,monospace;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font:14px/1.65 var(--font);color:var(--ink);background:var(--bg);-webkit-font-smoothing:antialiased}
+    a{color:var(--primary);text-decoration:none}
+    a:hover{text-decoration:underline}
+    h1,h2,h3,p{margin:0}
+    .wrap{max-width:1360px;margin:0 auto;padding:0 24px}
+    header{background:var(--surface);border-bottom:1px solid var(--line);padding:34px 0 26px}
+    .eyebrow{display:inline-flex;align-items:center;gap:8px;font:600 11.5px/1 var(--font);letter-spacing:.06em;color:var(--primary-strong);background:var(--primary-soft);border:1px solid var(--primary-line);border-radius:5px;padding:5px 8px}
+    h1{font-size:26px;font-weight:650;letter-spacing:-.015em;margin:14px 0 8px}
+    .lede{color:var(--ink-2);max-width:860px;font-size:14.5px}
+    .lede b{color:var(--ink)}
+    .meta{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:14px;color:var(--muted);font-size:12px}
+    .meta code{font-family:var(--mono);font-size:11.5px}
+    main{padding:26px 0 60px}
+    .toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+    .toolbar b{font-size:12.5px;color:var(--ink-2);font-weight:600}
+    .seg{display:inline-flex;padding:3px;gap:2px;background:#eceef2;border-radius:7px}
+    .seg button{height:28px;padding:0 12px;border:0;border-radius:5px;background:none;color:var(--ink-2);font:500 12.5px var(--font);cursor:pointer}
+    .seg button[aria-pressed="true"]{background:var(--surface);color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgba(17,24,39,.08)}
+    .shot{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+    .shot img{display:block;width:100%;height:auto}
+    .shot figcaption{padding:10px 14px;border-top:1px solid var(--line-soft);color:var(--muted);font-size:12px}
+    .plans{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;margin-top:22px}
+    @media(max-width:1100px){.plans{grid-template-columns:minmax(0,1fr)}}
+    .plan{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;display:flex;flex-direction:column}
+    .plan-h{display:flex;align-items:center;gap:10px;padding:14px 16px 0}
+    .plan-h .letter{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;background:var(--primary-soft);color:var(--primary-strong);border:1px solid var(--primary-line);font:700 12.5px var(--font)}
+    .plan-h h3{font-size:15px;font-weight:650}
+    .plan-h .tag{margin-left:auto;font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:2px 6px}
+    .plan-b{padding:12px 16px 4px;color:var(--ink-2);font-size:13px}
+    .plan img{display:block;width:100%;height:auto;border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft);margin-top:12px}
+    .plan.recommended{grid-column:1/-1;border-color:var(--primary-line);box-shadow:0 0 0 3px rgba(43,108,246,.07)}
+    .plan.recommended .plan-h h3{font-size:16px}
+    .pros{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;padding:12px 16px}
+    .pros div{font-size:12.5px;color:var(--ink-2)}
+    .pros b{display:block;font-size:11px;letter-spacing:.04em;color:var(--muted);font-weight:600;margin-bottom:2px}
+    .pros .minus b{color:#b76a00}
+    .plan-f{margin-top:auto;display:flex;gap:8px;padding:12px 16px 14px;border-top:1px solid var(--line-soft);background:#fcfcfd}
+    .btn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 11px;border:1px solid #d7dbe0;border-radius:6px;background:var(--surface);color:var(--ink);font:500 12.5px var(--font)}
+    .btn:hover{background:#f2f3f5;text-decoration:none}
+    .btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+    .btn.primary:hover{background:var(--primary-strong)}
+    .section{margin-top:34px}
+    .section-h{display:flex;align-items:baseline;gap:10px;margin-bottom:12px}
+    .section-h h2{font-size:17px;font-weight:650}
+    .section-h span{font-size:12.5px;color:var(--muted)}
+    .two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
+    @media(max-width:1100px){.two{grid-template-columns:minmax(0,1fr)}}
+    .note{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--primary);border-radius:8px;padding:14px 16px;color:var(--ink-2);font-size:13px}
+    .note b{color:var(--ink)}
+    .note ul{margin:6px 0 0;padding-left:18px}
+    .note li{margin:3px 0}
+    footer{border-top:1px solid var(--line);background:var(--surface);padding:22px 0 34px;color:var(--muted);font-size:12px}
+    footer code{font-family:var(--mono);font-size:11.5px}
+  </style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <span class="eyebrow">UI-CR050 候选 · 待选择 · 仅设计稿</span>
+    <h1>窗口页签条：五版设计对照</h1>
+    <p class="lede">问题不在颜色，而在<b>这条 40px 的条带只为「首页」一个页签存在</b>：文件夹式圆角与连体、<code>#fafbfc</code> 灰底、左侧 88px 白块配一条蓝线，右边 1300px 全空。A～D 分别从「只改样式」「改出现时机」「改形态」「改交互模型」四个方向给出解法；<b>E 是 B+C 的组合，也是我的推荐</b>。五版都保证首页固定、对象页签可关闭、溢出可收。</p>
+    <div class="meta">
+      <span>视口 1440 × 900（图为顶部 1440 × 396）</span>
+      <span>浅色 / 深色</span>
+      <span>状态：仅首页 · 1 个对象 · 4 个对象 · 8 个对象溢出</span>
+      <span>五版同一套外壳、同一份样例数据，只改页签条</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="toolbar">
+    <b>同一条件对比</b>
+    <div class="seg" id="stateSeg">
+      <button data-state="compare-home" aria-pressed="true">仅首页</button>
+      <button data-state="compare-one" aria-pressed="false">1 个对象</button>
+      <button data-state="compare-tabs" aria-pressed="false">4 个对象</button>
+    </div>
+    <span style="color:var(--muted);font-size:12px">只截顶栏与页签条，高度均按实际页签条高度</span>
+  </div>
+  <figure class="shot">
+    <img id="compareImg" src="figures/compare-home.png" alt="四版页签条在仅首页状态下的对比">
+    <figcaption id="compareCap">仅首页：A 保留一条 34px 细线；B、D 完全没有条带；C 为 44px 工作区胶囊栏。</figcaption>
+  </figure>
+
+  <div class="plans">
+    <section class="plan">
+      <div class="plan-h"><span class="letter">A</span><h3>细线页签</h3><span class="tag">最小改动</span></div>
+      <p class="plan-b">页签条仍横跨左侧导航上方，只换样式：40→34px、去掉灰底与文件夹造型、选中改为文字 + 2px 底线，首页与对象之间加一条细分隔线；仅一个页签时右侧显示一句极弱提示。</p>
+      <img src="figures/plan-a.png" alt="方案 A：仅首页与打开 4 个对象">
+      <div class="pros">
+        <div><b>优点</b>改动面最小、结构不变、风险低；多页签时一眼能扫。</div>
+        <div class="minus"><b>代价</b>仍常驻 34px；单页签时右侧靠提示文案撑场面，本质还是「一条只有首页的条」。</div>
+      </div>
+      <div class="plan-f"><a class="btn primary" href="shell.html?plan=a&tabs=1&open=0">打开可交互稿</a><a class="btn" href="figures/dark-a.png">深色</a></div>
+    </section>
+
+    <section class="plan">
+      <div class="plan-h"><span class="letter">B</span><h3>按需出现</h3><span class="tag">最干净</span></div>
+      <p class="plan-b">首页不占条：没打开对象时整条不渲染，内容直接接顶栏。打开对象后才在内容区顶部出现 36px 页签条，第一个是「首页」（点击返回），对象关闭到 0 个时条带自动消失。侧栏只在当前窗口是对象时隐藏。</p>
+      <img src="figures/plan-b.png" alt="方案 B：仅首页无条带与打开 4 个对象">
+      <div class="pros">
+        <div><b>优点</b>单页签问题彻底消失；条带只在内容区上方，与侧栏不错位；最接近专业桌面工具。</div>
+        <div class="minus"><b>代价</b>打开/关闭最后一个对象时页面会上下位移；「首页」作为窗口的可见身份变弱。</div>
+      </div>
+      <div class="plan-f"><a class="btn primary" href="shell.html?plan=b&tabs=1&open=0">打开可交互稿</a><a class="btn" href="figures/plan-b-object.png">对象激活态</a><a class="btn" href="figures/dark-b.png">深色</a></div>
+    </section>
+
+    <section class="plan">
+      <div class="plan-h"><span class="letter">C</span><h3>工作区胶囊栏</h3><span class="tag">最有形态</span></div>
+      <p class="plan-b">条带移入内容区，44px 白底，首页与对象统一为 28px 胶囊位：选中只做文字/图标高亮（无底色、无边框、无下划线），未选中是纯文字；首页后加竖分隔，右侧留工具区（单页签时提示，多页签时「全部窗口 N」）。</p>
+      <img src="figures/plan-c.png" alt="方案 C：仅首页与打开 4 个对象">
+      <div class="pros">
+        <div><b>优点</b>即使只有一个胶囊也像完整控件，不空格；层级清楚、可点面积大；与现有白蓝语言一致。</div>
+        <div class="minus"><b>代价</b>44px 最高；胶囊比下划线重，密集多页签时略挤；右侧工具区需要定义真实功能。</div>
+      </div>
+      <div class="plan-f"><a class="btn primary" href="shell.html?plan=c&tabs=1&open=0">打开可交互稿</a><a class="btn" href="figures/plan-c-object.png">对象激活态</a><a class="btn" href="figures/dark-c.png">深色</a></div>
+    </section>
+
+    <section class="plan">
+      <div class="plan-h"><span class="letter">D</span><h3>窗口切换器</h3><span class="tag">最极简</span></div>
+      <p class="plan-b">没有页签条。顶栏面包屑承担切换：打开对象后变成 <code>个人工作台 / 首页 / 预约服务 ⌄</code>，点「首页」返回、点对象名展开全部窗口下拉；右上角图钉图标显示窗口数。仅首页时顶栏与现状完全一致。</p>
+      <img src="figures/plan-d.png" alt="方案 D：仅首页与打开 4 个对象">
+      <div class="pros">
+        <div><b>优点</b>零占位，信息密度最低；窗口都收起在一处，不会出现一排洗不掉的标签。</div>
+        <div class="minus"><b>代价</b>切换要两次点击；并行开多个对象时看不到全貌，关闭入口藏得深。</div>
+      </div>
+      <div class="plan-f"><a class="btn primary" href="shell.html?plan=d&tabs=1&open=0">打开可交互稿</a><a class="btn" href="figures/dark-d.png">深色</a></div>
+    </section>
+
+    <section class="plan recommended" id="plan-e">
+      <div class="plan-h"><span class="letter">E</span><h3>按需胶囊（B + C 组合）</h3><span class="tag" style="color:var(--primary-strong);border-color:var(--primary-line);background:var(--primary-soft)">推荐</span></div>
+      <p class="plan-b">首页不占条，打开对象后才在内容区顶部出现 40px 胶囊条：首页与对象同规格，选中只做文字/图标高亮（无底色、无边框），首页后加竖分隔，右侧「全部窗口 N」。它同时拿到 B 的「单页签不空」与 C 的「一个页签也成立」。</p>
+      <img src="figures/plan-e.png" alt="方案 E：仅首页无条带，打开 4 个对象后出现胶囊条">
+      <div class="pros">
+        <div><b>优点</b>首页状态零占位；打开对象后才付 40px；胶囊形态在 1 个对象时也不空；与 B、C 的实现都可复用。</div>
+        <div class="minus"><b>代价</b>需要接受打开首个对象时的一次布局位移；右侧「全部窗口」需要定义真实行为（列表 / 仅溢出）。</div>
+      </div>
+      <div class="plan-f"><a class="btn primary" href="shell.html?plan=e&tabs=1&open=0">打开可交互稿</a><a class="btn" href="figures/plan-e-object.png">对象激活态</a><a class="btn" href="figures/dark-e.png">深色</a></div>
+    </section>
+  </div>
+
+  <div class="section">
+    <div class="section-h"><h2>对象激活时</h2><span>B / C / E 会隐藏左侧工作空间导航，把宽度让给对象</span></div>
+    <div class="two">
+      <figure class="shot"><img src="figures/plan-b-object.png" alt="方案 B 打开对象后"><figcaption>B：对象页签选中、侧栏隐藏、内容区从左侧开始。</figcaption></figure>
+      <figure class="shot"><img src="figures/plan-c-object.png" alt="方案 C 打开对象后"><figcaption>C：同一状态，胶囊选中「预约服务」，首页胶囊回到未选中。</figcaption></figure>
+      <figure class="shot"><img src="figures/plan-e-object.png" alt="方案 E 打开对象后"><figcaption>E：40px 胶囊条 + 全部窗口入口，选中对象后侧栏隐藏。</figcaption></figure>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="note">
+      <b>怎么选</b>
+      <ul>
+        <li><b>只想不丑、别动结构</b> → <b>A</b>：改动集中在 <code>.tabbar</code> 与 <code>.wtab</code> 两个选择器，风险最低。</li>
+        <li><b>要最干净、能接受条带按需出现</b> → <b>B</b>：首页状态没有条，代价是打开首个对象时一次位移。</li>
+        <li><b>想要工作区的可点感和现代感</b> → <b>C</b>：44px 常驻，需要一并确定右侧工具区放什么。</li>
+        <li><b>对象通常只开 1～2 个、更在意零占位</b> → <b>D</b>：切换要两次点击，关闭入口藏在下拉里。</li>
+        <li><b>想要又干净又不空</b> → <b>E（推荐）</b>：B 的时机 + C 的形态，首页零占位、打开对象 40px 胶囊条。</li>
+      </ul>
+      你也可以直接说「用 E，但把胶囊改成下划线」这类组合，我按你的方向出细稿（含窄屏、溢出下拉、深色、动效与可访问性）；确认前不动正式原型。
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    设计资源：<code>docs/UI/tab-redesign/</code>（<code>shell.html</code> 可交互 · <code>figures/</code> 对照图）· 说明：<code>docs/UI/文档/UI-CR050-窗口页签条候选设计.md</code> · 仅设计稿，未修改正式软件，未进入开发。
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var caps = {
+      "compare-home": "仅首页：A 保留一条 34px 细线；B、D 完全没有条带；C 为 44px 工作区胶囊栏。",
+      "compare-one": "打开 1 个对象：A、B 为「首页 + 对象」两项；C 多出「全部窗口 2」；D 只在右上角出现窗口数。",
+      "compare-tabs": "打开 4 个对象：A 与 B 用细分隔线区分固定首页与对象；C 用胶囊；D 完全收进顶栏。"
+    };
+    var img = document.getElementById("compareImg");
+    var cap = document.getElementById("compareCap");
+    document.getElementById("stateSeg").addEventListener("click", function (e) {
+      var btn = e.target.closest("button[data-state]");
+      if (!btn) return;
+      var state = btn.dataset.state;
+      img.src = "figures/" + state + ".png";
+      cap.textContent = caps[state];
+      Array.prototype.forEach.call(this.querySelectorAll("button"), function (b) {
+        b.setAttribute("aria-pressed", b === btn ? "true" : "false");
+      });
+    });
+  })();
+</script>
+</body>
+</html>

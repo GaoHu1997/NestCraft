@@ -20,12 +20,14 @@ svg { display: block; }
 :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: var(--r-xs); }
 [hidden] { display: none !important; }
 
-/* 滚动条 */
-* { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+/* 滚动条：只在实际滚动时着色，不改变占位。 */
+* { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.scrollbar-active { scrollbar-color: var(--muted-2) transparent; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: var(--line-strong); border: 3px solid transparent; background-clip: content-box; border-radius: 8px; }
-::-webkit-scrollbar-thumb:hover { background: var(--muted-2); background-clip: content-box; }
-::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: transparent; border: 3px solid transparent; background-clip: content-box; border-radius: 8px; }
+.scrollbar-active::-webkit-scrollbar-thumb { background: var(--muted-2); background-clip: content-box; }
+.scrollbar-active::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: content-box; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
 
 /* ---------- 排版 ---------- */
 .ico { width: 16px; height: 16px; flex: 0 0 auto; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }

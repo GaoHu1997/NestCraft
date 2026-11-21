@@ -1,0 +1,23 @@
+/* UI-CR037-v2：沿用现有容器的原生滚动和按需显隐规则。 */
+.ai-cr037-trigger { flex: 0 0 auto; min-height: 28px; border: 1px solid transparent; border-radius: var(--r-sm); padding: 0 6px; background: transparent; color: var(--primary); font-size: 11px; font-weight: 600; }
+.ai-cr037-trigger:hover { background: var(--surface-2); border-color: var(--line); }
+.agent-row [data-act="cr037-open-task"] { flex-shrink: 0; white-space: nowrap; }
+.cr037-card { display: grid; flex: 0 0 auto; gap: 9px; padding: 12px; min-width: 0; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); color: var(--ink); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.cr037-card p, .cr037-choices p { margin: 0; color: var(--muted); }
+.cr037-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
+.cr037-heading b { margin-inline-end: auto; }
+.cr037-heading .tag { white-space: normal; }
+.cr037-facts { display: grid; gap: 6px; margin: 0; padding: 8px 9px; border-radius: var(--r-sm); background: var(--surface-2); }
+.cr037-facts > div { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; }
+.cr037-facts dt { color: var(--muted); }
+.cr037-facts dd { margin: 0; font: 11px/1.45 var(--mono); }
+.cr037-trace { display: grid; gap: 6px; margin: 0; padding: 0 0 0 2px; list-style: none; }
+.cr037-trace li { display: grid; gap: 2px; padding: 4px 8px 4px 10px; border-inline-start: 2px solid var(--line); }
+.cr037-trace li:last-child { border-inline-start-color: var(--primary); }
+.cr037-trace span { color: var(--muted); }
+.cr037-break { display: grid; gap: 3px; padding: 8px 10px; border: 1px dashed var(--line-strong); border-radius: var(--r-sm); color: var(--muted); background: var(--surface-2); font-size: 11px; overflow-wrap: anywhere; }
+.cr037-break b { color: var(--ink); }
+.cr037-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.cr037-choices { display: grid; gap: 8px; justify-items: stretch; }
+.cr037-choices .btn { justify-content: flex-start; }
+.cr037-card button:focus-visible, .cr037-choices button:focus-visible, .ai-cr037-trigger:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }

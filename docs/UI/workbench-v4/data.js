@@ -1151,6 +1151,8 @@ describe("容量", () => {
       { role: "user", time: "14:18", text: "继续 STORY-0102。先看 RUN-2087 卡在哪，别重复已经通过的 AC。" },
       {
         role: "assistant", time: "14:19", text: "我先读运行记录与容量实现，确认缺口后再改代码。",
+        thinking: "先确认 RUN-2087 的失败阶段：如果卡在用例执行，就与实现无关。已通过的 AC 不重复跑，只看失败分支的日志与退出码。",
+        thinkMs: "12 秒",
         tools: [
           { name: "fs.read", arg: "docs/Plan/Story/STORY-0102.md", state: "完成", detail: "读取 1.2 KB · 3 条 AC" },
           { name: "code-search", arg: "reserveCapacity", state: "完成", detail: "2 处引用：capacity.ts / service.ts" }
@@ -1158,6 +1160,8 @@ describe("容量", () => {
       },
       {
         role: "assistant", time: "14:21", text: "缺口是并发失败时没有可读错误码：`reserveCapacity` 与预约写入已经同事务，但失败分支直接抛错。我补一个 RETRYABLE 分支，并加一条并发用例。",
+        thinking: "失败分支与事务边界在同一函数内，改这里不会影响已通过的 AC-01/02。用例要覆盖两个并发请求同时扣减，断言第二个拿到 RETRYABLE 而不是泛化异常。",
+        thinkMs: "2 分 06 秒",
         tools: [
           { name: "fs.write", arg: "src/booking/capacity.ts", state: "完成", detail: "+18 −2" },
           { name: "local-exec", arg: "pnpm vitest run tests/capacity.spec.ts", state: "运行中", detail: "3 passed · 1 running" }

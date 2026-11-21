@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>AI 侧栏原生续接三态 · UI-CR037-SR1 设计评审</title>
+<style>
+/* UI-CR037-SR1：AI 侧栏普通会话原生续接的三个新增可见状态（断点卡 / blocked 横幅 / fresh 确认弹窗）。
+   独立小设计稿：静态 HTML + 内联令牌（取自 theme-tokens.css 现行冻结值，未改任何既有资源）。
+   本页不是唯一业务原型入口，也不代表正式软件；软件对照证据另存 docs/Test/screenshots/cr037-sidebar/。 */
+*{box-sizing:border-box}
+[hidden]{display:none !important}
+html,body{margin:0;min-height:100%}
+:root{
+  --base:#f5f6f7;--paper:#ffffff;--line:#e5e6eb;--line-soft:#eff0f3;
+  --ink:#1f2329;--muted:#646a73;
+  --accent:#2b6cf6;--accent-ink:#ffffff;--soft:#eef3ff;
+  --warn:#9a6700;--warn-bg:#fff8e6;--warn-line:#f0c27a;--warn-deep:#7f5500;
+  --danger:#d83931;--danger-bg:#fef0ef;--danger-line:#f3b6b2;--danger-deep:#b12720;
+  --good-ink:#1f7a3f;--good-dot:#2ea44f;
+  --tag-bg:#f2f3f5;--tag-ink:#4e5969;
+  --msg-bg:#f7f8fa;--notice-bg:#f7f8fa;--notice-ink:#4e5969;--notice-line:#c9cdd4;
+  --backdrop:rgba(29,33,41,.45);
+  --shadow-md:0 8px 24px rgba(29,33,41,.12);
+  --radius-card:8px;--radius-ctl:6px;
+  --font-title:system-ui,-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+  color-scheme:light;
+}
+html[data-theme="dark"]{
+  color-scheme:dark;
+  --base:#17181a;--paper:#1f2022;--line:#2e3033;--line-soft:#33363a;
+  --ink:#e6e8ea;--muted:#9aa0a6;
+  --accent:#4f8bff;--accent-ink:#0b1220;--soft:#232a36;
+  --warn:#f0c27a;--warn-bg:#2e2617;--warn-line:#5c4a24;--warn-deep:#f6d79b;
+  --danger:#ff8b84;--danger-bg:#35201f;--danger-line:#6b3a37;--danger-deep:#ffb3ad;
+  --good-ink:#7fd39a;--good-dot:#48b96b;
+  --tag-bg:#26282b;--tag-ink:#b6bcc4;
+  --msg-bg:#232426;--notice-bg:#232426;--notice-ink:#c2c8cf;--notice-line:#3a3d42;
+  --backdrop:rgba(0,0,0,.6);
+  --shadow-md:0 8px 24px rgba(0,0,0,.5);
+}
+body{font:13px/1.6 var(--font-title);color:var(--ink);background:var(--base)}
+button{font:inherit;color:inherit;cursor:pointer;background:none;border:0;padding:0}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* 按需滚动条（UI-SCROLL-001 / UI-CR049-v1：仅实际滚动时显示，停止 700ms 后隐藏） */
+.stage-scroll{scrollbar-width:thin;scrollbar-color:transparent transparent}
+.stage-scroll.scrollbar-active{scrollbar-color:var(--muted) transparent}
+.stage-scroll::-webkit-scrollbar{width:10px;height:10px}
+.stage-scroll::-webkit-scrollbar-thumb{background:transparent;border:3px solid transparent;background-clip:content-box;border-radius:8px}
+.stage-scroll.scrollbar-active::-webkit-scrollbar-thumb{background:var(--muted);background-clip:content-box}
+.stage-scroll::-webkit-scrollbar-track{background:transparent}
+
+/* ---------- 评审控制条（非产品 UI） ---------- */
+.review{border-bottom:1px solid var(--line);background:var(--paper);padding:10px 18px;display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;position:sticky;top:0;z-index:5}
+.review .rb-t{display:flex;align-items:baseline;gap:8px;margin-right:auto;min-width:0}
+.review .rb-t b{font-size:12px;padding:1px 7px;border-radius:4px;background:var(--soft);color:var(--accent);font-weight:600}
+.review .rb-t span{font-size:11.5px;color:var(--muted)}
+.review .rb-g{display:flex;align-items:center;gap:6px}
+.review .rb-g label{font-size:11.5px;color:var(--muted)}
+.review .chip{border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:11.5px;color:var(--ink)}
+.review .chip.on{background:var(--soft);border-color:var(--accent);color:var(--accent);font-weight:600}
+.review .note{font-size:11px;color:var(--muted);max-width:640px}
+
+/* ---------- 舞台：三块画布并排（390 窄视口块独立缩放） ---------- */
+.stage{display:flex;flex-wrap:wrap;gap:20px;padding:18px;align-items:flex-start}
+.stage h2{font-size:13px;margin:0 0 8px;color:var(--ink)}
+.stage h2 small{font-weight:400;color:var(--muted);font-size:11px;margin-left:6px}
+.phone{width:380px;flex:0 0 auto}
+.phone.narrow{width:390px}
+.canvas{border:1px solid var(--line);border-radius:var(--radius-card);background:var(--paper);overflow:hidden}
+.canvas .cap{padding:8px 12px;border-top:1px dashed var(--line);font-size:11px;color:var(--muted)}
+
+/* ---------- AI 侧栏局部（对照正式侧栏结构简化，仅本次三态） ---------- */
+.sidebar{display:flex;flex-direction:column;height:520px}
+.sb-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)}
+.sb-head .dot{width:8px;height:8px;border-radius:50%;background:var(--good-dot)}
+.sb-head b{font-size:12.5px}
+.sb-head .spacer{flex:1}
+.sb-msgs{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px;min-height:0}
+.msg{max-width:92%}
+.msg .who{font-size:10.5px;color:var(--muted);margin-bottom:2px}
+.msg .bubble{background:var(--msg-bg);border-radius:var(--radius-card);padding:8px 10px}
+.msg.user{align-self:flex-end;text-align:right}
+.msg.user .bubble{background:var(--soft);text-align:left}
+
+/* 状态1：上下文断点卡（role=system 断点消息） */
+.breakpoint{align-self:stretch;display:flex;gap:8px;align-items:flex-start;border:1px dashed var(--notice-line);background:var(--notice-bg);border-radius:var(--radius-card);padding:8px 10px}
+.breakpoint .bp-ico{flex:0 0 auto;width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--tag-bg);color:var(--notice-ink);font-size:11px;font-weight:700}
+.breakpoint .bp-main{min-width:0}
+.breakpoint .bp-title{font-size:12px;font-weight:600;color:var(--ink)}
+.breakpoint .bp-title .tag{margin-left:6px;vertical-align:1px}
+.breakpoint .bp-reason{font-size:11px;color:var(--notice-ink);margin-top:2px}
+.breakpoint .bp-reason b{color:var(--warn-deep)}
+.breakpoint.ok .bp-ico{background:var(--soft);color:var(--accent)}
+.tag{display:inline-block;font-size:10px;line-height:1;padding:3px 6px;border-radius:4px;background:var(--tag-bg);color:var(--tag-ink);font-weight:600}
+.tag.good{background:var(--soft);color:var(--accent)}
+.tag.warn{background:var(--warn-bg);color:var(--warn-deep)}
+.tag.bad{background:var(--danger-bg);color:var(--danger-deep)}
+
+/* 状态2：绑定阻塞横幅（输入区禁用、草稿保留、历史仍可看） */
+.sb-banner{border-top:1px solid var(--warn-line);background:var(--warn-bg);padding:10px 12px;display:flex;gap:8px;align-items:flex-start}
+.sb-banner .bn-ico{flex:0 0 auto;width:16px;height:16px;border-radius:4px;background:var(--warn-bg);border:1px solid var(--warn-line);color:var(--warn-deep);font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.sb-banner .bn-main{min-width:0;flex:1}
+.sb-banner .bn-title{font-size:12px;font-weight:600;color:var(--warn-deep)}
+.sb-banner .bn-reason{font-size:11px;color:var(--warn-deep);margin-top:2px}
+.sb-banner .bn-foot{display:flex;gap:8px;margin-top:6px;flex-wrap:wrap}
+.sb-banner .bn-foot .draft{font-size:10.5px;color:var(--warn-deep);background:var(--paper);border:1px solid var(--warn-line);border-radius:4px;padding:1px 6px}
+.sb-banner .btn{font-size:11px;border:1px solid var(--warn-line);border-radius:var(--radius-ctl);padding:3px 10px;background:var(--paper);color:var(--warn-deep);font-weight:600}
+.sb-banner .btn.primary{background:var(--warn-deep);border-color:var(--warn-deep);color:var(--paper)}
+.composer{border-top:1px solid var(--line);padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.composer textarea{width:100%;min-height:56px;resize:none;border:1px solid var(--line);border-radius:var(--radius-ctl);background:var(--paper);color:var(--ink);font:inherit;padding:8px}
+.composer.disabled textarea{opacity:.55;cursor:not-allowed}
+.composer .row{display:flex;gap:8px;align-items:center}
+.composer .send{margin-left:auto;border-radius:var(--radius-ctl);background:var(--accent);color:var(--accent-ink);padding:5px 14px;font-weight:600;font-size:12px}
+.composer.disabled .send{opacity:.5;cursor:not-allowed}
+.composer .foot{font-size:10.5px;color:var(--muted)}
+.sb-banner~.composer{border-top:0}
+
+/* 状态3：fresh 确认弹窗 */
+.modal-wrap{position:relative}
+.modal-backdrop{position:absolute;inset:0;background:var(--backdrop);display:flex;align-items:center;justify-content:center}
+.modal{width:300px;background:var(--paper);border:1px solid var(--line);border-radius:var(--radius-card);box-shadow:var(--shadow-md);padding:14px}
+.modal h3{margin:0 0 6px;font-size:13px}
+.modal p{margin:0 0 10px;font-size:11.5px;color:var(--muted)}
+.modal .kv{background:var(--notice-bg);border:1px solid var(--notice-line);border-radius:var(--radius-ctl);padding:6px 8px;font-size:11px;color:var(--notice-ink);margin-bottom:10px}
+.modal .kv b{color:var(--ink)}
+.modal .acts{display:flex;gap:8px;justify-content:flex-end}
+.modal .btn{border-radius:var(--radius-ctl);border:1px solid var(--line);padding:4px 12px;font-size:12px;font-weight:600}
+.modal .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+
+/* 状态4（补充）：native 正常态对照 */
+.sb-status{display:flex;gap:6px;align-items:center;font-size:10.5px;color:var(--muted)}
+.sb-status .pill{border-radius:999px;padding:1px 8px;background:var(--soft);color:var(--accent);font-weight:600}
+.sb-status .pill.warn{background:var(--warn-bg);color:var(--warn-deep)}
+.sb-status .pill.bad{background:var(--danger-bg);color:var(--danger-deep)}
+</style>
+</head>
+<body>
+<div class="review">
+  <div class="rb-t">
+    <b>UI-CR037-SR1</b>
+    <span>AI 侧栏普通会话原生续接 · 三态设计评审稿（STORY-032 AC-05/06）</span>
+  </div>
+  <div class="rb-g">
+    <label>主题</label>
+    <button class="chip on" id="th-light" onclick="setTheme('light')">浅色</button>
+    <button class="chip" id="th-dark" onclick="setTheme('dark')">深色</button>
+  </div>
+  <div class="rb-g">
+    <label>断点卡样式</label>
+    <button class="chip on" id="bp-ok" onclick="setBp('ok')">已重建</button>
+    <button class="chip" id="bp-dead" onclick="setBp('dead')">不可续接</button>
+  </div>
+  <div class="rb-g">
+    <label>阻塞原因</label>
+    <select id="reason" style="font:inherit;border:1px solid var(--line);border-radius:6px;padding:2px 6px;background:var(--paper);color:var(--ink)">
+      <option value="REF_STALE">REF_STALE · 原线程引用已过期</option>
+      <option value="REF_MISSING">REF_MISSING · 引用缺失（历史无原生绑定）</option>
+      <option value="INCOMPATIBLE_CLI">INCOMPATIBLE_CLI · CLI 或版本不兼容</option>
+      <option value="INCOMPATIBLE_STORE">INCOMPATIBLE_STORE · 后端实例/profile 不兼容</option>
+      <option value="GRANT_REVOKED">GRANT_REVOKED · 知识授权已变化或撤销</option>
+      <option value="ADAPTER_REFUSED">ADAPTER_REFUSED · 适配器未确认同一线程</option>
+      <option value="UNSUPPORTED_CLI">UNSUPPORTED_CLI · 当前 CLI 不支持原生续接</option>
+    </select>
+  </div>
+  <div class="note">三个新增可见状态：① 上下文断点卡（消息流内 role=system 断点消息，跨重启可见）；② 绑定阻塞横幅（blocked：输入禁用、原因可见、草稿保留、历史仍可看）；③ fresh 确认弹窗（引用失效须用户确认才重建）。本页为静态演示，不接入真实业务。</div>
+</div>
+
+<div class="stage">
+  <!-- 状态1：断点卡 -->
+  <div class="phone">
+    <h2>① 上下文断点卡 <small>消息流内 system 断点消息；刷新/重启后仍在</small></h2>
+    <div class="canvas">
+      <div class="sidebar">
+        <div class="sb-head"><span class="dot"></span><b>登录模块重构</b><span class="spacer"></span>
+          <span class="sb-status"><span class="pill" id="st1">native · 已续接</span></span>
+        </div>
+        <div class="sb-msgs stage-scroll" id="sc1">
+          <div class="msg user"><div class="who">我 · 14:02</div><div class="bubble">把登录超时改成 30 秒，并补充注释。</div></div>
+          <div class="msg assistant"><div class="who">模型未上报 · 14:02</div><div class="bubble">已修改 auth.ts 的超时配置并补充注释。</div></div>
+          <div class="breakpoint ok" id="bp-card">
+            <div class="bp-ico" id="bp-ico">↻</div>
+            <div class="bp-main">
+              <div class="bp-title"><span id="bp-title">上下文已重建</span><span class="tag good" id="bp-tag">fresh</span></div>
+              <div class="bp-reason">原因：<b id="bp-reason">原线程引用已过期（REF_STALE）</b>；此前的对话保留为历史，不再作为模型上下文。</div>
+            </div>
+          </div>
+          <div class="msg user"><div class="who">我 · 14:05</div><div class="bubble">继续：把新超时同步到重试逻辑。</div></div>
+          <div class="msg assistant"><div class="who">模型未上报 · 14:05</div><div class="bubble">已在 retry.ts 中同步 30 秒超时。</div></div>
+        </div>
+        <div class="composer">
+          <textarea placeholder="描述你想构建的内容…">继续：把新超时同步到重试逻辑。</textarea>
+          <div class="row"><span class="foot">Enter 发送 · Shift+Enter 换行</span><span class="foot">claude · 代理模式</span><button class="send">发送</button></div>
+        </div>
+      </div>
+      <div class="cap">断点消息 role=system，持久化在消息流；文案区分「上下文已重建 / 原线程不可续接」并携带原因摘要。</div>
+    </div>
+  </div>
+
+  <!-- 状态2：blocked 横幅 -->
+  <div class="phone">
+    <h2>② 绑定阻塞横幅 <small>blocked：输入禁用 + 原因 + 草稿保留 + 历史可看</small></h2>
+    <div class="canvas">
+      <div class="sidebar">
+        <div class="sb-head"><span class="dot" style="background:var(--bad-dot)"></span><b>登录模块重构</b><span class="spacer"></span>
+          <span class="sb-status"><span class="pill bad">blocked · 原线程不可续接</span></span>
+        </div>
+        <div class="sb-msgs stage-scroll">
+          <div class="msg user"><div class="who">我 · 14:02</div><div class="bubble">把登录超时改成 30 秒。</div></div>
+          <div class="msg assistant"><div class="who">模型未上报 · 14:02</div><div class="bubble">已修改 auth.ts 的超时配置。</div></div>
+          <div class="msg assistant"><div class="who">模型未上报 · 14:03</div><div class="bubble">补充了错误分支处理。</div></div>
+        </div>
+        <div class="sb-banner">
+          <div class="bn-ico">!</div>
+          <div class="bn-main">
+            <div class="bn-title">原线程不可续接，已暂停发送</div>
+            <div class="bn-reason" id="bn-reason">原因：知识授权已变化或撤销（GRANT_REVOKED）。历史记录仍可查看；未发送草稿已保留。</div>
+            <div class="bn-foot">
+              <span class="draft">草稿已保留（12 字）</span>
+              <button class="btn primary" onclick="alert('演示：打开 fresh 确认弹窗')">重建上下文…</button>
+              <button class="btn" onclick="alert('演示：另建会话')">切换 CLI 另建会话</button>
+            </div>
+          </div>
+        </div>
+        <div class="composer disabled">
+          <textarea disabled placeholder="原线程不可续接，重建或另建会话后可继续发送">继续补充登录失败的提示文案。</textarea>
+          <div class="row"><span class="foot">Enter 发送 · Shift+Enter 换行</span><span class="foot">claude · 代理模式</span><button class="send" disabled>发送</button></div>
+        </div>
+      </div>
+      <div class="cap">blocked 时输入区整体禁用；横幅给出原因中文摘要与两条出路（重建 / 另建会话）；草稿与历史不动。</div>
+    </div>
+  </div>
+
+  <!-- 状态3：fresh 确认弹窗 -->
+  <div class="phone modal-wrap">
+    <h2>③ fresh 确认弹窗 <small>引用失效须用户确认才开始新上下文</small></h2>
+    <div class="canvas">
+      <div class="sidebar">
+        <div class="sb-head"><span class="dot" style="background:var(--warn-dot)"></span><b>登录模块重构</b><span class="spacer"></span>
+          <span class="sb-status"><span class="pill warn">freshPending · 待确认</span></span>
+        </div>
+        <div class="sb-msgs stage-scroll">
+          <div class="msg user"><div class="who">我 · 14:02</div><div class="bubble">把登录超时改成 30 秒。</div></div>
+          <div class="msg assistant"><div class="who">模型未上报 · 14:02</div><div class="bubble">已修改 auth.ts 的超时配置。</div></div>
+        </div>
+        <div class="composer disabled">
+          <textarea disabled>继续补充错误分支。</textarea>
+          <div class="row"><span class="foot">Enter 发送 · Shift+Enter 换行</span><span class="foot">claude · 代理模式</span><button class="send" disabled>发送</button></div>
+        </div>
+      </div>
+      <div class="modal-backdrop">
+        <div class="modal" role="dialog" aria-label="重建上下文确认">
+          <h3>无法续接原线程，是否重建上下文？</h3>
+          <p>本轮开始前检测到原生引用不可用。重建后将开启全新上下文；历史消息保留可见，不再自动送给模型。</p>
+          <div class="kv">原因：<b id="kv-reason">原线程引用已过期（REF_STALE）</b><br>引用指纹：<b>a1b2c3d4e5f60718</b> · 绑定版本：<b>#4</b></div>
+          <div class="acts">
+            <button class="btn">取消</button>
+            <button class="btn primary" onclick="alert('演示：确认重建 → 写入断点卡 → 下轮以全新上下文发送')">重建并继续</button>
+          </div>
+        </div>
+      </div>
+      <div class="cap">确认前输入禁用；弹窗展示原因、脱敏引用指纹与绑定版本；取消保留原绑定不改写。</div>
+    </div>
+  </div>
+
+  <!-- 窄视口 390 -->
+  <div class="phone narrow">
+    <h2>④ 窄视口 390px <small>断点卡 + blocked 横幅换行布局</small></h2>
+    <div class="canvas">
+      <div class="sidebar" style="height:470px">
+        <div class="sb-head"><span class="dot" style="background:var(--bad-dot)"></span><b>登录模块重构</b><span class="spacer"></span><span class="pill bad">blocked</span></div>
+        <div class="sb-msgs stage-scroll">
+          <div class="msg user"><div class="who">我 · 14:02</div><div class="bubble">把登录超时改成 30 秒。</div></div>
+          <div class="breakpoint ok" style="font-size:11px">
+            <div class="bp-ico">↻</div>
+            <div class="bp-main">
+              <div class="bp-title">上下文已重建<span class="tag good">fresh</span></div>
+              <div class="bp-reason">原因：原线程引用已过期（REF_STALE）；历史保留。</div>
+            </div>
+          </div>
+        </div>
+        <div class="sb-banner" style="flex-wrap:wrap">
+          <div class="bn-ico">!</div>
+          <div class="bn-main">
+            <div class="bn-title">原线程不可续接，已暂停发送</div>
+            <div class="bn-reason">原因：CLI 或版本不兼容（INCOMPATIBLE_CLI）。</div>
+            <div class="bn-foot"><span class="draft">草稿已保留</span><button class="btn primary">重建上下文…</button></div>
+          </div>
+        </div>
+        <div class="composer disabled">
+          <textarea disabled>继续补充错误分支。</textarea>
+          <div class="row"><span class="foot">390px</span><button class="send" disabled>发送</button></div>
+        </div>
+      </div>
+      <div class="cap">窄视口：横幅按钮换行、断点卡整行展示；文字不溢出。</div>
+    </div>
+  </div>
+</div>
+
+<script>
+function setTheme(t){document.documentElement.dataset.theme=t;
+  document.getElementById('th-light').classList.toggle('on',t==='light');
+  document.getElementById('th-dark').classList.toggle('on',t==='dark');}
+function setBp(m){var ok=m==='ok';
+  var card=document.getElementById('bp-card');
+  card.classList.toggle('ok',ok);
+  document.getElementById('bp-title').textContent=ok?'上下文已重建':'原线程不可续接';
+  var tag=document.getElementById('bp-tag');
+  tag.textContent=ok?'fresh':'blocked';tag.className='tag '+(ok?'good':'bad');
+  document.getElementById('bp-ico').textContent=ok?'↻':'!';
+  document.getElementById('st1').textContent=ok?'native · 已续接':'fresh · 已确认重建';
+  document.getElementById('bp-ok').classList.toggle('on',ok);
+  document.getElementById('bp-dead').classList.toggle('on',!ok);}
+document.getElementById('reason').addEventListener('change',function(){
+  var parts=this.value.split(' · ');
+  var text=parts[1]+'（'+parts[0]+'）';
+  document.getElementById('bp-reason').textContent=text.replace('）','）');
+  document.getElementById('bn-reason').textContent='原因：'+text+'。历史记录仍可查看；未发送草稿已保留。';
+  document.getElementById('kv-reason').textContent=text;});
+// UI-SCROLL-001：仅实际滚动时显示，停止 700ms 后隐藏（与正式规范一致的取样行为）
+var timer=null;
+document.querySelectorAll('.stage-scroll').forEach(function(el){
+  el.addEventListener('scroll',function(){
+    el.classList.add('scrollbar-active');
+    if(timer)clearTimeout(timer);
+    timer=setTimeout(function(){el.classList.remove('scrollbar-active');},700);
+  },{passive:true});});
+</script>
+</body>
+</html>

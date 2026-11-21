@@ -161,7 +161,7 @@
     subagents: [
       { cli: "dsh", title: "核验容量事务边界", tokens: "8.6M", duration: "12m31s", status: "成功", model: "deepseek-v4.1" },
       { cli: "claude", title: "评审取消回补用例", tokens: "2.1M", duration: "6m02s", status: "待确认", model: "claude-4.5-sonnet" },
-      { cli: "codex", title: "生成并发测试数据", tokens: "1.4M", duration: "3m18s", status: "成功", model: "gpt-5-codex" },
+      { id: "AG-2087-A", taskId: "RUN-2087", cli: "codex", title: "生成并发测试数据", tokens: "1.4M", duration: "3m18s", status: "成功", model: "gpt-5-codex" },
       { cli: "dsh", title: "整理交付证据清单", tokens: "—", duration: "—", status: "失败", model: "deepseek-v4.1" }
     ],
     background: [
