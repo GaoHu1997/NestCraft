@@ -49,4 +49,4 @@ docs/                研发文档（正式）+ tmp/（过程）+ 参考/（本�
 
 ## 状态
 
-当前版本 **0.0.2**：CR-049~CR-056 批量成果（滚动条按需显示、内置图标、页签溢出、CLI 工具选择、会话中心、编辑器与知识库性能、AI 侧栏重构）已入库，本地验证通过（cargo test --lib 205 通过 / tsc / vite build）；Windows x64 免安装 exe 由 GitHub Actions 构建并发布，CI 与发布流水线结果、Release 资产核验随 v0.0.2 标签执行，运行时逐项验收与安装包发布未完成。当前状态：**待用户验收**。
+当前版本 **0.0.2**：CR-049~CR-056 批量成果（滚动条按需显示、内置图标、页签溢出、CLI 工具选择、会话中心、编辑器与知识库性能、AI 侧栏重构）已入库；CI 与发布流水线均通过，本地验证 cargo test --lib 205 通过 / tsc / vite build；Release [v0.0.2](https://github.com/GaoHu1997/NestCraft/releases/tag/v0.0.2) 已发布 Windows x64 免安装 exe 并核验资产（SHA-256、版本号、zip 内容一致）；运行时逐项验收与安装包发布未完成。当前状态：**待用户验收**。
