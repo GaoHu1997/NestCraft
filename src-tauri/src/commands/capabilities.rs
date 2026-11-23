@@ -387,7 +387,7 @@ pub fn skill_scan_sources(app: tauri::AppHandle) -> Result<Vec<SkillScanGroup>, 
 // ---------- Tool（内置只读注册表） ----------
 
 /// CR-059：pub(crate) 供 ai_tools 单测校验「注册表 ↔ 工具目录」两侧不漂移。
-pub(crate) const BUILTIN_TOOLS: [(&str, &str, &str, &str); 21] = [
+pub(crate) const BUILTIN_TOOLS: [(&str, &str, &str, &str); 22] = [
     ("fs.read", "读取项目内文件", "low", "read"),
     ("knowledge.list", "列出项目已授权知识库", "low", "read"),
     ("knowledge.search", "在已授权知识库内检索", "low", "read"),
@@ -413,6 +413,8 @@ pub(crate) const BUILTIN_TOOLS: [(&str, &str, &str, &str); 21] = [
     ("workbench.open_panel", "AI 请求打开右侧预览面板（文件/需求/知识/办公文件）", "low", "config"),
     // CR-059 二期：查询 ssh_exec 高风险命令的跨进程审批结论
     ("workbench.ssh_exec_status", "AI 查询服务器命令审批结论与执行结果", "low", "config"),
+    // CR-069 / STORY-091：派发工作给受管执行（只建批次与任务，不执行、不推进状态）
+    ("workbench.dispatch_work", "AI 派发编码类工作给受管执行（只建批次与任务，不启动执行、不代表完成）", "medium", "config"),
 ];
 
 #[tauri::command]
