@@ -745,6 +745,8 @@ export interface SessionMeta {
   sessionRole?: "ordinary" | "executor";
   /** CR-037：原生绑定派生视图（无原引用，仅脱敏指纹）；执行会话/未绑定会话为 null。 */
   binding?: SessionBinding | null;
+  /** CR-069：会话运行通道；cli=外部 CLI 进程作答，platform=平台主代理直答。缺省按 cli 处理。 */
+  runner?: "cli" | "platform";
 }
 
 /** CR-037：binding.state = native（已绑定原线程）| fresh（已确认重建）| freshPending（待确认）| blocked（不可续接）。 */
@@ -849,6 +851,8 @@ export const chatSessionCreate = (args: {
   effort?: string;
   /** CR-047：显式绑定执行特性；绑定后不可更改。 */
   featureId?: string;
+  /** CR-069：新会话运行通道；缺省 cli（与后端 migrate_session_runner 默认一致）。 */
+  runner?: "cli" | "platform";
 }) => invoke<SessionMeta>("chat_session_create", args);
 export const chatSessionGet = (id: string) => invoke<SessionMeta>("chat_session_get", { id });
 export const chatSessionUpdate = (args: {
@@ -860,6 +864,8 @@ export const chatSessionUpdate = (args: {
   modelId?: string;
   effort?: string;
   unread?: string;
+  /** CR-069：切换运行通道；仅无消息且未运行的会话允许，后端校验。 */
+  runner?: "cli" | "platform";
 }) => invoke<void>("chat_session_update", args);
 export const chatSessionDelete = (id: string) => invoke<void>("chat_session_delete", { id });
 export const chatMessages = (sessionId: string) => invoke<ChatMessage[]>("chat_messages", { sessionId });

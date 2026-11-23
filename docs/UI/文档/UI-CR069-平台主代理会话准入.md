@@ -142,7 +142,14 @@
 - 设计验证与未验证（更新）：**已做**——`node --check` 语法检查、Node 桩模拟 8 组断言；headless Edge（CDP 驱动，1440×900）真实渲染并截图 6 个状态（浅/深主题、默认/已选/不可用/平台态输入区），弹层定位、菜单项、禁用态、toast、说明文案逐项目检通过。**未做**——390 窄屏、静态设计 diff 与滚动条动态三帧（本稿无新增滚动容器，浮层继承 SC-049-03/04 共享规则）；仍待用户人工查看确认。
 - 边界：本稿仅为设计资源，**不代表正式前端已实现、也不构成编码授权**；`src/modules/chat/` 等前端源码本轮零改动。SC-069-06（任务页来源标识）、SC-069-07（长会话上下文）不在本稿。
 
-## 9. 变更记录
+## 9. 前端实现登记（2026-11-23，按 v2 执行）
+
+- 实现位置：`src/api/index.ts`（SessionMeta.runner、create/update 参数）、`src/modules/chat/overlay.tsx`（浮层类型加 runner）、`src/modules/chat/ModelPicker.tsx`（运行通道 chip + 弹层 + 平台态 CLI/权限禁用）、`src/modules/chat/ChatPanel.tsx`（runnerDraft / switchRunner / createSession 传 runner / startSend 平台校验分流）、`src/modules/chat/chat.css`（chip 与弹层样式）。
+- 与 v2 设计的偏差（实现层）：「打开模型供应商设置」入口调用全局 `setSettingsOpen(true)`，落在设置默认页签，不定位到「模型供应商」页——定位需要 App 级 plumbing，超出本 Feature 边界，如实记录。
+- 行为口径：新会话先选通道再发送（runnerDraft 随首次创建落库）；已有会话切换走 `chat_session_update`，有消息/运行中由前后端双重拒绝（拒绝原因经 toast 反馈，不写静态界面文案）；平台会话发送校验 provider+model 在候选内，不走 CLI 校验。
+- 验证：`npm run build`（tsc --noEmit + vite build）通过。**未验证**：真实 Tauri 应用内人工操作、软件与设计稿成对视觉对照（需运行应用，待后续会话执行）；`src/modules/settings/` 零改动。
+
+## 10. 变更记录
 
 | 日期 | 变更 | 依据 |
 | --- | --- | --- |

@@ -349,6 +349,10 @@
 .chat-ctl-chip.icon-only { width: 28px; height: 28px; justify-content: center; border: 1px solid var(--line); border-radius: 7px; padding: 0; }
 .chat-ctl-chip.icon-only svg { width: 16px; height: 16px; }
 .chat-ctl-chip.cli { padding: 0 5px; }
+/* CR-069：运行通道 chip 与弹层（v2：无说明文字） */
+.chat-ctl-chip.runner { gap: 4px; font-weight: 500; }
+.chat-ctl-chip.runner.platform { color: var(--brand, var(--accent, var(--ink))); }
+.chat-runner-pop { width: 220px; }
 .chat-ctl-chip.model { flex: 1; min-width: 0; max-width: 150px; font-weight: 500; color: var(--ink); }
 .chat-ctl-chip.stale { color: var(--warning, var(--warn)); text-decoration: underline dotted; }
 .chat-send { margin-left: auto; width: 30px; height: 30px; border: 0; flex: 0 0 auto; border-radius: 8px; display: grid; place-items: center; background: var(--primary, var(--accent)); color: #fff; cursor: pointer; }
