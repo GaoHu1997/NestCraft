@@ -7,8 +7,10 @@
 //! - 不提供 shell / 文件写 / git 写 / 凭据读取能力（工具白名单硬编码）；
 //! - 不修改任务状态（派发只创建记录，见 execution.rs）。
 
-use crate::models::EffortMap;
+use crate::commands::chat::StreamOutcome;
+use crate::models::{EffortMap, SendPayload};
 use serde_json::{json, Value};
+use std::io::{BufRead, Read};
 
 /// 平台会话的默认输出上限（两协议一致；Anthropic 的 max_tokens 必填）。
 const MAX_OUTPUT_TOKENS: u64 = 4096;
@@ -491,6 +493,507 @@ pub(crate) fn parse_stream_lines(
         }
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 发送分派与单轮执行（LLD-CR069 §4）
+// ---------------------------------------------------------------------------
+
+/// CR-069：平台主代理可见工具。此清单是唯一来源；模型无法扩展。
+/// 首版 13 项：dispatch_work 随 STORY-091 灰度，不在本清单（LLD §5.1）。
+pub(crate) const PLATFORM_TOOL_ALLOWLIST: [&str; 13] = [
+    "get_context",
+    "list_projects",
+    "get_requirements",
+    "read_requirement_doc",
+    "write_requirement_doc",
+    "list_kbs",
+    "knowledge_list",
+    "knowledge_search",
+    "knowledge_read",
+    "knowledge_read_many",
+    "fs_read",
+    "list_servers",
+    "open_panel",
+];
+
+/// 工具循环三重上限（LLD §5.3）：轮次 / 单轮个数 / 累计次数。
+const MAX_TOOL_ROUNDS: usize = 8;
+const MAX_TOOL_CALLS_PER_ROUND: usize = 8;
+const MAX_TOOL_CALLS_TOTAL: usize = 24;
+
+/// 副作用工具同参数不重复执行；只读工具不去重（重复读取无害）。
+fn is_side_effect_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "write_requirement_doc"
+            | "create_project"
+            | "update_project"
+            | "create_kb"
+            | "set_kb_grant"
+            | "save_server"
+            | "generate_image"
+            | "dispatch_work"
+    )
+}
+
+/// 生成模型可见工具定义：白名单 ∩ 当前 capability 启用集（每轮重读）。
+fn platform_tool_defs(conn: &rusqlite::Connection) -> Vec<crate::commands::ai_tools::ToolDef> {
+    crate::commands::ai_tools::workbench_tools()
+        .into_iter()
+        .filter(|d| PLATFORM_TOOL_ALLOWLIST.contains(&d.name))
+        .filter(|d| crate::commands::ai_tools::tool_enabled(conn, d.registry_id))
+        .collect()
+}
+
+struct ToolOutcome {
+    content: String,
+    is_error: bool,
+}
+
+/// 安全执行封装：参数 JSON 校验 + catch_unwind（工具是同步调用，可捕获 panic）。
+fn execute_tool_safely(
+    ctx: &crate::commands::ai_tools::ToolContext,
+    call: &ToolCall,
+) -> ToolOutcome {
+    let args: Value = match serde_json::from_str(&call.arguments) {
+        Ok(v) => v,
+        Err(e) => return ToolOutcome { content: format!("参数不是有效 JSON：{e}"), is_error: true },
+    };
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        crate::commands::ai_tools::run_tool(ctx, &call.name, &args)
+    })) {
+        Ok(Ok(value)) => ToolOutcome { content: value.to_string(), is_error: false },
+        Ok(Err(e)) => ToolOutcome { content: e, is_error: true },
+        Err(_) => ToolOutcome { content: "工具执行异常终止".into(), is_error: true },
+    }
+}
+
+/// 从数据库解析一轮平台会话的全部运行要素（LLD §3.3/§4.2 步骤 2-4）。
+/// 所有校验在持久化用户消息之前完成，失败保留前端草稿。
+fn resolve_platform_turn(
+    conn: &rusqlite::Connection,
+    app: &tauri::AppHandle,
+    session: &crate::models::SessionMeta,
+) -> Result<PlatformTurn, String> {
+    let provider_id = session.provider_id.clone().filter(|s| !s.trim().is_empty())
+        .ok_or("会话未绑定平台供应商，请先在会话配置中选择模型")?;
+    let model_id = session.model_id.clone().filter(|s| !s.trim().is_empty())
+        .ok_or("会话未绑定平台模型，请先在会话配置中选择模型")?;
+    let (protocol, disabled, headers): (String, bool, Option<String>) = conn
+        .query_row(
+            "SELECT protocol, disabled, headersJson FROM provider WHERE id=?1",
+            [&provider_id],
+            |r| Ok((r.get(0)?, r.get::<_, i64>(1)? != 0, r.get(2)?)),
+        )
+        .map_err(|_| "供应商不存在，请检查设置中的供应商配置".to_string())?;
+    if disabled || !matches!(protocol.as_str(), "openai" | "anthropic") {
+        return Err("供应商已停用或协议不受支持，请先在设置中启用".into());
+    }
+    let base_url: String = conn
+        .query_row(
+            "SELECT baseUrl FROM provider_endpoint WHERE providerId=?1 AND enabled=1 AND protocol=?2 ORDER BY createdAt, id LIMIT 1",
+            rusqlite::params![provider_id, protocol],
+            |r| r.get(0),
+        )
+        .map_err(|_| format!("供应商没有与协议 {protocol} 匹配的启用端点，请检查设置"))?;
+    // 模型必须属于该供应商且是文本模型（对齐 providers.rs::model_candidates 过滤）。
+    let (text_enabled, image_gen, efforts_json): (i64, i64, String) = conn
+        .query_row(
+            "SELECT text, imageGen, effortsJson FROM model WHERE providerId=?1 AND modelId=?2",
+            rusqlite::params![provider_id, model_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .map_err(|_| "模型未在该供应商配置，请重新选择".to_string())?;
+    if text_enabled == 0 || image_gen != 0 {
+        return Err("该模型不是可对话的文本模型，请重新选择".into());
+    }
+    let efforts: EffortMap = serde_json::from_str(&efforts_json).map_err(|_| "模型思考档位配置无效".to_string())?;
+    let key_refs: Vec<String> = {
+        let mut stmt = conn
+            .prepare("SELECT secretRef FROM provider_key WHERE providerId=?1 AND enabled=1 ORDER BY createdAt, id")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([&provider_id], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+    };
+    let api_key = key_refs
+        .iter()
+        .find_map(|r| crate::commands::dispatch::read_secret(app, r).filter(|s| !s.trim().is_empty()))
+        .ok_or("供应商没有可用的启用密钥，请检查设置")?;
+    if api_key.contains(['\r', '\n']) {
+        return Err("密钥含无效字符".into());
+    }
+    let headers_map: std::collections::BTreeMap<String, String> = match headers.as_deref().filter(|s| !s.trim().is_empty()) {
+        Some(s) => serde_json::from_str(s).map_err(|_| "高级请求头格式无效".to_string())?,
+        None => Default::default(),
+    };
+    let mut extra_headers = Vec::new();
+    for (name, value) in &headers_map {
+        if name.is_empty()
+            || !name.bytes().all(|c| c.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&c))
+            || value.contains(['\r', '\n'])
+            || matches!(name.to_ascii_lowercase().as_str(), "authorization" | "x-api-key" | "host" | "cookie" | "proxy-authorization")
+        {
+            return Err("高级请求头含无效或保留字段".into());
+        }
+        extra_headers.push((name.clone(), value.clone()));
+    }
+    Ok(PlatformTurn {
+        session_id: session.id.clone(),
+        project_id: session.project_id.clone(),
+        base_url: platform_chat_url(&base_url, &protocol)?,
+        protocol,
+        api_key,
+        model_id,
+        effort: session.effort.clone(),
+        efforts,
+        extra_headers,
+    })
+}
+
+/// 平台会话单轮发送（LLD §4.2；步骤顺序不可调换：所有校验完成后才持久化用户消息）。
+pub async fn send_platform(
+    app: tauri::AppHandle,
+    payload: SendPayload,
+    channel: tauri::ipc::Channel<Value>,
+) -> Result<(), String> {
+    let session_id = payload.session_id.clone();
+    // 步骤 1：与 CLI 轮次共用互斥，防止同一会话并发写。
+    let (_running_turn, abort_rx) = crate::commands::chat::reserve_turn(&session_id)?;
+    let outcome = run_platform_turn(&app, &payload, &channel, &abort_rx).await;
+    // _running_turn 在此 Drop，释放 RUNNING（成功、失败、panic 均覆盖）。
+    drop(_running_turn);
+    match outcome {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = channel.send(json!({"type": "error", "message": e}));
+            Ok(())
+        }
+    }
+}
+
+async fn run_platform_turn(
+    app: &tauri::AppHandle,
+    payload: &SendPayload,
+    channel: &tauri::ipc::Channel<Value>,
+    abort_rx: &tokio::sync::watch::Receiver<bool>,
+) -> Result<(), String> {
+    let session_id = payload.session_id.clone();
+    // 步骤 2：读取会话。
+    let session = crate::commands::chat::chat_session_get(session_id.clone())?;
+    // 执行会话发送前复检 Feature 归属与源 hash（PRD §5.4；与 chat_send CLI 路径一致）。
+    if let Some(feature_id) = session.feature_id.as_deref() {
+        let guard = crate::db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        let current = crate::commands::chat::resolve_execution_feature(conn, session.project_id.as_deref(), Some(feature_id))?;
+        if current.feature_id.as_deref() != Some(feature_id) {
+            return Err("执行会话的Feature绑定不一致，拒绝发送".into());
+        }
+        if current.feature_source_hash != session.feature_source_hash {
+            return Err(format!("特性 {feature_id} 的源已变化；请重新预检后再创建或绑定执行会话，未按旧范围发送"));
+        }
+    }
+    // 步骤 3-5：供应商/端点/密钥/模型校验。
+    let turn = {
+        let guard = crate::db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        resolve_platform_turn(conn, app, &session)?
+    };
+    // 步骤 6 前置：受管上下文编译（知识授权、Skill 停用校验、引用边界全在 build_prompt 内）。
+    let prompt = crate::commands::chat::build_prompt(app, payload, session.project_id.as_deref())?;
+    // 步骤 6：组装消息（system + 历史 user/assistant 文本 + 本轮）。
+    let mut messages: Vec<ChatMsg> = vec![ChatMsg::System(PLATFORM_SYSTEM_PROMPT.to_string())];
+    {
+        let guard = crate::db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        let mut stmt = conn
+            .prepare("SELECT role, content FROM message WHERE sessionId=?1 AND role IN ('user','assistant') ORDER BY createdAt, rowid")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([&session_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?;
+        for row in rows {
+            let (role, content) = row.map_err(|e| e.to_string())?;
+            messages.push(match role.as_str() {
+                "user" => ChatMsg::User(content),
+                _ => ChatMsg::Assistant { text: content, tool_calls: Vec::new() },
+            });
+        }
+    }
+    messages.push(ChatMsg::User(prompt));
+    // 步骤 7：所有校验通过后才持久化用户消息（失败保留前端草稿）。
+    {
+        let guard = crate::db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        conn.execute(
+            "INSERT INTO message (id, sessionId, role, content, refsJson, createdAt) VALUES (?1,?2,'user',?3,?4,?5)",
+            rusqlite::params![
+                crate::models::new_id("msg"),
+                session_id,
+                payload.content,
+                serde_json::to_string(&payload.refs).ok(),
+                crate::models::now_ms()
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        conn.execute("UPDATE session SET updatedAt=?2 WHERE id=?1", rusqlite::params![session_id, crate::models::now_ms()])
+            .map_err(|e| e.to_string())?;
+    }
+    // 步骤 8：工具循环。
+    let ctx = crate::commands::ai_tools::ToolContext {
+        project_id: session.project_id.clone(),
+        data_dir: {
+            use tauri::Manager;
+            app.path().app_data_dir().map_err(|e| e.to_string())?
+        },
+        execution_feature_id: session.feature_id.clone(),
+    };
+    let mut outcome = StreamOutcome::default();
+    let loop_result = run_tool_loop(&turn, &ctx, &mut messages, channel, abort_rx, &mut outcome).await;
+    // 步骤 9：落库（含中止/失败时的已产生文本归档），再上抛循环结果。
+    {
+        let guard = crate::db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        if let Err(persist_err) = crate::commands::chat::insert_assistant_messages(conn, &session_id, &outcome) {
+            eprintln!("[platform] 回复保存失败：{persist_err}");
+            let _ = channel.send(json!({"type": "error", "message": format!("回复保存失败，流式内容保留但未持久化（{persist_err}）")}));
+        }
+    }
+    if let Err(e) = loop_result {
+        return Err(e);
+    }
+    if let Some((input, output, cache)) = outcome.usage {
+        let _ = channel.send(json!({
+            "type": "usage", "inputTokens": input, "outputTokens": output, "cacheReadTokens": cache
+        }));
+    }
+    let _ = channel.send(json!({"type": "done", "sessionRef": Value::Null}));
+    Ok(())
+}
+
+/// 单次模型请求（流式）：文本增量即时下发，工具调用按 index 累积到流结束。
+async fn request_model(
+    turn: &PlatformTurn,
+    messages: &[ChatMsg],
+    defs: &[crate::commands::ai_tools::ToolDef],
+    channel: &tauri::ipc::Channel<Value>,
+    abort_rx: &tokio::sync::watch::Receiver<bool>,
+) -> Result<ModelReply, String> {
+    let body = build_platform_body(&turn.protocol, &turn.model_id, turn.effort.as_deref(), &turn.efforts, messages, defs, true)?;
+    let payload = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
+    let url = turn.base_url.clone();
+    let protocol = turn.protocol.clone();
+    let api_key = turn.api_key.clone();
+    let extra_headers = turn.extra_headers.clone();
+    let channel = channel.clone();
+    let abort = abort_rx.clone();
+    // 阻塞式 ureq 放入 spawn_blocking，避免占用异步运行时。
+    tokio::task::spawn_blocking(move || -> Result<ModelReply, String> {
+        let agent = ureq::AgentBuilder::new()
+            .redirects(0)
+            .timeout(std::time::Duration::from_secs(300))
+            .build();
+        let mut request = agent
+            .post(&url)
+            .set("Content-Type", "application/json")
+            .set("Accept", "text/event-stream");
+        request = if protocol == "anthropic" {
+            request.set("x-api-key", &api_key).set("anthropic-version", "2023-06-01")
+        } else {
+            request.set("Authorization", &format!("Bearer {}", api_key))
+        };
+        for (name, value) in &extra_headers {
+            request = request.set(name, value);
+        }
+        let response = match request.send_bytes(&payload) {
+            Ok(response) => response,
+            Err(ureq::Error::Status(code, mut response)) => {
+                let mut detail = Vec::new();
+                let _ = response.into_reader().take(16 * 1024).read_to_end(&mut detail);
+                let text = String::from_utf8_lossy(&detail);
+                let message = serde_json::from_str::<Value>(&text)
+                    .ok()
+                    .and_then(|v| {
+                        v.pointer("/error/message")
+                            .or_else(|| v.get("message"))
+                            .and_then(|m| m.as_str().map(str::to_string))
+                    })
+                    .unwrap_or_else(|| text.trim().to_string());
+                let clipped: String = message.chars().take(300).collect();
+                // 不对 401/403 重试；直接报错说明原因。
+                return Err(format!("模型请求失败（HTTP {code}）：{clipped}"));
+            }
+            Err(_) => return Err("模型连接失败或超时".into()),
+        };
+        let status = response.status();
+        if !(200..300).contains(&status) {
+            return Err(format!("模型请求失败（HTTP {status}）"));
+        }
+        let mut handle = std::io::BufReader::new(response.into_reader().take(MAX_STREAM_BYTES));
+        let mut state = StreamState::default();
+        let mut line = String::new();
+        let mut stream_error: Option<String> = None;
+        loop {
+            if *abort.borrow() {
+                return Err("已停止".into());
+            }
+            line.clear();
+            match handle.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(_) => {
+                    stream_error = Some("流读取失败".into());
+                    break;
+                }
+            }
+            let trimmed = line.trim_end_matches(['\r', '\n']);
+            if trimmed.is_empty() || trimmed.starts_with(':') {
+                continue;
+            }
+            if protocol == "anthropic" {
+                handle_anthropic_line(trimmed, &mut state, &mut |d| {
+                    let _ = channel.send(json!({"type": "delta", "delta": d}));
+                }, &mut |t| {
+                    let _ = channel.send(json!({"type": "thinking", "delta": t}));
+                });
+            } else {
+                handle_openai_line(trimmed, &mut state, &mut |d| {
+                    let _ = channel.send(json!({"type": "delta", "delta": d}));
+                }, &mut |t| {
+                    let _ = channel.send(json!({"type": "thinking", "delta": t}));
+                });
+            }
+            if state.bad_lines > MAX_BAD_SSE_LINES {
+                return Err("响应流包含过多无法解析的帧，模型协议可能与所选供应商不兼容".into());
+            }
+        }
+        if let Some(e) = stream_error {
+            return Err(e);
+        }
+        Ok(state.into_reply())
+    })
+    .await
+    .map_err(|_| "模型请求任务异常".to_string())?
+}
+
+/// 工具循环主体（LLD §5.3）：白名单 + 启停双重复核、三重上限、副作用幂等。
+#[allow(clippy::too_many_arguments)]
+async fn run_tool_loop(
+    turn: &PlatformTurn,
+    ctx: &crate::commands::ai_tools::ToolContext,
+    messages: &mut Vec<ChatMsg>,
+    channel: &tauri::ipc::Channel<Value>,
+    abort_rx: &tokio::sync::watch::Receiver<bool>,
+    outcome: &mut StreamOutcome,
+) -> Result<(), String> {
+    let mut rounds = 0usize;
+    let mut total_calls = 0usize;
+    let mut executed: std::collections::HashSet<String> = Default::default();
+
+    loop {
+        if *abort_rx.borrow() {
+            if !outcome.assistant_text.is_empty() {
+                outcome.aborted = true;
+            }
+            return Err("发送已停止".into());
+        }
+        rounds += 1;
+        // 每轮重新读 capability：设置页停用立即生效（AC-STORY-090-03）。
+        let defs = {
+            let guard = crate::db::conn()?;
+            let conn = guard.as_ref().ok_or("db not initialized")?;
+            platform_tool_defs(conn)
+        };
+        let reply = request_model(turn, messages, &defs, channel, abort_rx).await?;
+        // 归档本轮文本（多轮文本以空行连接，落为一条 assistant 消息）。
+        if !reply.text.is_empty() {
+            if !outcome.assistant_text.is_empty() {
+                outcome.assistant_text.push_str("\n\n");
+            }
+            outcome.assistant_text.push_str(&reply.text);
+        }
+        if !reply.thinking.is_empty() {
+            if !outcome.thinking_text.is_empty() {
+                outcome.thinking_text.push('\n');
+            }
+            outcome.thinking_text.push_str(&reply.thinking);
+        }
+        if reply.usage.is_some() {
+            outcome.usage = reply.usage;
+        }
+
+        if reply.tool_calls.is_empty() {
+            return Ok(());
+        }
+        if rounds >= MAX_TOOL_ROUNDS {
+            return Err(format!("工具轮次已达上限 {MAX_TOOL_ROUNDS}；本轮未完成"));
+        }
+        if reply.tool_calls.len() > MAX_TOOL_CALLS_PER_ROUND {
+            return Err(format!("单轮工具调用超过 {MAX_TOOL_CALLS_PER_ROUND} 个"));
+        }
+        total_calls += reply.tool_calls.len();
+        if total_calls > MAX_TOOL_CALLS_TOTAL {
+            return Err(format!("累计工具调用超过 {MAX_TOOL_CALLS_TOTAL} 次"));
+        }
+
+        messages.push(ChatMsg::Assistant {
+            text: reply.text.clone(),
+            tool_calls: reply.tool_calls.clone(),
+        });
+
+        for call in &reply.tool_calls {
+            // 双重校验：白名单（常量）+ 当前 capability 启停。
+            let allowed = PLATFORM_TOOL_ALLOWLIST.contains(&call.name.as_str());
+            let enabled = allowed && {
+                let guard = crate::db::conn()?;
+                let conn = guard.as_ref().ok_or("db not initialized")?;
+                crate::commands::ai_tools::workbench_tools()
+                    .into_iter()
+                    .find(|d| d.name == call.name)
+                    .map(|d| crate::commands::ai_tools::tool_enabled(conn, d.registry_id))
+                    .unwrap_or(false)
+            };
+            if !allowed || !enabled {
+                let content = format!("工具 {} 不可用（未在允许清单或已停用）", call.name);
+                outcome.tool_results.push((call.id.clone(), content.clone(), true));
+                let _ = channel.send(json!({
+                    "type": "toolResult", "toolId": call.id, "content": content, "isError": true
+                }));
+                messages.push(ChatMsg::Tool {
+                    call_id: call.id.clone(),
+                    content,
+                    is_error: true,
+                });
+                continue;
+            }
+
+            // 副作用幂等：同一轮同一工具同一参数只执行一次。
+            let key = format!("{}:{}:{}", rounds, call.name, call.arguments);
+            if is_side_effect_tool(&call.name) && !executed.insert(key) {
+                let content = "相同调用已执行过，未重复执行；如需继续请改变参数或确认结果".to_string();
+                outcome.tool_results.push((call.id.clone(), content.clone(), true));
+                let _ = channel.send(json!({
+                    "type": "toolResult", "toolId": call.id, "content": content, "isError": true
+                }));
+                messages.push(ChatMsg::Tool { call_id: call.id.clone(), content, is_error: true });
+                continue;
+            }
+
+            let _ = channel.send(json!({
+                "type": "toolUse", "toolId": call.id, "name": call.name, "inputJson": call.arguments
+            }));
+            let result = execute_tool_safely(ctx, call);
+            outcome.tool_uses.push((call.id.clone(), call.name.clone(), call.arguments.clone()));
+            outcome.tool_results.push((call.id.clone(), result.content.clone(), result.is_error));
+            let _ = channel.send(json!({
+                "type": "toolResult", "toolId": call.id, "content": result.content, "isError": result.is_error
+            }));
+            messages.push(ChatMsg::Tool {
+                call_id: call.id.clone(),
+                content: result.content,
+                is_error: result.is_error,
+            });
+        }
+    }
 }
 
 #[cfg(test)]

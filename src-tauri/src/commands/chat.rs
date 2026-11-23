@@ -29,7 +29,7 @@ fn release_turn(running: &mut BTreeMap<String, RunningEntry>, session_id: &str, 
     }
 }
 
-struct RunningTurn { session_id: String, turn_id: String }
+pub(crate) struct RunningTurn { session_id: String, turn_id: String }
 impl RunningTurn {
     fn turn_id(&self) -> &str { &self.turn_id }
 }
@@ -84,14 +84,14 @@ fn spawn_cmd(cmd: &mut Command) {
 }
 
 #[derive(Default, Debug)]
-struct FeatureBinding {
-    feature_id: Option<String>,
-    feature_title: Option<String>,
-    feature_source_hash: Option<String>,
+pub(crate) struct FeatureBinding {
+    pub feature_id: Option<String>,
+    pub feature_title: Option<String>,
+    pub feature_source_hash: Option<String>,
 }
 
 /// CR-047：执行会话必须绑定本项目中可解析的唯一Feature；普通会话保持无Feature。
-fn resolve_execution_feature(conn: &rusqlite::Connection, project_id: Option<&str>, feature_id: Option<&str>) -> Result<FeatureBinding, String> {
+pub(crate) fn resolve_execution_feature(conn: &rusqlite::Connection, project_id: Option<&str>, feature_id: Option<&str>) -> Result<FeatureBinding, String> {
     let feature_id = feature_id.map(str::trim).filter(|value| !value.is_empty());
     let Some(feature_id) = feature_id else { return Ok(FeatureBinding::default()); };
     let project_id = project_id.ok_or("执行会话必须指定所属项目")?;
@@ -576,6 +576,19 @@ pub async fn chat_send(
     payload: SendPayload,
     channel: tauri::ipc::Channel<serde_json::Value>,
 ) -> Result<(), String> {
+    // CR-069：平台通道分流。必须在任何 CLI 校验之前判定；runner=cli 走下方既有实现，一行不改。
+    // 注意：DB 连接守卫必须在 await 前释放（MutexGuard 非 Send）。
+    let is_platform = {
+        let guard = db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        let runner: Option<String> = conn
+            .query_row("SELECT runner FROM session WHERE id=?1", [&payload.session_id], |r| r.get(0))
+            .map_err(|_| "会话不存在".to_string())?;
+        runner.as_deref().unwrap_or("cli") == "platform"
+    };
+    if is_platform {
+        return crate::commands::platform_agent::send_platform(app, payload, channel).await;
+    }
     let session_id = payload.session_id.clone();
     let (running_turn, abort_rx) = reserve_turn(&session_id)?;
     // 会话与执行配置
@@ -1325,24 +1338,24 @@ pub(crate) fn build_prompt(app: &tauri::AppHandle, payload: &SendPayload, projec
     Ok(parts.join("\n\n"))
 }
 
-struct StreamOutcome {
-    assistant_text: String,
-    thinking_text: String,
-    tool_uses: Vec<(String, String, String)>,  // id, name, input
-    tool_results: Vec<(String, String, bool)>, // id, content, is_error
-    usage: Option<(i64, i64, i64)>,
+pub(crate) struct StreamOutcome {
+    pub assistant_text: String,
+    pub thinking_text: String,
+    pub tool_uses: Vec<(String, String, String)>,  // id, name, input
+    pub tool_results: Vec<(String, String, bool)>, // id, content, is_error
+    pub usage: Option<(i64, i64, i64)>,
     /// 流内适配器上报的线程/会话 id（emittedRef）。仅后端内存使用，不进日志与前端。
-    emitted_ref: Option<String>,
+    pub emitted_ref: Option<String>,
     /// CR-037：本轮请求的 resume 引用（requestedResume）。
-    requested_resume: Option<String>,
+    pub requested_resume: Option<String>,
     /// claude result.is_error：exit 0 不可信，is_error 才能识别 API 失败轮。
-    is_error: bool,
+    pub is_error: bool,
     /// 途中被停止（写 stdin 阶段或流中）。
-    aborted: bool,
+    pub aborted: bool,
     /// CR-056：首段 thinking 的时间点，用于统计思考阶段耗时。
-    thinking_started: Option<std::time::Instant>,
+    pub thinking_started: Option<std::time::Instant>,
     /// CR-056：思考阶段耗时（毫秒），0 表示尚未确定。落库进 metaJson.thinkingMs。
-    thinking_ms: u64,
+    pub thinking_ms: u64,
 }
 
 impl StreamOutcome {
@@ -1993,7 +2006,7 @@ fn extract_content_text(c: Option<&serde_json::Value>) -> String {
 }
 
 /// 消息落库（无事务）：由 persist_assistant_with_conn 或结算事务复用，禁止嵌套开事务。
-fn insert_assistant_messages(conn: &rusqlite::Connection, session_id: &str, out: &StreamOutcome) -> Result<(), rusqlite::Error> {
+pub(crate) fn insert_assistant_messages(conn: &rusqlite::Connection, session_id: &str, out: &StreamOutcome) -> Result<(), rusqlite::Error> {
     let now = now_ms();
     if !out.assistant_text.trim().is_empty() || !out.thinking_text.trim().is_empty() {
         let mut meta = serde_json::json!({
