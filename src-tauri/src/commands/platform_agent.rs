@@ -552,17 +552,26 @@ struct ToolOutcome {
 }
 
 /// 安全执行封装：参数 JSON 校验 + catch_unwind（工具是同步调用，可捕获 panic）。
+/// 执行器可注入（仅测试注入 panic 桩，生产固定为 ai_tools::run_tool）。
 fn execute_tool_safely(
     ctx: &crate::commands::ai_tools::ToolContext,
     call: &ToolCall,
+) -> ToolOutcome {
+    execute_tool_with(ctx, call, |ctx, name, args| {
+        crate::commands::ai_tools::run_tool(ctx, name, args)
+    })
+}
+
+fn execute_tool_with(
+    ctx: &crate::commands::ai_tools::ToolContext,
+    call: &ToolCall,
+    runner: impl Fn(&crate::commands::ai_tools::ToolContext, &str, &Value) -> Result<Value, String>,
 ) -> ToolOutcome {
     let args: Value = match serde_json::from_str(&call.arguments) {
         Ok(v) => v,
         Err(e) => return ToolOutcome { content: format!("参数不是有效 JSON：{e}"), is_error: true },
     };
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        crate::commands::ai_tools::run_tool(ctx, &call.name, &args)
-    })) {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runner(ctx, &call.name, &args))) {
         Ok(Ok(value)) => ToolOutcome { content: value.to_string(), is_error: false },
         Ok(Err(e)) => ToolOutcome { content: e, is_error: true },
         Err(_) => ToolOutcome { content: "工具执行异常终止".into(), is_error: true },
@@ -1372,5 +1381,117 @@ mod tests {
         let reply = state.into_reply();
         assert_eq!(reply.usage, Some((10, 4, 2)));
         assert!(reply.tool_calls.is_empty());
+    }
+
+    // ---------- 工具循环（T-090-01 ~ T-090-04、T-090-13/14 的 L1 部分） ----------
+
+    fn capability_conn() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE capability (kind TEXT NOT NULL, name TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (kind, name));",
+        )
+        .unwrap();
+        conn
+    }
+
+    /// T-090-01：platform_tool_defs 返回 白名单 ∩ 启用集，且全部在白名单内。
+    #[test]
+    fn t090_01_tool_defs_are_allowlist_and_enabled_intersection() {
+        let conn = capability_conn();
+        let defs = platform_tool_defs(&conn);
+        assert!(!defs.is_empty());
+        for d in &defs {
+            assert!(PLATFORM_TOOL_ALLOWLIST.contains(&d.name), "{} 不在白名单却返回", d.name);
+        }
+        // 停用一个白名单内工具后不再返回（T-090-03）
+        conn.execute(
+            "INSERT INTO capability (kind, name, enabled) VALUES ('tool', 'workbench.get_context', 0)",
+            [],
+        )
+        .unwrap();
+        let defs = platform_tool_defs(&conn);
+        assert!(!defs.iter().any(|d| d.name == "get_context"), "停用后必须从清单消失");
+        assert!(defs.iter().any(|d| d.name == "fs_read"), "其余工具不受影响");
+    }
+
+    /// T-090-02 / T-091-14：白名单不含任何禁止项与执行引擎控制工具。
+    #[test]
+    fn t090_02_allowlist_excludes_forbidden_tools() {
+        let forbidden = [
+            "ssh_exec",
+            "ssh_exec_status",
+            "create_project",
+            "update_project",
+            "create_kb",
+            "set_kb_grant",
+            "save_server",
+            "generate_image",
+            "authorize_plan",
+            "claim_task",
+            "transition_task",
+            "dispatch_once",
+            "dispatch_work", // 首版随 STORY-091 灰度，不在清单
+        ];
+        for name in forbidden {
+            assert!(!PLATFORM_TOOL_ALLOWLIST.contains(&name), "{name} 不得出现在白名单");
+        }
+    }
+
+    /// T-090-04：白名单项数与常量一致，且每项都存在于工作台工具目录（防改漏）。
+    #[test]
+    fn t090_04_allowlist_matches_catalog() {
+        assert_eq!(PLATFORM_TOOL_ALLOWLIST.len(), 13);
+        let catalog = crate::commands::ai_tools::workbench_tools();
+        for name in PLATFORM_TOOL_ALLOWLIST {
+            assert!(
+                catalog.iter().any(|d| d.name == name),
+                "白名单工具 {name} 不存在于 workbench_tools 目录"
+            );
+        }
+    }
+
+    /// 副作用工具分类：写类去重，只读类不去重（T-090-11/12 的判定依据）。
+    #[test]
+    fn t090_side_effect_classification() {
+        assert!(is_side_effect_tool("write_requirement_doc"));
+        assert!(!is_side_effect_tool("get_context"));
+        assert!(!is_side_effect_tool("knowledge_read"));
+        assert!(!is_side_effect_tool("fs_read"));
+        assert!(!is_side_effect_tool("open_panel"));
+    }
+
+    fn test_ctx() -> crate::commands::ai_tools::ToolContext {
+        crate::commands::ai_tools::ToolContext {
+            project_id: None,
+            data_dir: std::env::temp_dir(),
+            execution_feature_id: None,
+        }
+    }
+
+    /// T-090-13：非法 JSON 参数回填错误，不 panic、不执行。
+    #[test]
+    fn t090_13_invalid_json_arguments_is_tool_error() {
+        let ctx = test_ctx();
+        let call = ToolCall { id: "c1".into(), name: "get_context".into(), arguments: "{not json".into() };
+        let outcome = execute_tool_safely(&ctx, &call);
+        assert!(outcome.is_error);
+        assert!(outcome.content.contains("参数不是有效 JSON"));
+    }
+
+    /// T-090-14：工具内部 panic 被捕获为工具错误，进程存活。
+    #[test]
+    fn t090_14_tool_panic_is_caught() {
+        let ctx = test_ctx();
+        let call = ToolCall { id: "c2".into(), name: "boom".into(), arguments: "{}".into() };
+        let outcome = execute_tool_with(&ctx, &call, |_, _, _| panic!("注入的测试 panic"));
+        assert!(outcome.is_error);
+        assert_eq!(outcome.content, "工具执行异常终止");
+        // 工具错误路径同样存活
+        let outcome = execute_tool_with(&ctx, &call, |_, _, _| Err("业务错误".into()));
+        assert!(outcome.is_error);
+        assert_eq!(outcome.content, "业务错误");
+        let outcome = execute_tool_with(&ctx, &call, |_, _, _| Ok(json!({"ok": true})));
+        assert!(!outcome.is_error);
+        assert_eq!(outcome.content, r#"{"ok":true}"#);
     }
 }
