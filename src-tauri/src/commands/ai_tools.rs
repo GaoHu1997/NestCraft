@@ -168,14 +168,15 @@ pub(crate) fn handle_message_value(ctx: &ToolContext, msg: &Value) -> Option<Val
 
 // ---------- 工具目录 ----------
 
-struct ToolDef {
-    name: &'static str,
+#[derive(Clone)]
+pub(crate) struct ToolDef {
+    pub(crate) name: &'static str,
     /// capability 注册名（kind='tool'）
-    registry_id: &'static str,
-    description: &'static str,
-    schema: Value,
+    pub(crate) registry_id: &'static str,
+    pub(crate) description: &'static str,
+    pub(crate) schema: Value,
     #[allow(dead_code)]
-    risk: &'static str,
+    pub(crate) risk: &'static str,
 }
 
 fn schema_obj(props: Value, required: &[&str]) -> Value {
@@ -189,7 +190,7 @@ fn schema_obj(props: Value, required: &[&str]) -> Value {
 /// 13 个工作台业务工具 + 6 个原有内置工具（BUG-CR059-01）+ 1 个右栏请求工具（CR-054／STORY-073）。
 const TOOL_COUNT: usize = 21;
 
-fn workbench_tools() -> [ToolDef; TOOL_COUNT] {
+pub(crate) fn workbench_tools() -> [ToolDef; TOOL_COUNT] {
     [
         ToolDef {
             name: "get_context",
@@ -505,7 +506,7 @@ pub const TOOL_LABELS: [(&str, &str); TOOL_COUNT] = [
     ("open_panel", "工作台·打开预览面板"),
 ];
 
-fn tool_enabled(conn: &rusqlite::Connection, registry_id: &str) -> bool {
+pub(crate) fn tool_enabled(conn: &rusqlite::Connection, registry_id: &str) -> bool {
     conn.query_row(
         "SELECT enabled FROM capability WHERE kind='tool' AND name=?1",
         [registry_id],
@@ -554,7 +555,7 @@ fn tool_error(message: &str) -> Value {
     json!({ "content": [{ "type": "text", "text": message }], "isError": true })
 }
 
-fn run_tool(ctx: &ToolContext, name: &str, args: &Value) -> Result<Value, String> {
+pub(crate) fn run_tool(ctx: &ToolContext, name: &str, args: &Value) -> Result<Value, String> {
     match name {
         "get_context" => tool_get_context(ctx),
         "list_projects" => crate::commands::projects::list_projects()

@@ -45,7 +45,7 @@ fn insert_turn(running: &mut BTreeMap<String, RunningEntry>, session_id: &str, e
     Ok(())
 }
 
-fn reserve_turn(session_id: &str) -> Result<(RunningTurn, watch::Receiver<bool>), String> {
+pub(crate) fn reserve_turn(session_id: &str) -> Result<(RunningTurn, watch::Receiver<bool>), String> {
     // 锁顺序统一 DB -> RUNNING，与修改/删除会话及项目更换根目录互斥。
     let _db_guard = db::conn()?;
     let mut running = RUNNING.lock().map_err(|_| "会话运行状态不可用".to_string())?;
@@ -1215,7 +1215,7 @@ fn check_prompt_size(parts: &[String]) -> Result<(), String> {
 
 /// 组装提示词；office 正文仅接受有当前 work 项目身份的内存快照。
 /// 这是受管注入边界，不代表 CLI 原生工具拥有 OS 隔离。
-fn build_prompt(app: &tauri::AppHandle, payload: &SendPayload, project_id: Option<&str>) -> Result<String, String> {
+pub(crate) fn build_prompt(app: &tauri::AppHandle, payload: &SendPayload, project_id: Option<&str>) -> Result<String, String> {
     if payload.refs.len() > 32 || payload.attachments.len() > 32 || payload.content.len() > MAX_PROMPT_TEXT {
         return Err("本轮消息或引用过多".into());
     }

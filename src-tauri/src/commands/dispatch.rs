@@ -72,7 +72,7 @@ fn masked_host(url: &str) -> String {
     url.split("://").nth(1).unwrap_or(url).split('/').next().unwrap_or(url).to_string()
 }
 
-fn read_secret(app: &tauri::AppHandle, key_id: &str) -> Option<String> {
+pub(crate) fn read_secret(app: &tauri::AppHandle, key_id: &str) -> Option<String> {
     use tauri::Manager;
     let path = app.path().app_data_dir().ok()?.join("secrets.json");
     let text = std::fs::read_to_string(path).ok()?;
