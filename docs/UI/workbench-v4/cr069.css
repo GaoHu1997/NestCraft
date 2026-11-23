@@ -1,0 +1,13 @@
+/* UI-CR069-v1：运行通道选择样式。chip 与弹层复用既有 ai-chip / ai-pop / menu-item 体系；
+   滚动行为继承 workbench-v4 共享规则（UI-SCROLL-001），本弹层为短菜单不新增滚动容器。 */
+
+/* 运行通道 chip：选中平台时加 platform 态（图标已表达，色彩随主题 token） */
+.ai-chip.runner.platform {
+  color: var(--accent, var(--brand, currentColor));
+}
+
+/* 平台不可用：菜单项内的「不可用」副行 */
+.ai-pop-runner .mi-main span {
+  font-size: 12px;
+  color: var(--muted, var(--text-2, inherit));
+}

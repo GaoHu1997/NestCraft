@@ -259,8 +259,9 @@ window.WorkbenchUI = (function () {
     const cli = (D.settings.clis || []).find(c => c.id === store.aiCli) || { id: "", name: "未配置 CLI" };
     const cm = (AI().currentModel && AI().currentModel()) || { name: "未配置", thinking: false };
     const busy = runtimeBusy();
-    const cliDisabled = busy || !(D.settings.clis || []).some(usableCli);
-    const permDisabled = busy || !(D.ai.permissions || []).some(p => p.available !== false && p.enabled !== false);
+    const platformRunner = !!(window.CR069 && CR069.isPlatform());
+    const cliDisabled = busy || platformRunner || !(D.settings.clis || []).some(usableCli);
+    const permDisabled = busy || platformRunner || !(D.ai.permissions || []).some(p => p.available !== false && p.enabled !== false);
     const modelDisabled = busy || !(D.ai.modelCatalog.providers || []).some(p => p.enabled !== false && p.available !== false && (AI().visibleModels(p) || []).some(usableModel));
     const running = busy;
     const canStop = running && !String(store.aiInput || "").trim();
@@ -273,8 +274,9 @@ window.WorkbenchUI = (function () {
         <textarea id="wb-input" placeholder="描述你想构建的内容，/ 调用指令，@ 文件或对话">${esc(store.aiInput || "")}</textarea>
         <div class="ai-tools">
           <button class="ai-chip icon-only" data-act="wb-menu-open" title="添加" aria-label="添加">${icon("plus")}</button>
-          <button class="ai-chip cli" data-act="wb-cli" data-wb-anchor="cli" aria-haspopup="dialog" aria-expanded="false" ${cliDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : cliDisabled ? "没有可用 CLI" : "切换 CLI：" + esc(cli.name)}" aria-label="切换 CLI：${esc(cli.name)}">${AI().cliLogo(cli.id, 16)}</button>
-          <button class="ai-chip perm" data-act="wb-perm" data-wb-anchor="perm" aria-haspopup="dialog" aria-expanded="false" ${permDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : "权限模式"}" aria-label="权限模式">${icon("shield")}${esc(store.aiPermission || "默认模式")}</button>
+          ${window.CR069 ? `<button class="ai-chip runner${CR069.isPlatform() ? " platform" : ""}" data-act="wb-runner" data-wb-anchor="runner" aria-haspopup="dialog" aria-expanded="${store.aiPop === "runner"}" ${busy ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : CR069.isPlatform() ? "运行通道：平台主代理——由平台直接调用已配置模型作答，不依赖 CLI 安装" : "运行通道：CLI 进程——由已安装的 CLI 程序作答，支持原生线程续接"}" aria-label="切换运行通道">${icon("bot", "ico-14")}${CR069.isPlatform() ? "平台主代理" : "CLI 进程"}</button>` : ""}
+          <button class="ai-chip cli" data-act="wb-cli" data-wb-anchor="cli" aria-haspopup="dialog" aria-expanded="false" ${cliDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : platformRunner ? "平台会话不使用 CLI；可用操作由平台工具白名单决定" : cliDisabled ? "没有可用 CLI" : "切换 CLI：" + esc(cli.name)}" aria-label="切换 CLI：${esc(cli.name)}">${AI().cliLogo(cli.id, 16)}</button>
+          <button class="ai-chip perm" data-act="wb-perm" data-wb-anchor="perm" aria-haspopup="dialog" aria-expanded="false" ${permDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : platformRunner ? "平台会话不使用 CLI 权限档位；边界由平台工具白名单决定" : "权限模式"}" aria-label="权限模式">${icon("shield")}${esc(store.aiPermission || "默认模式")}</button>
           <button class="ai-chip model" data-act="wb-model" data-wb-anchor="model" aria-haspopup="dialog" aria-expanded="false" ${modelDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : modelDisabled ? "没有可用模型" : !usableModel(cm) ? "当前模型失效，请重新选择" : "选择模型"}" aria-label="选择模型">${esc(cm.name)}${cm.available === false ? "（不可用）" : ""} · ${esc(cm.thinking ? D.ai.modelCatalog.current.level : "无思考档位")}</button>
           <button class="ai-send" data-act="wb-send" title="${canStop ? "停止" : "发送"}" aria-label="${canStop ? "停止" : "发送"}">${icon(canStop ? "stop" : "arrowUp", "ico-18")}</button>
         </div>
@@ -651,6 +653,7 @@ window.WorkbenchUI = (function () {
        避免出现两套不一致的 CLI/权限/模型选择。
        浮层锚点位于 .ai-panel 内，所以这里临时展开 AI 面板承载浮层；关闭后恢复工作台的单实例状态。 */
     "wb-menu-open": () => { withAiAnchor("add", () => { store.aiMenu = store.aiMenu === "add" ? null : "add"; }); },
+    "wb-runner": () => withAiAnchor("runner", () => { store.aiPop = store.aiPop === "runner" ? null : "runner"; }),
     "wb-cli": () => withAiAnchor("cli", () => { store.aiPop = store.aiPop === "cli" ? null : "cli"; }),
     "wb-perm": () => withAiAnchor("perm", () => { store.aiPop = store.aiPop === "perm" ? null : "perm"; }),
     "wb-model": () => withAiAnchor("model", () => { store.aiPop = store.aiPop === "model" ? null : "model"; }),

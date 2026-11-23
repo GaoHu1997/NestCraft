@@ -29,7 +29,7 @@ fn release_turn(running: &mut BTreeMap<String, RunningEntry>, session_id: &str, 
     }
 }
 
-struct RunningTurn { session_id: String, turn_id: String }
+pub(crate) struct RunningTurn { session_id: String, turn_id: String }
 impl RunningTurn {
     fn turn_id(&self) -> &str { &self.turn_id }
 }
@@ -45,7 +45,7 @@ fn insert_turn(running: &mut BTreeMap<String, RunningEntry>, session_id: &str, e
     Ok(())
 }
 
-fn reserve_turn(session_id: &str) -> Result<(RunningTurn, watch::Receiver<bool>), String> {
+pub(crate) fn reserve_turn(session_id: &str) -> Result<(RunningTurn, watch::Receiver<bool>), String> {
     // 锁顺序统一 DB -> RUNNING，与修改/删除会话及项目更换根目录互斥。
     let _db_guard = db::conn()?;
     let mut running = RUNNING.lock().map_err(|_| "会话运行状态不可用".to_string())?;
@@ -84,14 +84,14 @@ fn spawn_cmd(cmd: &mut Command) {
 }
 
 #[derive(Default, Debug)]
-struct FeatureBinding {
-    feature_id: Option<String>,
-    feature_title: Option<String>,
-    feature_source_hash: Option<String>,
+pub(crate) struct FeatureBinding {
+    pub feature_id: Option<String>,
+    pub feature_title: Option<String>,
+    pub feature_source_hash: Option<String>,
 }
 
 /// CR-047：执行会话必须绑定本项目中可解析的唯一Feature；普通会话保持无Feature。
-fn resolve_execution_feature(conn: &rusqlite::Connection, project_id: Option<&str>, feature_id: Option<&str>) -> Result<FeatureBinding, String> {
+pub(crate) fn resolve_execution_feature(conn: &rusqlite::Connection, project_id: Option<&str>, feature_id: Option<&str>) -> Result<FeatureBinding, String> {
     let feature_id = feature_id.map(str::trim).filter(|value| !value.is_empty());
     let Some(feature_id) = feature_id else { return Ok(FeatureBinding::default()); };
     let project_id = project_id.ok_or("执行会话必须指定所属项目")?;
@@ -150,6 +150,8 @@ fn session_row(row: &rusqlite::Row) -> rusqlite::Result<SessionMeta> {
         session_role,
         binding,
         pinned_at: row.get(22)?,
+        // CR-069：会话运行通道；列序见 SESSION_COLUMNS（pinnedAt=22，runner=23）。
+        runner: row.get::<_, Option<String>>(23)?.unwrap_or_else(|| "cli".into()),
     })
 }
 
@@ -157,7 +159,7 @@ const SESSION_COLUMNS: &str = "s.id, s.projectId, s.serverId, s.title, s.cliId, 
     s.nativeThreadRef, s.nativeBindingRevision, s.nativeConfirmedTurnId, \
     (SELECT t.outcome FROM execution_session_turn t WHERE t.sessionId = s.id ORDER BY t.createdAt DESC, t.rowid DESC LIMIT 1), \
     (SELECT t.reasonCode FROM execution_session_turn t WHERE t.sessionId = s.id ORDER BY t.createdAt DESC, t.rowid DESC LIMIT 1), \
-    s.pinnedAt";
+    s.pinnedAt, s.runner";
 
 // ---------- 会话 CRUD ----------
 
@@ -313,6 +315,7 @@ pub fn chat_session_create(
     model_id: Option<String>,
     effort: Option<String>,
     feature_id: Option<String>,
+    runner: Option<String>,
 ) -> Result<SessionMeta, String> {
     let id = new_id("sess");
     let now = now_ms();
@@ -325,10 +328,17 @@ pub fn chat_session_create(
             Some(name) => format!("执行 {id} · {name}"),
             None => format!("执行 {id}"),
         }).unwrap_or_else(|| "新会话".into());
+        // CR-069：默认必须是 cli——平台通道是显式选择，不得改变所有既有会话行为。
+        let runner = match runner.as_deref() {
+            None | Some("") => "cli",
+            Some("cli") => "cli",
+            Some("platform") => "platform",
+            Some(other) => return Err(format!("未知会话运行通道：{other}")),
+        };
         conn.execute(
-            "INSERT INTO session (id, projectId, serverId, title, cliId, providerId, modelId, effort, draft, createdAt, updatedAt, featureId, featureTitle, featureSourceHash, sessionRole)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'',?9,?9,?10,?11,?12,?13)",
-            rusqlite::params![id, project_id, server_id, title, cli_id, provider_id, model_id, effort, now, binding.feature_id, binding.feature_title, binding.feature_source_hash, role],
+            "INSERT INTO session (id, projectId, serverId, title, cliId, providerId, modelId, effort, draft, createdAt, updatedAt, featureId, featureTitle, featureSourceHash, sessionRole, runner)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'',?9,?9,?10,?11,?12,?13,?14)",
+            rusqlite::params![id, project_id, server_id, title, cli_id, provider_id, model_id, effort, now, binding.feature_id, binding.feature_title, binding.feature_source_hash, role, runner],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -357,15 +367,37 @@ pub fn chat_session_update(
     model_id: Option<String>,
     effort: Option<String>,
     unread: Option<String>,
+    runner: Option<String>,
 ) -> Result<(), String> {
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
     let running = RUNNING.lock().map_err(|_| "会话运行状态不可用".to_string())?;
     // 运行中禁止修改执行配置（运行快照锁定）
     if running.contains_key(&id)
-        && (cli_id.is_some() || provider_id.is_some() || model_id.is_some() || effort.is_some())
+        && (cli_id.is_some() || provider_id.is_some() || model_id.is_some() || effort.is_some() || runner.is_some())
     {
         return Err("会话运行中或有待审操作，禁止修改执行配置".into());
+    }
+    // CR-069：只有在会话没有消息且未运行时才允许切换运行通道。中途切换会让上下文
+    // 格式与续接语义完全不同（CLI 有原生线程引用，平台通道没有），混合状态无法保证一致。
+    if let Some(next) = runner.as_deref() {
+        let msg_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM message WHERE sessionId=?1",
+                [&id],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if msg_count > 0 {
+            return Err("已有消息的会话不能切换运行通道；请新建会话".into());
+        }
+        if running.contains_key(&id) {
+            return Err("会话正在运行，不能切换运行通道".into());
+        }
+        match next {
+            "cli" | "platform" => {}
+            other => return Err(format!("未知会话运行通道：{other}")),
+        }
     }
     // CR-037 / STORY-011 AC-05：非空会话（有消息或已有原生绑定）禁止原地换 CLI——
     // 前端改为确认后另建会话；空会话维持原地修改。
@@ -397,9 +429,10 @@ pub fn chat_session_update(
             providerId = COALESCE(?6, providerId),
             modelId = COALESCE(?7, modelId),
             effort = COALESCE(?8, effort),
-            unread = COALESCE(?9, unread)
+            unread = COALESCE(?9, unread),
+            runner = COALESCE(?10, runner)
          WHERE id = ?1",
-        rusqlite::params![id, now_ms(), title, draft, cli_id, provider_id, model_id, effort, unread],
+        rusqlite::params![id, now_ms(), title, draft, cli_id, provider_id, model_id, effort, unread, runner],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -552,6 +585,19 @@ pub async fn chat_send(
     payload: SendPayload,
     channel: tauri::ipc::Channel<serde_json::Value>,
 ) -> Result<(), String> {
+    // CR-069：平台通道分流。必须在任何 CLI 校验之前判定；runner=cli 走下方既有实现，一行不改。
+    // 注意：DB 连接守卫必须在 await 前释放（MutexGuard 非 Send）。
+    let is_platform = {
+        let guard = db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        let runner: Option<String> = conn
+            .query_row("SELECT runner FROM session WHERE id=?1", [&payload.session_id], |r| r.get(0))
+            .map_err(|_| "会话不存在".to_string())?;
+        runner.as_deref().unwrap_or("cli") == "platform"
+    };
+    if is_platform {
+        return crate::commands::platform_agent::send_platform(app, payload, channel).await;
+    }
     let session_id = payload.session_id.clone();
     let (running_turn, abort_rx) = reserve_turn(&session_id)?;
     // 会话与执行配置
@@ -1191,7 +1237,7 @@ fn check_prompt_size(parts: &[String]) -> Result<(), String> {
 
 /// 组装提示词；office 正文仅接受有当前 work 项目身份的内存快照。
 /// 这是受管注入边界，不代表 CLI 原生工具拥有 OS 隔离。
-fn build_prompt(app: &tauri::AppHandle, payload: &SendPayload, project_id: Option<&str>) -> Result<String, String> {
+pub(crate) fn build_prompt(app: &tauri::AppHandle, payload: &SendPayload, project_id: Option<&str>) -> Result<String, String> {
     if payload.refs.len() > 32 || payload.attachments.len() > 32 || payload.content.len() > MAX_PROMPT_TEXT {
         return Err("本轮消息或引用过多".into());
     }
@@ -1301,24 +1347,24 @@ fn build_prompt(app: &tauri::AppHandle, payload: &SendPayload, project_id: Optio
     Ok(parts.join("\n\n"))
 }
 
-struct StreamOutcome {
-    assistant_text: String,
-    thinking_text: String,
-    tool_uses: Vec<(String, String, String)>,  // id, name, input
-    tool_results: Vec<(String, String, bool)>, // id, content, is_error
-    usage: Option<(i64, i64, i64)>,
+pub(crate) struct StreamOutcome {
+    pub assistant_text: String,
+    pub thinking_text: String,
+    pub tool_uses: Vec<(String, String, String)>,  // id, name, input
+    pub tool_results: Vec<(String, String, bool)>, // id, content, is_error
+    pub usage: Option<(i64, i64, i64)>,
     /// 流内适配器上报的线程/会话 id（emittedRef）。仅后端内存使用，不进日志与前端。
-    emitted_ref: Option<String>,
+    pub emitted_ref: Option<String>,
     /// CR-037：本轮请求的 resume 引用（requestedResume）。
-    requested_resume: Option<String>,
+    pub requested_resume: Option<String>,
     /// claude result.is_error：exit 0 不可信，is_error 才能识别 API 失败轮。
-    is_error: bool,
+    pub is_error: bool,
     /// 途中被停止（写 stdin 阶段或流中）。
-    aborted: bool,
+    pub aborted: bool,
     /// CR-056：首段 thinking 的时间点，用于统计思考阶段耗时。
-    thinking_started: Option<std::time::Instant>,
+    pub thinking_started: Option<std::time::Instant>,
     /// CR-056：思考阶段耗时（毫秒），0 表示尚未确定。落库进 metaJson.thinkingMs。
-    thinking_ms: u64,
+    pub thinking_ms: u64,
 }
 
 impl StreamOutcome {
@@ -1969,7 +2015,7 @@ fn extract_content_text(c: Option<&serde_json::Value>) -> String {
 }
 
 /// 消息落库（无事务）：由 persist_assistant_with_conn 或结算事务复用，禁止嵌套开事务。
-fn insert_assistant_messages(conn: &rusqlite::Connection, session_id: &str, out: &StreamOutcome) -> Result<(), rusqlite::Error> {
+pub(crate) fn insert_assistant_messages(conn: &rusqlite::Connection, session_id: &str, out: &StreamOutcome) -> Result<(), rusqlite::Error> {
     let now = now_ms();
     if !out.assistant_text.trim().is_empty() || !out.thinking_text.trim().is_empty() {
         let mut meta = serde_json::json!({
@@ -2170,7 +2216,8 @@ mod tests {
                 sessionRole TEXT NOT NULL DEFAULT 'ordinary',
                 nativeThreadRef TEXT, nativeBindingRevision INTEGER NOT NULL DEFAULT 0,
                 nativeConfirmedTurnId TEXT,
-                pinnedAt INTEGER NOT NULL DEFAULT 0
+                pinnedAt INTEGER NOT NULL DEFAULT 0,
+                runner TEXT NOT NULL DEFAULT 'cli'
              );
              CREATE TABLE message (id TEXT PRIMARY KEY, sessionId TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, metaJson TEXT, refsJson TEXT, gitContextJson TEXT, createdAt INTEGER NOT NULL);
              CREATE TABLE execution_session_turn (id TEXT PRIMARY KEY, sessionId TEXT NOT NULL, outcome TEXT, reasonCode TEXT, createdAt INTEGER NOT NULL);",

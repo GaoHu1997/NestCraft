@@ -1,4 +1,5 @@
 import { Icon, CliLogo } from "@/components/icons";
+import { useApp } from "@/store/app";
 import { ResizeHandle, usePaneWidth } from "@/components/pane-resize";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { EffortMap, ModelCandidate, SdkState } from "@/api";
@@ -47,8 +48,15 @@ export function ModelPicker(props: {
   models: ModelCandidate[];
   locked?: boolean;
   onChange: (patch: { cliId?: string; providerId?: string; modelId?: string; effort?: string; permissionId?: PermissionId }) => void | Promise<void>;
+  /** CR-069：会话运行通道（缺省 cli）。 */
+  runner?: "cli" | "platform";
+  /** CR-069：平台通道可用性（存在可用的供应商+端点+密钥+文本模型）。 */
+  platformAvailable?: boolean;
+  onRunnerChange?: (runner: "cli" | "platform") => void;
 }) {
   const overlay = useChatOverlay();
+  const { setSettingsOpen } = useApp();
+  const runnerRef = useRef<HTMLButtonElement>(null);
   const cliRef = useRef<HTMLButtonElement>(null);
   const permissionRef = useRef<HTMLButtonElement>(null);
   const modelRef = useRef<HTMLButtonElement>(null);
@@ -59,6 +67,7 @@ export function ModelPicker(props: {
   });
   const { registerTrigger } = overlay;
   useLayoutEffect(() => {
+    registerTrigger("runner", runnerRef.current);
     registerTrigger("cli", cliRef.current);
     registerTrigger("perm", permissionRef.current);
     registerTrigger("model", modelRef.current);
@@ -92,6 +101,10 @@ export function ModelPicker(props: {
   useEffect(() => {
     if (overlay.activeOverlay === "model") { setProvider(props.providerId ?? groups[0]?.id ?? null); setQuery(""); }
   }, [overlay.activeOverlay]);
+  // CR-069：运行通道；平台会话不使用 CLI 与权限档位，边界由平台工具白名单决定。
+  const runner = props.runner ?? "cli";
+  const platformRunner = runner === "platform";
+  const platformOk = props.platformAvailable ?? false;
   const effortKeys = effectiveEfforts(curModel?.efforts);
   const selectedEffort = props.effort || curModel?.defaultEffort || "";
   const effortStale = !!selectedEffort && !!curModel && !effortKeys.includes(selectedEffort);
@@ -105,13 +118,21 @@ export function ModelPicker(props: {
   const selectedPermission = permissions.find(p => p.id === currentPermission) ?? permissions[0];
   const nativePermission = selectedPermission?.desc ?? "当前 CLI 权限映射未验证";
   return <>
-    <button ref={cliRef} className={`chat-ctl-chip cli ${cliStale ? "stale" : ""}`} data-chat-overlay-trigger="cli" aria-haspopup="dialog" aria-controls={`${overlay.scopeId}-config-cli`} disabled={props.locked} aria-label={`切换 CLI：${props.cliId ?? "未配置"}`} title={props.locked ? "运行快照已锁定" : `切换 CLI：${props.cliId ?? "未配置"}${cliStale ? "（已失效）" : ""}`} aria-expanded={overlay.activeOverlay === "cli"} onClick={e => overlay.toggle("cli", e.currentTarget)}>
+    <button ref={runnerRef} className={`chat-ctl-chip runner ${platformRunner ? "platform" : ""}`} data-chat-overlay-trigger="runner" aria-haspopup="dialog" aria-controls={`${overlay.scopeId}-config-runner`} disabled={props.locked} aria-label={`运行通道：${platformRunner ? "平台主代理" : "CLI 进程"}`} title={props.locked ? "运行快照已锁定" : `运行通道：${platformRunner ? "平台主代理" : "CLI 进程"}`} aria-expanded={overlay.activeOverlay === "runner"} onClick={e => overlay.toggle("runner", e.currentTarget)}>
+      <Icon name="bot" size={13} />{platformRunner ? "平台主代理" : "CLI 进程"}
+    </button>
+    <button ref={cliRef} className={`chat-ctl-chip cli ${cliStale ? "stale" : ""}`} data-chat-overlay-trigger="cli" aria-haspopup="dialog" aria-controls={`${overlay.scopeId}-config-cli`} disabled={props.locked || platformRunner} aria-label={`切换 CLI：${props.cliId ?? "未配置"}`} title={props.locked ? "运行快照已锁定" : platformRunner ? "平台会话不使用 CLI" : `切换 CLI：${props.cliId ?? "未配置"}${cliStale ? "（已失效）" : ""}`} aria-expanded={overlay.activeOverlay === "cli"} onClick={e => overlay.toggle("cli", e.currentTarget)}>
       <CliLogo id={props.cliId ?? "unknown"} size={16} />
     </button>
-    <button ref={permissionRef} className="chat-ctl-chip perm" data-chat-overlay-trigger="perm" aria-haspopup="dialog" aria-controls={`${overlay.scopeId}-config-perm`} disabled={props.locked} aria-label="权限模式" title={props.locked ? "运行快照已锁定" : nativePermission} aria-expanded={overlay.activeOverlay === "perm"} onClick={e => overlay.toggle("perm", e.currentTarget)}><ShieldIcon />{selectedPermission?.name ?? "未配置"}</button>
+    <button ref={permissionRef} className="chat-ctl-chip perm" data-chat-overlay-trigger="perm" aria-haspopup="dialog" aria-controls={`${overlay.scopeId}-config-perm`} disabled={props.locked || platformRunner} aria-label="权限模式" title={props.locked ? "运行快照已锁定" : platformRunner ? "平台会话不使用 CLI 权限档位" : nativePermission} aria-expanded={overlay.activeOverlay === "perm"} onClick={e => overlay.toggle("perm", e.currentTarget)}><ShieldIcon />{selectedPermission?.name ?? "未配置"}</button>
     <button ref={modelRef} className={`chat-ctl-chip model ${modelStale || effortStale ? "stale" : ""}`} data-chat-overlay-trigger="model" aria-haspopup="dialog" aria-controls={`${overlay.scopeId}-config-model`} disabled={props.locked} aria-label="选择模型" title={props.locked ? "运行快照已锁定" : `${curModel?.displayName ?? props.modelId ?? "模型未配置"} · ${effortLabel}`} aria-expanded={overlay.activeOverlay === "model"} onClick={e => overlay.toggle("model", e.currentTarget)}>
       <span className="ellipsis">{curModel?.displayName ?? props.modelId ?? "未配置"}{modelStale ? "（失效）" : ""} · {effortLabel}</span>
     </button>
+    {overlay.activeOverlay === "runner" && <ChatConfigPopup name="runner" className="chat-runner-pop" label="运行通道"><div className="chat-pop-head">运行通道<button className="chat-iconbtn chat-pop-close" aria-label="关闭运行通道选择" onClick={() => overlay.close(true)}><Icon name="x" size={14} /></button></div>
+      <button className={`chat-menu-row ${runner === "cli" ? "sel" : ""}`} disabled={props.locked} onClick={() => { props.onRunnerChange?.("cli"); overlay.close(true); }}><Icon name="terminal" size={14} /><span className="chat-menu-main"><b>CLI 进程</b></span>{runner === "cli" && <Icon name="check" size={14} />}</button>
+      <button className={`chat-menu-row ${runner === "platform" ? "sel" : ""}`} disabled={props.locked || !platformOk} onClick={() => { if (platformOk) { props.onRunnerChange?.("platform"); overlay.close(true); } }}><Icon name="bot" size={14} /><span className="chat-menu-main"><b>平台主代理</b>{!platformOk && <span>不可用</span>}</span>{runner === "platform" && <Icon name="check" size={14} />}</button>
+      {!platformOk && <button className="chat-menu-row" onClick={() => { setSettingsOpen(true); overlay.close(true); }}><Icon name="settings" size={14} /><span className="chat-menu-main"><b>打开模型供应商设置</b></span></button>}
+    </ChatConfigPopup>}
     {overlay.activeOverlay === "cli" && <ChatConfigPopup name="cli" className="chat-cli-pop" label="切换 CLI"><div className="chat-pop-head">切换 CLI<button className="chat-iconbtn chat-pop-close" aria-label="关闭 CLI 选择" onClick={() => overlay.close(true)}><Icon name="x" size={14} /></button></div>
       {!props.cliCandidates.length && <div className="chat-menu-hint">没有已安装且启用的 CLI；请在设置 → SDK 管理安装并启用。未虚构可用引擎。</div>}
       {props.cliCandidates.map(c => <button className={`chat-menu-row ${c.id === props.cliId ? "sel" : ""}`} key={c.id} disabled={props.locked} onClick={() => { void props.onChange({ cliId: c.id }); overlay.close(true); }}><CliLogo id={c.id} size={20} /><span className="chat-menu-main"><b>{c.id}</b><span>{c.version ?? "版本未知"}</span></span>{c.id === props.cliId && <Icon name="check" size={14} />}</button>)}

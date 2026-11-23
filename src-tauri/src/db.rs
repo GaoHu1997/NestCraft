@@ -218,7 +218,10 @@ fn migrate(conn: &Connection) -> Result<(), String> {
             draft TEXT NOT NULL DEFAULT '',
             unread TEXT,                       -- none|green|red|yellow
             createdAt INTEGER NOT NULL,
-            updatedAt INTEGER NOT NULL
+            updatedAt INTEGER NOT NULL,
+            -- CR-069：会话运行通道。'cli' 走既有 CLI 进程；'platform' 由平台主代理作答。
+            -- 旧库由 migrate_session_runner 补列并回填 'cli'，行为与升级前一致。
+            runner TEXT NOT NULL DEFAULT 'cli' CHECK (runner IN ('cli','platform'))
         );
         CREATE TABLE IF NOT EXISTS message (
             id TEXT PRIMARY KEY,
@@ -274,6 +277,8 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     migrate_cr063_session_page_index(conn)?;
     // CR-065：会话置顶字段与索引重建（DB-CR064）。
     migrate_cr065_session_pin(conn)?;
+    // CR-069：会话运行通道，旧记录默认 'cli'（DB-CR069）。
+    migrate_session_runner(conn)?;
     // CR-030-D1：知识切片与全文索引最小表集（FTS 虚表在库首次发布时创建，不在此建）。
     crate::commands::kb_index::migrate_cr030_knowledge_index(conn)?;
     // CR-058：模型检测历史（DB-CR058）。
@@ -479,6 +484,34 @@ fn migrate_session_feature_binding(conn: &Connection) -> Result<(), String> {   
     conn.execute_batch(
         "UPDATE session SET sessionRole='ordinary' WHERE sessionRole IS NULL OR sessionRole NOT IN ('ordinary','executor');
          CREATE INDEX IF NOT EXISTS idx_session_feature ON session(projectId, featureId, updatedAt);",
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// CR-069：会话运行通道。旧记录默认 'cli'，行为与现状完全一致。
+fn migrate_session_runner(conn: &Connection) -> Result<(), String> {
+    let column_exists = {
+        let mut statement = conn
+            .prepare("PRAGMA table_info(session)")
+            .map_err(|e| e.to_string())?;
+        let found = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .any(|name| name == "runner");
+        found
+    };
+    if !column_exists {
+        conn.execute_batch(
+            "ALTER TABLE session ADD COLUMN runner TEXT NOT NULL DEFAULT 'cli'
+                 CHECK (runner IN ('cli','platform'));",
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    conn.execute_batch(
+        "UPDATE session SET runner='cli'
+           WHERE runner IS NULL OR runner NOT IN ('cli','platform');
+         CREATE INDEX IF NOT EXISTS idx_session_runner ON session(projectId, runner, updatedAt);",
     )
     .map_err(|e| e.to_string())
 }
@@ -843,6 +876,89 @@ mod tests {
         // 前置表缺失时迁移必须报错，不静默通过。
         let empty = Connection::open_in_memory().unwrap();
         assert!(migrate_cr051_display_icons(&empty).is_err());
+    }
+
+    /// CR-069（T-089-01）：旧库结构（无 runner）升级后，既有行得到 runner='cli'，行为不变。
+    #[test]
+    fn cr069_runner_defaults_to_cli_for_old_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE session (
+                id TEXT PRIMARY KEY, projectId TEXT, serverId TEXT,
+                title TEXT NOT NULL DEFAULT '新会话', cliId TEXT, providerId TEXT,
+                modelId TEXT, effort TEXT, draft TEXT NOT NULL DEFAULT '',
+                unread TEXT, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL
+             );
+             INSERT INTO session (id, projectId, title, draft, createdAt, updatedAt)
+             VALUES ('old','p1','旧会话','',1,1);",
+        )
+        .unwrap();
+        migrate_session_runner(&conn).unwrap();
+        let runner: String = conn
+            .query_row("SELECT runner FROM session WHERE id='old'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(runner, "cli", "旧行必须默认 cli，不得改变既有行为");
+        // 新插入行不指定 runner 时同样默认 cli
+        conn.execute("INSERT INTO session (id, title, createdAt, updatedAt) VALUES ('new','新会话',2,2)", []).unwrap();
+        let runner: String = conn
+            .query_row("SELECT runner FROM session WHERE id='new'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(runner, "cli");
+    }
+
+    /// CR-069（T-089-02）：迁移幂等——连续执行两次不报错、数据不变。
+    #[test]
+    fn cr069_runner_migration_is_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE session (
+                id TEXT PRIMARY KEY, projectId TEXT, serverId TEXT,
+                title TEXT NOT NULL DEFAULT '新会话', cliId TEXT, providerId TEXT,
+                modelId TEXT, effort TEXT, draft TEXT NOT NULL DEFAULT '',
+                unread TEXT, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL
+             );
+             INSERT INTO session (id, projectId, title, draft, createdAt, updatedAt)
+             VALUES ('old','p1','旧会话','',1,1);",
+        )
+        .unwrap();
+        migrate_session_runner(&conn).unwrap();
+        migrate_session_runner(&conn).unwrap();
+        let (count, runner): (i64, String) = conn
+            .query_row("SELECT COUNT(*), MAX(runner) FROM session", [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(runner, "cli");
+        // 列不重复
+        let cols: Vec<String> = {
+            let mut statement = conn.prepare("PRAGMA table_info(session)").unwrap();
+            statement.query_map([], |row| row.get::<_, String>(1)).unwrap().filter_map(Result::ok).collect()
+        };
+        assert_eq!(cols.iter().filter(|name| name == &"runner").count(), 1, "runner 列不应重复");
+        assert!(cols.iter().any(|name| name == "runner"));
+    }
+
+    /// CR-069（T-089-03）：CHECK 约束生效，非法通道值写入被拒。
+    #[test]
+    fn cr069_runner_rejects_unknown_value() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE session (
+                id TEXT PRIMARY KEY, projectId TEXT, serverId TEXT,
+                title TEXT NOT NULL DEFAULT '新会话', cliId TEXT, providerId TEXT,
+                modelId TEXT, effort TEXT, draft TEXT NOT NULL DEFAULT '',
+                unread TEXT, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL
+             );",
+        )
+        .unwrap();
+        migrate_session_runner(&conn).unwrap();
+        conn.execute("INSERT INTO session (id, title, createdAt, updatedAt) VALUES ('r','会话',1,1)", []).unwrap();
+        assert!(conn
+            .execute("UPDATE session SET runner='bogus'", [])
+            .is_err(), "runner='bogus' 必须被 CHECK 拒绝");
+        // 合法取值可以写入
+        conn.execute("INSERT INTO session (id, title, createdAt, updatedAt, runner) VALUES ('p','平台会话',1,1,'platform')", []).unwrap();
+        let runner: String = conn.query_row("SELECT runner FROM session WHERE id='p'", [], |r| r.get(0)).unwrap();
+        assert_eq!(runner, "platform");
     }
 
 }

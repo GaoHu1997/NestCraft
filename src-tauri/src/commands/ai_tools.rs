@@ -168,14 +168,15 @@ pub(crate) fn handle_message_value(ctx: &ToolContext, msg: &Value) -> Option<Val
 
 // ---------- 工具目录 ----------
 
-struct ToolDef {
-    name: &'static str,
+#[derive(Clone)]
+pub(crate) struct ToolDef {
+    pub(crate) name: &'static str,
     /// capability 注册名（kind='tool'）
-    registry_id: &'static str,
-    description: &'static str,
-    schema: Value,
+    pub(crate) registry_id: &'static str,
+    pub(crate) description: &'static str,
+    pub(crate) schema: Value,
     #[allow(dead_code)]
-    risk: &'static str,
+    pub(crate) risk: &'static str,
 }
 
 fn schema_obj(props: Value, required: &[&str]) -> Value {
@@ -186,10 +187,11 @@ fn schema_obj(props: Value, required: &[&str]) -> Value {
     schema
 }
 
-/// 13 个工作台业务工具 + 6 个原有内置工具（BUG-CR059-01）+ 1 个右栏请求工具（CR-054／STORY-073）。
-const TOOL_COUNT: usize = 21;
+/// 13 个工作台业务工具 + 6 个原有内置工具（BUG-CR059-01）+ 1 个右栏请求工具（CR-054／STORY-073）
+/// + 1 个派发工具（CR-069／STORY-091：只建批次与任务，不执行、不推进状态）。
+const TOOL_COUNT: usize = 22;
 
-fn workbench_tools() -> [ToolDef; TOOL_COUNT] {
+pub(crate) fn workbench_tools() -> [ToolDef; TOOL_COUNT] {
     [
         ToolDef {
             name: "get_context",
@@ -475,6 +477,33 @@ fn workbench_tools() -> [ToolDef; TOOL_COUNT] {
             ),
             risk: "low",
         },
+        // CR-069 / STORY-091：派发工具。只创建批次与任务，不启动执行、不推进状态、不代表完成。
+        ToolDef {
+            name: "dispatch_work",
+            registry_id: "workbench.dispatch_work",
+            description: "把编码类工作派发给受管执行。只创建批次与任务，不启动执行、不推进状态、不代表完成。返回 batchId 与 taskIds。",
+            schema: schema_obj(
+                json!({
+                    "projectId": { "type": "string" },
+                    "featureId": { "type": "string", "description": "目标特性；执行会话必须与绑定一致" },
+                    "storyIds": { "type": "array", "items": {"type": "string"}, "minItems": 1 },
+                    "baselineHash": { "type": "string" },
+                    "idempotencyKey": { "type": "string" },
+                    "requestDigest": { "type": "string" },
+                    "dependencies": { "type": "array", "items": {
+                        "type": "object",
+                        "properties": {
+                            "successorStoryId": {"type": "string"},
+                            "predecessorStoryId": {"type": "string"},
+                            "requiredArtifactKey": {"type": "string"}
+                        },
+                        "required": ["successorStoryId","predecessorStoryId","requiredArtifactKey"]
+                    }}
+                }),
+                &["projectId", "storyIds", "baselineHash", "idempotencyKey", "requestDigest"],
+            ),
+            risk: "medium",
+        },
     ]
 }
 
@@ -503,9 +532,10 @@ pub const TOOL_LABELS: [(&str, &str); TOOL_COUNT] = [
     ("ssh_exec_status", "工作台·审批结论"),
     // CR-054 / STORY-073：右栏请求
     ("open_panel", "工作台·打开预览面板"),
+    ("dispatch_work", "工作台·派发工作"),
 ];
 
-fn tool_enabled(conn: &rusqlite::Connection, registry_id: &str) -> bool {
+pub(crate) fn tool_enabled(conn: &rusqlite::Connection, registry_id: &str) -> bool {
     conn.query_row(
         "SELECT enabled FROM capability WHERE kind='tool' AND name=?1",
         [registry_id],
@@ -554,7 +584,7 @@ fn tool_error(message: &str) -> Value {
     json!({ "content": [{ "type": "text", "text": message }], "isError": true })
 }
 
-fn run_tool(ctx: &ToolContext, name: &str, args: &Value) -> Result<Value, String> {
+pub(crate) fn run_tool(ctx: &ToolContext, name: &str, args: &Value) -> Result<Value, String> {
     match name {
         "get_context" => tool_get_context(ctx),
         "list_projects" => crate::commands::projects::list_projects()
@@ -579,8 +609,85 @@ fn run_tool(ctx: &ToolContext, name: &str, args: &Value) -> Result<Value, String
         "ssh_exec" => tool_ssh_exec(args),
         "ssh_exec_status" => tool_ssh_exec_status(args),
         "open_panel" => tool_open_panel(args),
+        "dispatch_work" => tool_dispatch_work(ctx, args),
         other => Err(format!("未知工具：{other}")),
     }
+}
+
+/// CR-069 / STORY-091：派发工作给受管执行。
+/// 只调用 execution::create_batch 创建批次/任务/步骤/依赖记录；不领取、不推进状态、
+/// 不创建执行计划（M0 派发≠完成；真实 worker 执行属后续增量）。
+fn tool_dispatch_work(ctx: &ToolContext, args: &Value) -> Result<Value, String> {
+    let project_id = resolve_project_id(ctx, args)?;
+    let story_ids: Vec<String> = args.get("storyIds")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .ok_or("storyIds 必须是字符串数组")?;
+    if story_ids.is_empty() { return Err("至少需要一个 Story".into()); }
+
+    let baseline_hash = req_str(args, "baselineHash")?;
+    let idempotency_key = req_str(args, "idempotencyKey")?;
+    let request_digest = req_str(args, "requestDigest")?;
+    let feature_id = str_arg(args, "featureId").map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+
+    // 执行会话边界：派发特性必须与执行会话绑定的 Feature 一致（CR-047）。
+    if let Some(bound) = ctx.execution_feature_id.as_deref() {
+        match feature_id.as_deref() {
+            Some(given) if given == bound => {}
+            Some(given) => return Err(format!("派发特性 {given} 与执行会话绑定 {bound} 不一致")),
+            None => return Err(format!("执行会话派发必须指定 featureId={bound}")),
+        }
+    }
+
+    // Story 存在性与类型校验：只允许 story/bug 进入派发批次。
+    let tree = crate::commands::projects::read_requirements(project_id.clone())?;
+    let mut nodes = Vec::new();
+    flatten_requirements(&tree, &mut nodes);
+    for id in &story_ids {
+        let node = nodes.iter().find(|n| &n.entity_id == id)
+            .ok_or_else(|| format!("Story {id} 不存在于项目 {project_id}"))?;
+        if node.kind != "story" && node.kind != "bug" {
+            return Err(format!("{id} 的类型是 {}，不是 story/bug", node.kind));
+        }
+    }
+
+    // 依赖边：三条字段缺一即拒绝，不静默丢弃。
+    let dependencies = args.get("dependencies").and_then(|v| v.as_array())
+        .map(|a| a.iter().map(|d| -> Result<crate::commands::execution::DependencyInput, String> {
+            Ok(crate::commands::execution::DependencyInput {
+                successor_story_id: d.get("successorStoryId").and_then(|v| v.as_str())
+                    .ok_or("依赖缺少 successorStoryId")?.to_string(),
+                predecessor_story_id: d.get("predecessorStoryId").and_then(|v| v.as_str())
+                    .ok_or("依赖缺少 predecessorStoryId")?.to_string(),
+                required_artifact_key: d.get("requiredArtifactKey").and_then(|v| v.as_str())
+                    .ok_or("依赖缺少 requiredArtifactKey")?.to_string(),
+            })
+        }).collect::<Result<Vec<_>, _>>())
+        .transpose()?
+        .unwrap_or_default();
+
+    let input = crate::commands::execution::CreateBatchInput {
+        project_id: project_id.clone(),
+        scope_kind: if story_ids.len() == 1 { "story".into() } else { "feature".into() },
+        story_ids,
+        feature_id,
+        baseline_hash,
+        idempotency_key,
+        request_digest,
+        dependencies,
+    };
+
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    let batch = crate::commands::execution::create_batch(conn, &input)?;
+
+    Ok(json!({
+        "accepted": true,
+        "batchId": batch.id,
+        "taskIds": batch.tasks.iter().map(|t| t.id.clone()).collect::<Vec<_>>(),
+        "taskStatuses": batch.tasks.iter().map(|t| (t.id.clone(), t.status.clone())).collect::<Vec<_>>(),
+        "note": "已受管接纳，尚未执行。任务当前为 queued；执行与验收另行进行。",
+    }))
 }
 
 // ---------- 参数辅助 ----------
@@ -1437,6 +1544,55 @@ mod tests {
             "kind": "story", "title": "范围内新故事", "parentEntityId": "FEAT-001"
         }));
         assert!(!err, "同 Feature 子树新建应允许：{allowed}");
+    }
+
+    /// CR-069 / T-091-10/11：执行会话派发必须与绑定 Feature 一致；未指定时拒绝。
+    /// 这两个分支在读取需求树与数据库之前返回，可在无 DB 环境下直接验证。
+    #[test]
+    fn dispatch_work_enforces_execution_feature_binding() {
+        let ctx = ToolContext {
+            project_id: Some("p1".into()),
+            data_dir: std::env::temp_dir(),
+            execution_feature_id: Some("FEAT-011".into()),
+        };
+        let mismatched = json!({
+            "projectId": "p1",
+            "featureId": "FEAT-999",
+            "storyIds": ["STORY-0101"],
+            "baselineHash": "sha256:x",
+            "idempotencyKey": "k1",
+            "requestDigest": "d1",
+        });
+        let err = tool_dispatch_work(&ctx, &mismatched).unwrap_err();
+        assert!(err.contains("FEAT-999") && err.contains("FEAT-011"), "实际错误：{err}");
+
+        let missing = json!({
+            "projectId": "p1",
+            "storyIds": ["STORY-0101"],
+            "baselineHash": "sha256:x",
+            "idempotencyKey": "k1",
+            "requestDigest": "d1",
+        });
+        let err = tool_dispatch_work(&ctx, &missing).unwrap_err();
+        assert!(err.contains("featureId=FEAT-011"), "实际错误：{err}");
+    }
+
+    #[test]
+    fn dispatch_work_rejects_empty_stories_before_any_io() {
+        let ctx = ToolContext {
+            project_id: Some("p1".into()),
+            data_dir: std::env::temp_dir(),
+            execution_feature_id: None,
+        };
+        let empty = json!({
+            "projectId": "p1",
+            "storyIds": [],
+            "baselineHash": "sha256:x",
+            "idempotencyKey": "k1",
+            "requestDigest": "d1",
+        });
+        let err = tool_dispatch_work(&ctx, &empty).unwrap_err();
+        assert!(err.contains("至少需要一个 Story"), "实际错误：{err}");
     }
 
     #[test]

@@ -14,6 +14,7 @@ pub mod gitconfig;
 pub mod kb_index;
 pub mod knowledge;
 pub mod model_probe;
+pub mod platform_agent;
 pub mod projects;
 pub(crate) mod model_route;
 pub mod image_gen;

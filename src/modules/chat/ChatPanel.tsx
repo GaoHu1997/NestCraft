@@ -199,6 +199,8 @@ function Panel(props: PanelProps) {
   const sessionsPageRef = useRef(sessionsPage);
   sessionsPageRef.current = sessionsPage;
   const [cur, setCur] = useState<SessionMeta | null>(null);
+  // CR-069：新会话运行通道草稿；创建会话后以 meta.runner 为准。默认 cli（与后端一致）。
+  const [runnerDraft, setRunnerDraft] = useState<"cli" | "platform">("cli");
   const [msgs, setMsgs] = useState<UiMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [runningIds, setRunningIds] = useState<string[]>([]);
@@ -371,6 +373,7 @@ function Panel(props: PanelProps) {
       ...(previous?.providerId ? { providerId: previous.providerId } : {}), ...(previous?.modelId ? { modelId: previous.modelId } : {}),
       ...(previous?.effort ? { effort: previous.effort } : {}),
       ...(featureId ? { featureId } : {}),
+      ...(runnerDraft === "platform" ? { runner: "platform" as const } : {}),
     };
     const work = (async () => {
       await saveDraftNow(); // 新会话也必须先保存旧会话，包含空草稿
@@ -822,7 +825,11 @@ function Panel(props: PanelProps) {
         if (viewing(meta.id, targetScope)) onDraftChange(unsent);
       }
       if (scopeRef.current !== targetScope) return false;
-      if (!meta.cliId || !cliCands.some(c => c.id === meta!.cliId)) { toast("CLI 未配置或已失效，请重新选择已安装且启用的 CLI", "err"); return false; }
+      // CR-069：平台会话不依赖 CLI；校验平台模型（provider+model 在候选内）。
+      const sessionRunner = meta.runner ?? "cli";
+      if (sessionRunner === "platform") {
+        if (!meta.providerId || !meta.modelId || !models.some(m => m.providerId === meta!.providerId && m.modelId === meta!.modelId)) { toast("请先在模型浮层选择平台模型", "err"); return false; }
+      } else if (!meta.cliId || !cliCands.some(c => c.id === meta!.cliId)) { toast("CLI 未配置或已失效，请重新选择已安装且启用的 CLI", "err"); return false; }
       const model = models.find(m => m.providerId === meta!.providerId && m.modelId === meta!.modelId);
       if (meta.modelId && !model) { toast("会话模型已失效，请重新选择可用模型", "err"); return false; }
       if (model && meta.effort && !effectiveEfforts(model.efforts).includes(meta.effort)) { toast("思考档位已失效，请在模型浮层重新选择", "err"); return false; }
@@ -908,6 +915,22 @@ function Panel(props: PanelProps) {
     return () => window.clearInterval(timer);
   }, [runningIds]);
 
+  /** CR-069：切换运行通道。新会话只改草稿；已有会话走后端校验（有消息/运行中会被拒绝）。 */
+  const switchRunner = async (next: "cli" | "platform") => {
+    if (next === (curRef.current?.runner ?? runnerDraft)) return;
+    if (!curRef.current) { setRunnerDraft(next); return; }
+    if (cfgLock.current || sendLock.current || executionLocked) { toast("当前会话仍有运行中的请求或子任务，配置已锁定；完成后再调整", "warn"); return; }
+    const meta = curRef.current;
+    if (meta.messageCount > 0 || meta.binding) { toast("已有消息的会话不能切换运行通道；请新建会话", "warn"); return; }
+    try {
+      if (await api.chatStatus(meta.id)) throw new Error("会话仍在运行，通道未切换");
+      await api.chatSessionUpdate({ id: meta.id, runner: next });
+      const updated = { ...meta, runner: next };
+      curRef.current = updated; setCur(updated);
+      setSessions(prev => prev.map(s => s.id === updated.id ? updated : s));
+    } catch (e) { toast(String(e), "warn"); }
+  };
+
   const applyCfg = async (patch: { cliId?: string; providerId?: string; modelId?: string; effort?: string; permissionId?: string }) => {
     if (cfgLock.current || sendLock.current || executionLocked) { toast("当前会话仍有运行中的请求或子任务，配置已锁定；完成后再调整", "warn"); return; }
     if (patch.permissionId && curRef.current) {
@@ -992,7 +1015,7 @@ function Panel(props: PanelProps) {
       </div>
     </div>}
     <div className="chat-composer-wrap">
-      <Composer scopeKey={`${scope}:${cur?.id ?? "new"}`} rootUri={props.rootUri} projectId={props.projectId} office={props.office} officeFiles={props.officeFiles} sessions={sessions} serverId={props.serverId} value={draft} streaming={running} disabled={composerLocked} goal={curRt?.goal ?? null} tasks={curRt?.tasks ?? []} onCreateGoal={text => { if (cur) { setGoal(cur.id, text); bumpRt(); } }} onGoalStateChange={state => { if (cur) { updateGoalState(cur.id, state); bumpRt(); } }} onCreateTask={taskName => { if (cur) { addSessionTask(cur.id, taskName); bumpRt(); } }} onChange={onDraftChange} onSend={startSend} onStop={stopSend} controls={<ModelPicker cliId={cur?.cliId ?? null} providerId={cur?.providerId ?? null} modelId={cur?.modelId ?? null} effort={cur?.effort ?? null} cliCandidates={cliCands} models={models} permissionId={(cur?.id && permissionBySession[cur.id] as any) || "default"} locked={executionLocked || cfgBusy} onChange={applyCfg} />} onSessionSearch={async (q: string) => (await api.chatSessionsPage({ ...(props.projectId ? { projectId: props.projectId } : {}), ...(props.serverId ? { serverId: props.serverId } : {}), ...(q.trim() ? { keyword: q.trim() } : {}), limit: 20 })).items} />
+      <Composer scopeKey={`${scope}:${cur?.id ?? "new"}`} rootUri={props.rootUri} projectId={props.projectId} office={props.office} officeFiles={props.officeFiles} sessions={sessions} serverId={props.serverId} value={draft} streaming={running} disabled={composerLocked} goal={curRt?.goal ?? null} tasks={curRt?.tasks ?? []} onCreateGoal={text => { if (cur) { setGoal(cur.id, text); bumpRt(); } }} onGoalStateChange={state => { if (cur) { updateGoalState(cur.id, state); bumpRt(); } }} onCreateTask={taskName => { if (cur) { addSessionTask(cur.id, taskName); bumpRt(); } }} onChange={onDraftChange} onSend={startSend} onStop={stopSend} controls={<ModelPicker cliId={cur?.cliId ?? null} providerId={cur?.providerId ?? null} modelId={cur?.modelId ?? null} effort={cur?.effort ?? null} cliCandidates={cliCands} models={models} permissionId={(cur?.id && permissionBySession[cur.id] as any) || "default"} locked={executionLocked || cfgBusy} onChange={applyCfg} runner={cur?.runner ?? runnerDraft} platformAvailable={models.length > 0} onRunnerChange={next => { void switchRunner(next); }} />} onSessionSearch={async (q: string) => (await api.chatSessionsPage({ ...(props.projectId ? { projectId: props.projectId } : {}), ...(props.serverId ? { serverId: props.serverId } : {}), ...(q.trim() ? { keyword: q.trim() } : {}), limit: 20 })).items} />
       {freshConfirm && cur && <Confirm
         title="无法续接原线程，是否重建上下文？"
         message={`本轮开始前检测到原生引用不可用。重建后将开启全新上下文；历史消息保留可见，不再自动送给模型。\n\n原因：${reasonLabel(freshConfirm.reasonCode)}\n引用指纹：${freshConfirm.refFingerprint ?? "—"} · 绑定版本：#${freshConfirm.expectedRevision}`}

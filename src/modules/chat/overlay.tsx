@@ -3,9 +3,9 @@ import { createPortal } from "react-dom";
 import type { ReactNode, RefObject } from "react";
 
 /** 一个可见聊天 scope 只有一个浮层；外点只关闭，不阻止原目标的点击。 */
-export type ChatOverlay = "history" | "agents" | "bg" | "cli" | "perm" | "model" | "session" | "tokens" | "context" | "@" | "/" | "+";
-export type ChatConfigOverlay = "cli" | "perm" | "model";
-const isConfig = (name: ChatOverlay): name is ChatConfigOverlay => name === "cli" || name === "perm" || name === "model";
+export type ChatOverlay = "history" | "agents" | "bg" | "runner" | "cli" | "perm" | "model" | "session" | "tokens" | "context" | "@" | "/" | "+";
+export type ChatConfigOverlay = "runner" | "cli" | "perm" | "model";
+const isConfig = (name: ChatOverlay): name is ChatConfigOverlay => name === "runner" || name === "cli" || name === "perm" || name === "model";
 interface OverlayController {
   activeOverlay: ChatOverlay | null;
   scopeRef: RefObject<HTMLDivElement>;

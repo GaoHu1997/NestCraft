@@ -349,7 +349,12 @@ pub struct SessionMeta {
     /// CR-065：置顶时刻（毫秒）；0 表示未置顶。
     #[serde(default)]
     pub pinned_at: i64,
+    /// CR-069：会话运行通道。'cli' 走既有 CLI 进程；'platform' 由平台主代理作答。
+    #[serde(default = "default_runner")]
+    pub runner: String,
 }
+
+fn default_runner() -> String { "cli".into() }
 
 fn ordinary_session_role() -> String { "ordinary".into() }
 
