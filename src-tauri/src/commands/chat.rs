@@ -150,6 +150,8 @@ fn session_row(row: &rusqlite::Row) -> rusqlite::Result<SessionMeta> {
         session_role,
         binding,
         pinned_at: row.get(22)?,
+        // CR-069：会话运行通道；列序见 SESSION_COLUMNS（pinnedAt=22，runner=23）。
+        runner: row.get::<_, Option<String>>(23)?.unwrap_or_else(|| "cli".into()),
     })
 }
 
@@ -157,7 +159,7 @@ const SESSION_COLUMNS: &str = "s.id, s.projectId, s.serverId, s.title, s.cliId, 
     s.nativeThreadRef, s.nativeBindingRevision, s.nativeConfirmedTurnId, \
     (SELECT t.outcome FROM execution_session_turn t WHERE t.sessionId = s.id ORDER BY t.createdAt DESC, t.rowid DESC LIMIT 1), \
     (SELECT t.reasonCode FROM execution_session_turn t WHERE t.sessionId = s.id ORDER BY t.createdAt DESC, t.rowid DESC LIMIT 1), \
-    s.pinnedAt";
+    s.pinnedAt, s.runner";
 
 // ---------- 会话 CRUD ----------
 
@@ -313,6 +315,7 @@ pub fn chat_session_create(
     model_id: Option<String>,
     effort: Option<String>,
     feature_id: Option<String>,
+    runner: Option<String>,
 ) -> Result<SessionMeta, String> {
     let id = new_id("sess");
     let now = now_ms();
@@ -325,10 +328,17 @@ pub fn chat_session_create(
             Some(name) => format!("执行 {id} · {name}"),
             None => format!("执行 {id}"),
         }).unwrap_or_else(|| "新会话".into());
+        // CR-069：默认必须是 cli——平台通道是显式选择，不得改变所有既有会话行为。
+        let runner = match runner.as_deref() {
+            None | Some("") => "cli",
+            Some("cli") => "cli",
+            Some("platform") => "platform",
+            Some(other) => return Err(format!("未知会话运行通道：{other}")),
+        };
         conn.execute(
-            "INSERT INTO session (id, projectId, serverId, title, cliId, providerId, modelId, effort, draft, createdAt, updatedAt, featureId, featureTitle, featureSourceHash, sessionRole)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'',?9,?9,?10,?11,?12,?13)",
-            rusqlite::params![id, project_id, server_id, title, cli_id, provider_id, model_id, effort, now, binding.feature_id, binding.feature_title, binding.feature_source_hash, role],
+            "INSERT INTO session (id, projectId, serverId, title, cliId, providerId, modelId, effort, draft, createdAt, updatedAt, featureId, featureTitle, featureSourceHash, sessionRole, runner)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'',?9,?9,?10,?11,?12,?13,?14)",
+            rusqlite::params![id, project_id, server_id, title, cli_id, provider_id, model_id, effort, now, binding.feature_id, binding.feature_title, binding.feature_source_hash, role, runner],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -357,15 +367,37 @@ pub fn chat_session_update(
     model_id: Option<String>,
     effort: Option<String>,
     unread: Option<String>,
+    runner: Option<String>,
 ) -> Result<(), String> {
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
     let running = RUNNING.lock().map_err(|_| "会话运行状态不可用".to_string())?;
     // 运行中禁止修改执行配置（运行快照锁定）
     if running.contains_key(&id)
-        && (cli_id.is_some() || provider_id.is_some() || model_id.is_some() || effort.is_some())
+        && (cli_id.is_some() || provider_id.is_some() || model_id.is_some() || effort.is_some() || runner.is_some())
     {
         return Err("会话运行中或有待审操作，禁止修改执行配置".into());
+    }
+    // CR-069：只有在会话没有消息且未运行时才允许切换运行通道。中途切换会让上下文
+    // 格式与续接语义完全不同（CLI 有原生线程引用，平台通道没有），混合状态无法保证一致。
+    if let Some(next) = runner.as_deref() {
+        let msg_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM message WHERE sessionId=?1",
+                [&id],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if msg_count > 0 {
+            return Err("已有消息的会话不能切换运行通道；请新建会话".into());
+        }
+        if running.contains_key(&id) {
+            return Err("会话正在运行，不能切换运行通道".into());
+        }
+        match next {
+            "cli" | "platform" => {}
+            other => return Err(format!("未知会话运行通道：{other}")),
+        }
     }
     // CR-037 / STORY-011 AC-05：非空会话（有消息或已有原生绑定）禁止原地换 CLI——
     // 前端改为确认后另建会话；空会话维持原地修改。
@@ -397,9 +429,10 @@ pub fn chat_session_update(
             providerId = COALESCE(?6, providerId),
             modelId = COALESCE(?7, modelId),
             effort = COALESCE(?8, effort),
-            unread = COALESCE(?9, unread)
+            unread = COALESCE(?9, unread),
+            runner = COALESCE(?10, runner)
          WHERE id = ?1",
-        rusqlite::params![id, now_ms(), title, draft, cli_id, provider_id, model_id, effort, unread],
+        rusqlite::params![id, now_ms(), title, draft, cli_id, provider_id, model_id, effort, unread, runner],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -2161,7 +2194,8 @@ mod tests {
                 sessionRole TEXT NOT NULL DEFAULT 'ordinary',
                 nativeThreadRef TEXT, nativeBindingRevision INTEGER NOT NULL DEFAULT 0,
                 nativeConfirmedTurnId TEXT,
-                pinnedAt INTEGER NOT NULL DEFAULT 0
+                pinnedAt INTEGER NOT NULL DEFAULT 0,
+                runner TEXT NOT NULL DEFAULT 'cli'
              );
              CREATE TABLE message (id TEXT PRIMARY KEY, sessionId TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, metaJson TEXT, refsJson TEXT, gitContextJson TEXT, createdAt INTEGER NOT NULL);
              CREATE TABLE execution_session_turn (id TEXT PRIMARY KEY, sessionId TEXT NOT NULL, outcome TEXT, reasonCode TEXT, createdAt INTEGER NOT NULL);",
