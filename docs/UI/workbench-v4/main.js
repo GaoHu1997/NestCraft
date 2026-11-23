@@ -15,6 +15,37 @@
     return { ...m, modalities: image ? ["生图"] : vision ? ["文本", "图片"] : ["文本"], thinking, levels: thinking ? ["off", "low", "medium", "high"] : [], defaultLevel: thinking ? (vision ? "高" : "中") : "—", context: m.context || (vision ? 200000 : 128000), maxOutput: m.maxOutput || (vision ? 65536 : 32768), autoLevels: true, on: true };
   }
 
+  /* CR-059 r3：思考档位解析（供应商信号 → 本地知识库 → 通用阶梯），供单模型「一键获取」
+     与工具栏「自动获取思考等级」共用；未命中返回 null，不猜测。 */
+  const normModel = s => String(s).toLowerCase().trim().replace(/[^a-z0-9]+/g, " ").replace(/([a-z])(\d)/g, "$1 $2");
+  function matchThinkKnowledge(id, name) {
+    const hay = normModel(id) + " " + normModel(name);
+    let best = null;
+    (D.settings.thinkKnowledge || []).forEach(entry => entry.patterns.forEach(pat => {
+      const needle = normModel(pat);
+      const at = hay.indexOf(needle);
+      if (at < 0) return;
+      const before = hay[at - 1], after = hay[at + needle.length];
+      const boundary = (!before || !/[a-z0-9]/.test(before)) && (!after || !/[a-z0-9]/.test(after));
+      if (boundary && (!best || needle.length > best.len)) best = { entry, len: needle.length };
+    }));
+    return best ? best.entry : null;
+  }
+  function resolveThinkingLevels(m) {
+    const signal = (D.settings.endpointSignals || {})[m.id];
+    if (signal && signal.reasoning === false) return { levels: [], thinking: false, defaultLevel: "不下发", source: "供应商", note: "上游明确不支持推理" };
+    const entry = matchThinkKnowledge(m.id, m.name);
+    if (entry) return { levels: Object.keys(entry.efforts), thinking: true, defaultLevel: entry.defaultEffort || "跟随记忆", source: signal && signal.reasoning === true ? "供应商信号 + 本地知识库" : "本地知识库", note: entry.note, contextWindow: entry.contextWindow, maxTokens: entry.maxTokens };
+    if (signal && signal.reasoning === true) return { levels: ["off", "low", "medium", "high"], thinking: true, defaultLevel: "跟随记忆", source: "供应商", note: "上游确认支持推理，通用阶梯（中置信）" };
+    return null;
+  }
+  function applyThinkingLevels(m, r) {
+    m.levels = r.levels; m.thinking = r.thinking; m.defaultLevel = r.defaultLevel;
+    m.levelSource = r.source; m.levelNote = r.note; m.autoLevels = true;
+    if (r.contextWindow && !m.context) m.context = r.contextWindow;
+    if (r.maxTokens && !m.maxOutput) m.maxOutput = r.maxTokens;
+  }
+
   function nextId(kind, projectId) {
     const prefix = kind === "epic" ? "EPIC-" : kind === "feature" ? "FEAT-" : "STORY-";
     const nums = D.requirements.filter(r => r.kind === kind).map(r => parseInt(String(r.id).replace(/\D+/g, ""), 10) || 0);
@@ -23,6 +54,105 @@
     while (D.requirements.some(r => r.id === id)) { n++; id = prefix + String(n).padStart(kind === "epic" ? 2 : 3, "0"); }
     return { id, n };
   }
+
+  /* r7b：密钥协议浮层定位——fixed 定位，锚定协议按钮；**默认向下展开**（用户要求），
+     下方放不下才向上；夹在视口内（8px margin），并按可用高度限制最大高度。
+     目标：浮层不遮挡协议按钮本身，也不被 .key-list / .set-scroll 裁剪。 */
+  function positionKeyPop() {
+    const pop = document.querySelector(".key-pop");
+    if (!pop) return;
+    const rect = store.keyPopRect;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const pw = pop.offsetWidth || 208;
+    const ph = pop.offsetHeight || 200;
+    const margin = 8, gap = 4;
+    // 右缘对齐协议按钮，横向夹在视口内
+    let left = rect ? rect.right - pw : vw / 2 - pw / 2;
+    left = Math.max(margin, Math.min(left, vw - pw - margin));
+    const spaceAbove = rect ? rect.top - margin - gap : vh / 2;
+    const spaceBelow = rect ? vh - rect.bottom - margin - gap : vh / 2;
+    let top;
+    pop.style.maxHeight = "";
+    if (rect && spaceBelow >= ph) {
+      top = rect.bottom + gap;                                        // 默认向下
+    } else if (rect && spaceAbove >= ph) {
+      top = rect.top - ph - gap;                                      // 下方不够 → 向上
+    } else if (spaceBelow >= spaceAbove) {
+      top = rect ? rect.bottom + gap : margin;                        // 两侧都不够：向空间大的一侧并限高
+      pop.style.maxHeight = Math.max(120, spaceBelow) + "px";
+    } else {
+      pop.style.maxHeight = Math.max(120, spaceAbove) + "px";
+      top = rect ? rect.top - Math.min(ph, spaceAbove) - gap : margin;
+    }
+    top = Math.max(margin, Math.min(top, vh - margin - Math.min(pop.offsetHeight, ph)));
+    pop.style.left = Math.round(left) + "px";
+    pop.style.top = Math.round(top) + "px";
+  }
+  window.addEventListener("resize", () => { if (document.querySelector(".key-pop")) positionKeyPop(); });
+  document.addEventListener("scroll", e => {
+    if (!document.querySelector(".key-pop")) return;
+    /* 正文滚动时关闭浮层，避免浮层与按钮脱位。 */
+    if (e.target && e.target.closest && e.target.closest(".set-scroll")) {
+      store.keyEdit = null; store.keyPopRect = null; S().refreshSettings();
+    }
+  }, true);
+
+  /* r8：密钥模型范围探测（异步、保存后触发）——演示夹具模拟每个密钥的 `/models` 应答。
+     规则（与设计一致）：
+     - 只有 1 个密钥 → 不探测（模型配置中的模型即其支持范围）；
+     - 全部支持 → 不写范围（空＝全部，后续新增模型自动覆盖）；
+     - 部分支持 → 写入交集，标记 auto；
+     - 已手动配置的密钥 → 只追加本次新增且被该密钥支持的模型，保留手动选择。
+     探测按密钥自身协议对应的端点发出（r8：协议决定端点，不沿用供应商默认）。 */
+  /* r9：探测过程在密钥行上不再显示任何状态；完成只弹一次会自动消失的 toast。
+     批量探测把所有密钥结果汇总成一条提示；手动探测（范围表单「立即探测」）单独一条。 */
+  function probeKeyScopes(p, onlyIdx, opts = {}) {
+    if (!p || p.keys.length < 2) return;
+    const targets = onlyIdx == null ? p.keys.map((_, i) => i).filter(i => p.keys[i] && p.keys[i].on) : [onlyIdx];
+    if (!targets.length) return;
+    const summary = [];
+    let pending = targets.length;
+    targets.forEach(i => {
+      const k = p.keys[i];
+      if (!k || !k.on) { pending--; return; }
+      setTimeout(() => {
+        const support = (D.settings.keyModelSupport && D.settings.keyModelSupport[k.id || k.label]) || null;
+        const current = p.models.map(m => m.id);
+        if (!support) {
+          summary.push({ label: k.label || "密钥", ok: false });
+        } else {
+          const served = current.filter(id => support.includes(id));
+          const prev = k.models || [];
+          if (served.length === current.length) {
+            /* 全部支持 → 空范围（兜底全部，后续新增自动覆盖） */
+            k.models = []; k.scope = "全部模型"; k.autoScope = false; k.manualScope = false;
+          } else if (k.manualScope || prev.length) {
+            /* 手动已配置 → 只追加新增模型中被支持的 */
+            const added = served.filter(id => !prev.includes(id));
+            k.models = Array.from(new Set([...prev, ...added]));
+            k.scope = `${k.models.length} 个模型`; k.autoScope = false; k.manualScope = true;
+          } else {
+            k.models = served.slice(); k.scope = `${served.length} 个模型`; k.autoScope = true; k.manualScope = false;
+          }
+          k.probedAt = "刚刚";
+          summary.push({ label: k.label || "密钥", ok: true, served: served.length, total: current.length });
+        }
+        pending--;
+        if (pending > 0) return;
+        S().refreshSettings();
+        if (opts.manual) {
+          const r = summary[0];
+          toast(r ? (r.ok ? `探测完成：该密钥支持 ${r.served}/${r.total} 个模型` : "探测未完成：未拿到该密钥的模型清单，已保留原范围")
+                  : "探测未完成：密钥已停用或删除");
+        } else {
+          const done = summary.filter(x => x.ok).length;
+          const failed = summary.length - done;
+          toast(failed ? `模型范围已更新（${done} 把密钥成功，${failed} 把未取到清单已保留原范围）` : "已根据探测结果更新各密钥的模型范围");
+        }
+      }, 700);
+    });
+  }
+  window.__probeKeyScopes = probeKeyScopes;
 
   const actions = {
     /* ---------- 外壳 ---------- */
@@ -216,7 +346,44 @@
     },
     "retry-task": el => { const t = D.tasks.find(x => x.id === el.dataset.id); if (t) { t.status = "running"; t.reason = ""; t.progress = 8; t.round += 1; t.branch = "agent/retry-" + t.id.toLowerCase(); } toast("已基于原运行创建重试，保留失败记录"); render(); },
     "code-rail": el => { store.codeRail = el.dataset.rail; store.codeEdit = false; render(); },
-    "git-stage": el => { const c = D.git.changes.find(x => x.file === el.dataset.file); if (c) { c.staged = !c.staged; render(); } },
+    "git-stage": (el, e) => { if (e && e.stopPropagation) e.stopPropagation(); const c = D.git.changes.find(x => x.file === el.dataset.file); if (c) { c.staged = !c.staged; render(); } },
+    "git-stage-all": () => { D.git.changes.forEach(c => { c.staged = true; }); toast("已全部加入暂存区（仿真）"); render(); },
+    "git-unstage-all": () => { D.git.changes.forEach(c => { c.staged = false; }); toast("已全部取消暂存（仿真）"); render(); },
+    "git-group": el => { store.gitOpenGroups = store.gitOpenGroups || { local: true, remote: false }; const k = el.dataset.group; store.gitOpenGroups[k] = !store.gitOpenGroups[k]; render(); },
+    "git-branch-expand": () => { store.gitOpenGroups = { local: true, remote: true }; render(); },
+    "git-branch-collapse": () => { store.gitOpenGroups = { local: false, remote: false }; render(); },
+    "git-remotes": () => {
+      openDialog(dlgShell("管理远程", "远程仓库地址；演示不写入真实仓库", `<div class="field"><label>远程名称</label><input class="input" id="gr-name" placeholder="origin"></div><div class="field"><label>仓库地址</label><input class="input" id="gr-url" placeholder="https://github.com/owner/repo.git"></div>${D.git.remoteManager.map(r => `<div class="gitp2-branch"><span class="gitp2-branch-mark">${icon("globe", "ico-14")}</span><span class="gitp2-branch-name">${esc(r.name)}</span><span class="gitp2-hint ellipsis">${esc(r.url)}</span></div>`).join("")}`, `<button class="btn" data-act="close-dialog">取消</button><button class="btn primary" data-act="git-remote-save">保存</button>`, "modal-sm"));
+    },
+    "git-remote-save": () => {
+      const name = val("gr-name").trim(), url = val("gr-url").trim();
+      if (!name || !url) { toast("请填写远程名称与地址"); return; }
+      D.git.remoteManager.push({ name, url }); closeDialog(); toast(`已保存远程 ${name}（仿真）`); render();
+    },
+    "git-refresh": () => { toast("已刷新仓库状态（仿真）"); render(); },
+    "git-accel": () => { store.gitAccelOpen = !store.gitAccelOpen; store.gitCredOpen = false; render(); },
+    "git-accel-toggle": () => { D.git.accel.on = !D.git.accel.on; render(); },
+    "git-accel-save": () => {
+      const v = val("git-accel-url").trim();
+      if (!/^https?:\/\/\S+$/.test(v)) { toast("镜像前缀需以 http:// 或 https:// 开头"); return; }
+      D.git.accel.url = v; store.gitAccelOpen = false;
+      toast(D.git.accel.on ? `已启用国内加速：${v}` : "已关闭国内加速"); render();
+    },
+    "git-accel-cancel": () => { store.gitAccelOpen = false; render(); },
+    "git-cred": () => { store.gitCredOpen = !store.gitCredOpen; store.gitAccelOpen = false; render(); },
+    "git-cred-save": () => {
+      const host = val("git-cred-host").trim(), token = val("git-cred-token").trim();
+      if (!/^[a-z0-9.-]+$/i.test(host)) { toast("请填写有效的远端主机名"); return; }
+      if (!token) { toast("请粘贴访问令牌"); return; }
+      const row = D.git.credentialHosts.find(h => h.host === host);
+      if (row) row.savedAt = "刚刚"; else D.git.credentialHosts.push({ host, user: "oauth2", savedAt: "刚刚" });
+      store.gitCredOpen = false; toast(`已保存 ${host} 的令牌（仿真，不回显）`); render();
+    },
+    "git-cred-cancel": () => { store.gitCredOpen = false; render(); },
+    "git-commit-menu": () => { store.gitCommitMenuOpen = !store.gitCommitMenuOpen; render(); },
+    "git-commit-push": () => { store.gitCommitMenuOpen = false; actions["git-commit"](); toast("已提交并推送（仿真）"); },
+    "git-commit-toggle": el => { store.gitOpenCommit = store.gitOpenCommit === el.dataset.sha ? null : el.dataset.sha; render(); },
+    "git-more": () => { toast("演示样例没有更多提交"); },
     "open-file": el => { store.codeFile = el.dataset.file; store.codeEdit = false; store.codeRail = "files"; render(); },
     "open-office": el => { store.officeDoc = el.dataset.name; render(); },
     "code-edit": () => { store.codeEdit = true; store.editingFile = store.codeFile; store.codeDraft = D.files[store.codeFile] || ""; render(); },
@@ -330,56 +497,219 @@
     "provider-tab": el => { store.providerTab = el.dataset.tab; S().refreshSettings(); },
     "provider-save": el => {
       const p = D.settings.providers.find(x => x.id === el.dataset.id);
-      if (p) { p.name = val("pm-name") || p.name; p.updated = "刚刚"; }
-      S().refreshSettings(); toast("供应商已保存");
+      if (p) {
+        p.name = val("pm-name") || p.name;
+        /* #6：名称可改，ID 只读不改。模型字段与供应商一并保存。 */
+        const open = store.modelOpen && p.models.find(m => m.id === store.modelOpen);
+        if (open) {
+          open.name = val("m-name") || open.name;
+          const ctx = parseInt(val("m-ctx"), 10); if (ctx > 0) open.context = ctx;
+          const max = parseInt(val("m-max"), 10); if (max > 0) open.maxOutput = max;
+          const def = val("m-default"); if (def) open.defaultLevel = def;
+        }
+        p.updated = "刚刚";
+        /* r8/r9：保存后异步探测每个启用密钥支持的模型（多密钥才探测；单密钥跳过）。
+           探测过程不在密钥行显示，完成时只用一条自动消失的 toast 反馈。 */
+        if (p.keys.filter(k => k.on).length >= 2) {
+          setTimeout(() => probeKeyScopes(p, null), 120);
+        }
+      }
+      S().refreshSettings();
+      toast("供应商与模型修改已保存");
+    },
+    /* #2：供应商级放弃修改——恢复为最近保存快照（演示重置为初始夹具）。 */
+    "provider-discard": el => {
+      const p = D.settings.providers.find(x => x.id === el.dataset.id);
+      if (!p) return;
+      store.modelOpen = null;
+      S().refreshSettings(); toast("已放弃未保存修改（演示：回到上次保存状态）");
+    },
+    /* #2：模型级放弃修改——折叠当前模型，丢弃其草稿。 */
+    "model-discard": () => { store.modelOpen = null; S().refreshSettings(); toast("已放弃该模型的修改"); },
+    /* #1：批量自动获取思考等级——只处理「档位未配置」的模型（不含生图）。 */
+    "model-auto-level-all": () => {
+      const p = D.settings.providers.find(x => x.id === store.providerOpen);
+      if (!p) return;
+      const pending = p.models.filter(m => !m.modalities.includes("生图") && !m.levels.length);
+      if (!pending.length) return toast("所有模型都已配置思考档位");
+      let hit = 0, miss = 0;
+      pending.forEach(m => {
+        const r = resolveThinkingLevels(m);
+        if (r) { applyThinkingLevels(m, r); hit++; } else miss++;
+      });
+      S().refreshSettings();
+      toast(`已为 ${hit} 个模型回显思考等级${miss ? `；${miss} 个未找到可信档位，需手动配置` : ""}`, miss ? "alert" : undefined);
     },
     "provider-key-add": () => { const p = D.settings.providers.find(x => x.id === store.providerOpen); if (p) { p.keys.push({ label: "新密钥", masked: "sk-****0000", on: true, scope: "全部模型" }); S().refreshSettings(); } },
     "provider-key-toggle": el => { const p = D.settings.providers.find(x => x.id === store.providerOpen); const k = p && p.keys[Number(el.dataset.idx)]; if (k) { k.on = !k.on; S().refreshSettings(); } },
     "provider-key-detect": () => { const p = D.settings.providers.find(x => x.id === store.providerOpen); if (p) { p.keys.push({ label: "自动探测", masked: "sk-****d3t3", on: true, scope: "全部模型" }); S().refreshSettings(); toast("已探测到 1 个可用密钥（仿真）"); } },
     "provider-protocol": el => { const p = D.settings.providers.find(x => x.id === store.providerOpen); if (p) { p.protocol = el.dataset.v; S().refreshSettings(); } },
+    /* CR-059 A4：协议下拉切换 → 端点协议联动（Chat/Responses→OpenAI，Anthropic→Anthropic），地址保留。 */
+    "provider-protocol-set": el => {
+      const p = D.settings.providers.find(x => x.id === (store.providerOpen || store.providerEdit));
+      if (!p) return;
+      p.protocol = el.value;
+      const wire = p.protocol === "Anthropic" ? "Anthropic" : "OpenAI";
+      p.endpoints.forEach(e => { e.protocol = wire; });
+      S().refreshSettings(); toast(`协议已切换为 ${p.protocol}，端点联动为 ${wire}（演示）`);
+    },
     "provider-header-add": () => { const p = D.settings.providers.find(x => x.id === store.providerOpen); if (p) { p.headers.push({ name: "", value: "" }); S().refreshSettings(); } },
     "provider-header-del": el => { const p = D.settings.providers.find(x => x.id === store.providerOpen); if (p) { p.headers.splice(Number(el.dataset.idx), 1); S().refreshSettings(); } },
     "provider-spoof": el => { const p = D.settings.providers.find(x => x.id === store.providerOpen); if (p) { p.spoof = el.dataset.v; S().refreshSettings(); } },
     "model-pull": () => { const p = D.settings.providers.find(x => x.id === store.providerOpen); if (p) { const m = { id: "pulled-model-" + (p.models.length + 1), name: "Pulled Model " + (p.models.length + 1), modalities: ["文本"], thinking: false, levels: [], defaultLevel: "—", context: 128000, maxOutput: 16384, autoLevels: false, on: true }; p.models.push(m); store.modelEdit = m.id; S().refreshSettings(); toast("已获取 1 个可用模型（仿真）"); } },
-    "model-auto-level": () => { const p = D.settings.providers.find(x => x.id === store.providerOpen); const m = p && p.models.find(x => x.id === store.modelEdit); if (m) { m.levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]; m.autoLevels = true; S().refreshSettings(); toast("已自动获取思考等级（7 档）"); } },
-    "model-select": el => { const id = el.dataset.id; store.modelOpen = store.modelOpen === id ? null : id; store.modelEdit = id; S().refreshSettings(); },
-    "model-pick-open": () => { const p = D.settings.providers.find(x => x.id === store.providerOpen); if (p) S().modelPickDialog(p); },
+    /* CR-059 r3 #1：模型内「一键获取」只取当前模型（共用解析器）。 */
+    "model-auto-level": () => {
+      const p = D.settings.providers.find(x => x.id === store.providerOpen);
+      const m = p && p.models.find(x => x.id === (store.modelOpen || store.modelEdit));
+      if (!m) return;
+      const r = resolveThinkingLevels(m);
+      if (!r) return toast("供应商与本地知识库均未找到可信档位，请手动配置；不会按名称猜测", "alert");
+      applyThinkingLevels(m, r);
+      S().refreshSettings(); toast(`已获取该模型 ${r.levels.length} 个档位（来源：${r.source}）`);
+    },
+    /* r8：整行可点击展开/收起；行内按钮（拖动/删除/箭头）由自己的动作处理，不触发展开。 */
+    "model-select": (el, e) => {
+      if (e && e.target && e.target.closest && e.target.closest("[data-drag-model],[data-act='model-delete']")) return;
+      const id = el.dataset.id;
+      store.modelOpen = store.modelOpen === id ? null : id;
+      store.modelEdit = id; S().refreshSettings();
+    },
+    "model-pick-open": () => { const p = D.settings.providers.find(x => x.id === store.providerOpen); if (p) { store.modelPick = {}; S().modelPickDialog(p); } },
+    /* CR-059 B1/A3：获取模型结果卡片点选。 */
+    "model-pick-toggle": el => {
+      store.modelPick = store.modelPick || {};
+      const id = el.dataset.id;
+      store.modelPick[id] = !store.modelPick[id];
+      const p = D.settings.providers.find(x => x.id === store.providerOpen);
+      if (p) S().modelPickDialog(p);
+    },
     "model-pick-save": () => {
       const p = D.settings.providers.find(x => x.id === store.providerOpen);
       if (!p) return;
-      const chosen = Array.from(document.querySelectorAll("[data-pick-model]")).filter(x => x.checked).map(x => x.dataset.pickModel);
-      chosen.forEach(id => { const src = (p.availableModels || []).find(m => m.id === id) || { id, name: id, modalities: ["文本"], context: 128000 }; p.models.push(autoModel({ id: src.id, name: src.name, modalities: src.modalities || ["文本"], context: src.context || 128000, on: true })); });
+      const chosen = Object.keys(store.modelPick || {}).filter(id => store.modelPick[id]);
+      /* CR-059 B1：只收清单字段；模态/思考保持未知，不猜测、不阻塞。 */
+      chosen.forEach(id => {
+        const src = (p.availableModels || []).find(m => m.id === id) || { id, name: id, context: null };
+        p.models.push({ id: src.id, name: src.name, modalities: ["文本"], visionUnknown: true, thinking: false, levels: [], defaultLevel: "跟随记忆", context: src.context || null, maxOutput: null, autoLevels: false, on: true });
+      });
+      store.modelPick = {};
       UI.closeSubDialog();
       if (chosen.length) { store.modelOpen = chosen[0]; store.modelEdit = chosen[0]; }
       S().refreshSettings();
-      toast(chosen.length ? `已添加 ${chosen.length} 个模型` : "未选择模型");
+      toast(chosen.length ? `已添加 ${chosen.length} 个模型（能力字段保持未知，可用「自动获取思考等级」补齐）` : "未选择模型");
+    },
+    "model-add-manual": () => {
+      const p = D.settings.providers.find(x => x.id === store.providerOpen);
+      if (!p) return;
+      const id = "new-model-" + (p.models.length + 1);
+      p.models.push({ id, name: "新模型", modalities: ["文本"], visionUnknown: true, thinking: false, levels: [], defaultLevel: "跟随记忆", context: null, maxOutput: null, autoLevels: false, on: true });
+      store.modelOpen = id; store.modelEdit = id;
+      S().refreshSettings();
     },
     "model-autoconfig": () => { const p = D.settings.providers.find(x => x.id === store.providerOpen); const m = p && p.models.find(x => x.id === store.modelEdit); if (m) { Object.assign(m, autoModel(m)); S().refreshSettings(); toast("已按模型能力自动配置"); } },
     "model-modality": el => { const p = D.settings.providers.find(x => x.id === store.providerOpen); const m = p && p.models.find(x => x.id === store.modelEdit); if (m) { const v = el.dataset.v; m.modalities = m.modalities.includes(v) ? m.modalities.filter(x => x !== v) : m.modalities.concat(v); S().refreshSettings(); } },
     "model-thinking": () => { const p = D.settings.providers.find(x => x.id === store.providerOpen); const m = p && p.models.find(x => x.id === store.modelEdit); if (m) { m.thinking = !m.thinking; S().refreshSettings(); } },
     "model-level": el => { const p = D.settings.providers.find(x => x.id === store.providerOpen); const m = p && p.models.find(x => x.id === store.modelEdit); if (m) { const v = el.dataset.v; m.levels = m.levels.includes(v) ? m.levels.filter(x => x !== v) : m.levels.concat(v); S().refreshSettings(); } },
     "model-delete": el => { const p = D.settings.providers.find(x => x.id === store.providerOpen); if (!p) return; if (p.models.length <= 1) { toast("至少保留一个模型"); return; } p.models = p.models.filter(x => x.id !== el.dataset.id); if (store.modelOpen === el.dataset.id) store.modelOpen = null; S().refreshSettings(); toast("已删除模型"); },
-    "model-save": () => { const p = D.settings.providers.find(x => x.id === store.providerOpen); const m = p && p.models.find(x => x.id === store.modelEdit); if (m) { m.id = val("m-id") || m.id; m.name = val("m-name") || m.name; m.context = parseInt(val("m-ctx"), 10) || m.context; m.maxOutput = parseInt(val("m-max"), 10) || m.maxOutput; m.defaultLevel = val("m-default") || m.defaultLevel; } S().refreshSettings(); toast("模型配置已保存"); },
+    /* CR-059 r3：#6 供应商默认协议改成一行均分卡片（点击即切换，端点联动）。 */
+    "provider-protocol-card": el => {
+      const p = D.settings.providers.find(x => x.id === (store.providerOpen || store.providerEdit));
+      if (!p) return;
+      p.protocol = el.dataset.v;
+      const wire = { "Chat": "OpenAI", "Responses": "OpenAI", "Anthropic": "Anthropic" }[el.dataset.v] || "OpenAI";
+      p.endpoints.forEach(e => { e.protocol = wire; });
+      S().refreshSettings(); toast(`协议已切换为 ${p.protocol}，端点联动为 ${wire}（演示）`);
+    },
+    /* CR-059 r3 #5 / r8：密钥协议悬浮下拉点选即写入并收起；
+       r8 明确语义——选定的协议决定该密钥请求走哪个端点（不是沿用供应商默认）。 */
+    "key-protocol-pick": el => {
+      const p = D.settings.providers.find(x => x.id === store.providerOpen); if (!p) return;
+      const k = p.keys[Number(el.dataset.idx)]; if (!k) return;
+      k.protocol = el.dataset.v;
+      const wire = k.protocol ? ({ Chat: "OpenAI", Responses: "OpenAI", Anthropic: "Anthropic" }[k.protocol] || "OpenAI") : null;
+      store.keyEdit = null; store.keyPopRect = null;
+      S().refreshSettings();
+      toast(wire ? `密钥协议已设为 ${k.protocol}，请求走 ${wire} 端点` : "该密钥沿用供应商默认协议");
+    },
+    /* r8：密钥可用模型——手动清空作为全部；立即探测（单密钥无需探测）。 */
+    "key-scope-clear": el => {
+      const p = D.settings.providers.find(x => x.id === store.providerOpen); if (!p) return;
+      const k = p.keys[Number(el.dataset.idx)]; if (!k) return;
+      k.models = []; k.scope = "全部模型"; k.autoScope = false; k.manualScope = false;
+      S().refreshSettings(); toast("已清空范围＝全部模型（不含筛选）");
+    },
+    "key-scope-probe": el => {
+      const p = D.settings.providers.find(x => x.id === store.providerOpen); if (!p) return;
+      const idx = Number(el.dataset.idx);
+      const k = p.keys[idx]; if (!k) return;
+      if (p.keys.length < 2) return toast("只有一个密钥时无需探测：模型配置中的模型即其支持范围", "alert");
+      probeKeyScopes(p, idx, { manual: true });
+    },
+    /* CR-059 r3 生图配置 */
+    "imagegen-open": () => S().imageGenDialog(),
+    "imagegen-toggle": () => { const c = D.settings.imageGen; c.enabled = !c.enabled; S().imageGenDialog(); toast(c.enabled ? "生图已开启：generate_image 将提供给 AI（演示）" : "生图已关闭：tool 已注销（演示）", c.enabled ? undefined : "alert"); },
+    "imagegen-add": el => {
+      const c = D.settings.imageGen; const key = el.dataset.key;
+      if (!c.order.includes(key)) c.order.push(key);
+      S().imageGenDialog();
+    },
+    "imagegen-remove": el => {
+      const c = D.settings.imageGen; const key = el.dataset.key;
+      if (c.order.length <= 1) { toast("至少保留一个生图模型", "alert"); return; }
+      c.order = c.order.filter(k => k !== key); S().imageGenDialog();
+    },
+    "imagegen-save": () => {
+      const c = D.settings.imageGen;
+      c.defaults.size = val("ig-size") || c.defaults.size;
+      c.defaults.quality = val("ig-quality") || c.defaults.quality;
+      c.defaults.n = parseInt(val("ig-n"), 10) || c.defaults.n;
+      c.defaults.timeoutMin = parseInt(val("ig-timeout"), 10) || c.defaults.timeoutMin;
+      c.outputDir = val("ig-outdir") || c.outputDir;
+      UI.closeSubDialog(); S().refreshSettings();
+      toast(`生图配置已保存：${c.order.length} 个模型按顺序尝试${c.enabled ? "" : "（当前关闭）"}`);
+    },
+    /* CR-058 模型检测 */
+    "probe-run": () => S().probeRun(),
+    "probe-history": () => S().probeHistoryDialog(),
+    "probe-hist-pick": el => S().probePickHistory(el.dataset.id),
+    "probe-history-row": el => { const st = S().probeState(); st.histOpen = st.histOpen === el.dataset.id ? null : el.dataset.id; S().probeHistoryDialog(); },
     "key-alias": el => { store.keyEdit = { idx: Number(el.dataset.idx), mode: "alias" }; S().refreshSettings(); },
     "key-value": el => { store.keyEdit = { idx: Number(el.dataset.idx), mode: "value" }; S().refreshSettings(); },
-    "key-protocol": el => { store.keyEdit = { idx: Number(el.dataset.idx), mode: "protocol" }; S().refreshSettings(); },
+    "key-protocol": el => {
+      /* r7：记录触发按钮的位置，浮层用 fixed 定位并优先向上展开，避免被 .key-list/.set-scroll 裁剪。 */
+      store.keyPopRect = el && el.getBoundingClientRect ? el.getBoundingClientRect().toJSON() : null;
+      store.keyEdit = { idx: Number(el.dataset.idx), mode: "protocol" };
+      S().refreshSettings();
+      positionKeyPop();
+    },
     "key-scope": el => { store.keyEdit = { idx: Number(el.dataset.idx), mode: "scope" }; S().refreshSettings(); },
     "key-remove": el => { store.keyEdit = { idx: Number(el.dataset.idx), mode: "remove" }; S().refreshSettings(); },
     "key-edit-cancel": () => { store.keyEdit = null; S().refreshSettings(); },
     "key-protocol-set": el => { const p = D.settings.providers.find(x => x.id === store.providerOpen); const k = p && p.keys[Number(el.dataset.idx)]; if (k) { k.protocol = el.dataset.v; store.keyEdit = null; S().refreshSettings(); } },
+    /* CR-059 A3：密钥模型范围卡片点选（切换选中，保存时收集）。 */
+    "key-scope-pick": el => {
+      const p = D.settings.providers.find(x => x.id === store.providerOpen); if (!p) return;
+      const k = p.keys[Number(el.dataset.idx)]; if (!k) return;
+      k.models = k.models || [];
+      const id = el.dataset.model;
+      k.models = k.models.includes(id) ? k.models.filter(x => x !== id) : k.models.concat(id);
+      k.scope = k.models.length ? k.models.length + " 个模型" : "全部模型";
+      S().refreshSettings();
+    },
     "key-save": el => {
       const p = D.settings.providers.find(x => x.id === store.providerOpen); if (!p) return;
       const k = p.keys[Number(el.dataset.idx)]; if (!k) return;
       const mode = el.dataset.mode;
       if (mode === "alias") k.label = val("key-alias-input") || k.label;
       else if (mode === "value") k.masked = val("key-value-input") || k.masked;
-      else if (mode === "scope") { k.models = Array.from(document.querySelectorAll("[data-key-model]")).filter(x => x.checked).map(x => x.dataset.keyModel); k.scope = k.models.length ? k.models.length + " 个模型" : "全部模型"; }
+      else if (mode === "protocol") { const sel = document.getElementById("key-protocol-select"); if (sel) k.protocol = sel.value; }
+      else if (mode === "scope") { k.scope = (k.models || []).length ? k.models.length + " 个模型" : "全部模型"; }
       store.keyEdit = null; S().refreshSettings(); toast("密钥已更新");
     },
     "key-remove-confirm": el => { const p = D.settings.providers.find(x => x.id === store.providerOpen); if (!p) return; if (p.keys.length <= 1) { toast("至少保留一个密钥"); store.keyEdit = null; S().refreshSettings(); return; } p.keys.splice(Number(el.dataset.idx), 1); store.keyEdit = null; S().refreshSettings(); toast("已删除密钥"); },
     "close-sub": () => UI.closeSubDialog(),
     "sdk-expand": el => { store.sdkOpen = store.sdkOpen === el.dataset.id ? null : el.dataset.id; S().refreshSettings(); },
-    "sdk-tab": el => { store.sdkTab = el.dataset.tab; S().refreshSettings(); },
+    "sdk-tab": el => { store.sdkTab = el.dataset.tab; S().refreshSettings(); if (el.dataset.tab === "sdk") warmCliSdk(); },
     "cli-toggle": el => { const c = D.settings.clis.find(x => x.id === el.dataset.id); if (c) c.enabled = !c.enabled; S().refreshSettings(); },
     "cli-expand": el => { store.cliOpen = store.cliOpen === el.dataset.id ? "" : el.dataset.id; S().refreshSettings(); },
     "cli-type": el => { const c = D.settings.clis.find(x => x.id === el.dataset.id); if (c) { const t = el.dataset.type; c.types = c.types.includes(t) ? c.types.filter(x => x !== t) : c.types.concat(t); S().refreshSettings(); } },
@@ -411,8 +741,85 @@
 
     /* ---------- AI ---------- */
     "ai-toggle": () => { store.aiOpen = !store.aiOpen; render(); },
-    "ai-history": () => { store.aiHistory = !store.aiHistory; store.aiTop = null; store.aiPop = null; store.aiMenu = null; render(); },
-    "ai-history-close": () => { store.aiHistory = false; render(); },
+    /* CR-063：关闭历史浮层时回到「最近 20 条」初始态，下次打开仍是分批列表。 */
+    "ai-history": () => {
+      store.aiHistory = !store.aiHistory; store.aiTop = null; store.aiPop = null; store.aiMenu = null;
+      if (!store.aiHistory) { store.aiHistLimit = 20; store.aiHistQuery = ""; store.aiHistFocus = false; }
+      render();
+    },
+    "ai-history-close": () => { store.aiHistory = false; store.aiHistLimit = 20; store.aiHistQuery = ""; store.aiHistFocus = false; render(); },
+    "ai-history-more": () => {
+      const hl = document.querySelector(".ai-history-list");
+      store.aiHistScroll = hl ? hl.scrollTop : 0;
+      store.aiHistLimit = (Number(store.aiHistLimit) || 20) + 20;
+      render();
+    },
+    "ai-history-all": () => { store.aiHistQuery = ""; store.aiHistLimit = 20; store.aiHistFocus = false; store.aiHistState = "idle"; render(); },
+    /* CR-064：行内「…」菜单与操作 */
+    "ai-hist-menu": el => { const id = el.dataset.id; store.aiHistMenu = store.aiHistMenu === id ? null : id; render(); },
+    "ai-hist-menu-noop": () => {},
+    "ai-hist-copy-id": el => {
+      const id = el.dataset.id;
+      const done = () => { store.aiHistMenu = null; toast("已复制会话 ID"); render(); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(id).then(done).catch(() => toast("复制失败，请手动复制", "err"));
+      else toast("当前环境不支持剪贴板，请手动复制", "err");
+    },
+    "ai-hist-fork": el => {
+      const src = D.ai.sessions.find(s => s.id === el.dataset.id);
+      if (!src) return;
+      if ((D.ai.runningIds || []).includes(src.id)) { toast("会话运行中，结束或停止后再分叉"); return; }
+      const copy = { ...src, id: "S-" + Date.now().toString().slice(-6), title: "分叉 · " + src.title, pinned: false, status: "read", updated: "刚刚", tokens: "0", duration: "0s", messages: (src.messages || []).map(m => ({ ...m })) };
+      D.ai.sessions.unshift(copy);
+      store.aiHistMenu = null; store.aiSession = copy.id; store.aiMessages = copy.messages || [];
+      toast("已分叉会话，上下文已保留"); render();
+    },
+    "ai-hist-pin": el => {
+      const s = D.ai.sessions.find(x => x.id === el.dataset.id);
+      if (!s) return;
+      s.pinned = !s.pinned;
+      store.aiHistMenu = null;
+      toast(s.pinned ? "已置顶会话" : "已取消置顶"); render();
+    },
+    "ai-hist-rename": el => {
+      const s = D.ai.sessions.find(x => x.id === el.dataset.id);
+      if (!s) return;
+      store.aiHistMenu = null;
+      store.aiHistEditId = s.id;
+      store.aiHistEditValue = s.title;
+      render();
+      requestAnimationFrame(() => {
+        const input = document.getElementById("ai-hist-rename-input");
+        if (input) { input.focus(); input.select(); }
+      });
+    },
+    "ai-hist-edit-noop": () => {},
+    "ai-hist-rename-save": () => {
+      const id = store.aiHistEditId;
+      const s = id ? D.ai.sessions.find(x => x.id === id) : null;
+      if (!s) return;
+      const value = String(store.aiHistEditValue || "").trim();
+      if (!value) { toast("标题不能为空"); store.aiHistEditId = null; render(); return; }
+      s.title = value;
+      store.aiHistEditId = null; store.aiHistEditValue = "";
+      toast("已重命名"); render();
+    },
+    "ai-hist-rename-cancel": () => { store.aiHistEditId = null; store.aiHistEditValue = ""; render(); },
+    "ai-history-retry": () => { store.aiHistState = "idle"; render(); },
+    "ai-del": el => {
+      const s = D.ai.sessions.find(x => x.id === el.dataset.id);
+      if (!s) return;
+      /* 与正式软件既有 Confirm 对齐：标题 + 正文（含“删除后不可恢复”）+ 取消/确认，危险操作按钮为 danger 样式。 */
+      openDialog(dlgShell("删除会话", "", `<p class="caption">确定删除「${esc(s.title || "未命名会话")}」？删除后不可恢复。</p>`, `<button class="btn" data-act="close-dialog">取消</button><button class="btn danger" data-act="ai-del-confirm" data-id="${esc(s.id)}">确认</button>`, "modal-sm"));
+    },
+    "ai-del-confirm": el => {
+      const id = el.dataset.id;
+      D.ai.sessions = D.ai.sessions.filter(s => s.id !== id);
+      if (store.aiSession === id) store.aiSession = D.ai.sessions[0]?.id || null;
+      closeDialog(); toast("已删除会话"); render();
+    },
+    /* CR-062：子智能体只读详情；进入后隐藏计数入口，返回主会话保留原状态。 */
+    "ai-agent-open": el => { if (!el.dataset.agentId) return; store.aiAgent = el.dataset.agentId; store.aiTop = null; store.aiPop = null; store.aiMenu = null; render(); },
+    "ai-agent-back": () => { store.aiAgent = null; render(); },
     "ai-new": () => AIPanel.newSession(),
     "ai-switch": el => AIPanel.switchSession(el.dataset.id),
     "ai-menu-open": el => { store.aiMenu = "add"; store.aiMenuTab = el.dataset.tab || "add"; store.aiMenuQuery = ""; render(); setTimeout(() => { const q = document.getElementById("ai-menu-q"); if (q) q.focus(); }, 20); },
@@ -469,7 +876,67 @@
     },
     "file-new": () => openDialog(dlgShell("新建文件", "写入当前演示工程", `<div class="field"><label>文件路径</label><input class="input" id="nf-path" placeholder="src/booking/new.ts"></div><div class="field"><label>初始内容</label><textarea class="textarea mono" id="nf-body" rows="5"></textarea></div>`, `<button class="btn" data-act="close-dialog">取消</button><button class="btn primary" data-act="file-new-save">创建</button>`, "modal-sm")),
     "file-new-save": () => { const f = val("nf-path").trim(); if (!f) { toast("请填写文件路径"); return; } D.files[f] = val("nf-body") || ""; store.codeFile = f; closeDialog(); toast("已创建 " + f); render(); },
-    "cli-save": el => { const c = D.settings.clis.find(x => x.id === el.dataset.id); if (!c) return; const model = val("cli-model-" + c.id), effort = val("cli-effort-" + c.id), min = val("cli-min-" + c.id), perm = val("cli-perm-" + c.id); if (model) c.model = model; if (effort) c.effort = effort; if (min) c.minDifficulty = min; if (perm) c.permission = perm; closeDialog(); openSettings("cli"); toast("CLI 配置已保存"); },
+    "cli-save": el => {
+      const c = D.settings.clis.find(x => x.id === el.dataset.id); if (!c) return;
+      /* CR-059 r5：只收集已存在的槽（0～5）＋兜底（含思考等级）；D4：权限挡位。 */
+      document.querySelectorAll(`[data-cli-slot^="${c.id}:"]`).forEach(sel => {
+        const [, slot, field] = sel.dataset.cliSlot.split(":");
+        if (slot === "fallback") { c.fallback = c.fallback || { model: "", note: "跟随主 agent" }; c.fallback[field] = sel.value; }
+        else { const idx = Number(slot); if (!Number.isInteger(idx) || idx < 0 || idx >= 5) return; c.slots = c.slots || []; c.slots[idx] = c.slots[idx] || { model: "", effort: "", types: [] }; c.slots[idx][field] = sel.value; }
+      });
+      const perm = document.getElementById("cli-perm-" + c.id);
+      if (perm) c.permission = perm.value;
+      S().refreshSettings(); toast("CLI 任务模型路由与权限已保存（演示）；仅影响之后的新会话");
+    },
+    /* CR-059 r4：单行折叠——点击行/箭头展开收起下方详情区（每 CLI 一个折叠态）。 */
+    "cli-route-toggle": el => {
+      const id = el.dataset.id;
+      store.cliRouteOpen = store.cliRouteOpen || {};
+      store.cliRouteOpen[id] = !store.cliRouteOpen[id];
+      S().refreshSettings();
+    },
+    /* CR-059 r4：点行首标签切换当前编辑的模型槽 / 兜底；未展开时同时展开。 */
+    "cli-slot-select": el => {
+      const id = el.dataset.id;
+      store.cliRouteSel = store.cliRouteSel || {};
+      store.cliRouteSel[id] = el.dataset.slot;
+      store.cliRouteOpen = store.cliRouteOpen || {};
+      store.cliRouteOpen[id] = true;
+      S().refreshSettings();
+    },
+    /* CR-059 r4：新增模型槽（最多 5 个），新增后选中并展开该槽。 */
+    "cli-slot-add": el => {
+      const c = D.settings.clis.find(x => x.id === el.dataset.id); if (!c) return;
+      c.slots = c.slots || [];
+      if (c.slots.length >= 5) { toast("最多只能有 5 个模型槽"); return; }
+      c.slots.push({ model: "", effort: "", types: [] });
+      store.cliRouteSel = store.cliRouteSel || {};
+      store.cliRouteSel[c.id] = String(c.slots.length - 1);
+      store.cliRouteOpen = store.cliRouteOpen || {};
+      store.cliRouteOpen[c.id] = true;
+      S().refreshSettings();
+      toast(`已新增模型${c.slots.length}，选择模型与任务类型后保存`);
+    },
+    /* CR-059 r4：删除当前模型槽；剩余标签重排，选中态跟随。兜底不可删。 */
+    "cli-slot-remove": el => {
+      const c = D.settings.clis.find(x => x.id === el.dataset.id); if (!c || !c.slots) return;
+      const idx = Number(el.dataset.slot);
+      if (!Number.isInteger(idx) || idx < 0 || idx >= c.slots.length) return;
+      c.slots.splice(idx, 1);
+      store.cliRouteSel = store.cliRouteSel || {};
+      /* 删到 0 个或删的是最后一个可见槽时回到兜底；否则选中原位置（或末位）。 */
+      store.cliRouteSel[c.id] = c.slots.length ? String(Math.min(idx, c.slots.length - 1)) : "fallback";
+      S().refreshSettings();
+      toast(c.slots.length ? `已删除模型槽，剩 ${c.slots.length}/5` : "已删除全部模型槽；所有任务将使用兜底模型");
+    },
+    /* CR-059 D3：槽位任务类型 chips。 */
+    "cli-slot-type": el => {
+      const c = D.settings.clis.find(x => x.id === el.dataset.id); if (!c || !c.slots) return;
+      const s = c.slots[Number(el.dataset.slot)]; if (!s) return;
+      const t = el.dataset.type;
+      s.types = s.types.includes(t) ? s.types.filter(x => x !== t) : s.types.concat(t);
+      S().refreshSettings();
+    },
     "design-export": () => { const doc = D.design[store.designTab]; download(doc.name, doc.body); toast("已导出 " + doc.name, "download"); },
     "git-pull": () => { D.git.commits.unshift({ sha: Math.random().toString(16).slice(2, 9), msg: "merge origin/" + D.git.branch, author: "远程", time: "刚刚" }); toast("已提取远程更新（仿真）"); render(); },
     "git-update": () => { D.git.ahead = Math.max(0, D.git.ahead - 1); toast("当前分支已更新（仿真）"); render(); },
@@ -509,7 +976,84 @@
     },
     "ai-goal-save": () => { AIPanel.activeSession().goal = val("goal-text"); closeDialog(); toast("会话目标已保存"); },
     "ai-feedback-save": () => { D.ai.feedback = D.ai.feedback || []; D.ai.feedback.push({ at: "刚刚", text: val("fb-text") }); closeDialog(); toast("反馈已保存到本机演示"); },
-    "cli-check": el => { const c = D.settings.clis.find(x => x.id === el.dataset.id); if (c) { c.meta = c.meta.replace(/^已检测 · /, "") ; c.checked = "刚刚"; toast(c.name + " 已重新检测（" + c.version + "）"); } },
+    "cli-check": el => { const c = D.settings.clis.find(x => x.id === el.dataset.id); if (c) { store.cliChecking = c.id; S().refreshSettings(); setTimeout(() => { store.cliChecking = null; c.checked = "刚刚"; S().refreshSettings(); toast(c.name + " 已重新检测（" + c.version + "）"); }, 700); } },
+    /* CR-059 E3：刷新版本列表（演示为即时；正式实现 HTTP 直连 registry）。 */
+    "sdk-versions-refresh": el => { const s = D.settings.sdks.find(x => x.id === el.dataset.id); if (s) { store.sdkChecking = s.id; S().refreshSettings(); setTimeout(() => { store.sdkChecking = null; S().refreshSettings(); toast(s.name + " 版本列表已刷新：最新 10 个稳定版（演示）"); }, 600); } },
+    /* CR-059 F1：Skill 文件夹添加流程。 */
+    "skill-folder-choose": () => S().skillFolderChooseDialog(),
+    "skill-folder-pick": el => { store.skillFolderPick = el.dataset.path; S().skillAddDialog(); },
+    "skill-add-back": () => S().skillAddDialog(),
+    "skill-folder-save": () => {
+      const folder = D.settings.skillFolders.find(f => f.path === store.skillFolderPick);
+      if (!folder || !folder.valid) { toast("所选文件夹没有 SKILL.md"); return; }
+      const slug = val("sk-slug").trim() || folder.slug;
+      if (D.settings.skills.some(s => s.slug === slug)) { toast("同名技能已存在"); return; }
+      D.settings.skills.push({ name: val("sk-name").trim() || folder.name, slug, desc: val("sk-desc") || folder.desc, source: "本机文件夹（受管副本）", updated: "刚刚", on: true, uses: 0 });
+      store.skillFolderPick = null;
+      UI.closeSubDialog(); S().refreshSettings(); toast("已复制为受管技能副本；外部源删除不影响");
+    },
+    /* CR-059 F2：Skill 扫描导入。 */
+    "skill-scan-open": () => { store.skillScanSel = {}; S().skillScanDialog(); },
+    "skill-scan-import": () => {
+      const sel = store.skillScanSel || {};
+      let n = 0;
+      D.settings.skillSources.forEach(src => src.items.forEach(it => {
+        const key = src.agent + ":" + it.slug;
+        if (!sel[key]) return;
+        if (D.settings.skills.some(s => s.slug === it.slug)) return;
+        D.settings.skills.push({ name: it.name, slug: it.slug, desc: it.desc, source: `扫描导入 · ${src.agent}（受管副本）`, updated: "刚刚", on: true, uses: 0 });
+        it.imported = true; n++;
+      }));
+      store.skillScanSel = {};
+      UI.closeSubDialog(); S().refreshSettings();
+      toast(n ? `已导入 ${n} 个技能为受管副本` : "未选择可导入的技能");
+    },
+    /* CR-059 F4：MCP 扫描导入。 */
+    "mcp-scan-open": () => { store.mcpScanSel = {}; S().mcpScanDialog(); },
+    "mcp-import-json": () => S().mcpImportJsonDialog(),
+    "mcp-scan-import": () => {
+      const sel = store.mcpScanSel || {};
+      let n = 0;
+      D.settings.mcpSources.forEach(src => src.items.forEach(it => {
+        const key = src.agent + ":" + it.name;
+        if (!sel[key]) return;
+        if (D.settings.mcp.some(m => m.name === it.name)) return;
+        D.settings.mcp.push({ name: it.name, transport: it.transport, target: it.target, on: true, tools: 0, source: `扫描导入 · ${src.agent}`, updated: "刚刚" });
+        it.imported = true; n++;
+      }));
+      store.mcpScanSel = {};
+      UI.closeSubDialog(); S().refreshSettings();
+      toast(n ? `已导入 ${n} 个 MCP 为受管配置` : "未选择可导入的 MCP");
+    },
+    /* CR-059 F5：图3表单保存（命令词法拆分＋逐行参数/环境变量解析演示）。 */
+    "mcp-save-59": () => {
+      const name = val("mc-name").trim();
+      if (!name) { toast("请填写名称"); return; }
+      if (D.settings.mcp.some(m => m.name === name)) { toast("MCP 名称重复，已拒绝"); return; }
+      const type = val("mc-type") || "stdio";
+      if (type === "stdio") {
+        const command = val("mc-command").trim();
+        if (!command) { toast("STDIO 需填写启动命令"); return; }
+        const extra = val("mc-args").split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+        const envLines = val("mc-env").split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+        const badLine = envLines.findIndex(x => !x.includes("="));
+        if (badLine >= 0) { toast(`环境变量第 ${badLine + 1} 行不是 KEY=value 格式`); return; }
+        D.settings.mcp.push({ name, transport: "stdio", target: command + (extra.length ? " " + extra.join(" ") : ""), on: true, tools: 0, source: "手动添加", updated: "刚刚" });
+      } else {
+        const url = val("mc-url").trim();
+        if (!url) { toast("HTTP 需填写 URL"); return; }
+        D.settings.mcp.push({ name, transport: "http", target: url, on: true, tools: 0, source: "手动添加", updated: "刚刚" });
+      }
+      UI.closeSubDialog(); S().refreshSettings(); toast("已添加 MCP " + name + "（仅保存配置，未自动连接）");
+    },
+    /* CR-059 F7：Tools 树形展开/开关。 */
+    "tool-tree-toggle": el => { store.toolTreeOpen = store.toolTreeOpen || {}; const id = el.dataset.id; store.toolTreeOpen[id] = !store.toolTreeOpen[id]; S().refreshSettings(); },
+    "tool-tree-switch": el => {
+      const g = D.settings.toolTree.find(x => x.id === el.dataset.group);
+      if (!g || g.kind === "cli") return;
+      const t = g.tools[Number(el.dataset.idx)];
+      if (t) { t.on = !t.on; S().refreshSettings(); if (t.pending) toast("开关已保存；该项注入待实现（BUG-CR059-01），当前软件中尚未到达 AI", "alert"); }
+    },
 
 
     "close-dialog": () => UI.closeTopDialog(),
@@ -639,7 +1183,9 @@
     if (store.reqMenu && !e.target.closest("#req-menu") && !e.target.closest("[data-act=req-menu]")) store.reqMenu = null;
     if ((store.aiPop || store.aiMenu) && !e.target.closest(".ai-panel")) { store.aiPop = null; store.aiMenu = null; }
     if (store.aiTop && !e.target.closest(".ai-drop-wrap")) store.aiTop = null;
-    if (store.aiHistory && !e.target.closest(".ai-history") && !e.target.closest("[data-act=ai-history]")) store.aiHistory = false;
+    if (store.aiHistory && !e.target.closest(".ai-history") && !e.target.closest("[data-act=ai-history]")) { store.aiHistory = false; store.aiHistLimit = 20; store.aiHistQuery = ""; store.aiHistFocus = false; store.aiHistMenu = null; }
+    // CR-064：点击菜单外部关闭「…」菜单
+    if (store.aiHistMenu && !e.target.closest(".ai-hist-menu-wrap")) store.aiHistMenu = null;
     const el = e.target.closest("[data-act]");
     if (!el) { if (hadMenu) render(); return; }
     const fn = actions[el.dataset.act];
@@ -648,6 +1194,35 @@
     fn(el, e);
     if (hadMenu) render();
   });
+
+  /* CR-063：会话历史搜索输入（250ms 防抖；IME 组合期间不重绘，避免打断输入）。 */
+  let histQueryTimer = null, histComposing = false;
+  const scheduleHistQuery = delay => {
+    clearTimeout(histQueryTimer);
+    histQueryTimer = setTimeout(() => { store.aiHistLimit = 20; render(); }, delay);
+  };
+  document.addEventListener("compositionstart", e => { if (e.target && e.target.id === "ai-history-q") histComposing = true; }, true);
+  document.addEventListener("compositionend", e => {
+    if (!e.target || e.target.id !== "ai-history-q") return;
+    histComposing = false;
+    store.aiHistQuery = e.target.value;
+    scheduleHistQuery(250);
+  }, true);
+  document.addEventListener("input", e => {
+    // CR-064：原位重命名输入，不触发重绘（保留输入焦点与光标）
+    if (e.target && e.target.id === "ai-hist-rename-input") { store.aiHistEditValue = e.target.value; return; }
+    if (!e.target || e.target.id !== "ai-history-q" || histComposing) return;
+    store.aiHistQuery = e.target.value;
+    store.aiHistFocus = true;
+    scheduleHistQuery(250);
+  }, true);
+
+  /* CR-064：原位重命名——Enter 保存、Escape 取消、失焦保存 */
+  document.addEventListener("focusout", e => {
+    if (e.target && e.target.id === "ai-hist-rename-input" && store.aiHistEditId) {
+      setTimeout(() => { if (store.aiHistEditId) actions["ai-hist-rename-save"](); }, 0);
+    }
+  }, true);
 
   document.addEventListener("dblclick", e => { if (e.target.closest(".window-drag-guide")) UI.windowControl("maximize"); });
   document.addEventListener("error", e => {
@@ -683,7 +1258,9 @@
     }
     else if (el.id === "ai-menu-q") { store.aiMenuQuery = el.value; render(); }
     else if (el.id === "ai-model-q") { store.aiModelQuery = el.value; render(); setTimeout(() => { const q = document.getElementById("ai-model-q"); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }, 0); }
-    else if (el.id === "git-message") { store.gitMessage = el.value; const b = document.querySelector('[data-act=git-commit]'); if (b) b.disabled = !(el.value.trim() && D.git.changes.some(c => c.staged)); }
+    else if (el.id === "git-message") { store.gitMessage = el.value; render(); }
+    else if (el.id === "git-branch-q") { store.gitBranchQuery = el.value; render(); }
+    else if (el.id === "git-history-author") { store.gitHistoryAuthor = el.value; render(); }
     else if (el.id === "code-editor") { store.codeDraft = el.value; }
     else if (el.id === "design-editor") { store.designDraft = el.value; }
     else if (el.id === "term-input") { store.termInput = el.value; }
@@ -702,11 +1279,18 @@
 
   document.addEventListener("keydown", e => {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openSearch(); return; }
+    // CR-064：原位重命名时 Enter 保存、Escape 取消，优先于浮层关闭
+    if (store.aiHistEditId) {
+      if (e.isComposing) return;
+      if (e.key === "Enter") { e.preventDefault(); actions["ai-hist-rename-save"](); return; }
+      if (e.key === "Escape") { e.preventDefault(); actions["ai-hist-rename-cancel"](); return; }
+    }
     if (e.key === "Escape") {
       const sub = document.getElementById("dialog2"), dlg = document.getElementById("dialog");
       if ((sub && sub.open) || (dlg && dlg.open)) { e.preventDefault(); UI.closeTopDialog(); return; }
       if (store.reqMenu) { store.reqMenu = null; render(); return; }
-      if (store.aiMenu || store.aiPop || store.aiTop || store.aiHistory) { store.aiMenu = null; store.aiPop = null; store.aiTop = null; store.aiHistory = false; render(); return; }
+      if (store.aiHistMenu) { store.aiHistMenu = null; render(); return; }
+      if (store.aiMenu || store.aiPop || store.aiTop || store.aiHistory) { store.aiMenu = null; store.aiPop = null; store.aiTop = null; store.aiHistory = false; store.aiHistMenu = null; render(); return; }
       UI.closeTopDialog();
     }
     if (e.target && e.target.id === "ai-input" && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); AIPanel.send(); }
@@ -714,6 +1298,211 @@
   });
 
   document.addEventListener("click", e => { if (e.target.id === "dialog" || e.target.id === "dialog2") UI.closeTopDialog(); });
+
+  /* ================= CR-059：设置中心评审调整交互 ================= */
+  /* A4：供应商协议下拉（change 事件）。 */
+  document.addEventListener("change", e => {
+    const el = e.target;
+    if (el.id === "git-history-branch") { store.gitHistoryBranch = el.value; render(); return; }
+    if (el.id === "git-history-range") { store.gitHistoryRange = el.value; render(); return; }
+    if (el.id === "pm-protocol") { actions["provider-protocol-set"](el); return; }
+    if (el.hasAttribute && el.hasAttribute("data-mcp-type")) { store.mcpFormType = el.value; S().mcpAddDialog(); return; }
+    if (el.hasAttribute && el.hasAttribute("data-scan-skill")) { store.skillScanSel = store.skillScanSel || {}; store.skillScanSel[el.dataset.scanSkill] = el.checked; return; }
+    if (el.hasAttribute && el.hasAttribute("data-scan-mcp")) { store.mcpScanSel = store.mcpScanSel || {}; store.mcpScanSel[el.dataset.scanMcp] = el.checked; return; }
+    if (el.hasAttribute && el.hasAttribute("data-cli-slot")) {
+      const [cliId, slot, field] = el.dataset.cliSlot.split(":");
+      const c = D.settings.clis.find(x => x.id === cliId); if (!c) return;
+      if (slot === "fallback") { c.fallback = c.fallback || { model: "", note: "跟随主 agent" }; c.fallback.model = el.value; }
+      else { c.slots = c.slots || []; c.slots[Number(slot)] = c.slots[Number(slot)] || { model: "", effort: "", types: [] }; c.slots[Number(slot)][field] = el.value; }
+      return;
+    }
+    if (el.hasAttribute && el.hasAttribute("data-cli-perm")) {
+      const c = D.settings.clis.find(x => x.id === el.dataset.cliPerm);
+      if (c) c.permission = el.value;
+      return;
+    }
+  });
+
+  /* A5：供应商拖动排序——指针拖动手柄，插入指示线，松手保存顺序；键盘 Alt+↑/↓ 等价。 */
+  let dragProvider = null;
+  function providerCards() { return Array.from(document.querySelectorAll("[data-provider-card]")); }
+  function clearDropMarks() { providerCards().forEach(c => c.classList.remove("drop-before", "drop-after")); }
+  function moveProvider(id, dir) {
+    const list = D.settings.providers;
+    const i = list.findIndex(p => p.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return false;
+    const [p] = list.splice(i, 1);
+    list.splice(j, 0, p);
+    return true;
+  }
+  document.addEventListener("pointerdown", e => {
+    const handle = e.target.closest("[data-drag-provider]");
+    if (!handle) return;
+    dragProvider = { id: handle.dataset.dragProvider, startY: e.clientY, moved: false };
+    handle.setPointerCapture && handle.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  document.addEventListener("pointermove", e => {
+    if (!dragProvider) return;
+    if (Math.abs(e.clientY - dragProvider.startY) > 4) dragProvider.moved = true;
+    if (!dragProvider.moved) return;
+    const cards = providerCards();
+    clearDropMarks();
+    const target = cards.find(c => {
+      const r = c.getBoundingClientRect();
+      return e.clientY >= r.top && e.clientY <= r.bottom && c.dataset.providerCard !== dragProvider.id;
+    });
+    if (target) {
+      const r = target.getBoundingClientRect();
+      target.classList.add(e.clientY < r.top + r.height / 2 ? "drop-before" : "drop-after");
+      dragProvider.target = target.dataset.providerCard;
+      dragProvider.before = e.clientY < r.top + r.height / 2;
+    } else { dragProvider.target = null; }
+  });
+  document.addEventListener("pointerup", () => {
+    if (!dragProvider) return;
+    const d = dragProvider; dragProvider = null;
+    clearDropMarks();
+    if (!d.moved || !d.target) return;
+    const list = D.settings.providers;
+    const from = list.findIndex(p => p.id === d.id);
+    let to = list.findIndex(p => p.id === d.target);
+    if (from < 0 || to < 0) return;
+    const [p] = list.splice(from, 1);
+    to = list.findIndex(x => x.id === d.target);
+    list.splice(d.before ? to : to + 1, 0, p);
+    S().refreshSettings(); toast("供应商顺序已保存（演示）");
+  });
+  document.addEventListener("keydown", e => {
+    const handle = e.target.closest && e.target.closest("[data-drag-provider]");
+    if (!handle || !e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+    e.preventDefault();
+    if (moveProvider(handle.dataset.dragProvider, e.key === "ArrowUp" ? -1 : 1)) {
+      S().refreshSettings();
+      const again = document.querySelector(`[data-drag-provider="${handle.dataset.dragProvider}"]`);
+      if (again) again.focus();
+      toast("供应商顺序已保存（键盘）");
+    }
+  });
+
+  /* ================= CR-059 r3：模型与生图列表拖动排序（复用同一套指针/键盘模式） ================= */
+  const modelList = () => {
+    const p = D.settings.providers.find(x => x.id === store.providerOpen);
+    return p ? p.models : null;
+  };
+  function moveInList(list, id, dir, keyOf) {
+    if (!list) return false;
+    const i = list.findIndex(x => keyOf(x) === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return false;
+    const [x] = list.splice(i, 1);
+    list.splice(j, 0, x);
+    return true;
+  }
+  let dragRow = null;
+  document.addEventListener("pointerdown", e => {
+    if (dragProvider) return;
+    const mh = e.target.closest("[data-drag-model]");
+    const ih = e.target.closest("[data-drag-ig]");
+    if (!mh && !ih) return;
+    dragRow = mh
+      ? { kind: "model", id: mh.dataset.dragModel, startY: e.clientY, moved: false, attr: "data-model-card" }
+      : { kind: "ig", id: ih.dataset.dragIg, startY: e.clientY, moved: false, attr: "data-ig-model" };
+    (mh || ih).setPointerCapture && (mh || ih).setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  document.addEventListener("pointermove", e => {
+    if (!dragRow) return;
+    if (Math.abs(e.clientY - dragRow.startY) > 4) dragRow.moved = true;
+    if (!dragRow.moved) return;
+    const rows = Array.from(document.querySelectorAll(`[${dragRow.attr}]`));
+    rows.forEach(r => r.classList.remove("drop-before", "drop-after"));
+    const target = rows.find(r => {
+      const rect = r.getBoundingClientRect();
+      return e.clientY >= rect.top && e.clientY <= rect.bottom && r.getAttribute(dragRow.attr) !== dragRow.id;
+    });
+    if (target) {
+      const rect = target.getBoundingClientRect();
+      const before = e.clientY < rect.top + rect.height / 2;
+      target.classList.add(before ? "drop-before" : "drop-after");
+      dragRow.target = target.getAttribute(dragRow.attr);
+      dragRow.before = before;
+    } else { dragRow.target = null; }
+  });
+  document.addEventListener("pointerup", () => {
+    if (!dragRow) return;
+    const d = dragRow; dragRow = null;
+    document.querySelectorAll(".drop-before, .drop-after").forEach(r => r.classList.remove("drop-before", "drop-after"));
+    if (!d.moved || !d.target) return;
+    if (d.kind === "model") {
+      const list = modelList(); if (!list) return;
+      const from = list.findIndex(m => m.id === d.id);
+      let to = list.findIndex(m => m.id === d.target);
+      if (from < 0 || to < 0) return;
+      const [m] = list.splice(from, 1);
+      to = list.findIndex(x => x.id === d.target);
+      list.splice(d.before ? to : to + 1, 0, m);
+      S().refreshSettings(); toast("模型顺序已保存（演示）");
+    } else {
+      const c = D.settings.imageGen;
+      const from = c.order.indexOf(d.id);
+      if (from < 0) return;
+      const [key] = c.order.splice(from, 1);
+      let to = c.order.indexOf(d.target);
+      if (to < 0) { c.order.push(key); } else { c.order.splice(d.before ? to : to + 1, 0, key); }
+      S().imageGenDialog(); toast("生图模型优先顺序已更新（演示）");
+    }
+  });
+  document.addEventListener("keydown", e => {
+    if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+    const dir = e.key === "ArrowUp" ? -1 : 1;
+    const mh = e.target.closest && e.target.closest("[data-drag-model]");
+    if (mh) {
+      e.preventDefault();
+      if (moveInList(modelList(), mh.dataset.dragModel, dir, m => m.id)) {
+        S().refreshSettings();
+        const again = document.querySelector(`[data-drag-model="${mh.dataset.dragModel}"]`);
+        if (again) again.focus();
+        toast("模型顺序已保存（键盘）");
+      }
+      return;
+    }
+    const ih = e.target.closest && e.target.closest("[data-drag-ig]");
+    if (ih) {
+      e.preventDefault();
+      const c = D.settings.imageGen;
+      const i = c.order.indexOf(ih.dataset.dragIg);
+      const j = i + dir;
+      if (i >= 0 && j >= 0 && j < c.order.length) {
+        [c.order[i], c.order[j]] = [c.order[j], c.order[i]];
+        S().imageGenDialog();
+        const again = document.querySelector(`[data-drag-ig="${ih.dataset.dragIg}"]`);
+        if (again) again.focus();
+        toast("生图模型顺序已更新（键盘）");
+      }
+    }
+  });
+
+  /* D5/E4：打开 CLI/SDK 页签时首帧渲染缓存，后台逐项「检测中…」渐进上屏（演示 stale-while-revalidate）。 */
+  const origOpenSettings = S().openSettings;
+  S().openSettings = function (tab) {
+    origOpenSettings(tab);
+    if (tab === "cli") warmCliSdk();
+  };
+  function warmCliSdk() {
+    if (store.sdkVersionsReady === undefined) {
+      /* 首次：版本列表短暂「加载中…」后到位；已有缓存则直接短路。 */
+      store.sdkVersionsReady = false;
+      S().refreshSettings();
+      setTimeout(() => { store.sdkVersionsReady = true; S().refreshSettings(); }, 500);
+    }
+    const items = D.settings.clis.filter(c => c.installed);
+    items.forEach((c, i) => {
+      setTimeout(() => { store.cliChecking = c.id; S().refreshSettings(); }, 120 * i);
+      setTimeout(() => { if (store.cliChecking === c.id) store.cliChecking = null; S().refreshSettings(); }, 420 + 160 * i);
+    });
+  }
 
   /* 仿真时钟：只更新进度条 */
   setInterval(() => {
@@ -732,6 +1521,13 @@
     lastWidth = w;
   });
 
+  /* CR-054：挂载会话中心工作台。只注册新增动作并包装 Screens.project / Office.renderPage，
+     不重写既有视图；Action 名统一 wb- 前缀，project-tab 为覆盖式接管（工作台需要整页渲染）。 */
+  if (window.WorkbenchUI) {
+    Object.assign(actions, WorkbenchUI.ACTIONS);
+    try { WorkbenchUI.attach(); } catch (e) { console.error("WorkbenchUI 挂载失败", e); }
+  }
+
   window.__actions = actions;
   if (!D.settings.general.sendMode) D.settings.general.sendMode = "queue";
   // CR-056：`?demo=ai` 直接打开项目窗口并展开 AI 侧栏，便于逐状态截图；默认行为不变。
@@ -741,6 +1537,15 @@
     if (pid) { UI.openWindow("project", pid, D.projects.find(p => p.id === pid)?.name || pid); store.aiOpen = true; }
     // 截图用：top=1 停在与在顶部，便于查看完整时间线；默认贴底跟随最新消息。
     if (new URLSearchParams(window.location.search).get("top") === "1") store.aiStick = false;
+  }
+  // CR-062：`?agent=<id>` 直接打开子智能体只读详情，供设计与软件同条件截图。
+  const agentParam = new URLSearchParams(window.location.search).get("agent");
+  // 截图辅助：隐藏右下角栏宽开关，避免遮挡只读条按钮；不影响交互演示。
+  if (new URLSearchParams(window.location.search).get("clean") === "1") document.body.classList.add("shot-clean");
+  if (agentParam) {
+    const pid = D.requirements.find(r => r.kind === "story")?.project || D.projects[0]?.id;
+    if (pid) { UI.openWindow("project", pid, D.projects.find(p => p.id === pid)?.name || pid); store.aiOpen = true; }
+    store.aiAgent = agentParam;
   }
   render();
 })();

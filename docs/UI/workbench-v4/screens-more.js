@@ -99,6 +99,7 @@
   const SET_NAV = [
     ["general", "通用", "settings"],
     ["models", "模型管理", "cpu"],
+    ["probe", "模型检测", "shield"],
     ["cli", "SDK 与 CLI", "terminal"],
     ["skills", "能力 · Skill", "layers"],
     ["mcp", "能力 · MCP", "box"],
@@ -121,13 +122,13 @@
         <div class="set-nav-f"><span class="caption">UI-CR036-v4 · 演示</span><button class="btn sm" data-act="close-dialog">关闭</button></div>
       </aside>
       <section class="set-body">
-        <div class="set-head"><div><h2>${esc((SET_NAV.find(x => x[0] === tab) || [])[1])}</h2><p class="caption">${esc(setSub(tab))}</p></div></div>
+        <div class="set-head"><div><h2>${esc((SET_NAV.find(x => x[0] === tab) || [])[1])}</h2><p class="caption">${esc(setSub(tab))}</p></div>${tab === "models" ? `<button class="icon-btn set-head-imagegen" data-act="imagegen-open" title="生图配置" aria-label="生图配置">${icon("image", "ico-18")}</button>` : ""}</div>
         <div class="set-scroll">${setContent(tab)}</div>
       </section>
     </div>`;
   }
   function setSub(tab) {
-    return { general: "用户信息、代码样式与服务器默认值。", models: "供应商、密钥、端点与模型配置。", cli: "CLI 管理与 SDK 管理。", skills: "技能是过程性指令；启用不等于授权执行。", mcp: "MCP 服务器发现工具与资源。", tools: "内置工具与风险等级。" }[tab] || "";
+    return { general: "用户信息、代码样式与服务器默认值。", models: "供应商、密钥、端点与模型配置。", probe: "固定 9 针黑盒探针，检测模型是否被中转掺水。", cli: "CLI 管理与 SDK 管理。", skills: "技能是过程性指令；启用不等于授权执行。", mcp: "MCP 服务器发现工具与资源。", tools: "内置工具与风险等级。" }[tab] || "";
   }
 
   function setContent(tab) {
@@ -162,10 +163,11 @@
       <div class="set-actions"><button class="btn primary" data-act="settings-save">保存设置</button><span class="caption">保存后立即作用于设计稿；取消恢复已保存风格</span></div>`;
     }
     if (tab === "models") {
-      return `<div class="row between" style="margin-bottom:14px"><span class="caption">${D.settings.providers.length} 个供应商 · 点击卡片展开配置</span><button class="btn sm primary" data-act="provider-new">${icon("plus", "ico-14")}新建供应商</button></div>
-        ${D.settings.providers.map(providerBlock).join("")}
-        <div class="note-box info">${icon("shield", "ico-14")} 密钥只保存引用占位；指纹检测按意见移除，保留多密钥、多端点、请求头与请求伪装。</div>`;
+      return `<div class="row between" style="margin-bottom:14px"><span class="caption">${D.settings.providers.length} 个供应商 · 拖动手柄排序 · 点击卡片展开配置</span><button class="btn sm primary" data-act="provider-new">${icon("plus", "ico-14")}新建供应商</button></div>
+        <div class="provider-sort-list" aria-label="供应商列表（可拖动排序）">${D.settings.providers.map(providerBlock).join("")}</div>
+        <div class="note-box info">${icon("shield", "ico-14")} 密钥只保存引用占位；指纹检测按意见移除（CR-058 改为左栏独立页签「模型检测」）。CR-059：高级配置（请求头/请求伪装）已移除，协议不再提供 Gemini。</div>`;
     }
+    if (tab === "probe") return probeSection();
     if (tab === "cli") {
       return `<div class="cli-tabs"><button class="${store.sdkTab === "cli" ? "on" : ""}" data-act="sdk-tab" data-tab="cli">CLI 管理</button><button class="${store.sdkTab === "sdk" ? "on" : ""}" data-act="sdk-tab" data-tab="sdk">SDK 管理</button></div>
         ${store.sdkTab === "sdk" ? sdkList() : cliList()}`;
@@ -175,23 +177,24 @@
     return toolList();
   }
 
+  /* CR-059：供应商卡片——移除名称缩写 logo，左侧为拖动手柄；页签只剩 供应商配置 / 模型配置。 */
   function providerBlock(p) {
     const open = store.providerOpen === p.id;
-    const tab = store.providerTab || "config";
-    const tabs = [["config", "供应商配置"], ["models", "模型配置"], ["advanced", "高级配置"]];
-    return `<div class="provider-card ${open ? "open" : ""}">
-      <div class="provider-h" data-act="provider-expand" data-id="${p.id}">
-        <span class="pico">${esc(p.name.slice(0, 2))}</span>
-        <span class="pinfo"><b>${esc(p.name)}</b><span>${esc(p.protocol)} · ${p.keys.length} 个密钥 · ${p.endpoints.length} 个端点 · ${p.models.length} 个模型</span></span>
+    const tab = store.providerTab === "advanced" ? "config" : (store.providerTab || "config");
+    const tabs = [["config", "供应商配置"], ["models", "模型配置"]];
+    return `<div class="provider-card ${open ? "open" : ""}" data-provider-card="${esc(p.id)}">
+      <div class="provider-h">
+        <button class="drag-handle" data-drag-provider="${esc(p.id)}" title="拖动排序（键盘：Alt+↑/↓）" aria-label="拖动排序供应商 ${esc(p.name)}">${icon("drag", "ico-14")}</button>
+        <span class="pinfo" data-act="provider-expand" data-id="${p.id}" role="button" tabindex="0"><b>${esc(p.name)}</b><span>${esc(p.protocol)} · ${p.keys.length} 个密钥 · ${p.endpoints.length} 个端点 · ${p.models.length} 个模型</span></span>
         <span class="status ${p.enabled ? "green" : "gray"}">${p.enabled ? "启用" : "停用"}</span>
         <button class="switch" data-act="provider-toggle" data-id="${p.id}" aria-checked="${p.enabled}"></button>
         <button class="icon-btn" data-act="provider-delete" data-id="${p.id}" title="删除供应商">${icon("trash")}</button>
-        <span class="chev">${icon(open ? "chevronUp" : "chevronDown")}</span>
+        <span class="chev" data-act="provider-expand" data-id="${p.id}">${icon(open ? "chevronUp" : "chevronDown")}</span>
       </div>
       ${open ? `<div class="provider-inline">
         <div class="pm-tabs">${tabs.map(([k, l]) => `<button class="${tab === k ? "on" : ""}" data-act="provider-tab" data-tab="${k}">${l}</button>`).join("")}</div>
-        <div class="pm-body">${tab === "models" ? providerModels(p) : tab === "advanced" ? providerAdvanced(p) : providerConfig(p)}</div>
-        <div class="pm-f"><span class="caption">配置即改即存，不需要弹窗</span><button class="btn primary" data-act="provider-save" data-id="${p.id}">保存供应商</button></div>
+        <div class="pm-body">${tab === "models" ? providerModels(p) : providerConfig(p)}</div>
+        <div class="pm-f"><span class="caption">模型修改随供应商一并保存</span><span class="spacer"></span><button class="btn" data-act="provider-discard" data-id="${p.id}">放弃修改</button><button class="btn primary" data-act="provider-save" data-id="${p.id}">保存供应商</button></div>
       </div>` : ""}
     </div>`;
   }
@@ -201,51 +204,170 @@
     if (body) body.innerHTML = setContent(store.settingsTab);
   }
 
+  /* CR-059 D：CLI 管理——移除任务难度/CLI 级任务类型；5 模型槽＋兜底的任务路由；中文权限挡位与 AI 侧栏一致。
+     加载演示：首帧渲染缓存（store.cliCache），后台逐项「检测中…」渐进上屏（cr059WarmCli）。 */
+  const PERM_LABEL = { default: "默认模式", plan: "规划模式", agent: "代理模式", auto: "自动审核", full: "完全访问" };
   function cliList() {
-    return `<div class="stack-sm">${D.settings.clis.map(c => `<div class="cli-row ${c.expandable ? "expandable" : ""}">
+    return `<div class="caption cli-load-note">${icon("clock", "ico-14")} 打开即显示上次缓存，后台并发刷新（演示）；「重新检测」强制刷新。</div>
+      <div class="stack-sm">${D.settings.clis.map(c => `<div class="cli-row ${c.expandable ? "expandable" : ""}">
       <div class="cli-h">${Screens.cliTile(c.id, 34)}<span class="cli-info"><b>${esc(c.name)} ${c.badge ? `<span class="tag blue">${esc(c.badge)}</span>` : ""}</b><span>${esc(c.meta)}</span></span>
+        <span class="cli-version mono">${esc(c.version || "—")}${store.cliChecking === c.id ? ` <span class="tag blue">检测中…</span>` : ""}</span>
         <span class="tag ${c.installed ? (c.enabled ? "green" : "gray") : "gray"}">${c.installed ? (c.enabled ? "启用" : "停用") : "未安装"}</span>
         <button class="switch" aria-checked="${c.enabled}" data-act="cli-toggle" data-id="${c.id}" ${c.installed ? "" : "disabled"}></button>
         ${c.expandable ? `<button class="icon-btn" data-act="cli-expand" data-id="${c.id}">${icon(store.cliOpen === c.id ? "chevronUp" : "chevronDown")}</button>` : ""}</div>
-      ${c.expandable && store.cliOpen === c.id ? `<div class="cli-body">
-        <div class="two-col"><div><label>模型</label><select class="select" id="cli-model-${c.id}"><option>${esc(c.model)}</option><option>沿用主代理模型</option></select></div><div><label>思考等级</label><select class="select" id="cli-effort-${c.id}"><option>${esc(c.effort)}</option><option>低</option><option>中</option><option>高</option></select></div></div>
-        <div><label>最低任务难度</label><select class="select" id="cli-min-${c.id}"><option>${esc(c.minDifficulty)}</option><option>高</option></select><div class="caption">仅控制此 CLI；未达门槛改用 dsh 子代理。</div></div>
-        <div><label>任务类型</label><div class="chips">${["仓库探索", "代码定位", "资料检索", "方案核验", "影响分析", "功能开发", "缺陷修复", "测试验证", "代码审查", "数据处理", "模块重构", "方案设计", "文档整理"].map(t => `<button class="chip ${c.types.includes(t) ? "on" : ""}" data-act="cli-type" data-id="${c.id}" data-type="${t}">${t}</button>`).join("")}</div></div>
-        <div><label>权限模式</label><select class="select" id="cli-perm-${c.id}"><option>${esc(c.permission)}</option><option>acceptEdits</option><option>workspace-write</option></select></div>
-        <div class="row"><button class="btn sm primary" data-act="cli-save" data-id="${c.id}">保存</button><button class="btn sm" data-act="cli-check" data-id="${c.id}">重新检测</button></div>
-      </div>` : ""}</div>`).join("")}</div>`;
+      ${c.expandable && store.cliOpen === c.id ? cliBody(c) : ""}</div>`).join("")}</div>`;
   }
 
+  function cliModelOptions(c) {
+    /* 协议兼容过滤（演示）：claude→Anthropic 系；codex/grok→OpenAI 系。 */
+    const groups = D.ai.modelCatalog.providers;
+    const opts = [];
+    groups.forEach(g => g.models.forEach(m => {
+      if (m.image) return;
+      const anthropic = /tierflow|claude/i.test(g.name + m.name);
+      const ok = c.id === "claude" ? anthropic : !anthropic;
+      if (ok) opts.push(`${g.name} · ${m.name}`);
+    }));
+    return opts;
+  }
+
+  function cliBody(c) {
+    /* CR-059 r5：单行折叠路由。行首标签＝模型1…模型5／兜底模型，样式完全一致；模型标签悬浮显示 ×（可删），
+       兜底标签无 ×（不可删）。点行展开唯一详情区，点标签切换当前配置。兜底同样含思考等级。 */
+    const slots = c.slots || [];
+    const opts = cliModelOptions(c);
+    const efforts = ["off", "low", "medium", "high", "xhigh", "max"];
+    const perms = D.ai.permissions;
+    const atLimit = slots.length >= 5;
+    const open = !!store.cliRouteOpen?.[c.id];
+    const sel = store.cliRouteSel?.[c.id] || "fallback";
+    const selIdx = sel === "fallback" ? -1 : Number(sel);
+    const slot = selIdx >= 0 ? slots[selIdx] : null;
+    const modelSelect = (value, attr) => `<select class="select" ${attr}><option value="">未选择</option>${opts.map(o => `<option${value === o ? " selected" : ""}>${esc(o)}</option>`).join("")}${value && !opts.includes(value) ? `<option selected>${esc(value)}（不可用）</option>` : ""}</select>`;
+    const effortSelect = (value, attr) => `<select class="select" ${attr}><option value="">沿用会话</option>${efforts.map(e => `<option${value === e ? " selected" : ""}>${e}</option>`).join("")}</select>`;
+    /* 标签：模型与兜底同一结构、字号与内边距；仅模型标签在悬浮/键盘聚焦时显示 × 删除。 */
+    const tab = (key, label, removable) => `<span class="route-tab-wrap">
+        <button type="button" role="tab" aria-selected="${sel === key}" class="route-tab ${sel === key ? "on" : ""} ${removable ? "removable" : ""}" data-act="cli-slot-select" data-id="${c.id}" data-slot="${key}">${label}</button>
+        ${removable ? `<button type="button" class="route-x" data-act="cli-slot-remove" data-id="${c.id}" data-slot="${key}" title="删除${esc(label)}" aria-label="删除${esc(label)}">${icon("close", "ico-12")}</button>` : ""}
+      </span>`;
+    const detail = sel === "fallback" ? `
+      <div class="two-col">
+        <div><label>兜底模型</label>${modelSelect(c.fallback?.model || "", `data-cli-slot="${c.id}:fallback:model" aria-label="${esc(c.name)} 兜底模型"`)}</div>
+        <div><label>思考等级</label>${effortSelect(c.fallback?.effort || "", `data-cli-slot="${c.id}:fallback:effort" aria-label="${esc(c.name)} 兜底思考等级"`)}</div>
+      </div>
+      <p class="route-note">任一模型槽不可用时使用；默认与主 agent 当前选择一致（实时跟随）。兜底模型不可删除。</p>`
+      : `<div class="two-col">
+          <div><label>模型</label>${modelSelect(slot?.model || "", `data-cli-slot="${c.id}:${selIdx}:model"`)}</div>
+          <div><label>思考等级</label>${effortSelect(slot?.effort || "", `data-cli-slot="${c.id}:${selIdx}:effort"`)}</div>
+        </div>
+        <div><label>执行任务类型</label><div class="chips">${D.settings.taskTypes.map(t => `<button class="chip ${(slot?.types || []).includes(t) ? "on" : ""}" data-act="cli-slot-type" data-id="${c.id}" data-slot="${selIdx}" data-type="${t}">${t}</button>`).join("")}</div></div>
+        <div class="route-detail-f"><button type="button" class="link-btn danger" data-act="cli-slot-remove" data-id="${c.id}" data-slot="${selIdx}">${icon("trash", "ico-14")}删除此模型槽</button></div>`;
+    return `<div class="cli-body">
+      <div class="caption">由主 agent 决定使用哪个 CLI；这里只配置该 CLI 内「哪类任务用哪个模型」。模型不可用时使用兜底模型。</div>
+      <div class="route-card ${open ? "open" : ""}">
+        <div class="route-bar">
+          <div class="route-tabs" role="tablist" aria-label="${esc(c.name)} 任务模型路由">
+            ${tab("fallback", "兜底模型", false)}
+            ${slots.map((s, i) => tab(String(i), `模型${i + 1}`, true)).join("")}
+            ${atLimit ? "" : `<button type="button" class="route-add" data-act="cli-slot-add" data-id="${c.id}" title="新增模型槽（最多 5 个）" aria-label="新增模型槽">${icon("plus", "ico-14")}新增</button>`}
+          </div>
+          <span class="spacer"></span>
+          <span class="route-sum">${slots.length ? `${slots.length}/5` : "仅兜底"}</span>
+          <button type="button" class="route-toggle" data-act="cli-route-toggle" data-id="${c.id}" aria-expanded="${open}" aria-label="${open ? "收起模型配置" : "展开模型配置"}">${icon(open ? "chevronUp" : "chevronDown", "ico-14")}</button>
+        </div>
+        ${open ? `<div class="route-detail">${detail}</div>` : ""}
+      </div>
+      <div><label>权限模式</label><select class="select" id="cli-perm-${c.id}" data-cli-perm="${c.id}">${perms.map(p => `<option value="${p.id}"${c.permission === p.id ? " selected" : ""}${p.enabled === false ? " disabled" : ""}>${esc(p.name)}${p.enabled === false ? "（暂未核验）" : ""}</option>`).join("")}</select>
+        <div class="caption">与 AI 侧栏权限挡位一致；自动审核 / 完全访问在原生通道核验前不可选。</div></div>
+      <div class="row"><button class="btn sm primary" data-act="cli-save" data-id="${c.id}">保存</button><button class="btn sm" data-act="cli-check" data-id="${c.id}">重新检测</button><span class="caption">保存仅影响之后的新会话。</span></div>
+    </div>`;
+  }
+
+  /* CR-059 E：SDK 管理——严格按图2：官方 logo＋名称＋包名＋版本＋箭头；展开区＝目标版本下拉＋刷新版本、
+     当前版本/卸载/重新检测/安装目标版本、版本摘要、路径。版本列表＝最新 10 稳定版＋当前版补入。 */
   function sdkList() {
-    return `<div class="sdk-registry"><label>npm registry</label><div class="row"><input class="input" value="https://registry.npmmirror.com"><button class="btn sm" data-act="sdk-check-all">全部重新检测</button></div><div class="caption">可选，镜像源；保存后对后续安装生效。</div></div>
+    return `<div class="sdk-registry"><label>npm registry</label><div class="row"><input class="input" value="https://registry.npmmirror.com"><button class="btn sm" data-act="toast" data-msg="演示：registry 已保存">保存</button><button class="btn sm" data-act="sdk-check-all">全部重新检测</button></div><div class="caption">可选，镜像源；保存后对后续安装生效。打开页签即显示缓存并后台刷新（演示）。</div></div>
       <div class="sdk-cards">${D.settings.sdks.map(sdkCard).join("")}</div>`;
+  }
+
+  function sdkVersionOptions(s) {
+    const list = (s.versions || []).slice(0, 10);
+    const cur = String(s.version || "").replace(/^v/, "");
+    const opts = list.map((v, i) => `<option value="${esc(v)}"${i === 0 ? " selected" : ""}>${esc(v)}${i === 0 ? "（最新稳定）" : ""}</option>`);
+    if (cur && cur !== "—" && !list.includes(cur)) opts.push(`<option value="${esc(cur)}">${esc(cur)}（当前）</option>`);
+    return opts.join("");
   }
 
   function sdkCard(s) {
     const open = store.sdkOpen === s.id;
     const status = s.builtin ? "内置" : !s.installed ? "未安装" : s.version === s.latest ? "已安装" : "有更新";
     const tone = s.builtin ? "gray" : !s.installed ? "gray" : s.version === s.latest ? "green" : "amber";
+    const checking = store.sdkChecking === s.id;
     return `<div class="sdk-card ${s.builtin ? "builtin" : ""} ${open ? "open" : ""}">
       <div class="sdk-card-h" data-act="sdk-expand" data-id="${s.id}">
-        <span class="sdk-logo">${icon(s.builtin ? "box" : "terminal", "ico-16")}</span>
-        <span class="sdk-info"><b>${esc(s.name)} <span class="tag ${tone}">${status}</span>${!s.builtin && s.installed && s.version !== s.latest ? ` <span class="mono sdk-to">${esc(s.version)} → ${esc(s.latest)}</span>` : ""}</b><span>${esc(s.desc)}</span></span>
-        <span class="sdk-version">${s.builtin ? esc(s.version) : esc(s.version)}</span>
+        <span class="sdk-logo-official">${s.builtin ? icon("box", "ico-20") : Screens.cliTile(s.id, 30)}</span>
+        <span class="sdk-info"><b>${esc(s.name)} <span class="tag ${tone}">${status}</span>${checking ? ` <span class="tag blue">检测中…</span>` : ""}${!s.builtin && s.installed && s.version !== s.latest ? ` <span class="mono sdk-to">${esc(s.version)} → ${esc(s.latest)}</span>` : ""}</b><span>${esc(s.package || s.desc)}</span></span>
+        <span class="sdk-version mono">${esc(s.version)}</span>
         <span class="sdk-chev">${icon(open ? "chevronUp" : "chevronDown", "ico-14")}</span>
       </div>
       ${open ? `<div class="sdk-body">
-        ${s.builtin ? `<div class="caption">随宿主安装，无需 npm 安装或升级。</div><div class="sdk-path mono">${esc(s.path)}</div>` : `<div class="sdk-field"><label>目标版本</label><select class="select"><option>${esc(s.latest)}（最新稳定）</option><option>${esc(s.version)}（当前）</option></select><div class="caption">只列正式版（不含 alpha / beta）· 当前平台 win32-x64</div></div>
-        <div class="row sdk-actions"><button class="btn sm" disabled>当前版本 ${esc(s.version)}</button>${s.installed ? `<button class="btn sm danger" data-act="sdk-uninstall" data-id="${s.id}">卸载</button>` : ""}<button class="btn sm" data-act="sdk-${s.installed ? "check" : "install"}" data-id="${s.id}">${s.installed ? "重新检测" : "安装"}</button></div>
+        ${s.builtin ? `<div class="caption">随宿主安装，无需 npm 安装或升级。</div><div class="sdk-path mono">${esc(s.path)}</div>` : `
+        <div class="sdk-field"><label>目标版本</label><div class="row"><select class="select" aria-label="${esc(s.name)} 目标版本">${store.sdkVersionsReady === false ? `<option>最新稳定版（加载中…）</option>` : sdkVersionOptions(s)}</select><button class="btn sm" data-act="sdk-versions-refresh" data-id="${s.id}">${icon("refresh", "ico-14")}刷新版本</button></div><div class="caption">只列正式版（不含 alpha / beta）· 最新 10 个稳定版，当前版不在其中时补入 · 当前平台 win32-x64</div></div>
+        <div class="row sdk-actions"><button class="btn sm" disabled>当前版本 ${esc(s.version)}</button>${s.installed ? `<button class="btn sm danger" data-act="sdk-uninstall" data-id="${s.id}">卸载</button>` : ""}<button class="btn sm" data-act="sdk-check" data-id="${s.id}">重新检测</button><button class="btn sm primary" data-act="sdk-install" data-id="${s.id}">${s.installed ? "安装目标版本" : "安装"}</button></div>
         <div class="sdk-meta">当前版本 ${esc(s.version)} · 最新稳定 ${esc(s.latest)}</div>
         <div class="sdk-path mono">${esc(s.path)}</div>`}
       </div>` : ""}
     </div>`;
   }
 
+  /* CR-059 F1/F2：Skill 添加＝选择本地文件夹识别；导入＝扫描其他 agent 技能目录勾选。副本归受管目录。 */
   function skillList() {
-    return `<div class="row between" style="margin-bottom:12px"><span class="caption">${D.settings.skills.length} 个技能</span><div class="row"><button class="btn sm" data-act="skill-import">${icon("upload", "ico-14")}导入</button><button class="btn sm primary" data-act="skill-add">${icon("plus", "ico-14")}添加技能</button></div></div>
+    return `<div class="row between" style="margin-bottom:12px"><span class="caption">${D.settings.skills.length} 个技能 · 导入后为受管副本，外部删除不影响</span><div class="row"><button class="btn sm" data-act="skill-scan-open">${icon("search", "ico-14")}扫描导入</button><button class="btn sm primary" data-act="skill-add">${icon("folderPlus", "ico-14")}添加技能</button></div></div>
       <div class="card">${D.settings.skills.map((s, i) => `<div class="cap-row"><span class="kb-icon blue" style="width:32px;height:32px;border-radius:8px">${icon("layers", "ico-16")}</span>
         <span class="cap-main"><b>${esc(s.name)} <span class="mono muted" style="font-size:11px">/${esc(s.slug)}</span></b><span>${esc(s.desc)} · 来源 ${esc(s.source)} · ${esc(s.updated)}</span></span>
         <button class="switch" aria-checked="${s.on}" data-act="skill-toggle" data-idx="${i}"></button></div>`).join("")}</div>`;
+  }
+
+  function skillAddDialog() {
+    const picked = store.skillFolderPick || null;
+    const folder = picked ? D.settings.skillFolders.find(f => f.path === picked) : null;
+    const body = `<div class="form-grid">
+      <div class="form-row"><label>技能文件夹</label>
+        <div class="row"><button class="btn sm" data-act="skill-folder-choose">${icon("folderOpen", "ico-14")}选择文件夹…</button><span class="mono caption">${picked ? esc(picked) : "未选择（需包含 SKILL.md）"}</span></div>
+        <small>演示：点击后模拟系统文件夹选择框；正式实现调用系统目录选择对话框。</small></div>
+      ${folder && !folder.valid ? `<div class="note-box warn">所选文件夹没有 SKILL.md，无法识别为技能。请选择包含 SKILL.md 的文件夹（结构：&lt;文件夹&gt;/SKILL.md，可含附属资源）。</div>` : ""}
+      ${folder && folder.valid ? `
+      <div class="form-row"><label>识别结果</label><input class="input" id="sk-name" value="${esc(folder.name)}"></div>
+      <div class="form-row"><label>标识（slug）</label><input class="input mono" id="sk-slug" value="${esc(folder.slug)}"></div>
+      <div class="form-row"><label>说明</label><input class="input" id="sk-desc" value="${esc(folder.desc)}"></div>
+      <div class="form-row"><label>正文预览（SKILL.md）</label><textarea class="textarea mono" rows="5" readonly>${esc(folder.body)}</textarea></div>
+      <div class="caption">确认后整目录复制到受管技能目录（app_data_dir/skills/&lt;slug&gt;/）；外部源后续删除或修改不影响副本。</div>` : ""}
+    </div>`;
+    openSubDialog(dlgShell("添加技能", "选择本地文件夹 → 识别 SKILL.md → 复制为受管副本", body, `<button class="btn" data-act="close-sub">取消</button><button class="btn primary" data-act="skill-folder-save"${folder && folder.valid ? "" : " disabled"}>添加到我的技能</button>`));
+  }
+
+  function skillFolderChooseDialog() {
+    const body = `<div class="folder-list">${D.settings.skillFolders.map(f => `<button class="folder-row" data-act="skill-folder-pick" data-path="${esc(f.path)}">${icon("folder", "ico-16")}<span class="mono">${esc(f.path)}</span>${f.valid ? `<span class="tag green">含 SKILL.md</span>` : `<span class="tag gray">无 SKILL.md</span>`}</button>`).join("")}</div>
+      <div class="caption">演示夹具：模拟系统文件夹选择框的候选目录；正式实现为原生目录选择对话框，不限于这些路径。</div>`;
+    openSubDialog(dlgShell("选择技能文件夹", "演示：模拟系统文件夹选择框", body, `<button class="btn" data-act="skill-add-back">返回</button>`));
+  }
+
+  function skillScanDialog() {
+    if (!store.skillScanSel) store.skillScanSel = {};
+    const sources = D.settings.skillSources;
+    const total = sources.reduce((n, s) => n + s.items.filter(x => !x.imported && !D.settings.skills.some(k => k.slug === x.slug)).length, 0);
+    const body = `<div class="scan-list">${sources.map(src => `<div class="scan-group">
+      <div class="scan-group-h">${icon("bot", "ico-14")}<b>${esc(src.agent)}</b><span class="mono caption">${esc(src.root)}</span></div>
+      ${src.items.map(it => {
+        const imported = it.imported || D.settings.skills.some(k => k.slug === it.slug);
+        const key = src.agent + ":" + it.slug;
+        const on = !!store.skillScanSel[key];
+        return `<label class="scan-row ${imported ? "imported" : ""}"><input type="checkbox" data-scan-skill="${esc(key)}"${on ? " checked" : ""}${imported ? " disabled" : ""}>
+          <span class="scan-main"><b>${esc(it.name)} <span class="mono caption">/${esc(it.slug)}</span></b><span>${esc(it.desc)}</span></span>
+          ${imported ? `<span class="tag gray">已导入</span>` : ""}</label>`;
+      }).join("")}</div>`).join("")}</div>
+      <div class="caption">只读扫描其他 agent 的技能目录与 SKILL.md，不执行其中指令；勾选后复制为受管副本。共 ${total} 个可导入。</div>`;
+    openSubDialog(dlgShell("扫描导入技能", "扫描本机其他 agent 的技能 → 勾选 → 复制为受管副本", body, `<button class="btn" data-act="close-sub">取消</button><button class="btn primary" data-act="skill-scan-import">导入所选</button>`, "modal-md"));
   }
   function mcpOauthPreview() {
     const states = [
@@ -264,57 +386,133 @@
         <p class="caption">静态令牌连接不需要 OAuth 回调；工具发现仍使用同一受管令牌。</p>
       </div></section>`;
   }
+  /* CR-059 F4/F5：MCP 导入＝扫描其他 agent 配置；添加表单按图3（类型/名称/命令/额外参数每行一个/环境变量 KEY=value）。 */
   function mcpList() {
-    return `<div class="row between" style="margin-bottom:12px"><span class="caption">${D.settings.mcp.length} 个服务器</span><div class="row"><button class="btn sm" data-act="mcp-import">${icon("upload", "ico-14")}导入</button><button class="btn sm primary" data-act="mcp-add">${icon("plus", "ico-14")}添加 MCP</button></div></div>
+    return `<div class="row between" style="margin-bottom:12px"><span class="caption">${D.settings.mcp.length} 个服务器 · 导入后为受管配置，外部删除不影响</span><div class="row"><button class="btn sm" data-act="mcp-scan-open">${icon("search", "ico-14")}扫描导入</button><button class="btn sm primary" data-act="mcp-add">${icon("plus", "ico-14")}添加 MCP</button></div></div>
       <div class="card">${D.settings.mcp.map((m, i) => `<div class="cap-row"><span class="sdk-logo" style="width:32px;height:32px">${icon("box", "ico-16")}</span>
         <span class="cap-main"><b>${esc(m.name)}</b><span>${esc(m.transport)} · <span class="mono">${esc(m.target)}</span> · ${m.tools} 个工具</span></span>
         <span class="status ${m.on ? "green" : "gray"}">${m.on ? "已启用 · 工具发现独立显示" : "已停用"}</span><button class="switch" aria-checked="${m.on}" data-act="mcp-toggle" data-idx="${i}"></button></div>`).join("")}</div>${mcpOauthPreview()}`;
   }
-  function toolList() {
-    return `<div class="card"><table class="table"><thead><tr><th>工具</th><th>风险</th><th>说明</th><th>今日调用</th><th>状态</th></tr></thead><tbody>
-      ${D.settings.tools.map((t, i) => `<tr><td><span class="mono" style="color:var(--ink)">${esc(t.name)}</span></td><td><span class="risk ${t.risk === "低" ? "low" : t.risk === "中" ? "mid" : "high"}">${esc(t.risk)}</span></td><td class="muted">${esc(t.desc)}</td><td class="num">${t.calls}</td><td><button class="switch" aria-checked="${t.on}" data-act="tool-toggle" data-idx="${i}"></button></td></tr>`).join("")}
-    </tbody></table></div>`;
+
+  function mcpScanDialog() {
+    if (!store.mcpScanSel) store.mcpScanSel = {};
+    const sources = D.settings.mcpSources;
+    const body = `<div class="scan-list">${sources.map(src => `<div class="scan-group">
+      <div class="scan-group-h">${icon("bot", "ico-14")}<b>${esc(src.agent)}</b><span class="mono caption">${esc(src.root)}</span></div>
+      ${src.items.map(it => {
+        const imported = it.imported || D.settings.mcp.some(m => m.name === it.name);
+        const key = src.agent + ":" + it.name;
+        const on = !!store.mcpScanSel[key];
+        return `<label class="scan-row ${imported ? "imported" : ""}"><input type="checkbox" data-scan-mcp="${esc(key)}"${on ? " checked" : ""}${imported ? " disabled" : ""}>
+          <span class="scan-main"><b>${esc(it.name)} <span class="tag gray">${esc(it.transport)}</span></b><span class="mono">${esc(it.target)}</span></span>
+          ${imported ? `<span class="tag gray">已导入</span>` : ""}</label>`;
+      }).join("")}</div>`).join("")}</div>
+      <div class="caption">只读扫描其他 agent 的 MCP 配置；含敏感值的环境变量按受管密钥写入，不在列表回显。也可 <button class="link-btn" data-act="mcp-import-json">从 JSON 文件导入…</button></div>`;
+    openSubDialog(dlgShell("扫描导入 MCP", "扫描本机其他 agent 的 MCP 配置 → 勾选 → 导入受管配置", body, `<button class="btn" data-act="close-sub">取消</button><button class="btn primary" data-act="mcp-scan-import">导入所选</button>`, "modal-md"));
   }
 
-  /* 供应商编辑 */
+  /* 图3基准表单：STDIO＝类型/名称/命令/额外参数（每行一个）/环境变量（KEY=value 每行一个）；footer 只有取消/保存。 */
+  function mcpAddDialog() {
+    const t = store.mcpFormType || "stdio";
+    const body = `<div class="form-grid mcp-form-59">
+      <div class="form-row"><label>类型</label><select class="select" id="mc-type" data-mcp-type><option value="stdio"${t === "stdio" ? " selected" : ""}>STDIO</option><option value="http"${t === "http" ? " selected" : ""}>HTTP</option></select></div>
+      <div class="form-row"><label>名称 <span class="req">*</span></label><input class="input" id="mc-name" placeholder="例如 workspace-files"></div>
+      ${t === "stdio" ? `
+      <div class="form-row"><label>命令 <span class="req">*</span></label><input class="input mono" id="mc-command" placeholder="npx -y @modelcontextprotocol/server-filesystem D:/work"><small>启动 MCP 服务器的完整命令行</small></div>
+      <div class="form-row"><label>额外参数</label><textarea class="textarea mono" id="mc-args" rows="3" placeholder="-y&#10;@modelcontextprotocol/server-filesystem"></textarea><small>每行一个参数，追加到命令后</small></div>
+      <div class="form-row"><label>环境变量</label><textarea class="textarea mono" id="mc-env" rows="3" placeholder="API_KEY=your-key-here&#10;DEBUG=true"></textarea><small>每行一个 KEY=value 格式；敏感值按受管密钥保存，不回显</small></div>` : `
+      <div class="form-row"><label>URL <span class="req">*</span></label><input class="input mono" id="mc-url" placeholder="https://example.com/mcp"></div>
+      <div class="form-row"><label>认证方式</label><select class="select" id="mc-auth"><option>OAuth</option><option>静态令牌</option><option>无认证</option></select><small>OAuth 由 NestCraft 完成浏览器授权；静态令牌直接使用服务提供的 Bearer</small></div>
+      <div class="form-row"><label>Bearer 令牌</label><input class="input mono" type="password" id="mc-token" placeholder="仅写入受管密钥，保存后不回显"></div>
+      <div class="form-row"><label>信任本机自签名证书</label><div class="row"><button class="switch" aria-checked="false" data-act="toast" data-msg="演示：仅 loopback HTTPS 可开启"></button><span class="caption">仅 loopback（127.0.0.1／localhost／::1）HTTPS，默认关闭</span></div></div>`}
+    </div>`;
+    openSubDialog(dlgShell("添加 MCP", "仅保存配置；测试连接在列表行进行", body, `<button class="btn" data-act="close-sub">取消</button><button class="btn primary" data-act="mcp-save-59">保存</button>`));
+  }
+  /* CR-059 r2 F7：Tools 树形列表——根节点＝提供方（内置/MCP/CLI 原生）；移除平铺表格与「今日调用」列。
+     用户决策「AI 必须可以使用工具」：内置 18 项统一经 workbench MCP 注入（目标态）；
+     原有 6 项注入待实现（BUG-CR059-01），行内「待实现」tag 如实标注，不虚构已生效。 */
+  function toolList() {
+    if (!store.toolTreeOpen) store.toolTreeOpen = { nestcraft: true };
+    const riskCls = r => r === "低" ? "low" : r === "中" ? "mid" : "high";
+    return `<div class="caption" style="margin-bottom:12px">按提供方分组：哪个工具、哪个服务提供的 tool。内置工具经 workbench MCP 注入会话，开关真实生效；不等于原生 CLI 安全门禁已生效。</div>
+      <div class="card tool-tree">${D.settings.toolTree.map(g => {
+        const open = !!store.toolTreeOpen[g.id];
+        const kindTag = g.kind === "builtin-live" ? `<span class="tag green">已注入</span>` : g.kind === "mcp" ? `<span class="tag gray">MCP</span>` : `<span class="tag gray">CLI 原生</span>`;
+        return `<div class="tree-group ${open ? "open" : ""}">
+          <button class="tree-root" data-act="tool-tree-toggle" data-id="${esc(g.id)}" aria-expanded="${open}">
+            ${icon(open ? "chevronDown" : "chevronRight", "ico-14")}
+            ${g.kind === "cli" ? Screens.cliTile(g.id.replace("cli-", ""), 20) : icon(g.kind === "mcp" ? "box" : "workflow", "ico-16")}
+            <b>${esc(g.name)}</b>${kindTag}<span class="caption">${g.tools.length} 个工具</span>
+            <span class="spacer"></span><span class="caption tree-note">${esc(g.note)}</span>
+          </button>
+          ${open ? `<div class="tree-children">${g.tools.length ? g.tools.map((t, i) => `<div class="tree-tool">
+              <span class="mono tree-name">${esc(t.name)}</span>
+              <span class="risk ${riskCls(t.risk)}">${esc(t.risk)}</span>
+              <span class="muted tree-desc">${esc(t.desc)}</span>
+              ${t.pending ? `<span class="tag amber" title="注入实现待落地（BUG-CR059-01）；当前软件中此开关尚未到达 AI">待实现</span>` : ""}
+              ${g.kind === "cli" ? `<span class="tag gray">只读</span>` : `<button class="switch" aria-checked="${t.on}" data-act="tool-tree-switch" data-group="${esc(g.id)}" data-idx="${i}"></button>`}
+            </div>`).join("") : `<div class="tree-empty">${g.kind === "mcp" ? `尚未发现工具 · <button class="link-btn" data-act="toast" data-msg="演示：到 MCP 列表行测试连接后发现工具">去测试连接</button>` : "暂无工具"}</div>`}</div>` : ""}
+        </div>`;
+      }).join("")}</div>
+      <div class="note-box warn" style="margin-top:12px">${icon("alert", "ico-14")} BUG-CR059-01（修复方向已定案：真正注入）：内置原有 6 项（fs.read／knowledge.*／ssh-exec）当前软件尚未接入派发链路，标「待实现」；实现将复用 workbench MCP 通道（CR-060 已落地 12 项），ssh-exec 保持连接＋授权＋逐次审批门禁。MCP 工具由 CLI 连接对应服务器后可用；CLI 原生工具由 CLI 自身管理。</div>`;
+  }
+
+  /* CR-059：供应商编辑器弹窗与内联卡片共用同一套页签（高级配置已移除）。 */
   function providerModal(id, modelId) {
-    const p = id ? D.settings.providers.find(x => x.id === id) : { id: "PRV-NEW", name: "新供应商", protocol: "OpenAI", enabled: true, keys: [], endpoints: [{ protocol: "OpenAI", url: "", on: true }], headers: [], spoof: "关闭", models: [] };
+    const p = id ? D.settings.providers.find(x => x.id === id) : { id: "PRV-NEW", name: "新供应商", protocol: "Chat", enabled: true, keys: [], endpoints: [{ protocol: "OpenAI", url: "", on: true }], models: [] };
     store.providerEdit = p.id;
-    store.providerTab = store.providerTab || "config";
+    store.providerTab = store.providerTab === "advanced" ? "config" : (store.providerTab || "config");
     if (modelId) store.modelEdit = modelId;
     const body = `<div class="provider-modal">
       <div class="pm-h">${icon("drag", "ico-14")}<b>${esc(p.name)}</b><span class="tag gray">自定义</span><span class="status ${p.enabled ? "green" : "gray"}">${p.enabled ? "启用" : "停用"}</span><span class="spacer"></span>
         <button class="switch" aria-checked="${p.enabled}" data-act="provider-toggle" data-id="${p.id}"></button>
         <button class="btn sm" data-act="toast" data-msg="演示：编辑基础信息">编辑</button><button class="btn sm danger" data-act="provider-delete" data-id="${p.id}">删除</button></div>
-      <div class="pm-tabs">${[["config", "供应商配置"], ["models", "模型配置"], ["advanced", "高级配置"]].map(([k, l]) => `<button class="${store.providerTab === k ? "on" : ""}" data-act="provider-tab" data-tab="${k}">${l}</button>`).join("")}</div>
-      <div class="pm-body">${store.providerTab === "models" ? providerModels(p) : store.providerTab === "advanced" ? providerAdvanced(p) : providerConfig(p)}</div>
-      <div class="pm-f"><button class="btn" data-act="settings-back">返回</button><button class="btn primary" data-act="provider-save" data-id="${p.id}">保存供应商</button></div>
+      <div class="pm-tabs">${[["config", "供应商配置"], ["models", "模型配置"]].map(([k, l]) => `<button class="${store.providerTab === k ? "on" : ""}" data-act="provider-tab" data-tab="${k}">${l}</button>`).join("")}</div>
+      <div class="pm-body">${store.providerTab === "models" ? providerModels(p) : providerConfig(p)}</div>
+      <div class="pm-f"><button class="btn" data-act="settings-back">返回</button><span class="spacer"></span><button class="btn" data-act="provider-discard" data-id="${p.id}">放弃修改</button><button class="btn primary" data-act="provider-save" data-id="${p.id}">保存供应商</button></div>
     </div>`;
     openDialog(body, "settings-dialog provider-dialog");
   }
 
+  const PROTOCOL_WIRE = { "Chat": "OpenAI", "Responses": "OpenAI", "Anthropic": "Anthropic" };
+  /* CR-059 r3：供应商配置——协议一行均分卡片（#8）；端点固定 OpenAI/Anthropic 两个输入框，
+     「更多端点」只是展开第二个（#7）；供应商 ID 只读展示（#6，名称可改、ID 不变）。 */
   function providerConfig(p) {
+    const wire = PROTOCOL_WIRE[p.protocol] || "OpenAI";
+    const epOpenAi = p.endpoints.find(e => e.protocol === "OpenAI") || { protocol: "OpenAI", url: "", on: true };
+    const epAnthropic = p.endpoints.find(e => e.protocol === "Anthropic") || { protocol: "Anthropic", url: "", on: false };
     return `<div class="pm-section"><div class="row between"><b>API 密钥</b><button class="btn xs" data-act="provider-key-detect">自动探测</button></div>
       <div class="key-list">${p.keys.map((k, i) => keyRow(p, k, i)).join("") || `<div class="caption" style="padding:10px">还没有密钥</div>`}
-        <button class="key-add" data-act="provider-key-add">${icon("plus", "ico-14")}添加另一个密钥</button></div>
+        <button class="text-add" data-act="provider-key-add">${icon("plus", "ico-14")}添加另一个密钥</button></div>
       <div class="caption">悬停密钥可改别名、协议与可用模型；删除前会二次确认。</div></div>
-      <div class="pm-section"><label>显示名称</label><input class="input" id="pm-name" value="${esc(p.name)}"></div>
-      <div class="pm-section"><label>API 协议</label><div class="seg">${["Chat", "Responses", "Anthropic", "Gemini API"].map(x => `<button aria-selected="${p.protocol === x}" data-act="provider-protocol" data-v="${x}">${x}</button>`).join("")}</div></div>
+      <div class="pm-section two-col"><div><label>供应商 ID</label><input class="input mono" id="pm-id" value="${esc(p.id)}" readonly title="供应商标识，创建后不可修改；路由与引用按 ID 而非名称"><div class="caption">创建后不可修改；引用按 ID。</div></div><div><label>显示名称</label><input class="input" id="pm-name" value="${esc(p.name)}"><div class="caption">可随时修改，不影响引用。</div></div></div>
+      <div class="pm-section"><label>API 协议</label>
+        <div class="seg-cards" role="radiogroup" aria-label="供应商默认协议">
+          ${["Chat", "Responses", "Anthropic"].map(x => `<button type="button" class="seg-card ${p.protocol === x ? "on" : ""}" role="radio" aria-checked="${p.protocol === x}" data-act="provider-protocol-card" data-v="${x}">${x}</button>`).join("")}
+        </div>
+        <div class="caption">切换协议时下方端点联动为 ${esc(wire)}；已填地址保留。仅支持 OpenAI / Anthropic 两种端点协议。</div></div>
       <div class="pm-section"><div class="row between"><label>API 地址</label><button class="btn xs" data-act="provider-endpoints">${store.endpointsOpen ? "收起端点 ˄" : "更多端点 ˅"}</button></div>
-        ${(store.endpointsOpen ? p.endpoints : p.endpoints.slice(0, 1)).map(e => `<div class="endpoint-row"><span class="dot ${e.on ? "on" : "off"}"></span><span class="caption">${esc(e.protocol)}</span><input class="input mono" value="${esc(e.url)}" placeholder="https://…"></div>`).join("")}
-        ${store.endpointsOpen ? `<button class="key-add" data-act="provider-endpoint-add">${icon("plus", "ico-14")}添加端点</button>` : ""}
+        <div class="endpoint-row"><span class="dot ${epOpenAi.on ? "on" : "off"}"></span><span class="caption endpoint-proto">OpenAI</span><input class="input mono" value="${esc(epOpenAi.url)}" placeholder="https://…/v1"></div>
+        ${store.endpointsOpen ? `<div class="endpoint-row"><span class="dot ${epAnthropic.on ? "on" : "off"}"></span><span class="caption endpoint-proto">Anthropic</span><input class="input mono" value="${esc(epAnthropic.url)}" placeholder="https://…"></div>` : ""}
+        <div class="caption">仅支持 OpenAI 与 Anthropic 两种端点；「更多端点」展开另一种协议的地址输入框，不新增其他协议。</div>
       </div>`;
   }
 
+  /* CR-059 r8：密钥行——协议决定该密钥请求走哪个端点（不再沿用供应商默认）；
+     模型范围可自动探测（保存后异步）。
+     r9：密钥行不再显示任何探测状态（探测中/已探测/待探测/单密钥提示全部移除）；
+     探测完成只用会自动消失的 toast 反馈；「单密钥无需探测」只在范围表单里说明。 */
   function keyRow(p, k, i) {
     const editing = store.keyEdit && store.keyEdit.idx === i ? store.keyEdit.mode : null;
     const scope = k.models && k.models.length ? `${k.models.length} 个模型` : (k.scope || "全部模型");
+    const scopeKind = k.autoScope ? `<span class="tag blue" title="自动探测得出；手动修改后转为手动范围">自动</span>` : (k.manualScope ? `<span class="tag gray" title="手动指定；自动探测只补充新增模型">手动</span>` : "");
+    const wire = k.protocol ? ({ Chat: "OpenAI", Responses: "OpenAI", Anthropic: "Anthropic" }[k.protocol] || "OpenAI") : null;
     return `<div class="key-item ${editing ? "editing" : ""}">
       <div class="key-row">
         <span class="cb ${k.on ? "on" : ""}" data-act="provider-key-toggle" data-idx="${i}" role="checkbox" aria-checked="${k.on}">${k.on ? icon("check", "ico-14") : ""}</span>
-        <span class="key-val"><b>${esc(k.label || "未命名密钥")}</b><span class="mono key-mask">${esc(k.masked)}</span><span class="key-scope-tag">${esc(scope)}</span></span>
+        <span class="key-val"><b>${esc(k.label || "未命名密钥")}</b><span class="mono key-mask">${esc(k.masked)}</span><span class="key-scope-tag">${esc(scope)}</span>${scopeKind}</span>
         <span class="key-actions">
-          <button class="link-btn" data-act="key-protocol" data-idx="${i}" title="该密钥使用的协议">${esc(k.protocol || "默认协议")} ›</button>
+          <button class="link-btn" data-act="key-protocol" data-idx="${i}" title="${wire ? `该密钥请求走 ${wire} 端点` : "沿用供应商默认协议"}">${esc(k.protocol || "默认协议")}${wire ? ` · ${wire}` : ""} ›</button>
           <button class="link-btn" data-act="key-scope" data-idx="${i}">模型</button>
           <button class="link-btn" data-act="key-alias" data-idx="${i}">别名</button>
           <button class="link-btn" data-act="key-value" data-idx="${i}">编辑</button>
@@ -325,77 +523,338 @@
     </div>`;
   }
 
+  /* CR-059 r3 #5/r8：密钥协议＝悬浮下拉（点选即写入收起）；
+     协议决定该密钥请求使用的端点（Chat/Responses→OpenAI 端点，Anthropic→Anthropic 端点）；
+     可用模型＝小按钮卡片（选中仅高亮，无对勾）；支持「自动探测」与「清空＝全部模型」。 */
   function keyForm(p, k, i, mode) {
     let body = "";
     if (mode === "alias") body = `<div class="key-form-row"><label>别名</label><input class="input" id="key-alias-input" value="${esc(k.label || "")}" placeholder="例如：主凭证"></div>`;
     else if (mode === "value") body = `<div class="key-form-row"><label>密钥值</label><input class="input mono" id="key-value-input" value="${esc(k.masked)}"></div>`;
-    else if (mode === "protocol") body = `<div class="key-form-row"><label>该密钥的协议</label><div class="chips">${["", "Chat", "Responses", "Anthropic"].map(v => `<button class="chip ${(k.protocol || "") === v ? "on" : ""}" data-act="key-protocol-set" data-idx="${i}" data-v="${v}">${v || "默认"}</button>`).join("")}</div><div class="caption">默认沿用供应商协议；只有配置了端点地址的协议才应出现。</div></div>`;
+    else if (mode === "protocol") {
+      const hasOpenAi = p.endpoints.some(e => e.protocol === "OpenAI" && e.url);
+      const hasAnthropic = p.endpoints.some(e => e.protocol === "Anthropic" && e.url);
+      const opts = [["", "默认（沿用供应商）"]];
+      if (hasOpenAi) opts.push(["Chat", "Chat · OpenAI 端点"], ["Responses", "Responses · OpenAI 端点"]);
+      if (hasAnthropic) opts.push(["Anthropic", "Anthropic · Anthropic 端点"]);
+      return `<div class="key-pop" role="dialog" aria-label="选择密钥协议">
+        <div class="key-pop-h">该密钥的协议</div>
+        ${opts.map(([v, l]) => `<button type="button" class="key-pop-opt ${(k.protocol || "") === v ? "on" : ""}" data-act="key-protocol-pick" data-idx="${i}" data-v="${v}">${l}</button>`).join("")}
+        <div class="caption key-pop-note">选定后该密钥的请求走对应协议的端点，不再沿用供应商默认；只列已配置端点地址的协议。</div>
+      </div>`;
+    }
     else if (mode === "remove") body = `<div class="key-form-row"><div class="note-box">确定删除「${esc(k.label || "该密钥")}」？删除后该密钥不再参与路由。</div></div>`;
-    else if (mode === "scope") body = `<div class="key-form-row"><label>这个密钥可用的模型</label><div class="key-models">${p.models.map(m => `<label class="key-model"><input type="checkbox" data-key-model="${esc(m.id)}" ${(k.models || []).includes(m.id) ? "checked" : ""}>${esc(m.name)}<span class="mono">${esc(m.id)}</span></label>`).join("") || '<span class="caption">还没有模型，先获取模型。</span>'}</div></div>`;
-    return `<div class="key-form">${body}<div class="row"><button class="btn sm ${mode === "remove" ? "danger" : "primary"}" data-act="${mode === "remove" ? "key-remove-confirm" : "key-save"}" data-idx="${i}" ${mode === "remove" ? "" : `data-mode="${mode}"`}>${mode === "remove" ? "确认删除" : "保存"}</button><button class="btn sm" data-act="key-edit-cancel">取消</button></div></div>`;
+    else if (mode === "scope") {
+      const n = p.models.length, sel = (k.models || []).length;
+      const single = p.keys.length < 2;
+      body = `<div class="key-form-row"><label>这个密钥可用的模型（点选小卡片；全不选＝全部模型）</label>
+      <div class="row between key-scope-head">
+        <span class="caption">${sel ? `已选 ${sel} / ${n}` : `全部模型（${n}）`}${k.autoScope ? " · 自动探测得出" : k.manualScope ? " · 手动指定" : ""}${single ? " · 单密钥无需探测" : ""}</span>
+        <span class="row">
+          <button class="link-btn" data-act="key-scope-probe" data-idx="${i}" ${single ? `disabled title="只有一个密钥：模型配置中的模型即其支持范围，无需探测"` : ""}>立即探测</button>
+          <button class="link-btn" data-act="key-scope-clear" data-idx="${i}">清空＝全部</button>
+        </span>
+      </div>
+      <div class="mini-cards">${p.models.map(m => {
+        const on = (k.models || []).includes(m.id);
+        return `<button type="button" class="mini-card ${on ? "on" : ""}" data-act="key-scope-pick" data-idx="${i}" data-model="${esc(m.id)}" aria-pressed="${on}" title="${esc(m.id)}">${esc(m.name)}</button>`;
+      }).join("") || '<span class="caption">还没有模型，先获取模型。</span>'}</div>
+      <div class="caption">规则：两把及以上密钥时，保存后自动探测各自实际支持的模型并勾选（后台进行，完成只提示一次）；全部支持则不写范围（等同全部）。已手动配置的密钥，自动探测只追加本次新增的模型。</div></div>`;
+    }
+    return `<div class="key-form">${body}<div class="row key-form-actions"><span class="spacer"></span><button class="btn sm" data-act="key-edit-cancel">取消</button><button class="btn sm ${mode === "remove" ? "danger" : "primary"}" data-act="${mode === "remove" ? "key-remove-confirm" : "key-save"}" data-idx="${i}" ${mode === "remove" ? "" : `data-mode="${mode}"`}>${mode === "remove" ? "确认删除" : "保存"}</button></div></div>`;
   }
 
+  /* CR-059 r3 #1/#2：模型内「一键获取」只取当前模型；无单独保存按钮，放弃修改右置；
+     保存统一走供应商保存。B3 布局维持（跟随记忆/三列一行/无状态）。 */
   function modelForm(p, m) {
+    const levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+    const defaultOpts = ["跟随记忆", "不下发"].concat(m.levels.length ? m.levels : []);
     return `<div class="model-form">
       <div class="two-col"><div><label>模型 ID</label><input class="input mono" id="m-id" value="${esc(m.id)}"></div><div><label>显示名称</label><input class="input" id="m-name" value="${esc(m.name)}"></div></div>
-      <div><label>支持模态</label><div class="chips">${["文本", "图片", "生图"].map(x => `<button class="chip ${m.modalities.includes(x) ? "on" : ""}" data-act="model-modality" data-v="${x}">${x}</button>`).join("")}</div></div>
-      <div class="row between"><label>思考</label><div class="row"><button class="btn xs" data-act="model-autoconfig">自动配置</button><button class="switch" aria-checked="${m.thinking}" data-act="model-thinking"></button></div></div>
-      <div><label>支持档位</label><div class="chips">${["off", "minimal", "low", "medium", "high", "xhigh", "max"].map(x => `<button class="chip ${m.levels.includes(x) ? "on" : ""}" data-act="model-level" data-v="${x}">${x}</button>`).join("")}</div></div>
-      <div class="two-col"><div><label>默认思考强度</label><select class="select" id="m-default">${["低", "中", "高", "跟随记忆"].map(x => `<option ${m.defaultLevel === x ? "selected" : ""}>${x}</option>`).join("")}</select></div><div><label>上下文窗口</label><input class="input" id="m-ctx" value="${m.context || ""}" placeholder="留空 = 模型目录值"></div></div>
-      <div class="two-col"><div><label>最大输出</label><input class="input" id="m-max" value="${m.maxOutput || ""}"></div><div><label>状态</label><div class="row"><button class="switch" aria-checked="${m.on}" data-act="toast" data-msg="演示：切换模型启用"></button><span class="caption">${m.on ? "可用" : "停用"}</span></div></div></div>
-      <div class="row"><button class="btn sm primary" data-act="model-save">保存模型</button><button class="btn sm" data-act="toast" data-msg="演示：放弃修改">放弃修改</button></div>
+      <div><label>支持模态</label><div class="chips">${["文本", "图片", "生图"].map(x => `<button class="chip ${m.modalities.includes(x) ? "on" : ""}" data-act="model-modality" data-v="${x}">${x}</button>`).join("")}</div>${m.visionUnknown ? `<div class="caption">上游未提供视觉能力，当前为未知；可点「图片」明确。</div>` : ""}</div>
+      <div class="row thinking-row"><label>思考</label><button class="switch" aria-checked="${m.thinking}" data-act="model-thinking" aria-label="思考开关"></button><span class="spacer"></span><button class="link-btn" data-act="model-auto-level">一键获取</button></div>
+      ${m.levelSource ? `<div class="caption">档位来源：${esc(m.levelSource)}${m.levelNote ? " · " + esc(m.levelNote) : ""}</div>` : ""}
+      <div><label>支持档位</label><div class="chips">${levels.map(x => `<button class="chip ${m.levels.includes(x) ? "on" : ""}" data-act="model-level" data-v="${x}">${x}</button>`).join("")}</div></div>
+      <div class="three-col"><div><label>默认思考强度</label><select class="select" id="m-default">${defaultOpts.map(x => `<option ${m.defaultLevel === x ? "selected" : ""}>${x}</option>`).join("")}</select></div><div><label>上下文窗口</label><input class="input" id="m-ctx" value="${m.context || ""}" placeholder="留空 = 未知"></div><div><label>最大输出</label><input class="input" id="m-max" value="${m.maxOutput || ""}" placeholder="留空 = 未知"></div></div>
+      <div class="row model-form-actions"><span class="caption">修改随「保存供应商」一并保存</span><span class="spacer"></span><button class="btn sm" data-act="model-discard" data-id="${esc(m.id)}">放弃修改</button></div>
     </div>`;
   }
 
+  /* CR-059 r3 #1/#3：工具栏外置「自动获取思考等级」（批量补齐未配置模型）；模型列表可拖动排序。
+     r8：整行可点击展开/收起（不只末尾箭头）；行内按钮（拖动/删除/箭头）点击不触发展开。 */
   function providerModels(p) {
-    return `<div class="row between model-toolbar"><span class="caption">${p.models.length} 个模型 · 点击模型展开配置</span><button class="btn sm primary" data-act="model-pick-open">${icon("plus", "ico-14")}获取模型</button></div>
-      <div class="model-list">${p.models.map(x => {
+    const keyHint = p.keys.length > 1 ? " · 保存后自动探测每个密钥支持的模型" : "";
+    return `<div class="row between model-toolbar"><span class="caption">${p.models.length} 个模型 · 拖动手柄排序 · 点击行展开${keyHint}</span><span class="row"><button class="link-btn" data-act="model-auto-level-all">自动获取思考等级</button><button class="link-btn" data-act="model-add-manual">手动添加</button><button class="link-btn strong" data-act="model-pick-open">获取模型</button></span></div>
+      <div class="model-list model-sort-list" aria-label="模型列表（可拖动排序）">${p.models.map(x => {
         const open = store.modelOpen === x.id;
-        return `<div class="model-item ${open ? "open" : ""}">
-          <div class="model-head" data-act="model-select" data-id="${esc(x.id)}">
+        return `<div class="model-item ${open ? "open" : ""}" data-model-card="${esc(x.id)}">
+          <div class="model-head" data-act="model-select" data-id="${esc(x.id)}" role="button" tabindex="0" aria-expanded="${open}">
+            <button class="drag-handle sm" data-drag-model="${esc(x.id)}" title="拖动排序（键盘：Alt+↑/↓）" aria-label="拖动排序模型 ${esc(x.name)}">${icon("drag", "ico-14")}</button>
             <span class="m-name">${esc(x.name)}</span>
             <span class="m-id mono">${esc(x.id)}</span>
-            <span class="m-tags">${x.modalities.map(t => `<span class="tag gray">${esc(t)}</span>`).join("")}</span>
+            <span class="m-tags">${x.modalities.map(t => `<span class="tag gray">${esc(t)}</span>`).join("")}${x.visionUnknown ? `<span class="tag amber">视觉未知</span>` : ""}${!x.levels.length && !x.modalities.includes("生图") ? `<span class="tag amber">档位未配</span>` : ""}</span>
             <span class="m-ctx">${x.context ? Math.round(x.context / 1000) + "K" : "—"}</span>
             <button class="icon-btn model-del" data-act="model-delete" data-id="${esc(x.id)}" title="删除模型">${icon("trash", "ico-14")}</button>
             <span class="m-chev">${icon(open ? "chevronUp" : "chevronDown", "ico-14")}</span>
           </div>
           ${open ? modelForm(p, x) : ""}
         </div>`;
-      }).join("") || `<div class="empty" style="padding:24px"><b>还没有模型</b><p>点击「获取模型」从上游拉取并勾选。</p></div>`}</div>`;
+      }).join("") || `<div class="empty" style="padding:24px"><b>还没有模型</b><p>点击「获取模型」从上游拉取清单并点选卡片。</p></div>`}</div>`;
   }
 
+  /* CR-059 B1：获取模型只拉清单（ID＋显示名＋上游明确给出的上下文），不请求思考等级/模态；卡片点选。 */
   function modelPickDialog(p) {
     const existing = new Set(p.models.map(m => m.id));
     const available = (p.availableModels || []).filter(m => !existing.has(m.id));
-    const body = `<div class="model-pick-list">${available.map(m => `<label class="model-pick-row"><input type="checkbox" data-pick-model="${esc(m.id)}"><span class="pick-main"><b>${esc(m.name)}</b><span class="mono">${esc(m.id)}</span></span><span class="tag gray">${esc((m.modalities || []).join(" / "))}</span><span class="caption">${m.context ? Math.round(m.context / 1000) + "K" : "—"}</span></label>`).join("") || `<div class="empty" style="padding:24px"><b>没有更多模型</b><p>上游返回的模型都已在列表中。</p></div>`}</div>
-      <div class="caption">勾选保存后会出现在模型列表；再点模型可配置模态与思考档位。</div>`;
-    openSubDialog(dlgShell("获取模型", `${p.name} · 从上游拉取`, body, `<button class="btn" data-act="close-sub">取消</button><button class="btn primary" data-act="model-pick-save">保存所选</button>`, "modal-md"));
+    if (!store.modelPick) store.modelPick = {};
+    const body = `<div class="pick-cards pick-grid">${available.map(m => {
+      const on = !!store.modelPick[m.id];
+      return `<button type="button" class="pick-card ${on ? "on" : ""}" data-act="model-pick-toggle" data-id="${esc(m.id)}" aria-pressed="${on}"><b>${esc(m.name)}</b><span class="mono">${esc(m.id)}</span><span class="caption">${m.context ? Math.round(m.context / 1000) + "K 上下文" : "上下文未知"}</span>${on ? `<span class="pick-check">${icon("check", "ico-14")}</span>` : ""}</button>`;
+    }).join("") || `<div class="empty" style="padding:24px"><b>没有更多模型</b><p>上游返回的模型都已在列表中。</p></div>`}</div>
+      <div class="caption">只拉取模型清单，不等待思考等级/模态等能力字段；点选卡片后保存，未知能力保持未知，稍后可用「自动获取思考等级」补齐。</div>`;
+    openSubDialog(dlgShell("获取模型", `${p.name} · 从上游拉取清单`, body, `<button class="btn" data-act="close-sub">取消</button><button class="btn primary" data-act="model-pick-save">保存所选</button>`, "modal-md"));
   }
 
-  function providerAdvanced(p) {
-    return `<div class="pm-section"><b>请求头</b><div class="caption">该路由的每个请求都会携带自定义请求头。</div>
-      ${p.headers.map((h, i) => `<div class="header-row"><input class="input" value="${esc(h.name)}" placeholder="例如 x-company"><input class="input" value="${esc(h.value)}" placeholder="值"><button class="icon-btn" data-act="provider-header-del" data-idx="${i}">${icon("x", "ico-14")}</button></div>`).join("")}
-      <button class="key-add" data-act="provider-header-add">${icon("plus", "ico-14")}添加请求头</button></div>
-      <div class="pm-section"><div class="row between"><b>请求伪装</b><div class="seg">${["关闭", "Codex", "Claude"].map(x => `<button aria-selected="${p.spoof === x}" data-act="provider-spoof" data-v="${x}">${x}</button>`).join("")}</div></div><div class="caption">按意见保留请求伪装，不提供指纹检测。</div></div>`;
+  /* ================= CR-059 r3 #4：生图配置（模型管理大标题同行最右侧图标按钮进入）。
+     参考 MIT 开源实现的形态与协议（标题行右端图标＋弹层卡片、OpenAI images 协议、
+     b64_json/url 双解析、参数降级链、错误分类与密钥脱敏）；本项目差异：
+     多生图模型有序列表＋拖动排序，第一个失败自动顺延第二个（参考项目无此机制，自建）。
+     生图作为内置 tool（generate_image）提供给 AI，随 workbench MCP 通道注入。
+     演示夹具：不发起真实请求。 ================= */
+  function imageGenDialog() {
+    const cfg = D.settings.imageGen;
+    const candidates = [];
+    D.settings.providers.forEach(p => p.models.forEach(m => {
+      if (m.modalities.includes("生图")) candidates.push({ key: p.id + "/" + m.id, label: `${p.name} · ${m.name}`, modelId: m.id });
+    }));
+    const ordered = cfg.order.map(key => candidates.find(c => c.key === key)).filter(Boolean);
+    const unused = candidates.filter(c => !cfg.order.includes(c.key));
+    const body = `<div class="imagegen-pane">
+      <div class="row between"><b>生图</b><div class="row"><span class="caption">${cfg.enabled ? "已开启 · tool 已注册" : "已关闭 · tool 注销"}</span><button class="switch" aria-checked="${cfg.enabled}" data-act="imagegen-toggle" aria-label="生图总开关"></button></div></div>
+      <div class="caption">开启后向 AI 提供 <span class="mono">generate_image</span> 工具（随内置 workbench MCP 注入）；关闭即注销，所有入口拒绝生成。</div>
+      <div class="ig-section"><b>生图模型（按顺序尝试，第一个失败自动用下一个）</b>
+        <div class="ig-model-list" aria-label="生图模型顺序（可拖动排序）">${ordered.map((c, i) => `<div class="ig-model-row" data-ig-model="${esc(c.key)}">
+          <button class="drag-handle sm" data-drag-ig="${esc(c.key)}" title="拖动排序（键盘：Alt+↑/↓）" aria-label="拖动排序生图模型 ${esc(c.label)}">${icon("drag", "ico-14")}</button>
+          <span class="ig-rank">${i + 1}</span>
+          <span class="ig-model-main"><b>${esc(c.label)}</b><span class="mono caption">${esc(c.modelId)}</span></span>
+          ${i === 0 ? `<span class="tag green">首选</span>` : `<span class="tag gray">备选 ${i}</span>`}
+          <button class="icon-btn" data-act="imagegen-remove" data-key="${esc(c.key)}" title="移出生图列表">${icon("x", "ico-14")}</button>
+        </div>`).join("") || `<div class="caption ig-empty">还没有生图模型；从下方候选添加，或先在供应商模型中把模态标为「生图」。</div>`}</div>
+        ${unused.length ? `<div class="ig-candidates"><span class="caption">候选（模态已标生图）：</span>${unused.map(c => `<button class="mini-card" data-act="imagegen-add" data-key="${esc(c.key)}">${esc(c.label)}</button>`).join("")}</div>` : ""}
+        <div class="caption">失败顺延规则：鉴权/端点不支持等不可修复错误也继续尝试下一个；全部失败时汇总各模型错误返回 AI。单模型内先做参数降级（response_format→quality→size→n），再换模型。</div>
+      </div>
+      <div class="ig-section"><b>默认参数</b>
+        <div class="four-col">
+          <div><label>尺寸</label><select class="select" id="ig-size">${["1024x1024", "2048x2048", "4096x4096"].map(s => `<option${cfg.defaults.size === s ? " selected" : ""}>${s}</option>`).join("")}</select></div>
+          <div><label>质量</label><select class="select" id="ig-quality">${["low", "medium", "high", "auto"].map(q => `<option${cfg.defaults.quality === q ? " selected" : ""}>${q}</option>`).join("")}</select></div>
+          <div><label>数量 n</label><select class="select" id="ig-n">${[1, 2, 3, 4].map(n => `<option${cfg.defaults.n === n ? " selected" : ""}>${n}</option>`).join("")}</select></div>
+          <div><label>超时</label><select class="select" id="ig-timeout">${[5, 10, 15, 30, 60].map(t => `<option value="${t}"${cfg.defaults.timeoutMin === t ? " selected" : ""}>${t} 分钟</option>`).join("")}</select></div>
+        </div>
+      </div>
+      <div class="ig-section"><b>输出目录</b><input class="input mono" id="ig-outdir" value="${esc(cfg.outputDir)}"><div class="caption">相对应用数据目录；同名文件永不覆盖（自动加序号后缀）。</div></div>
+      <div class="note-box info">${icon("info", "ico-14")} 协议：OpenAI 兼容 images（/images/generations，参考图走 /images/edits）；响应 b64_json 与 url 都支持。端点与密钥复用所选模型所属供应商的配置，不单独填写。Anthropic 端点无 images 接口，标为不支持并跳过。</div>
+    </div>`;
+    openSubDialog(dlgShell("生图配置", "多模型有序尝试 · 失败自动顺延 · 作为 tool 提供给 AI", body, `<button class="btn" data-act="close-sub">取消</button><button class="btn primary" data-act="imagegen-save">保存</button>`, "modal-md"));
   }
 
-  /* 技能 / MCP 增删 */
+  /* ================= CR-058：模型检测九针探针（设置 → 模型管理，供应商列表下方独立区块）。
+     设计稿演示：不发起任何真实网络请求；逐针状态与结论来自 D.settings.probeFixtures 夹具。
+     固定 9 针、无探针选择入口；历史记录入口在区块右上角，保留最近 10 条。 ================= */
+  const PROBE_ITEMS = [
+    ["P1", "连通与鉴权握手"], ["P2", "模型回显与跨档偷换"], ["P3", "响应 Schema 与 ID 规范"],
+    ["P4", "SSE 真流式与假首字"], ["P5", "网关响应头指纹"], ["P6", "System 金丝雀服从"],
+    ["P7", "隐藏注入与套壳嗅探"], ["P8", "多轮记忆保持"], ["P9", "Stop 序列截断"],
+    ["P10", "Max Tokens 硬截断"], ["P11", "原生工具调用验真"], ["P12", "Strict JSON Schema"],
+    ["P13", "动态逻辑与防背题"], ["P14", "并发混池快照"], ["P15", "识图多模态验真"],
+    ["P16", "Responses 协议探测"], ["P17", "输入 Token 对账"], ["P18", "流式输出对账"],
+    ["P19", "长前缀缓存命中"]
+  ];
+  const PROBE_STATUS_LABEL = { pass: "通过", warn: "警示", fail: "不通过", skip: "未执行", na: "不适用", pending: "等待", running: "执行中" };
+
+  function probeState() {
+    if (!store.probe) store.probe = { providerId: "", modelId: "", phase: "idle", done: 0, probes: [], result: null, histOpen: null };
+    return store.probe;
+  }
+
+  function probeGradeBadge(g) {
+    const key = String(g || "b").toLowerCase();
+    return `<span class="grade-badge ${key}" aria-label="等级 ${key}">${key.toUpperCase()}</span>`;
+  }
+
+  function probeVerdictTag(v) {
+    const tone = v === "真实" ? "green" : v === "存疑" ? "amber" : "";
+    const style = v === "假冒嫌疑" || v === "无法判定" ? " style=\"background:var(--danger-soft);color:var(--danger)\"" : "";
+    return `<span class="tag ${tone}"${style}>真伪 · ${esc(v)}</span>`;
+  }
+
+  function probeRow(i, item, st) {
+    const [code, name] = PROBE_ITEMS[i];
+    let dot = "pending", note = "", ms = "";
+    if (st.phase === "running") {
+      if (i < st.done && item) { dot = item.status; note = item.note; ms = item.ms + "ms"; }
+      else if (i === st.done) { dot = "running"; note = "探针执行中…"; ms = "—"; }
+    } else if (item) {
+      dot = item.status; note = item.note; ms = item.ms + "ms";
+    }
+    const label = PROBE_STATUS_LABEL[dot] || dot;
+    return `<div class="probe-row"><span class="p-code mono">${code}</span><span class="probe-dot ${dot}" role="img" aria-label="${label}"></span><span class="p-name">${name}${note ? `<span class="p-note mono">${esc(note)}</span>` : ""}</span><span class="p-ms">${ms}</span></div>`;
+  }
+
+  function probeSection() {
+    const st = probeState();
+    const providers = D.settings.providers.filter(p => p.enabled);
+    const provider = providers.find(p => p.id === st.providerId) || null;
+    const models = provider ? provider.models.filter(m => m.on !== false && !(m.modalities || []).includes("生图")) : [];
+    const model = models.find(m => m.id === st.modelId) || null;
+    const running = st.phase === "running";
+    const done = st.probes.length;
+    const pct = Math.round((done / PROBE_ITEMS.length) * 100);
+    const rows = `<div class="probe-rows" role="list" aria-label="十九针探针结果">${PROBE_ITEMS.map((_, i) => probeRow(i, st.probes[i], st)).join("")}</div>`;
+    // 结果区：空闲 / 进行中（进度）/ 完成
+    let resultBlock;
+    if (running) {
+      const cur = st.done < PROBE_ITEMS.length ? PROBE_ITEMS[st.done] : null;
+      resultBlock = `<div class="probe-result running">
+        <div class="probe-result-top">
+          <span class="probe-result-title">检测中</span>
+          <span class="caption probe-result-note">${cur ? esc(cur[0] + " " + cur[1]) : "正在连接目标网关…"}</span>
+          <span class="probe-count mono">${done}/${PROBE_ITEMS.length}</span>
+        </div>
+        <div class="probe-progress"><span class="probe-progress-fill" style="width:${pct}%"></span></div>
+      </div>`;
+    } else if (st.result) {
+      resultBlock = `<div class="probe-result done">
+        <div class="probe-result-top">
+          <span class="probe-score"><b>${st.result.score}</b><span class="caption">/ 100</span></span>
+          ${probeGradeBadge(st.result.grade)}
+          <span class="probe-tags">${probeVerdictTag(st.result.verdict)}<span class="tag gray">渠道 · ${esc(st.result.channel)}</span><span class="tag gray">${esc(st.result.duration)}</span></span>
+        </div>
+        <p class="caption probe-result-summary">${esc(st.result.summary)}</p>
+      </div>`;
+    } else {
+      const target = provider ? (model ? `${esc(provider.name)} · ${esc(model.name)}` : `${esc(provider.name)}（未选模型）`) : "尚未选择供应商";
+      resultBlock = `<div class="probe-result idle">
+        <div class="probe-result-top">
+          <span class="probe-result-title">待检测</span>
+          <span class="caption probe-result-note">${target}</span>
+        </div>
+      </div>`;
+    }
+    const hist = D.settings.probeHistory || [];
+    const histPop = st.histOpen ? `<div class="probe-hist-pop" role="listbox" aria-label="历史检测记录">
+        ${hist.length ? hist.map(h => `<button type="button" role="option" class="probe-hist-item${st.histPick === h.id ? " on" : ""}" data-act="probe-hist-pick" data-id="${esc(h.id)}">
+            <span class="h-when">${esc(h.time)}</span>
+            <span class="h-target">${esc(h.providerName)}<span class="mono"> · ${esc(h.modelId)}</span></span>
+            <span class="h-score mono">${h.score}</span>
+            ${probeGradeBadge(h.grade)}
+          </button>`).join("") : `<p class="caption probe-hist-empty">还没有检测记录</p>`}
+      </div>` : "";
+    return `<div class="probe-section" aria-label="模型检测">
+      <div class="probe-head">
+        <div><h3>模型检测</h3><span class="caption">固定 ${PROBE_ITEMS.length} 针黑盒探针 · 检测中转掺水（偷换模型 / 吞指令 / 裁历史 / 假流式）· 结果仅本地展示，不改写配置</span></div>
+        <div class="probe-hist-wrap">
+          <button class="btn sm" data-act="probe-history" aria-expanded="${st.histOpen ? "true" : "false"}">${icon("history", "ico-14")}历史记录${icon(st.histOpen ? "chevronUp" : "chevronDown", "ico-14")}</button>
+          ${histPop}
+        </div>
+      </div>
+      <div class="probe-pick">
+        <select class="select" id="probe-provider" aria-label="选择供应商"${running ? " disabled" : ""}>
+          <option value=""${st.providerId ? "" : " selected"} disabled>选择供应商</option>
+          ${providers.map(p => `<option value="${esc(p.id)}"${st.providerId === p.id ? " selected" : ""}>${esc(p.name)}</option>`).join("")}
+        </select>
+        <select class="select" id="probe-model" aria-label="选择模型"${!provider || running ? " disabled" : ""}>
+          <option value=""${st.modelId ? "" : " selected"} disabled>${provider ? "选择模型" : "先选择供应商"}</option>
+          ${models.map(m => `<option value="${esc(m.id)}"${st.modelId === m.id ? " selected" : ""}>${esc(m.name)} · ${esc(m.id)}</option>`).join("")}
+        </select>
+        <button class="btn sm primary" data-act="probe-run"${!provider || !model || running ? " disabled" : ""}>${running ? icon("clock", "ico-14") + " 检测中…" : icon("play", "ico-14") + " 开始检测"}</button>
+        <span class="caption probe-run-hint">端点与密钥自动取自已保存配置，无需填写；历史保留最近 10 次。</span>
+      </div>
+      ${resultBlock}
+      ${rows}
+    </div>`;
+  }
+
+  function probePickProvider(id) {
+    const st = probeState();
+    if (st.phase === "running") return;
+    st.providerId = id; st.modelId = ""; st.phase = "idle"; st.done = 0; st.probes = []; st.result = null;
+    refreshSettings();
+  }
+
+  function probePickModel(id) {
+    const st = probeState();
+    if (st.phase === "running") return;
+    st.modelId = id; st.phase = "idle"; st.done = 0; st.probes = []; st.result = null;
+    refreshSettings();
+  }
+
+  function probeRun() {
+    const st = probeState();
+    if (st.phase === "running") return;
+    const provider = D.settings.providers.find(p => p.id === st.providerId);
+    const model = provider && provider.models.find(m => m.id === st.modelId);
+    if (!provider || !model) { toast("请先选择供应商与模型"); return; }
+    const key = model.id.includes("lite") || model.id.includes("mini") || model.id.includes("flash") || model.id.includes("turbo") ? "downgraded" : model.id.includes("local") ? "localWarn" : "clean";
+    const fixture = ((D.settings.probeFixtures || {})[key] || (D.settings.probeFixtures || {}).clean);
+    st.phase = "running"; st.done = 0; st.probes = []; st.result = null;
+    refreshSettings();
+    const step = () => {
+      if (st.phase !== "running") return;
+      st.done++;
+      st.probes = fixture.probes.slice(0, st.done);
+      if (st.done >= 19) {
+        st.phase = "done";
+        st.result = { score: fixture.score, grade: fixture.grade, verdict: fixture.verdict, channel: fixture.channel, summary: fixture.summary, duration: fixture.duration, modelId: model.id, modelName: model.name, providerName: provider.name };
+        st.histOpen = null;
+      }
+      refreshSettings();
+      if (st.phase === "running") setTimeout(step, 280);
+      else toast(`检测完成：${st.result.score} 分 · ${st.result.grade} 级（演示数据，未发起真实请求）`);
+    };
+    setTimeout(step, 380);
+  }
+
+  function probeHistoryDialog() {
+    const st = probeState();
+    st.histOpen = !st.histOpen;
+    refreshSettings();
+  }
+
+  // 选中历史：收起下拉，结果区与 19 针列表切到该次结果。
+  function probePickHistory(id) {
+    const st = probeState();
+    const h = (D.settings.probeHistory || []).find(x => x.id === id);
+    st.histOpen = false;
+    if (!h) return;
+    st.histPick = id;
+    st.phase = "history";
+    st.done = h.probes.length;
+    st.probes = h.probes.slice();
+    st.result = { score: h.score, grade: h.grade, verdict: h.verdict, channel: h.channel, summary: h.summary, duration: h.duration, modelId: h.modelId, modelName: h.modelId, providerName: h.providerName };
+    refreshSettings();
+  }
+
+  document.addEventListener("change", e => {
+    const t = e.target;
+    if (!(t instanceof Element)) return;
+    if (t.id === "probe-provider") { probePickProvider(t.value); return; }
+    if (t.id === "probe-model") { probePickModel(t.value); return; }
+  }, true);
+
+
+  /* 技能 / MCP 增删（CR-059：旧手填弹窗由文件夹添加/扫描导入/图3表单替代；保留 JSON 文件导入次级入口） */
   function skillModal(mode) {
-    openSubDialog(dlgShell(mode === "import" ? "导入技能" : "添加技能", "演示：保存后立即出现在能力列表", `<div class="form-grid">
-      <div class="form-row"><label>技能名称</label><input class="input" id="sk-name" placeholder="例如：发布检查"></div>
-      <div class="form-row"><label>标识（slug）</label><input class="input" id="sk-slug" placeholder="release-check"></div>
-      <div class="form-row"><label>说明</label><input class="input" id="sk-desc" placeholder="一句话说明用途"></div>
-      ${mode === "import" ? `<div class="form-row"><label>来源</label><input class="input" id="sk-file" placeholder="选择本机 SKILL.md" value="D:/skills/release-check/SKILL.md"></div>` : `<div class="form-row"><label>正文</label><textarea class="textarea mono" id="sk-body" rows="4" placeholder="Markdown 过程性指令"></textarea></div>`}
-    </div>`, `<button class="btn" data-act="close-sub">取消</button><button class="btn primary" data-act="skill-save" data-mode="${mode}">${mode === "import" ? "导入" : "添加"}</button>`));
+    if (mode === "import") { skillScanDialog(); return; }
+    skillAddDialog();
   }
   function mcpModal(mode) {
-    openSubDialog(dlgShell(mode === "import" ? "导入 MCP" : "添加 MCP", "演示：重复名称会被拒绝", `<div class="form-grid">
-      <div class="form-row"><label>名称</label><input class="input" id="mc-name" placeholder="例如：workspace-files"></div>
-      <div class="form-row"><label>传输</label><select class="select" id="mc-transport"><option>stdio</option><option>HTTP</option></select></div>
-      <div class="form-row"><label>命令 / 地址</label><input class="input" id="mc-target" placeholder="demo-mcp-fs --root D:/work"></div>
-      ${mode === "import" ? `<div class="form-row"><label>配置文件</label><input class="input" id="mc-file" value="D:/config/mcp.json"></div>` : ""}
-    </div>`, `<button class="btn" data-act="close-sub">取消</button><button class="btn primary" data-act="mcp-save" data-mode="${mode}">${mode === "import" ? "导入" : "添加"}</button>`));
+    if (mode === "import") { mcpScanDialog(); return; }
+    mcpAddDialog();
+  }
+  function mcpImportJsonDialog() {
+    openSubDialog(dlgShell("从 JSON 文件导入 MCP", "次级入口：选择包含 mcpServers 的 JSON 配置", `<div class="form-grid">
+      <div class="form-row"><label>配置文件</label><input class="input" id="mc-file" value="D:/config/mcp.json"></div>
+      <div class="caption">演示：正式实现读取用户选中的 JSON（≤2MB），逐个服务器确认后导入受管配置。</div>
+    </div>`, `<button class="btn" data-act="mcp-scan-open">返回扫描</button><button class="btn primary" data-act="toast" data-msg="演示：JSON 导入需先选择真实文件">导入</button>`));
   }
 
   /* ================= CR-051 r2/r6：知识库图标选择器（与项目共用 50 个、6 组，10 色卡成对保存） ================= */
@@ -821,6 +1280,17 @@
   Screens.modelPickDialog = modelPickDialog;
   Screens.skillModal = skillModal;
   Screens.mcpModal = mcpModal;
+  Screens.skillAddDialog = skillAddDialog;
+  Screens.skillFolderChooseDialog = skillFolderChooseDialog;
+  Screens.skillScanDialog = skillScanDialog;
+  Screens.mcpScanDialog = mcpScanDialog;
+  Screens.mcpAddDialog = mcpAddDialog;
+  Screens.mcpImportJsonDialog = mcpImportJsonDialog;
+  Screens.imageGenDialog = imageGenDialog;
+  Screens.probeState = probeState;
+  Screens.probeRun = probeRun;
+  Screens.probeHistoryDialog = probeHistoryDialog;
+  Screens.probePickHistory = probePickHistory;
 })();
 
 

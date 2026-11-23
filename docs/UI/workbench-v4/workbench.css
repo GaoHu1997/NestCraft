@@ -1,0 +1,159 @@
+/* CR-054：会话中心工作台（原型同步稿样式）。
+   命名空间 wb-，避免与并行产物 cr054.css 的 sc- 冲突；只使用 tokens.css 现行令牌。 */
+
+.wb-page { max-width: none; margin: 0; padding: 0; height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.wb-page .ws-tabs { flex: 0 0 auto; margin-bottom: 0; }
+/* 工作台页签：纯图标（坐在电脑前的小人），不显示文字。
+   必须与相邻文字页签在视觉上对齐：
+   - 文字页签是 block + 44px 行盒，中文视觉中心略低于几何中心；
+   - 图标是真实 18px 高度，若仅靠 flex 居中会看起来偏上。
+   因此图标用与文字相同的 flex 居中，并加 1px 光学补偿。 */
+.ws-tabs .ws-tab.ws-tab-icon { display: inline-flex; align-items: center; justify-content: center; gap: 0; padding: 0 12px; min-width: 44px; line-height: 1; }
+.ws-tab-icon svg { flex: 0 0 auto; display: block; transform: translateY(1px); }
+.wb-page .ws-tab { white-space: nowrap; }
+/* 选中下划线与文字页签同宽内缩，避免图标页签下划线看起来更长 */
+.ws-tabs .ws-tab.ws-tab-icon[aria-selected="true"]::after { left: 10px; right: 10px; }
+.wb-share-note { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px; margin-right: 4px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); color: var(--muted); font-size: 10.5px; white-space: nowrap; }
+
+.wb-shell { position: relative; flex: 1 1 auto; min-height: 0; display: flex; background: var(--surface); }
+
+/* ---------- 左：会话历史 ----------
+   结构与类名复用 AI 侧栏历史浮层：.ai-history / .ai-history-h / .ai-history-search /
+   .ai-history-list / .ai-session / .ai-hist-* 全部由 ai.css + cr063.css + cr065.css 提供。
+   这里只约束“常驻栏”的尺寸与边界，不重定义内部样式，避免与 AI 侧栏不一致。 */
+.wb-hist { width: 288px; flex: 0 0 auto; min-width: 0; display: flex; flex-direction: column; min-height: 0;
+  border-right: 1px solid var(--line); background: var(--surface); }
+.wb-hist.ai-history { position: static; inset: auto; width: 288px; box-shadow: none; }
+.wb-hist .ai-history-h { flex: 0 0 auto; }
+.wb-hist .ai-history-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+
+/* ---------- 中：当前会话 ---------- */
+.wb-conv { flex: 1 1 auto; min-width: 320px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; background: var(--surface); }
+.wb-ch { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 9px 14px; border-bottom: 1px solid var(--line-soft); }
+.wb-drawer-btn { display: none; }
+.wb-ct { min-width: 0; }
+.wb-ct b { display: block; overflow: hidden; font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
+.wb-ct span { display: block; margin-top: 1px; color: var(--muted); font-size: 10.5px; }
+.wb-ch .spacer { flex: 1; }
+.wb-pill { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 7px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); color: var(--muted); font-size: 10.5px; white-space: nowrap; }
+.wb-pill.run { border-color: var(--primary-line); background: var(--primary-soft); color: var(--primary-strong); }
+
+.wb-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 14px 18px 8px; }
+/* 会话消息：结构与类名复用 AI 侧栏 .msg / .msg-body / .msg-time / .msg-user-block / .text / .tool，
+   全部由 ai.css 提供。这里只约束消息列的最大宽度与居中，让宽屏下可读性接近侧栏。 */
+.wb-scroll .msg { max-width: 860px; margin: 0 auto 14px; }
+.wb-scroll .ai-day { max-width: 860px; margin: 0 auto; }
+
+.wb-chat-empty { max-width: 860px; margin: 56px auto; text-align: center; color: var(--muted); font-size: 11.5px; line-height: 1.8; }
+.wb-chat-empty b { display: block; margin-bottom: 4px; color: var(--ink); font-size: 12.5px; }
+
+.wb-steps { max-width: 860px; margin: 0 auto 14px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); overflow: hidden; flex: 0 0 auto; }
+.wb-steps-h { display: flex; align-items: center; gap: 7px; padding: 7px 10px; border-bottom: 1px solid var(--line-soft); color: var(--muted); font-size: 11px; }
+.wb-steps-h b { color: var(--ink); font-size: 11px; }
+.wb-steps-h .spacer { flex: 1; }
+.wb-steps-b { padding: 7px 10px 9px; display: flex; flex-direction: column; gap: 5px; }
+.wb-step { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--ink-2); }
+.wb-sdot { width: 12px; height: 12px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 50%; font-size: 8px; color: #fff; }
+.wb-step.done .wb-sdot { background: var(--success); }
+.wb-step.run .wb-sdot { border: 1.5px solid var(--primary); border-top-color: transparent; background: transparent; animation: wb-spin .8s linear infinite; }
+.wb-step.todo .wb-sdot { border: 1.5px solid var(--line-strong); background: transparent; }
+.wb-step.fail .wb-sdot { background: var(--danger); }
+.wb-smeta { margin-left: auto; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+
+/* 输入区不再自定义样式：完全使用 ai.css 的 .ai-composer-wrap / .ai-composer / .ai-tools /
+   .ai-chip / .ai-send / .ai-stats；工作台只加 .wb-composer 做宽度与内边距对齐。 */
+
+/* ---------- 右：辅助栏 ---------- */
+.wb-aux { width: 360px; flex: 0 0 auto; min-width: 0; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); background: var(--surface); }
+.wb-shell.no-aux .wb-aux { display: none; }
+.wb-ah { flex: 0 0 auto; display: flex; align-items: center; gap: 7px; padding: 9px 11px; border-bottom: 1px solid var(--line-soft); }
+.wb-ah b { font-size: 12.5px; font-weight: 600; }
+.wb-ah .spacer { flex: 1; }
+.wb-atabs { flex: 0 0 auto; display: flex; gap: 2px; padding: 6px 9px; border-bottom: 1px solid var(--line-soft); overflow-x: auto; }
+.wb-atab { display: inline-flex; align-items: center; gap: 5px; height: 25px; padding: 0 9px; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--muted); font: inherit; font-size: 11px; white-space: nowrap; cursor: pointer; flex: 0 0 auto; }
+.wb-atab:hover { background: var(--surface-3); color: var(--ink); }
+.wb-atab[aria-selected="true"] { background: var(--primary-soft); color: var(--primary-strong); font-weight: 600; }
+.wb-ax { color: var(--muted); font-size: 10px; }
+.wb-ax:hover { color: var(--danger); }
+.wb-abody { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 11px 12px 14px; }
+.wb-af { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 7px 11px; border-top: 1px solid var(--line-soft); }
+.wb-af .spacer { flex: 1; }
+
+.wb-path { display: flex; align-items: center; gap: 5px; margin-bottom: 7px; color: var(--muted); font-size: 10.5px; min-width: 0; }
+.wb-path .ellipsis { min-width: 0; }
+.wb-ptitle { margin: 0 0 3px; font-size: 13px; font-weight: 650; line-height: 1.45; }
+.wb-pmeta { display: flex; flex-wrap: wrap; gap: 6px; margin: 5px 0 9px; }
+.wb-code { margin: 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2); color: var(--ink-2); font: 11px/1.75 var(--mono); white-space: pre-wrap; word-break: break-word; }
+.wb-code .ln { display: inline-block; width: 22px; color: var(--muted); user-select: none; }
+.wb-doc { font-size: 12px; line-height: 1.72; color: var(--ink-2); }
+.wb-doc h1, .wb-doc h2, .wb-doc h3 { margin: 11px 0 5px; font-size: 12.5px; color: var(--ink); }
+.wb-doc p { margin: 5px 0; }
+.wb-doc ul, .wb-doc ol { margin: 5px 0 5px 17px; }
+.wb-note { margin: 9px 0 0; padding: 7px 9px; border: 1px dashed var(--line); border-radius: var(--r-sm); background: var(--surface-2); color: var(--muted); font-size: 10.5px; line-height: 1.65; }
+.wb-src { display: flex; flex-direction: column; gap: 2px; }
+.wb-srow { display: flex; align-items: center; gap: 7px; width: 100%; padding: 7px 8px; border: 0; border-radius: var(--r-sm); background: transparent; color: inherit; font: inherit; font-size: 11.5px; text-align: left; cursor: pointer; }
+.wb-srow:hover { background: var(--surface-3); }
+.wb-fname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wb-smeta { color: var(--muted); font-size: 10px; flex: 0 0 auto; }
+.wb-backdrop { display: none; }
+
+/* ---------- 会话内可点击目标（实体 / 文件路径） ---------- */
+.wb-link { display: inline; padding: 0; border: 0; background: none; color: var(--primary-strong); font: inherit; text-align: left; cursor: pointer; border-bottom: 1px dashed var(--primary-line); }
+.wb-link:hover { border-bottom-style: solid; background: var(--primary-soft); }
+.tool .t-arg .wb-link { font: inherit; }
+
+/* ---------- AI 请求开栏提示条 ---------- */
+.wb-req { flex: 0 0 auto; display: flex; align-items: flex-start; gap: 7px; padding: 8px 10px; border-bottom: 1px solid var(--line-soft); background: var(--primary-soft); }
+.wb-req-ico { flex: 0 0 auto; display: inline-flex; margin-top: 2px; color: var(--primary-strong); }
+.wb-req-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.wb-req-main b { display: block; font-size: 11px; line-height: 1.45; color: var(--primary-strong); }
+.wb-req-main span { display: block; color: var(--muted); font-size: 10px; line-height: 1.55; overflow-wrap: anywhere; }
+.wb-req-x { flex: 0 0 auto; width: 18px; height: 18px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 3px; background: transparent; color: var(--muted); font-size: 10px; cursor: pointer; }
+.wb-req-x:hover { background: var(--primary-line); color: var(--ink); }
+
+/* 单实例：进入工作台时收起右侧 AI 栏，避免同一会话出现两个视图（工作台本身就是会话视图）。
+   例外：工作台的 CLI/权限/模型/添加 浮层锚在 .ai-panel 内，此时临时借出面板承载浮层。 */
+body.wb-active .ai-panel { display: none !important; }
+body.wb-active.wb-borrow-ai .ai-panel {
+  display: block !important;
+  position: fixed; z-index: 60; top: var(--topbar-h); right: 0; bottom: 0;
+  width: min(392px, 92vw); background: transparent; border: 0; box-shadow: none; pointer-events: none;
+}
+body.wb-active.wb-borrow-ai .ai-panel > :not(.ai-composer-wrap) { display: none !important; }
+/* 借用态必须保留 .ai-composer 盒子的布局尺寸，浮层才有非零宽度；
+   只把正文、输入框、统计与脚注藏起来，视觉上不留痕迹。 */
+body.wb-active.wb-borrow-ai .ai-panel .ai-composer-wrap { background: transparent; padding: 0; pointer-events: none; }
+body.wb-active.wb-borrow-ai .ai-panel .ai-composer { border-color: transparent; box-shadow: none; background: transparent; }
+body.wb-active.wb-borrow-ai .ai-panel .ai-composer textarea,
+body.wb-active.wb-borrow-ai .ai-panel .ai-stats,
+body.wb-active.wb-borrow-ai .ai-panel .ai-foot { visibility: hidden; }
+/* 只隐藏面板自己的 chip 按钮与发送键；锚点插槽、浮层与菜单保持可用，
+   否则浮层父级（.ai-anchor-slot）不可见会导致浮层尺寸为 0。 */
+body.wb-active.wb-borrow-ai .ai-panel .ai-tools button.ai-chip,
+body.wb-active.wb-borrow-ai .ai-panel .ai-tools button.ai-send { visibility: hidden; }
+body.wb-active.wb-borrow-ai .ai-panel .ai-tools { pointer-events: none; }
+body.wb-active.wb-borrow-ai .ai-panel .ai-menu,
+body.wb-active.wb-borrow-ai .ai-panel [data-ai-popup],
+body.wb-active.wb-borrow-ai .ai-panel [data-ai-popup] * { visibility: visible !important; pointer-events: auto !important; }
+body.wb-active .ai-toggle-btn { display: none; }
+/* 工作台输入区：沿用 AI 侧栏 .ai-composer-wrap 的内边距与宽度口径；
+   统计行保持 AI 侧栏的居中口径（不改成左对齐）。 */
+.wb-composer.ai-composer-wrap { padding: 8px 18px 12px; }
+.wb-composer .ai-composer { max-width: 860px; margin: 0 auto; }
+.wb-composer .ai-stats { max-width: 860px; margin: 0 auto; }
+.wb-composer .ai-tools { padding: 5px 7px 7px; }
+
+/* ---------- 窄屏：左右栏改覆盖式抽屉 ---------- */
+@media (max-width: 960px) {
+  .wb-drawer-btn { display: inline-grid; }
+  .wb-hist, .wb-aux { position: absolute; top: 0; bottom: 0; z-index: 45; width: min(86vw, 320px); box-shadow: var(--shadow-pop); display: none; }
+  .wb-hist { left: 0; }
+  .wb-aux { right: 0; width: min(88vw, 340px); }
+  .wb-shell.drawer-left .wb-hist { display: flex; }
+  .wb-shell.drawer-right .wb-aux { display: flex; }
+  .wb-shell.no-aux .wb-aux { display: none; }
+  .wb-shell.drawer-left .wb-backdrop, .wb-shell.drawer-right .wb-backdrop { display: block; position: absolute; inset: 0; z-index: 44; background: rgba(29, 33, 41, .45); }
+  .wb-scroll { padding: 12px 12px 8px; }
+  .wb-composer.ai-composer-wrap { padding: 8px 12px 12px; }
+  .wb-share-note { display: none; }
+}

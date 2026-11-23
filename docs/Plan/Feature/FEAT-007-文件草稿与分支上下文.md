@@ -20,6 +20,7 @@
 - [STORY-013：文件/Git 页签与 AI 分支上下文](../Story/STORY-013-文件Git页签与AI分支上下文.md)
 - [STORY-033：Git 管理正式实现](../Story/STORY-033-Git管理正式实现.md)
 - [STORY-034：编码区正式实现](../Story/STORY-034-编码区正式实现.md)
+- [STORY-085：Git 管理面板按参考图重构](../Story/STORY-085-Git管理面板按参考图重构.md)
 
 ## 关联与证据
 

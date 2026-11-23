@@ -34,13 +34,74 @@ window.AIPanel = (function () {
     </div></div></div>`;
   }
 
-  /* ---------------- 历史：覆盖在 AI 侧栏左侧的浮层，不参与布局 ---------------- */
+  /* ---------------- 历史：覆盖在 AI 侧栏左侧的浮层，不参与布局 ----------------
+     CR-063：默认加载最近 20 条，末尾「继续加载」文字按钮追加，支持当前作用域标题搜索。
+     CR-064：状态只看左侧标识（运行 spinner / 成功绿点 / 失败红点 / 待处理橘点 / 已读空）；
+     选中只用背景色、无边框、不写「当前」；底部显示当前会话 token；搜索旁为「重置」；
+     行内「…」菜单：复制会话 ID / 分叉 / 置顶 / 重命名 / 删除。 */
+  const HIST_PAGE = 20;
+  function sessionMark(s) {
+    if ((D.ai.runningIds || []).includes(s.id)) return { kind: "running", label: "运行中" };
+    if (s.id === store.aiSession) return { kind: "none", label: "已读" };
+    if (s.status === "success") return { kind: "unread-success", label: "未读 · 成功" };
+    if (s.status === "failed") return { kind: "unread-failed", label: "未读 · 失败" };
+    if (s.status === "pending") return { kind: "unread-pending", label: "待处理" };
+    return { kind: "none", label: "已读" };
+  }
   function historyRail() {
+    const kw = String(store.aiHistQuery || "").trim();
+    const lower = kw.toLowerCase();
+    // 置顶优先；其余保持数组顺序（正式实现由后端按 pinnedAt DESC, updatedAt DESC 排序）
+    const ordered = [...D.ai.sessions].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+    const matched = lower ? ordered.filter(s => String(s.title || "").toLowerCase().includes(lower)) : ordered;
+    const limit = Math.max(HIST_PAGE, Number(store.aiHistLimit) || HIST_PAGE);
+    const shown = matched.slice(0, limit);
+    const hasMore = shown.length < matched.length;
+    const current = D.ai.sessions.find(s => s.id === store.aiSession);
+    const pinned = !lower && current && !shown.some(s => s.id === current.id) ? current : null;
+    const state = store.aiHistState || "idle";
+    const mark = s => {
+      const m = sessionMark(s);
+      if (m.kind === "running") return `<span class="ai-hist-spin" role="status" aria-label="运行中" title="运行中"></span>`;
+      if (m.kind === "none") return `<span class="ai-hist-mark" aria-hidden="true"></span>`;
+      const cls = m.kind === "unread-success" ? "good" : m.kind === "unread-failed" ? "bad" : "warn";
+      return `<span class="ai-hist-dot dot-${cls}" role="img" aria-label="${esc(m.label)}" title="${esc(m.label)}"></span>`;
+    };
+    const menu = s => store.aiHistMenu === s.id ? `<div class="ai-hist-menu" role="menu" data-act="ai-hist-menu-noop">
+        <button role="menuitem" data-act="ai-hist-copy-id" data-id="${s.id}">${icon("copy", "ico-13")}复制会话 ID</button>
+        <button role="menuitem" data-act="ai-hist-fork" data-id="${s.id}"${(D.ai.runningIds || []).includes(s.id) ? ' disabled title="会话运行中，结束或停止后再分叉"' : ""}>${icon("branch", "ico-13")}分叉会话</button>
+        <button role="menuitem" data-act="ai-hist-pin" data-id="${s.id}">${icon("arrowUp", "ico-13")}${s.pinned ? "取消置顶" : "置顶"}</button>
+        <button role="menuitem" data-act="ai-hist-rename" data-id="${s.id}">${icon("edit", "ico-13")}重命名</button>
+        <button role="menuitem" class="danger" data-act="ai-del" data-id="${s.id}">${icon("trash", "ico-13")}删除</button>
+      </div>` : "";
+    const row = (s, extra = "") => {
+      const editing = store.aiHistEditId === s.id;
+      const title = editing
+        ? `<input id="ai-hist-rename-input" class="ai-hist-rename-input" data-act="ai-hist-edit-noop" value="${esc(store.aiHistEditValue ?? s.title)}" maxlength="200" aria-label="重命名会话标题">`
+        : `<b class="ellipsis">${s.pinned ? icon("arrowUp", "ico-12 ai-hist-pin-ico") : ""}${esc(s.title)}</b>`;
+      return `<div class="ai-session ${s.id === store.aiSession ? "active" : ""}${extra ? " pinned-row" : ""}${editing ? " editing" : ""}" role="button" tabindex="0" data-act="ai-switch" data-id="${s.id}" aria-current="${s.id === store.aiSession ? "true" : "false"}">
+        ${mark(s)}<span class="s-main">${title}<span>${esc(s.updated)} · ${esc(s.tokens)} · ${esc(s.duration)}</span>${s.sessionRole === "executor" && s.featureId ? `<span class="ai-hist-scope" title="执行特性：${esc(s.featureTitle || s.featureId)}">单特性 · ${esc(s.featureId)}</span>` : ""}</span><span class="ai-hist-menu-wrap"><button class="ai-hist-more-btn" data-act="ai-hist-menu" data-id="${s.id}" title="更多操作" aria-label="更多操作：${esc(s.title)}" aria-haspopup="menu" aria-expanded="${store.aiHistMenu === s.id}">${icon("more", "ico-14")}</button>${menu(s)}</span></div>`;
+    };
+    const empty = lower
+      ? `<div class="ai-hist-empty">没有匹配的会话<button class="link-btn" data-act="ai-history-all">清除搜索</button></div>`
+      : `<div class="ai-hist-empty">暂无历史会话</div>`;
+    const tail = state === "more"
+      ? `<div class="ai-hist-more loading" role="status" aria-live="polite">加载中…</div>`
+      : hasMore
+        ? `<button class="ai-hist-more" data-act="ai-history-more">继续加载 · 还剩 ${matched.length - shown.length} 条</button>`
+        : `<div class="ai-hist-end">已到全部</div>`;
+    const errorRow = state === "error"
+      ? `<div class="ai-hist-error" role="alert">加载失败，已加载内容保留<button class="link-btn" data-act="ai-history-retry">重试</button></div>`
+      : "";
+    const loadingFirst = state === "first" ? `<div class="ai-hist-loading" role="status" aria-live="polite">加载中…</div>` : "";
+    const searching = state === "search" ? `<div class="ai-hist-loading" role="status" aria-live="polite">搜索中…</div>` : "";
+    const body = state === "first"
+      ? loadingFirst
+      : `${errorRow}${searching}${pinned ? row(pinned, true) : ""}${shown.map(s => row(s)).join("")}${shown.length ? tail : ""}${!shown.length && !pinned && state !== "search" && state !== "error" ? empty : ""}`;
     return `<aside class="ai-history" data-ai-overlay="history" data-pane="ai-history" data-pane-default="296" data-pane-min="240" data-pane-max="420" role="dialog" aria-label="会话历史">
-      <div class="ai-history-h"><span class="ah-title">${icon("history", "ico-14")}<b>会话历史</b><span class="caption">${D.ai.sessions.length}</span></span><button class="icon-btn" data-act="ai-history-close" aria-label="关闭会话历史">${icon("x", "ico-14")}</button></div>
-      <div class="ai-history-list">${D.ai.sessions.map(s => `<button class="ai-session ${s.id === store.aiSession ? "active" : ""}" data-act="ai-switch" data-id="${s.id}" aria-current="${s.id === store.aiSession ? "true" : "false"}">
-        ${statusDot(s.status)}<span class="s-main"><b class="ellipsis">${esc(s.title)}</b><span>${esc(s.updated)} · ${esc(s.tokens)} · ${esc(s.duration)}</span>${s.sessionRole === "executor" && s.featureId ? `<span class="ai-hist-scope" title="执行特性：${esc(s.featureTitle || s.featureId)}">单特性 · ${esc(s.featureId)}</span>` : ""}</span><span class="s-state">${esc(statusText(s.status))}</span></button>`).join("")}</div>
-      <div class="ai-history-f"><button class="btn sm" style="width:100%" data-act="ai-new">${icon("plus", "ico-14")}新会话</button></div>
+      <div class="ai-history-h"><span class="ah-title">${icon("history", "ico-14")}<b>会话历史</b><span class="caption" title="已加载 / 全部">${state === "first" ? "…" : `${shown.length} / ${matched.length}`}</span></span><button class="icon-btn" data-act="ai-history-close" aria-label="关闭会话历史">${icon("x", "ico-14")}</button></div>
+      <div class="ai-history-search"><span class="ahs-ico">${icon("search", "ico-14")}</span><input id="ai-history-q" type="search" autocomplete="off" value="${esc(store.aiHistQuery || "")}" placeholder="搜索本项目会话标题" aria-label="搜索本项目会话标题"><button class="ahs-all" data-act="ai-history-all"${lower ? "" : " disabled"} title="${lower ? "清空搜索并重新查询" : "当前没有搜索词"}" aria-label="清空搜索并重新查询">重置</button></div>
+      <div class="ai-history-list">${body}</div>
     </aside>`;
   }
 
@@ -48,11 +109,11 @@ window.AIPanel = (function () {
   function agentDrop() {
     return `<div class="ai-drop ai-drop-agents" role="dialog" aria-label="子智能体">
       <div class="drop-h"><b>子智能体</b><span class="caption">${D.ai.subagents.length} 个 · 仅本会话</span></div>
-      <div class="drop-list">${D.ai.subagents.length ? D.ai.subagents.map(a => `<div class="agent-row">
+      <div class="drop-list">${D.ai.subagents.length ? D.ai.subagents.map(a => `<div class="agent-row" role="button" tabindex="0" data-act="ai-agent-open" data-agent-id="${esc(a.id)}" title="查看子智能体：${esc(a.title)}" aria-label="查看子智能体 ${esc(a.title)}，只读">
         ${cliLogo(a.cli, 24)}<span class="ar-main"><b class="ellipsis">${esc(a.title)}</b><span>${esc(a.model)} · ${esc(a.duration)} · ${esc(a.tokens)}</span></span>
         <span class="tag ${a.status === "失败" ? "red" : a.status === "待确认" ? "amber" : "green"}">${esc(a.status)}</span>
-        ${window.CR037?.agentLink(a) || ""}</div>`).join("") : '<div class="drop-empty">本会话没有子智能体。</div>'}</div>
-      <div class="drop-f">合成演示 · 不调用真实 CLI</div>
+        ${window.CR037?.agentLink(a) || ""}<span class="ar-open">${icon("chevronRight", "ico-12")}</span></div>`).join("") : '<div class="drop-empty">本会话没有子智能体。</div>'}</div>
+      <div class="drop-f">合成演示 · 点击行查看只读详情；记录仅本次运行可见</div>
     </div>`;
   }
 
@@ -206,10 +267,13 @@ window.AIPanel = (function () {
   function statsRow() {
     const s = D.ai.stats;
     const total = D.ai.stats.tokens.total;
+    // CR-065：无数据时不显示内容，但保留占位高度，避免输入区位移
+    const hasData = Number(s.rounds) > 0 || (total && total !== "0" && total !== "—");
+    if (!hasData) return `<div class="ai-stats is-empty" aria-hidden="true"></div>`;
     return `<div class="ai-stats">
-      ${statWrap("session", "会话统计", `${icon("refresh", "ico-14")}${s.rounds} 轮 · ${esc(s.tps)}`)}
-      ${statWrap("tokens", "Token 用量", `${icon("database", "ico-14")}${s.simulated ? esc(total) : (Number(String(total).replace(/[^0-9.]/g, "")) / 1e6).toFixed(2) + "M"} · 命中 ${esc(s.tokens.cacheHit)}`)}
-      ${statWrap("context", "上下文", `${icon("cpu", "ico-14")}上下文 ${esc(s.context.used)}`)}
+      ${statWrap("session", "会话统计", `${icon("sessionStats", "ico-14")}${s.rounds} 轮 · ${esc(s.tps)}`)}
+      ${statWrap("tokens", "Token 用量", `${icon("tokenUsage", "ico-14")}${s.simulated ? esc(total) : (Number(String(total).replace(/[^0-9.]/g, "")) / 1e6).toFixed(2) + "M"} · 命中 ${esc(s.tokens.cacheHit)}`)}
+      ${statWrap("context", "上下文", `${icon("contextUsage", "ico-14")}上下文 ${esc(s.context.used)}`)}
     </div>`;
   }
 
@@ -253,7 +317,53 @@ window.AIPanel = (function () {
 
   function cliLogo(id, size) { return UI.cliLogo(id, size); }
 
+  /* ---------------- CR-062：子智能体只读详情 ---------------- */
+  const currentAgent = () => D.ai.subagents.find(a => a.id === store.aiAgent) || null;
+  const agentState = s => s === "失败" ? "red" : s === "运行中" || s === "待确认" ? "amber" : s === "已停止" ? "gray" : "green";
+  const AGENT_KIND = { status: "状态", text: "说明", tool: "工具调用", result: "工具结果", output: "产出" };
+
+  function agentView(a) {
+    const tone = agentState(a.status);
+    const events = a.events || [];
+    return `<aside class="ai-panel ai-agent-view" aria-label="子智能体只读详情" style="width:${store.aiWidth}px">
+      <div class="ai-resize" data-act="ai-resize" title="拖动调整宽度"></div>
+      <div class="ai-top ai-agent-top">
+        <button class="icon-btn" data-act="ai-agent-back" title="返回主会话" aria-label="返回主会话">${icon("arrowLeft")}</button>
+        <nav class="ai-crumb" aria-label="会话位置">
+          <button class="ai-crumb-link" data-act="ai-agent-back" title="返回主会话">主会话</button>
+          <span class="ai-crumb-sep" aria-hidden>/</span>
+          <span class="ai-crumb-current ellipsis" title="${esc(a.title)}">${esc(a.title)}</span>
+        </nav>
+        <span class="spacer"></span>
+        <span class="ai-agent-state st-${tone}" role="status"><span class="ai-agent-dot dot-${tone}"></span>${esc(a.status)}</span>
+      </div>
+      <div class="ai-agent-meta">
+        ${cliLogo(a.cli, 16)}<span class="am-cli">${esc(a.cli || "CLI 未知")}</span>
+        <span class="sep">·</span><span>${esc(a.model || "模型未知")}</span>
+        <span class="sep">·</span><span>${esc(a.duration || "耗时未知")}</span>
+        <span class="sep">·</span><span>${esc(a.tokens || "tokens 未知")}</span>
+        ${a.taskId ? `<span class="ai-agent-task">任务 ${esc(a.taskId)}</span>` : ""}
+      </div>
+      <div class="ai-scroll ai-agent-timeline" id="ai-scroll">
+        <div class="ai-agent-note">${icon("eye", "ico-13")}子智能体记录仅本次运行可见；未上报的内容保持未知，不补造。</div>
+        ${events.length ? events.map(ev => `<div class="ai-agent-ev ${ev.isError ? "ev-error" : ""}">
+          <span class="ev-ico">${icon(ev.kind === "tool" ? "terminal" : ev.kind === "result" ? "check" : ev.kind === "status" ? "loader" : ev.kind === "output" ? "checkCircle" : "message", "ico-13")}</span>
+          <div class="ev-main">
+            <div class="ev-head"><span class="ev-kind">${AGENT_KIND[ev.kind] || "记录"}</span>
+              ${ev.status ? `<span class="ev-status st-${agentState(ev.status)}">${esc(ev.status)}</span>` : ""}
+              ${ev.toolName ? `<code class="ev-tool">${esc(ev.toolName)}</code>` : ""}
+            </div>
+            ${ev.text ? `<div class="ev-text ${ev.kind === "tool" || ev.kind === "result" ? "mono" : ""}">${esc(ev.text)}</div>` : ""}
+          </div></div>`).join("") : `<div class="ai-agent-empty"><b>暂无过程记录</b><p>${esc(a.output || "该子智能体尚未上报正文或工具调用。")}</p></div>`}
+      </div>
+      <div class="ai-agent-readonly">${icon("eye", "ico-13")}<span>子智能体由主会话派发，这里只读；输入与发送在主会话进行。</span><button class="btn sm" data-act="ai-agent-back">返回主会话</button></div>
+    </aside>`;
+  }
+
   function render() {
+    const agent = currentAgent();
+    if (store.aiAgent && agent) return agentView(agent);
+    if (store.aiAgent && !agent) store.aiAgent = null;
     const msgs = store.aiMessages;
     const cli = D.settings.clis.find(c => c.id === store.aiCli) || { id: "", name: "未配置 CLI" };
     const cm = currentModel(), busy = runtimeBusy();
@@ -300,13 +410,21 @@ window.AIPanel = (function () {
           </div>
         </div>
         ${statsRow()}
-        <div class="ai-foot"><span>Enter 发送 · Shift+Enter 换行</span><span>${esc(cli.name)} · ${esc(store.aiPermission)}</span></div>
       </div>
     </aside>`;  }
 
   function afterRender() {
     const sc = document.getElementById("ai-scroll");
     if (sc && store.aiStick !== false) sc.scrollTop = sc.scrollHeight;
+    // CR-063：搜索输入保持焦点与光标；继续加载后恢复列表滚动位置，避免视觉跳动。
+    const q = document.getElementById("ai-history-q");
+    if (q && store.aiHistFocus) {
+      q.focus();
+      const n = q.value.length;
+      try { q.setSelectionRange(n, n); } catch { /* type=search 在部分环境不支持选区，忽略 */ }
+    }
+    const hl = document.querySelector(".ai-history-list");
+    if (hl && store.aiHistScroll) { hl.scrollTop = store.aiHistScroll; store.aiHistScroll = 0; }
   }
 
   function switchSession(id) {
@@ -315,14 +433,17 @@ window.AIPanel = (function () {
     if (!s) return;
     window.CR037?.beforeSwitchSession(s);
     store.aiSession = id;
+    store.aiAgent = null;
     store.aiMessages = s.messages.length ? s.messages : [];
     s.status = "read";
     store.aiHistory = false;
+    store.aiHistLimit = 20; store.aiHistQuery = ""; store.aiHistFocus = false;
     render && UI.render();
   }
 
   function newSession(feature) {
     if (window.OfficeAI && OfficeAI.newSession()) return;
+    store.aiAgent = null;
     const cur = activeSession();
     cur.messages = store.aiMessages.slice();
     cur.tokens = cur.tokens || "0";

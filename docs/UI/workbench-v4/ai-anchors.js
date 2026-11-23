@@ -6,7 +6,13 @@
   const kinds = { "ai-cli": "cli", "ai-permission": "perm", "ai-model": "model" };
   const configActions = new Set([...Object.keys(kinds), "ai-cli-set", "ai-perm-set", "ai-model-provider", "ai-model-set", "ai-level"]);
   const busy = () => Boolean(store.aiBusy || store.aiRuntimeBusy);
-  const anchor = kind => document.querySelector(`.ai-panel [data-ai-anchor="${kind}"]`);
+  /* 锚点查找：默认在 AI 侧栏内。CR-054 工作台借用同一套浮层时，其按钮带 data-wb-anchor，
+     且此时 AI 面板处于借用态（不可见），因此优先命中工作台里可见的按钮，浮层才贴到用户点的位置。 */
+  const anchor = kind => {
+    const wb = document.querySelector(`.wb-composer [data-wb-anchor="${kind}"]`);
+    if (wb && wb.getClientRects().length) return wb;
+    return document.querySelector(`.ai-panel [data-ai-anchor="${kind}"]`);
+  };
   const popup = () => document.querySelector(".ai-panel [data-ai-popup]");
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(v, Math.max(lo, hi)));
   let frame = 0, observer = null, transaction = null;

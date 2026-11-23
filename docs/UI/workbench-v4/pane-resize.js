@@ -71,7 +71,10 @@
   function addToggle(group, record) {
     const button = document.createElement("button");
     button.className = "pane-toggle"; button.type = "button";
-    button.textContent = record.name;
+    /* CR-065：折叠按钮只留箭头图标，避免与底部状态文字争空间 */
+    button.textContent = "›";
+    button.setAttribute("aria-label", `展开${record.name}`);
+    button.title = `展开${record.name}`;
     button.addEventListener("click", e => {
       e.stopPropagation();
       visibility.set(record.key, !record.open);
@@ -93,16 +96,29 @@
       if (r.open && !r.overlay && !group.spec.overlay) budget -= r.effective;
       r.pane.classList.toggle("pane-collapsed", !r.open);
       r.pane.classList.toggle("pane-overlay", r.overlay);
-      r.pane.style.setProperty("--pane-width", r.effective + "px");
-      r.pane.style.setProperty("width", r.effective + "px", "important");
-      if (group.spec.overlay) r.pane.style.setProperty("position", "absolute", "important");
+      /* CR-063：窄屏下 overlay 浮层交给 CSS 媒体查询（fixed 全宽抽屉）。
+         内联 absolute + right:100% 会把浮层推到视口外，导致窄屏看不到历史列表。 */
+      if (group.spec.overlay && available <= 960) {
+        r.pane.style.removeProperty("position");
+        r.pane.style.removeProperty("width");
+        r.pane.style.removeProperty("max-width");
+      } else {
+        r.pane.style.setProperty("--pane-width", r.effective + "px");
+        r.pane.style.setProperty("width", r.effective + "px", "important");
+        if (group.spec.overlay) r.pane.style.setProperty("position", "absolute", "important");
+        r.pane.style.setProperty("max-width", "none", "important");
+      }
       r.pane.style.setProperty("min-width", "0", "important");
-      r.pane.style.setProperty("max-width", "none", "important");
       r.pane.dataset.paneWidth = String(Math.round(r.effective));
       r.handle.setAttribute("aria-valuemin", String(r.min));
       r.handle.setAttribute("aria-valuemax", String(Math.min(r.max, r.overlay || group.spec.overlay ? available - fixed - 16 : r.effective + budget)));
       r.handle.setAttribute("aria-valuenow", String(Math.round(r.effective)));
-      if (r.toggle) { r.toggle.setAttribute("aria-expanded", String(r.open)); r.toggle.title = `${r.open ? "收起" : "展开"}${r.name}`; }
+      if (r.toggle) {
+        r.toggle.setAttribute("aria-expanded", String(r.open));
+        r.toggle.textContent = r.open ? "›" : "‹";
+        r.toggle.title = `${r.open ? "收起" : "展开"}${r.name}`;
+        r.toggle.setAttribute("aria-label", `${r.open ? "收起" : "展开"}${r.name}`);
+      }
     });
       if (group.spec.overlay) return;
     if (getComputedStyle(group.root).display === "grid" || group.spec.fixed) {

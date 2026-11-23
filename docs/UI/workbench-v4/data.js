@@ -45,7 +45,14 @@ window.DEMO = (function () {
 
   const requirements = [
     {
-      id: "EPIC-01", kind: "epic", title: "可预约的社区活动", project: "PRJ-1042", status: "running",
+      /* UI-CR066：显式 Vision 父级，使 Vision → Epic → Feature → Story 为真实父子层级，
+         导图连线与目录都按此父子关系绘制，不再靠「无父项」兜底推断。 */
+      id: "VISION-01", kind: "vision", title: "预约服务产品愿景", project: "PRJ-1042", status: "running",
+      summary: "让参与者在可信时段上完成预约，让运营看得见占用与审计；本节点为设计夹具中的显式愿景父级。",
+      owner: "林澈", updated: "今天 14:10", estimate: "—"
+    },
+    {
+      id: "EPIC-01", kind: "epic", parent: "VISION-01", title: "可预约的社区活动", project: "PRJ-1042", status: "running",
       summary: "参与者选择活动时段完成预约，满额拒绝、取消回补，运营可查看占用。",
       owner: "林澈", updated: "今天 14:20", estimate: "5 周", progress: 62
     },
@@ -129,7 +136,7 @@ window.DEMO = (function () {
       deps: ["STORY-0201"], tests: "未执行", hash: "req 2a91bb · design —"
     },
     {
-      id: "EPIC-02", kind: "epic", title: "运营看板与审计", project: "PRJ-1042", status: "running",
+      id: "EPIC-02", kind: "epic", parent: "VISION-01", title: "运营看板与审计", project: "PRJ-1042", status: "running",
       summary: "运营查看时段占用、导出明细，管理员追溯关键操作。",
       owner: "周野", updated: "今天 12:02", estimate: "3 周", progress: 48
     },
@@ -752,10 +759,17 @@ describe("容量", () => {
 `
   };
 
+  /* CR-067：Git 面板样例按参考图补齐——仓库路径、本地/远程分支树、带父提交的提交图谱、
+     提交人/分支/时间筛选、ai 侧状态。全部为合成夹具，不对应真实仓库。 */
   const git = {
+    repoPath: "D:\\github\\AI_Delelovelop",
     branch: "feature/booking-idempotency",
     base: "main",
     ahead: 3,
+    behind: 0,
+    upstream: "origin/feature/booking-idempotency",
+    accel: { on: true, url: "https://gh-proxy.com/" },
+    credentialHosts: [{ host: "github.com", user: "oauth2", savedAt: "2026-11-21" }],
     changes: [
       { file: "src/booking/service.ts", state: "M", add: 41, del: 12, staged: true },
       { file: "src/booking/idempotency.ts", state: "A", add: 96, del: 0, staged: true },
@@ -763,10 +777,43 @@ describe("容量", () => {
       { file: "tests/idempotency.spec.ts", state: "A", add: 74, del: 0, staged: false },
       { file: "docs/adr/001-idempotency.md", state: "M", add: 12, del: 2, staged: false }
     ],
+    /* 本地/远程分支树：当前分支带 ↑↓ 轨道数，远程按 remote 分组。 */
+    branches: {
+      locals: [
+        { name: "feature/booking-idempotency", current: true, ahead: 3, behind: 0 },
+        { name: "main", current: false, ahead: 0, behind: 0 },
+        { name: "fix/capacity-race", current: false, ahead: 1, behind: 2 }
+      ],
+      remotes: [
+        { remote: "origin", branches: [
+          { name: "origin/feature/booking-idempotency", short: "feature/booking-idempotency", ahead: 3, behind: 0 },
+          { name: "origin/main", short: "main", ahead: 0, behind: 0 },
+          { name: "origin/fix/capacity-race", short: "fix/capacity-race", ahead: 1, behind: 2 }
+        ] }
+      ]
+    },
+    /* 提交带 parents，用于图谱车道；refs 区分 HEAD / tag / 远程 / 本地。 */
     commits: [
-      { sha: "a1f7c2d", msg: "feat(booking): 幂等键与响应快照", author: "周野", time: "今天 13:26" },
-      { sha: "9d04b18", msg: "test(booking): 满额与并发用例", author: "周野", time: "今天 12:48" },
-      { sha: "3c9e510", msg: "refactor: 容量扣减改为条件更新", author: "林澈", time: "昨天 19:02" }
+      { sha: "a1f7c2d", msg: "feat(booking): 幂等键与响应快照", author: "周野", time: "2026/11/22 13:26", parents: ["9d04b18"], refs: ["HEAD -> main", "origin/main", "origin/HEAD"] },
+      { sha: "9d04b18", msg: "test(booking): 满额与并发用例", author: "周野", time: "2026/11/22 12:48", parents: ["3c9e510"], refs: ["tag: v0.2.0"] },
+      { sha: "3c9e510", msg: "refactor: 容量扣减改为条件更新", author: "林澈", time: "2026/11/21 19:02", parents: ["b27d401", "8e5c1a3"], refs: [] },
+      { sha: "b27d401", msg: "Merge origin/main into feat/booking-idempotency", author: "林澈", time: "2026/11/21 18:40", parents: ["c04a8e2", "77b2f10"], refs: ["origin/feat/booking-idempotency"] },
+      { sha: "c04a8e2", msg: "docs(adr): 记录幂等键取舍与回滚", author: "周野", time: "2026/11/21 16:12", parents: ["77b2f10"], refs: [] },
+      { sha: "77b2f10", msg: "chore: 升级依赖并同步锁文件", author: "林澈", time: "2026/11/21 10:05", parents: ["5a1c9d0"], refs: [] },
+      { sha: "5a1c9d0", msg: "feat(booking): 预约表单校验与提交", author: "周野", time: "2026/11/20 21:30", parents: [], refs: ["tag: v0.1.0"] }
+    ],
+    commitFiles: {
+      "a1f7c2d": [
+        { path: "src/booking/service.ts", state: "M", add: 41, del: 12 },
+        { path: "src/booking/idempotency.ts", state: "A", add: 96, del: 0 }
+      ],
+      "9d04b18": [
+        { path: "tests/idempotency.spec.ts", state: "A", add: 74, del: 0 }
+      ]
+    },
+    remoteManager: [
+      { name: "origin", url: "https://github.com/GaoHu1997/NestCraft.git" },
+      { name: "upstream", url: "https://github.com/example/nestcraft.git" }
     ],
     diff: `@@ -38,12 +38,24 @@ export async function createBooking(input: CreateBookingInput) {
 -  const bookingId = await tx.insert("booking", {
@@ -1191,6 +1238,14 @@ describe("容量", () => {
   return {
     user, projects, statusMeta, requirements, tasks, design, files, office, git, knowledge, servers, terminal,
     settings: { providers, sdks, agents, skills, mcp, tools }, session,
+    /* UI-CR066 r2：数据库／领域设计模型（对应项目 docs/DB 下的设计文档）。
+       合成夹具，只用于演示模型作为项目级独立分支在导图与预览中的位置。 */
+    designModels: [
+      { id: "DB-001", title: "预约与容量模型", project: "PRJ-1042", relPath: "docs/DB/DB-001-预约与容量模型.md", summary: "booking、slot 与容量扣减的表结构与约束；取消回补在同一事务内提交。" },
+      { id: "DB-002", title: "用户与角色权限模型", project: "PRJ-1042", relPath: "docs/DB/DB-002-用户与角色权限模型.md", summary: "user、role 与只读运营角色的授权关系；操作审计留痕。" },
+      { id: "DB-003", title: "通知与消息模型", project: "PRJ-1042", relPath: "docs/DB/DB-003-通知与消息模型.md", summary: "站内消息与回执的读写路径；当前受消息通道配置阻塞。" },
+      { id: "DB-011", title: "主机与巡检模型", project: "PRJ-1031", relPath: "docs/DB/DB-011-主机与巡检模型.md", summary: "host、group 与巡检指标的存储；高风险命令逐次审批留档。" }
+    ],
     clock: "14:32", date: "2026-11-19 周四"
   };
 })();

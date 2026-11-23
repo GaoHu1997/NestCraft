@@ -1,6 +1,6 @@
 # LLD-CR046：右上角软件更新入口实现方案
 
-- 关联需求／Story／AC：[CR-046](../PRD/CR-046-右上角软件更新入口.md)、[STORY-064](../Plan/Story/STORY-064-主界面按评审意见重构.md#cr-046右上角软件更新入口) AC-35～39；UI 基准 [UI-CR046](UI-CR046-右上角更新入口.md)。
+- 关联需求／Story／AC：[CR-046](../PRD/CR-046-右上角软件更新入口.md)、[STORY-064](../Plan/Story/STORY-064-主界面按评审意见重构.md#cr-046右上角软件更新入口) AC-35～39；UI 基准 [UI-CR046](../UI/文档/UI-CR046-右上角更新入口.md)。
 - 本次解决的问题：应用没有更新能力；用户希望有更新时标题栏出现「更新」、下载校验后变「重启」，并同时适配安装版与免安装版。
 - 不在本次范围：更新说明弹窗、跳过版本、自动更新开关、差分更新、断点续传、代码签名、发布流程改造；正式源码改动以用户明确指令「再改代码实现」为授权依据。
 
@@ -46,7 +46,7 @@ https://github.com/GaoHu1997/NestCraft/releases/latest/download/nestcraft-win64.
 
 1. 环境变量 `NESTCRAFT_UPDATE_FEED`（单个 URL，设置后只用它，便于强制指定与测试）。
 2. `<app_data>/update/feed.json`：内容为单个或多个 URL，逗号／空白／换行分隔，只接受 `http://`、`https://`。
-3. 内置默认地址。
+3. 内置默认候选：默认清单地址的「直连 + 各 GitHub 加速镜像」列表（见 §2.2.1）。
 
 清单结构（只允许 `installer`／`portable` 两类资产）：
 
@@ -72,7 +72,18 @@ https://github.com/GaoHu1997/NestCraft/releases/latest/download/nestcraft-win64.
 
 - 字段校验：`version` 非空；资产 `url` 必须 `http(s)`；`sha256` 必须 64 位十六进制；`size` 允许 0 但大于 0 时严格校验。
 - 只取当前形态资产；另一形态缺失不影响本形态；当前形态缺失时 `update_available=false` 并记录原因，不显示可安装状态。
-- 不走第三方加速代理；镜像由清单显式声明，校验仍以清单 SHA-256 为准。
+
+### 2.2.1 GitHub 加速候选（BUG-001 修复）
+
+直连 GitHub Release 在部分网络下会卡在 `release-assets.githubusercontent.com` 的连接重置上，表现为「拉取更新清单失败」，此时用户既看不到更新也无法自更新。因此内置一份前缀式加速镜像列表，规则如下：
+
+- **展开规则**：`{加速器前缀}{原始 GitHub 地址}`。清单与安装包都走同一套展开；只有 `github.com`、`raw.githubusercontent.com`、`objects.githubusercontent.com`、`release-assets.githubusercontent.com`、`codeload.github.com` 会被展开，其他域名原样使用。
+- **顺序语义**：候选顺序为「直连 → 加速镜像（按列表顺序）→ 清单声明的 `mirrors`」。顺序只影响首选速度，不影响正确性：任一源成功即用，失败自动切下一个。列表靠前的为实测可用源，靠后的保留作兜底（镜像会出现 429／403 等临时限流，仍可作为下一轮候选）。
+- **安全边界**：镜像只承担传输，安装包下载完成与安装前都按清单 `sha256` 完整校验，哈希不符即删除并切下一个源；清单本身来自发布仓库，加速器不参与内容生成。
+- **失败体验**：清单探测走较短的连接／读取超时（6s／12s），总等待上限 45s，超限放弃剩余候选；最终错误消息说明已尝试的源数量，并最多列出 3 条源错误，避免界面提示被十几个源的失败串撑满。
+- **慢源保护**：镜像的实际下载速度差异很大（同一安装包实测约 10KB/s～320KB/s）。启动阶段 30s 内收不到 512KiB（<17KB/s）视为该源不可用立即切源；单源总时限 600s 兜底，超时丢弃半包切下一个候选，避免更新长时间停在慢源上。候选顺序按实测下载可用性排列（`hub.ddayh.com` 优先）。
+- **代理**：`NESTCRAFT_UPDATE_PROXY` 优先，其次 `HTTPS_PROXY`／`ALL_PROXY`／`HTTP_PROXY`（大小写均认）；都未设置时仍读取系统环境变量代理，不再有任何代理即直连。注意只识别环境变量，不读取 Windows「Internet 选项」里的系统代理/PAC；使用 Clash 等工具的用户需要用 `NESTCRAFT_UPDATE_PROXY` 显式指定，否则走加速镜像兜底。
+- **覆盖能力不变**：`NESTCRAFT_UPDATE_FEED` 与 `feed.json` 仍是强制指定（只尝试给定地址），便于内网或指定 tag 场景；内置加速只作用于默认候选。
 
 ### 2.3 版本比较
 
@@ -92,6 +103,7 @@ https://github.com/GaoHu1997/NestCraft/releases/latest/download/nestcraft-win64.
 ### 2.5 下载与校验
 
 - 使用 `ureq::AgentBuilder`，连接超时 10s、单次读超时 30s；在 `tauri::async_runtime::spawn_blocking` 中执行，避免阻塞 UI 线程。
+- 下载候选按 §2.2.1 展开：主地址若为 GitHub 直链，先直连、再逐个加速镜像，最后追加清单声明的 `mirrors`；去重后逐个尝试，任一成功即用。单个候选失败（含大小或哈希不符）立即删除 `.part` 并切下一个。
 - 暂存目录 `<app_data>/update/`；临时文件 `update.part`，落位名 `update-staged.exe`（两形态共用，内容由清单决定）。
 - 分块 64 KiB 写入，累计 `done`、按 1 秒窗口计算 `speed`；每块后更新全局进度并 `emit("update-progress", ...)`；前端同时以 700ms 轮询 `update_status` 兜底。
 - 下载完成：若清单 `size>0` 且实际大小不等 → 失败；计算 SHA-256，不匹配 → 删除 `.part`、失败；匹配 → `rename` 为 `update-staged.exe`，状态 `ready`，写入 `staged.json`（版本、sha256、形态）供重启后恢复。
@@ -136,7 +148,7 @@ https://github.com/GaoHu1997/NestCraft/releases/latest/download/nestcraft-win64.
 - 点击 `available` → `update_download`；监听 `update-progress` 更新进度，轮询 `update_status` 兜底；成功后 `ready`。
 - 点击 `ready` → `update_apply`；失败恢复 `ready` 并 Toast 提示。
 - 失败提示复用 `src/components/ui.tsx` 的 `useToast`；错误文案直接来自后端。
-- 状态机与样式按 [UI-CR046](UI-CR046-右上角更新入口.md)：54×22 文字胶囊，绿「更新」、橙「重启」、边框进度、加载环。
+- 状态机与样式按 [UI-CR046](../UI/文档/UI-CR046-右上角更新入口.md)：54×22 文字胶囊，绿「更新」、橙「重启」、边框进度、加载环。
 - 卸载时清理监听与定时器；页面不可见不改变状态。
 
 ## 3. 数据、权限、安全与兼容
@@ -144,7 +156,7 @@ https://github.com/GaoHu1997/NestCraft/releases/latest/download/nestcraft-win64.
 - **数据**：不新建数据库表、不迁移、不改现有 schema；只写 `<app_data>/update/` 下的暂存包、`staged.json` 与 `feed.json`（可选）。DB 不适用，理由：更新状态是瞬时本机安装状态，不参与业务数据与多设备同步。
 - **权限**：只读网络与自身安装目录；不在应用内提权；安装版由安装包自行处理 UAC；免安装版仅在 exe 目录可写时允许落位，不可写时返回错误。
 - **安全**：只允许 `http(s)`；SHA-256 必填并在下载后、安装前各校验一次；固定落盘路径；不执行未校验文件；失败清理临时文件；不记录凭据。
-- **兼容**：Windows 10/11 x64；`http(s)` 代理沿用系统环境变量（ureq 默认）；无更新源或离线时静默；版本号取 `CARGO_PKG_VERSION`，与 `tauri.conf.json`／`package.json` 保持一致由发布流程保证。
+- **兼容**：Windows 10/11 x64；`http(s)` 代理沿用系统环境变量（ureq 读取 `HTTPS_PROXY`／`ALL_PROXY`／`HTTP_PROXY`，专用变量 `NESTCRAFT_UPDATE_PROXY` 优先）；无更新源或离线时静默；版本号取 `CARGO_PKG_VERSION`，与 `tauri.conf.json`／`package.json` 保持一致由发布流程保证。GitHub 直连不可达时按 §2.2.1 切加速镜像。
 - **并发**：下载单飞；apply 期间忽略重复点击；检查与下载互不覆盖状态。
 
 ## 4. 实现步骤与验证
@@ -168,7 +180,7 @@ https://github.com/GaoHu1997/NestCraft/releases/latest/download/nestcraft-win64.
 | 不使用 Tauri updater 插件 | 需要自己实现下载、校验与落位 | 复用现有 `ureq`／`sha2`；逻辑集中在一个模块并单测 |
 | NSIS `/S` | 安装器是否完全无界面、是否需要 UAC 取决于其配置 | 文案不承诺无界面；失败保留 ready 可重试 |
 | 形态判定 | 无 marker、无卸载器的绿色版会被判为 unsupported | 免安装构建写入 marker；文档明确；不猜测目录可写性作为唯一依据 |
-| 更新源 | 默认仓库与清单名待确认 | 常量集中、可用环境变量覆盖；Q-046-01 |
+| 更新源 | 默认仓库与清单名待确认；直连 GitHub 在部分网络会被重置 | 常量集中、可用环境变量覆盖（Q-046-01）；内置「直连 + 加速镜像」候选，按 §2.2.1 逐级兜底 |
 | 大文件下载 | 无断点续传 | 本轮范围外；失败重下，`.part` 清理 |
 | 安装版替换时机 | 安装器可能在应用退出前开始 | 启动安装器后立即退出；安装器自身负责文件占用处理 |
 
@@ -184,3 +196,4 @@ https://github.com/GaoHu1997/NestCraft/releases/latest/download/nestcraft-win64.
 | 2026-11-20 | CI 环境适配：GitHub Windows runner 所在卷未阻止对已打开目录的 rename，且重建同名目录时复用 `creation_time`（NTFS file system tunneling），`knowledge_parent_change_and_symlink_are_rejected` 的 pin 断言在该卷上只记录日志；符号链接替换断言仍生效。产品侧 `SafeRoot` 校验未放宽 | CI run 44769606280 失败、44770443847 通过；本地仍严格通过 |
 | 2026-11-22 | 0.0.2 发布启动：版本统一为 0.0.2（package.json、tauri.conf.json、Cargo.toml、两份 lock 同步）；提交 CR-049~CR-056 批量成果（文档 fd56a86、源码 c4cbe8e）并推送 v0.0.2 标签触发 release-windows 流水线，仍只发布 Windows x64 免安装 exe | 用户 2026-11-22 02:06 指令「五个小时后提交代码到 GitHub 并发布 0.0.2」；发布前本地验证 npm run build 与 cargo test --lib（205 通过）均绿 |
 | 2026-11-22 | 0.0.2 发布验证：CI（run 44961327296）与发布构建（run 44961333017）均 success；Release `v0.0.2` 含 exe／zip／`.sha256`／`nestcraft-win64.json` 四资产，`releases/latest` 指向 v0.0.2；清单、校验文件与实际下载 exe 三方 SHA-256 一致（73848345…b4062eef），exe 大小 23,085,056 字节与清单一致，VersionInfo 产品版本 0.0.2；zip 含 `NestCraft.exe`、`portable.marker`、`README.txt`。GUI 启动验证未执行（无人值守），列为待用户验收项 | 用户 2026-11-22 02:06 指令；Actions run 结论与 Release 资产逐项核对 |
+| 2026-11-22 | BUG-001 修复：更新检查报「拉取更新清单失败」。新增 §2.2.1 GitHub 加速候选与 §2.5 下载候选展开；清单探测改用较短的 6s／12s 超时并加 45s 总预算，错误消息限长；支持 `NESTCRAFT_UPDATE_PROXY` 与系统代理环境变量。实测本机直连 GitHub Release 资产被连接重置（curl http=000），加速镜像 `kenyu.ggff.net`／`hub.ddayh.com` 可取到清单 v0.0.2；实网回退与整包 SHA-256 校验见验证记录 | 用户 2026-11-22 报错并要求对照参考项目补齐加速配置 |

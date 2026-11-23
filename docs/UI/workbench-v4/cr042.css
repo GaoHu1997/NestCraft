@@ -20,7 +20,7 @@
 }
 html[data-theme="dark"] .ai-history { box-shadow: -14px 0 34px rgba(0, 0, 0, .5); }
 @keyframes aiHistIn { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: none; } }
-.ai-history-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 8px 8px 12px; border-bottom: 1px solid var(--line-soft); }
+.ai-history-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 8px 8px 12px; }
 .ai-history-h .ah-title { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; min-width: 0; }
 .ai-history-h .ah-title .ico { color: var(--muted); }
 .ai-history-h .icon-btn { width: 26px; height: 26px; flex: 0 0 auto; }

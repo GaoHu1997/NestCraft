@@ -106,6 +106,7 @@ window.UI = (function () {
 <symbol id="expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9V3h6M15 3h6v6M21 15v6h-6M9 21H3v-6"/></symbol>
 <symbol id="collapse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v6H3M21 9h-6V3M15 21v-6h6M3 15h6v6"/></symbol>
 <symbol id="layout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12"/></symbol>
+<symbol id="atDesk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8.5" cy="5" r="2.3"/><path d="M8.5 7.6v5.4M8.5 9.4h4.2M5.6 13h6.2"/><rect x="13" y="9" width="6.6" height="5" rx=".9"/><path d="M16.3 14v2M3.5 16h17M5.5 16v3M18.5 16v3"/></symbol>
 <symbol id="alignLeft" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v16M8 6h12M8 12h8M8 18h12"/></symbol>
 <symbol id="alignCenter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M4 6h16M7 12h10M4 18h16"/></symbol>
 <symbol id="alignRight" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 4v16M4 6h12M8 12h8M4 18h12"/></symbol>
@@ -181,6 +182,11 @@ window.UI = (function () {
     panelLeft: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>',
     history: '<rect x="3" y="4" width="13.5" height="16" rx="2.5"/><path d="M6.5 8.5h6.5M6.5 12h6.5M6.5 15.5h4"/><path d="M20.5 7.5v9.5a3 3 0 0 1-3 3H6.5"/>',
     gauge: '<path d="M12 21a9 9 0 1 1 9-9"/><path d="M12 12l5.2-3.6"/><circle cx="12" cy="12" r="1.6"/>',
+    sessionStats: '<path d="M4 19.5h16"/><path d="M7.5 19.5v-6"/><path d="M12 19.5V8"/><path d="M16.5 19.5v-9"/>',
+    tokenUsage: '<rect x="4.5" y="6" width="15" height="12" rx="2"/><path d="M8 10h8"/><path d="M8 13.5h5"/>',
+    contextUsage: '<rect x="7" y="4.5" width="10" height="8" rx="1.5"/><path d="M4.5 9.5v6A1.5 1.5 0 0 0 6 17h8.5"/>',
+    aiMark: '<path d="M3.5 19 7.4 5l3.9 14"/><path d="M5.1 14.2h4.6"/><path d="M14.3 5h4.4"/><path d="M16.5 5v14"/><path d="M14.3 19h4.4"/>',
+    aiBot: '<rect x="4.5" y="7.5" width="15" height="10.5" rx="3"/><path d="M12 7.5V4.8"/><circle cx="12" cy="3.7" r="1"/><path d="M9.2 11.2v1.8"/><path d="M14.8 11.2v1.8"/><path d="M9.5 15.3h5"/>',
     eye: '<path d="M2.6 12S6.2 5.8 12 5.8 21.4 12 21.4 12 17.8 18.2 12 18.2 2.6 12 2.6 12z"/><circle cx="12" cy="12" r="3"/>',
     bulb: '<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8V16h7.2v-2.2A6 6 0 0 0 12 3z"/>',
     steps: '<path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 5.6 1.4 1.4L7.4 4.5"/><circle cx="4.6" cy="12" r="1.2"/><circle cx="4.6" cy="18" r="1.2"/>',
@@ -237,6 +243,7 @@ window.UI = (function () {
     expand: '<path d="M3 9V3h6M15 3h6v6M21 15v6h-6M9 21H3v-6"/>',
     collapse: '<path d="M9 3v6H3M21 9h-6V3M15 21v-6h6M3 15h6v6"/>',
     layout: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12"/>',
+    atDesk: '<circle cx="8.5" cy="5" r="2.3"/><path d="M8.5 7.6v5.4M8.5 9.4h4.2M5.6 13h6.2"/><rect x="13" y="9" width="6.6" height="5" rx=".9"/><path d="M16.3 14v2M3.5 16h17M5.5 16v3M18.5 16v3"/>',
     alignLeft: '<path d="M4 4v16M8 6h12M8 12h8M8 18h12"/>',
     alignCenter: '<path d="M12 3v18M4 6h16M7 12h10M4 18h16"/>',
     alignRight: '<path d="M20 4v16M4 6h12M8 12h8M4 18h12"/>',
@@ -265,11 +272,14 @@ window.UI = (function () {
     const missing = !canonical;
     return `<svg class="ico ${esc(cls || "")}${missing ? " icon-missing" : ""}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ${missing ? `role="img" aria-label="缺失图标：${esc(name)}" data-missing-icon="${esc(name)}"` : 'aria-hidden="true"'}>${missing ? `<title>缺失图标：${esc(name)}</title>` : ""}<use href="#${canonical || "error"}"></use></svg>`;
   }
+  /* 品牌标志资源版本：SVG 内容变更时递增，使浏览器缓存失效（避免旧画布尺寸继续生效）。 */
+  const BRAND_ASSET_VERSION = { grok: 2 };
   function cliLogo(id, size) {
     const known = ["claude", "codex", "grok"].includes(id);
     const px = [14, 16, 18, 20, 24, 28, 32, 48].includes(Number(size)) ? Number(size) : 20;
     const status = known ? "官方资源加载中；失败标记未就绪" : id === "dsh" ? "无可核验的独立官方 CLI 标志 · not available" : "官方图标资源未就绪";
-    return `<span class="cli-logo cli-brand ${known ? "asset-pending" : "asset-unavailable"}" style="width:${px}px;height:${px}px" title="${esc(id + " · " + status)}" aria-label="${esc(id + " · " + status)}" data-cli-brand="${esc(id)}">${known ? `<img src="./brand-icons/${id}.svg" alt="${esc(id)} 官方品牌标志" data-cli-asset="${esc(id)}">` : icon("error", "ico-14")}<span class="sr-only">${esc(status)}</span></span>`;
+    const ver = BRAND_ASSET_VERSION[id] ? `?v=${BRAND_ASSET_VERSION[id]}` : "";
+    return `<span class="cli-logo cli-brand ${known ? "asset-pending" : "asset-unavailable"}" style="width:${px}px;height:${px}px" title="${esc(id + " · " + status)}" aria-label="${esc(id + " · " + status)}" data-cli-brand="${esc(id)}">${known ? `<img src="./brand-icons/${id}.svg${ver}" alt="${esc(id)} 官方品牌标志" data-cli-asset="${esc(id)}">` : icon("error", "ico-14")}<span class="sr-only">${esc(status)}</span></span>`;
   }
   /* CR-051：扩展名 → 图标符号 + 类型色令牌（与 UI-CR051 §5.2 映射表唯一来源一致）。 */
   const FILE_TYPE_META = {
@@ -446,6 +456,16 @@ window.UI = (function () {
     gitBranch: "feature/booking-idempotency",
     gitMessage: "",
     gitSection: "changes",
+    /* CR-067：Git 面板演示状态（筛选、展开组、弹层、展开的提交）。 */
+    gitBranchQuery: "",
+    gitHistoryAuthor: "",
+    gitHistoryBranch: "",
+    gitHistoryRange: "all",
+    gitOpenGroups: { local: true, remote: false },
+    gitOpenCommit: null,
+    gitCommitMenuOpen: false,
+    gitAccelOpen: false,
+    gitCredOpen: false,
     kbId: "KB-01",
     kbDoc: "KD-011",
     kbQuery: "",
@@ -466,12 +486,29 @@ window.UI = (function () {
     sdkOpen: null,
     sdkTab: "cli",
     cliOpen: "claude",
+    /** CR-059 r4：任务模型路由的单行折叠态与当前选中标签（`<cliId>` → bool / `fallback`|槽索引）。 */
+    cliRouteOpen: {},
+    cliRouteSel: {},
     skillDialog: null,
     mcpDialog: null,
     aiOpen: true,
     aiWidth: 372,
     aiHistory: false,
+    /** CR-063：历史会话分批加载（每批 20 条）、全项目标题搜索与「全部」模式。 */
+    aiHistLimit: 20,
+    aiHistQuery: "",
+    aiHistFocus: false,
+    aiHistScroll: 0,
+    /** CR-063：idle | first（首批加载中）| more（追加中）| search（搜索中）| error（失败）。 */
+    aiHistState: "idle",
+    /** CR-064：当前展开「…」菜单的会话 id；null 表示未展开。 */
+    aiHistMenu: null,
+    /** CR-064：正在原位重命名的会话 id 与输入值。 */
+    aiHistEditId: null,
+    aiHistEditValue: "",
     aiTop: null,
+    /** CR-062：当前查看的子智能体 id；null 表示主会话视图。 */
+    aiAgent: null,
     aiBgOpen: null,
     aiStepsOpen: true,
     aiModelQuery: "",
@@ -483,7 +520,7 @@ window.UI = (function () {
     aiSession: D.ai.sessions[0].id,
     aiBusy: false,
     aiGen: 0,
-    aiPermission: "全自动",
+    aiPermission: "默认模式",
     aiCli: "claude",
     aiInput: "",
     aiStick: true,
@@ -521,7 +558,7 @@ window.UI = (function () {
   const objectViews = new Map();
   const viewKeys = {
     home: ["homePage", "projectFilter", "projQuery"],
-    project: ["projectId", "projectTab", "selectedReq", "collapsed", "treeQuery", "designTab", "designEdit", "designDraft", "designToc", "taskId", "taskTreeCollapsed", "codeRail", "codeFile", "codeEdit", "codeDraft", "editingFile", "gitBranch", "gitMessage", "gitSection", "officeDoc", "aiOpen", "aiHistory", "aiStepsOpen", "aiSession", "aiInput", "aiStick", "aiPermission", "aiCli"],
+    project: ["projectId", "projectTab", "selectedReq", "collapsed", "treeQuery", "designTab", "designEdit", "designDraft", "designToc", "taskId", "taskTreeCollapsed", "codeRail", "codeFile", "codeEdit", "codeDraft", "editingFile", "gitBranch", "gitMessage", "gitSection", "gitBranchQuery", "gitHistoryAuthor", "gitHistoryBranch", "gitHistoryRange", "gitOpenGroups", "gitOpenCommit", "officeDoc", "aiOpen", "aiHistory", "aiStepsOpen", "aiSession", "aiInput", "aiStick", "aiPermission", "aiCli"],
     library: ["kbId", "kbDoc", "kbQuery"],
     server: ["serverId", "serverSelected", "termInput", "termTab"]
   };
@@ -788,7 +825,10 @@ window.UI = (function () {
     else if (win.kind === "library") main = screens.library ? screens.library(win.refId) : "";
     else if (win.kind === "server") main = screens.server ? screens.server(win.refId) : "";
     const isOffice = win.kind === "project" && D.projects.find(p => p.id === win.refId)?.kind === "work" && Boolean(window.Office);
-    const showAI = win.kind === "project" && (isOffice ? window.Office.isOpen(win.refId) : store.aiOpen);
+    /* CR-054：工作台需要借用 AI 侧栏承载 CLI/权限/模型/添加 浮层（浮层锚点在 .ai-panel 内），
+       此时即使 aiOpen=false 也要渲染面板；由 ai.css 的 wb-borrow-ai 规则只显示浮层所需部分。 */
+    const wbBorrow = win.kind === "project" && store.projectTab === "workbench" && Boolean(store.aiPop || store.aiMenu);
+    const showAI = win.kind === "project" && (isOffice ? window.Office.isOpen(win.refId) : (store.aiOpen || wbBorrow));
     if (window.Office) window.Office.onRender(isOffice);
     document.body.classList.toggle("ai-open", showAI);
     document.body.classList.toggle("object-detail", win.kind !== "home");

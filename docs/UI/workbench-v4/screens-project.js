@@ -216,31 +216,273 @@
     return `<div class="panel-h"><b>资源管理</b><button class="icon-btn" data-act="file-new" title="新建文件">${icon("plus")}</button></div><div class="file-tree">${render(tree, 0)}</div>`;
   }
 
+  /* CR-067：Git 管理面板按参考图一比一重构。
+     结构：顶栏（仓库药丸 + 国内加速／密钥配置／刷新）→ 三张卡片
+     （未提交变更 2 份、分支 1 份、提交历史 2 份）。全部为设计仿真。 */
   function gitPanel() {
     const g = D.git;
+    const q = (store.gitBranchQuery || "").trim().toLowerCase();
+    const locals = g.branches.locals.filter(b => !q || b.name.toLowerCase().includes(q));
+    const remotes = g.branches.remotes
+      .map(r => ({ ...r, branches: r.branches.filter(b => !q || b.name.toLowerCase().includes(q)) }))
+      .filter(r => r.branches.length > 0);
+    const openLocal = store.gitOpenGroups?.local !== false;
+    const openRemote = Boolean(store.gitOpenGroups?.remote);
     const staged = g.changes.filter(c => c.staged);
-    return `<div class="panel-h"><b>Git</b><span class="caption">${g.ahead} ahead</span></div>
-      <div class="git-scroll">
-        <div class="git-block">
-          <div class="git-block-h"><b>未提交变更</b><span class="caption">${g.changes.length} 个文件</span></div>
-          <div class="git-actions"><button class="btn xs" data-act="git-pull">${icon("download", "ico-14")}提取</button><button class="btn xs" data-act="git-update">${icon("refresh", "ico-14")}更新当前分支</button><button class="btn xs" data-act="git-push">${icon("upload", "ico-14")}推送当前分支</button></div>
-          <div class="git-changes">${g.changes.length ? g.changes.map(c => `<button class="git-change" data-act="git-diff" data-file="${esc(c.file)}"><span class="st ${c.state}">${c.state}</span><span class="ellipsis">${esc(c.file)}</span><span class="add">+${c.add}</span><span class="del">−${c.del}</span><span class="cb ${c.staged ? "on" : ""}" data-act="git-stage" data-file="${esc(c.file)}" role="checkbox" aria-checked="${c.staged}">${c.staged ? icon("check", "ico-14") : ""}</span></button>`).join("") : '<div class="caption" style="padding:12px">没有未提交的变更</div>'}</div>
-          <textarea class="textarea git-msg" id="git-message" data-act="git-msg" rows="2" placeholder="提交信息（feat: …）">${esc(store.gitMessage || "")}</textarea>
-          <div class="row" style="margin-top:6px"><button class="btn xs" data-act="git-gen">${icon("sparkles", "ico-14")}AI 生成</button><span class="spacer"></span><button class="btn xs primary" data-act="git-commit" ${staged.length && store.gitMessage ? "" : "disabled"}>提交</button></div>
-          <div class="caption" style="margin-top:6px">${staged.length ? "已勾选 " + staged.length + " 个文件进入暂存区" : "先勾选文件加入暂存区"}</div>
+    const unstaged = g.changes.filter(c => !c.staged);
+    const canCommit = staged.length > 0 && String(store.gitMessage || "").trim() !== "";
+    const hint = staged.length === 0 ? "先勾选文件加入暂存区"
+      : String(store.gitMessage || "").trim() === "" ? "填写提交信息后可提交"
+        : `将提交 ${staged.length} 个已暂存文件`;
+    const q2 = (store.gitHistoryAuthor || "").trim().toLowerCase();
+    const branchFilter = store.gitHistoryBranch || "";
+    const commits = g.commits.filter(c =>
+      (!q2 || c.author.toLowerCase().includes(q2)) &&
+      (!branchFilter || (c.refs || []).some(r => r.includes(branchFilter)) || branchFilter === "HEAD"));
+    const graph = buildGraph(commits);
+    const band = graphWidth(graph) * 14 + 4;
+
+    const refBadge = r => {
+      const t = String(r).trim();
+      const isHead = /^HEAD/.test(t);
+      const isTag = t.startsWith("tag:");
+      const isRemote = /^origin\//.test(t) && !/HEAD/.test(t);
+      const cls = isHead ? "head" : isTag ? "tag" : isRemote ? "remote" : "local";
+      const text = isTag ? t.slice(4).trim() : t;
+      return `<span class="gitp2-ref ${cls}">${esc(text)}</span>`;
+    };
+
+    const changeRow = (c, stagedRow) => `<div class="gitp2-row">
+      <input class="gitp2-row-check" type="checkbox" ${stagedRow ? "checked" : ""} aria-label="${stagedRow ? "取消暂存" : "暂存"} ${esc(c.file)}" data-act="git-stage" data-file="${esc(c.file)}">
+      <span class="gitp2-st ${c.staged ? c.state : "Q"}">${esc(c.state)}</span>
+      <span class="gitp2-path" title="${esc(c.file)}" data-act="git-diff" data-file="${esc(c.file)}">${esc(c.file)}</span>
+      <span class="gitp2-hint">${stagedRow ? "git reset" : "git add"}</span>
+    </div>`;
+
+    const branchRow = (b, display) => `<div class="gitp2-branch ${b.current ? "current" : ""}" data-act="toast" data-msg="演示：切换到 ${esc(b.name)}">
+      <span class="gitp2-branch-mark">${b.current ? icon("check", "ico-14") : icon("branch", "ico-14")}</span>
+      <span class="gitp2-branch-name" title="${esc(b.name)}">${esc(display || b.name)}</span>
+      <span class="gitp2-branch-track">${b.ahead || b.behind ? `↓${b.behind || 0} ↑${b.ahead || 0}` : ""}</span>
+    </div>`;
+
+    const commitRow = (c, i) => {
+      const open = store.gitOpenCommit === c.sha;
+      const files = (g.commitFiles || {})[c.sha] || [];
+      return `<div class="gitp2-commit-row" data-act="git-commit-toggle" data-sha="${c.sha}" style="--graph-w:${band}px">
+        <span class="gitp2-graph">${commitGraphSvg(graph[i], band, c.parents.length > 1)}</span>
+        <div class="gitp2-commit-main">
+          <div class="gitp2-commit-subject"><span class="txt">${esc(c.msg)}</span>
+            <span class="gitp2-refs">${(c.refs || []).map(refBadge).join("")}</span></div>
+          <div class="gitp2-commit-meta"><span class="author">${esc(c.author)}</span></div>
         </div>
-        <div class="git-block">
-          <div class="git-block-h"><b>分支</b><button class="icon-btn" data-act="git-branch-new" title="新建分支">${icon("plus")}</button></div>
-          <label class="search">${icon("search", "ico-14")}<input class="input" id="git-branch-q" placeholder="搜索分支"></label>
-          <div class="branch-row on"><span>✓</span><b>${esc(g.branch)}</b><span class="caption">当前</span></div>
-          <div class="branch-row"><span></span><b>main</b><span class="caption">本地</span></div>
-          <div class="branch-row"><span></span><b>origin/${esc(g.branch)}</b><span class="caption">远程</span></div>
-        </div>
-        <div class="git-block">
-          <div class="git-block-h"><b>提交历史</b><span class="caption">${g.commits.length} 条</span></div>
-          <div class="commit-list">${g.commits.map(c => `<div class="commit"><span class="sha">${c.sha}</span><div><div class="cmsg">${esc(c.msg)}</div><div class="cmeta">${esc(c.author)} · ${esc(c.time)}</div></div></div>`).join("")}</div>
-        </div>
+        <div class="gitp2-commit-side"><span class="gitp2-commit-date">${esc(c.time)}</span></div>
+        ${open ? `<div class="gitp2-files">${files.length ? files.map(f => `<div class="gitp2-file-row">
+            <span class="gitp2-st ${f.state}">${esc(f.state)}</span>
+            <span class="gitp2-file-path" title="${esc(f.path)}">${esc(f.path)}</span>
+            <span class="gitp2-file-nums">+${f.add} −${f.del}</span>
+          </div>`).join("") : `<span class="gitp2-note">该提交没有可显示的文件变更</span>`}</div>` : ""}
       </div>`;
+    };
+
+    return `<div class="gitp2">
+      <div class="gitp2-top">
+        <span class="gitp2-repo" title="${esc(g.repoPath)}"><span>${esc(g.repoPath)}</span></span>
+        <div class="gitp2-top-acts">
+          <button class="gitp2-top-btn" data-act="git-accel" aria-expanded="${Boolean(store.gitAccelOpen)}" title="国内加速"><span class="ico-zap">${icon("zap", "ico-14")}</span><span>国内加速</span>${g.accel.on ? `<span class="gitp2-accel-dot"></span>` : ""}</button>
+          <button class="gitp2-top-btn" data-act="git-cred" aria-expanded="${Boolean(store.gitCredOpen)}" title="密钥配置"><span class="ico-key">${icon("key", "ico-14")}</span><span>密钥配置</span></button>
+          <button class="gitp2-refresh" data-act="git-refresh" title="刷新" aria-label="刷新">${icon("refresh", "ico-14")}</button>
+        </div>
+        ${store.gitAccelOpen ? gitAccelPop() : ""}
+        ${store.gitCredOpen ? gitCredPop() : ""}
+      </div>
+
+      <div class="gitp2-scroll">
+        <section class="gitp2-card changes" aria-label="未提交变更">
+          <div class="gitp2-head">
+            <h2 class="gitp2-title">未提交变更</h2>
+            ${g.changes.length ? `<span class="gitp2-count">${g.changes.length}</span>` : ""}
+            <div class="gitp2-tools">
+              <button class="gitp2-act" data-act="git-pull" title="fetch --all --prune">${icon("download", "ico-14")}提取</button>
+              <button class="gitp2-act" data-act="git-update" title="pull --ff-only">${icon("download", "ico-14")}更新当前分支</button>
+              <button class="gitp2-act" data-act="git-push" title="push（不使用强制推送）">${icon("upload", "ico-14")}推送当前分支</button>
+            </div>
+          </div>
+          <div class="gitp2-body">
+            <div class="gitp2-changes">
+              ${g.changes.length === 0 ? `<p class="gitp2-empty">没有未提交的变更</p>` : ""}
+              ${staged.length ? `<div>
+                <div class="gitp2-group-h">已暂存 <span class="n">${staged.length}</span>
+                  <button class="gitp2-link" data-act="git-unstage-all">全部取消暂存</button></div>
+                ${staged.map(c => changeRow(c, true)).join("")}
+              </div>` : ""}
+              ${unstaged.length ? `<div>
+                <div class="gitp2-group-h">未暂存 <span class="n">${unstaged.length}</span>
+                  <button class="gitp2-link accent" data-act="git-stage-all">全部暂存</button></div>
+                ${unstaged.map(c => changeRow(c, false)).join("")}
+              </div>` : ""}
+            </div>
+            <div class="gitp2-commit">
+              <textarea class="gitp2-commit-input" id="git-message" data-act="git-msg" rows="2" placeholder="提交信息（feat: …）">${esc(store.gitMessage || "")}</textarea>
+              <div class="gitp2-commit-acts">
+                <button class="gitp2-act" data-act="git-gen" ${g.changes.length ? "" : "disabled"} title="${g.changes.length ? "按已暂存改动生成提交信息（仿真）" : "没有变更可生成"}">${icon("sparkles", "ico-14")}AI 生成</button>
+                <div class="gitp2-split">
+                  <button class="gitp2-act primary" data-act="git-commit" ${canCommit ? "" : "disabled"}>提交</button>
+                  <button class="gitp2-act primary caret" data-act="git-commit-menu" aria-label="更多提交操作" aria-expanded="${Boolean(store.gitCommitMenuOpen)}" ${canCommit ? "" : "disabled"}>▾</button>
+                  ${store.gitCommitMenuOpen ? `<div class="gitp2-menu" role="menu">
+                    <button class="gitp2-menu-item" role="menuitem" data-act="git-commit">提交</button>
+                    <button class="gitp2-menu-item" role="menuitem" data-act="git-commit-push">提交并推送</button>
+                  </div>` : ""}
+                </div>
+              </div>
+              <div class="gitp2-commit-hint">${esc(hint)}</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="gitp2-card branches" aria-label="分支">
+          <div class="gitp2-head">
+            <h2 class="gitp2-title">分支</h2>
+            <label class="gitp2-search">${icon("search", "ico-14")}<input id="git-branch-q" data-act="git-branch-q" value="${esc(store.gitBranchQuery || "")}" placeholder="搜索分支" aria-label="搜索分支"></label>
+            <div class="gitp2-tools">
+              <button class="gitp2-link" data-act="git-branch-expand">全部展开</button>
+              <button class="gitp2-link" data-act="git-branch-collapse">全部折叠</button>
+              <button class="gitp2-link" data-act="git-remotes">管理远程</button>
+              <button class="gitp2-act" data-act="git-branch-new">${icon("plus", "ico-14")}新建分支</button>
+            </div>
+          </div>
+          <div class="gitp2-body scroll">
+            ${q && !locals.length && !remotes.length ? `<p class="gitp2-empty">无匹配分支</p>` : ""}
+            <div>
+              <div class="gitp2-tree-h" data-act="git-group" data-group="local" role="button" aria-expanded="${openLocal}">
+                <span class="gitp2-tree-caret">${icon(openLocal ? "chevronDown" : "chevronRight", "ico-12")}</span>
+                <span>本地</span><span class="n">${locals.length}</span>
+              </div>
+              ${openLocal ? `<div class="gitp2-tree-kids">${locals.map(b => branchRow(b)).join("")}</div>` : ""}
+            </div>
+            <div>
+              <div class="gitp2-tree-h" data-act="git-group" data-group="remote" role="button" aria-expanded="${openRemote}">
+                <span class="gitp2-tree-caret">${icon(openRemote ? "chevronDown" : "chevronRight", "ico-12")}</span>
+                <span>远程</span><span class="n">${remotes.reduce((n, r) => n + r.branches.length, 0)}</span>
+              </div>
+              ${openRemote ? `<div class="gitp2-tree-kids">${remotes.map(r => `
+                <div>
+                  <div class="gitp2-tree-h nest" data-act="git-remote-group" data-remote="${esc(r.remote)}" role="button">
+                    <span class="gitp2-tree-caret">${icon("chevronDown", "ico-12")}</span><span>${esc(r.remote)}</span><span class="n">${r.branches.length}</span>
+                  </div>
+                  <div class="gitp2-tree-kids">${r.branches.map(b => branchRow(b, b.short)).join("")}</div>
+                </div>`).join("")}</div>` : ""}
+            </div>
+          </div>
+        </section>
+
+        <section class="gitp2-card history" aria-label="提交历史">
+          <div class="gitp2-history-head">
+            <h2 class="gitp2-title">提交历史</h2>
+            <div class="gitp2-filters">
+              <input class="gitp2-filter-input" id="git-history-author" data-act="git-history-author" value="${esc(store.gitHistoryAuthor || "")}" placeholder="提交人" aria-label="提交人">
+              <select class="gitp2-filter-select" id="git-history-branch" data-act="git-history-branch" aria-label="所有分支">
+                <option value="">所有分支</option>
+                ${g.branches.locals.map(b => `<option value="${esc(b.name)}" ${branchFilter === b.name ? "selected" : ""}>${esc(b.name)}</option>`).join("")}
+              </select>
+              <select class="gitp2-filter-select" id="git-history-range" data-act="git-history-range" aria-label="时间范围">
+                ${[["all", "全部"], ["day", "最近 24 小时"], ["week", "最近 7 天"]].map(([v, t]) => `<option value="${v}" ${(store.gitHistoryRange || "all") === v ? "selected" : ""}>${t}</option>`).join("")}
+              </select>
+            </div>
+          </div>
+          <div class="gitp2-body scroll">
+            ${commits.length === 0 ? `<p class="gitp2-empty">没有符合条件的提交</p>` : commits.map(commitRow).join("")}
+            <div class="gitp2-more"><button class="gitp2-act" data-act="git-more">加载更多</button></div>
+          </div>
+        </section>
+      </div>
+    </div>`;
+  }
+
+  /* 提交图谱：与软件同一套车道算法（前向单趟，2:1:2 段内共享坐标系）。 */
+  function buildGraph(commits) {
+    const lanes = [], rows = [];
+    const take = () => { const f = lanes.indexOf(null); if (f >= 0) return f; lanes.push(null); return lanes.length - 1; };
+    commits.forEach(c => {
+      const incoming = [];
+      lanes.forEach((h, i) => { if (h === c.sha) incoming.push(i); });
+      const lane = incoming.length ? incoming[0] : take();
+      while (lanes.length <= lane) lanes.push(null);
+      if (!incoming.length) incoming.push(lane);
+      const top = lanes.slice();
+      incoming.forEach(i => { lanes[i] = null; });
+      const outs = [];
+      (c.parents || []).forEach((p, pos) => {
+        let target;
+        if (pos === 0) { target = lane; while (lanes.length <= target) lanes.push(null); }
+        else { const wait = lanes.indexOf(p); target = wait >= 0 ? wait : take(); }
+        lanes[target] = p;
+        if (!outs.includes(target)) outs.push(target);
+      });
+      const edges = [];
+      for (let i = 0; i < Math.max(top.length, lanes.length); i++) {
+        const above = top[i] ?? null, below = lanes[i] ?? null;
+        if (above === null) continue;
+        if (below === above && i !== lane) { edges.push({ kind: "through", from: i, to: i }); continue; }
+        edges.push({ kind: "in", from: i, to: lane });
+      }
+      outs.forEach(t => edges.push({ kind: "out", from: lane, to: t }));
+      rows.push({ lane, edges });
+    });
+    return rows;
+  }
+  function graphWidth(rows) {
+    return rows.reduce((w, r) => Math.max(w, r.lane + 1, ...r.edges.map(e => Math.max(e.from, e.to) + 1)), 1);
+  }
+  const LANE_COLORS = ["#4c6bf5", "#2f9e44", "#e8590c", "#9c36b5", "#0c8599", "#d6336c", "#f08c00", "#5f3dc4"];
+  function laneColor(n) { return LANE_COLORS[((n % LANE_COLORS.length) + LANE_COLORS.length) % LANE_COLORS.length]; }
+  function commitGraphSvg(row, width, merge) {
+    if (!row) return "";
+    const pitch = 14, band = 44, mid = band / 2;
+    const cx = l => l * pitch + pitch / 2 + 2;
+    const bend = (from, fromY, to, toY) => {
+      const x0 = cx(from), x1 = cx(to);
+      if (x0 === x1) return `M ${x0} ${fromY} L ${x1} ${toY}`;
+      const m = (toY - fromY) / 2;
+      return `M ${x0} ${fromY} C ${x0} ${fromY + m} ${x1} ${toY - m} ${x1} ${toY}`;
+    };
+    const paths = row.edges.map(e => {
+      const [fromY, toY] = e.kind === "through" ? [0, band] : e.kind === "in" ? [0, mid] : [mid, band];
+      const color = laneColor(e.kind === "out" ? e.to : e.from);
+      return `<path d="${bend(e.from, fromY, e.to, toY)}" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`;
+    }).join("");
+    const color = laneColor(row.lane);
+    const dot = `<span class="gitp2-dot" style="left:${cx(row.lane)}px;color:${color};background:${merge ? "transparent" : color}"></span>`;
+    return `<svg width="${width}" height="100%" viewBox="0 0 ${width} ${band}" preserveAspectRatio="none" aria-hidden="true" focusable="false">${paths}</svg>${dot}`;
+  }
+
+  function gitAccelPop() {
+    const a = D.git.accel;
+    return `<div class="gitp2-pop" style="right:120px;top:44px" role="dialog" aria-label="国内加速">
+      <div class="gitp2-pop-h">${icon("zap", "ico-14")}<b>国内加速</b></div>
+      <p class="gitp2-pop-note">仅对 GitHub 的读取操作生效：按前缀把 <span class="mono">https://github.com/</span> 重写到镜像，写入与私有仓库仍走直连。</p>
+      <label class="gitp2-switch-row"><span class="switch" role="switch" aria-checked="${a.on}" data-act="git-accel-toggle" tabindex="0"></span>启用加速</label>
+      <div class="gitp2-field"><label for="git-accel-url">镜像前缀</label>
+        <input id="git-accel-url" value="${esc(a.url)}" data-act="git-accel-url" placeholder="https://gh-proxy.com/">
+        <span class="gitp2-err"></span></div>
+      <div class="gitp2-pop-f"><button class="gitp2-act primary" data-act="git-accel-save">保存</button><button class="gitp2-act" data-act="git-accel-cancel">取消</button></div>
+    </div>`;
+  }
+
+  function gitCredPop() {
+    return `<div class="gitp2-pop" style="right:64px;top:44px" role="dialog" aria-label="密钥配置">
+      <div class="gitp2-pop-h">${icon("key", "ico-14")}<b>密钥配置</b></div>
+      <p class="gitp2-pop-note">按远端主机保存访问令牌，本机所有仓库共用；列表只显示掩码，保存后不回显原值。</p>
+      ${D.git.credentialHosts.length ? D.git.credentialHosts.map(h => `<div class="gitp2-branch">
+        <span class="gitp2-branch-mark">${icon("globe", "ico-14")}</span>
+        <span class="gitp2-branch-name">${esc(h.host)}</span>
+        <span class="gitp2-branch-track">••••••••</span></div>`).join("") : `<p class="gitp2-empty">尚未保存任何主机的令牌</p>`}
+      <div class="gitp2-field" style="margin-top:8px"><label for="git-cred-host">主机</label>
+        <input id="git-cred-host" value="github.com" data-act="git-cred-host" placeholder="github.com"></div>
+      <div class="gitp2-field"><label for="git-cred-token">访问令牌</label>
+        <input id="git-cred-token" type="password" value="" data-act="git-cred-token" placeholder="粘贴 Personal Access Token">
+        <span class="gitp2-err"></span></div>
+      <div class="gitp2-pop-f"><button class="gitp2-act primary" data-act="git-cred-save">保存</button><button class="gitp2-act" data-act="git-cred-cancel">取消</button></div>
+    </div>`;
   }
 
   function codeDiffModal(file) {

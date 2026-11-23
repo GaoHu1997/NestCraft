@@ -3,7 +3,7 @@ window.OfficeAI = (function () {
   "use strict";
   const { D, store, esc, icon } = UI;
   const codeAI = D.ai, projects = new Map(), codeState = {};
-  const defaults = { aiHistory: false, aiTop: null, aiBgOpen: null, aiStepsOpen: true, aiMenu: null, aiMenuQuery: "", aiStats: null, aiMenuTab: "add", aiBusy: false, aiGen: 0, aiPermission: "全自动", aiCli: "claude", aiInput: "", aiStick: true, aiQueue: [], aiPop: null, aiModelQuery: "", aiModelMenu: false, aiPermissionMenu: false, aiCliMenu: false, aiSubagents: false, aiBackground: false, aiContext: false, aiTokens: false };
+  const defaults = { aiHistory: false, aiTop: null, aiBgOpen: null, aiStepsOpen: true, aiMenu: null, aiMenuQuery: "", aiStats: null, aiMenuTab: "add", aiBusy: false, aiGen: 0, aiPermission: "默认模式", aiCli: "claude", aiInput: "", aiStick: true, aiQueue: [], aiPop: null, aiModelQuery: "", aiModelMenu: false, aiPermissionMenu: false, aiCliMenu: false, aiSubagents: false, aiBackground: false, aiContext: false, aiTokens: false };
   const keys = [...Object.keys(defaults), "aiMessages", "aiSession", "aiOpen"];
   let pid = null, serial = 0;
   const clone = x => structuredClone(x);
@@ -136,7 +136,12 @@ window.OfficeAI = (function () {
       Office.aiDialog(pid, action.kind, { action: action.kind, title: action.kind === "ppt" ? "项目汇报" : "资料简报", purpose: action.purpose, audience: "项目评审会", pages: 3, model: "cloud", consent: false, targetId: f?.id || null, refs: action.refs || (f ? [{ fileId: f.id, location: p.location || { kind: "document" } }] : []) });
     }
   }, true);
+  /* CR-054：工作台以只读方式读取办公项目的会话集合与当前会话，避免出现第二套数据源。
+     访问器不改变状态，也不触发 load/save。 */
+  function sessionsOf() { return pid ? ensure(pid).data.sessions : []; }
+  function currentSessionId() { return pid ? ensure(pid).sessionId : null; }
   return { activate, isActive: () => Boolean(pid), projectId: () => pid, switchSession, newSession, referenceItems, filePicker, captureRequest, response, messageExtra,
+    sessionsOf, currentSessionId,
     extra: projectId => projectId && Office.renderActivity ? Office.renderActivity(projectId) : "",
     panelAttrs: () => pid ? ` data-ai-scope="work" data-project="${esc(pid)}" data-mobile="${esc(Office.getView(pid).mobile)}"` : "" };
 })();

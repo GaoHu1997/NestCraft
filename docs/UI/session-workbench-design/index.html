@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>会话中心工作台 · UI-CR054-v1 设计评审</title>
+<link rel="icon" type="image/png" href="../brand-assets-v2/favicon.png">
+<link rel="stylesheet" href="../task-workbench/theme-tokens.css">
+<link rel="stylesheet" href="design.css">
+</head>
+<body>
+<div class="review" id="review">
+  <div class="rb-t"><b>UI-CR054-v1</b><span>会话中心工作台 · 仅设计资源，不接入正式软件</span></div>
+  <div class="rb-g"><i>项目</i><div class="seg" id="segKind">
+    <button data-kind="code" aria-pressed="true">编码项目</button>
+    <button data-kind="work" aria-pressed="false">办公项目</button>
+  </div></div>
+  <div class="rb-g"><i>主题</i><div class="seg" id="segTheme">
+    <button data-theme-btn="light" aria-pressed="true">浅色</button>
+    <button data-theme-btn="dark" aria-pressed="false">深色</button>
+  </div></div>
+  <div class="rb-g"><i>视口</i><div class="seg" id="segView">
+    <button data-view="1440" aria-pressed="true">1440</button>
+    <button data-view="1100" aria-pressed="false">1100</button>
+    <button data-view="390" aria-pressed="false">390</button>
+  </div></div>
+  <div class="rb-g"><i>右栏</i><div class="seg" id="segRight">
+    <button data-right="0" aria-pressed="true">关闭</button>
+    <button data-right="1" aria-pressed="false">打开</button>
+  </div></div>
+  <div class="rb-g rb-s"><i>场景</i><select id="scenario" aria-label="场景"></select></div>
+</div>
+
+<div class="stage">
+  <div class="app-window" id="win" data-w="1440">
+    <div class="titlebar">
+      <span class="brand"><img src="../brand-assets-v2/logo-sail.png" alt=""></span>
+      <div class="tb-title" id="tbTitle"></div>
+      <span class="tb-spacer"></span>
+      <span class="tb-pill" id="tbKind"></span>
+      <span class="tb-spacer"></span>
+      <span class="wbtn" title="最小化">—</span><span class="wbtn" title="最大化">▢</span><span class="wbtn" title="关闭">✕</span>
+    </div>
+    <div class="tabbar" id="tabbar" role="tablist"></div>
+    <div class="shell" id="shell"></div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </div>
+  <p class="stage-note" id="stageNote"></p>
+</div>
+
+<script src="design.js"></script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 # LLD-CR055-FEAT008-SNAPSHOT-v1：快照执行设计
 
 - 执行身份：`NestCraft-workspace-D-github-AI_Delelovelop / FEAT-008`；子包owner=`impl-kb-snapshot`，继承impl-knowledge，主writer及注册/API owner仍为impl-knowledge。
-- 授权：用户明确正式开发；本子包只写新模块[快照模块](../../src-tauri/src/commands/kb_snapshot.rs)、本文和[报告](../Test/REPORT-CR055-FEAT008-快照.md)。不自行cargo/build、不修改其他源码。
+- 授权：用户明确正式开发；本子包只写新模块[快照模块](../../src-tauri/src/commands/kb_snapshot.rs)、本文和[当前实际报告](../Test/REPORT-CR055-完整配对优化与性能标准.md)。不自行cargo/build、不修改其他源码。
 - 现行依据：[v3执行语义](LLD-CR055-v3-执行授权与快照语义.md)、[DB历史及v3覆盖](../DB/DB-CR055-性能目录与索引发布设计.md)、[工作包](LLD-CR055-工作包与接口契约.md)、[TEST](../Test/TEST-CR055-性能基准与故障验收.md)。用户已选人类重建期间持续快照搜索与GB只读；不实施停库检索路线。
 - 准入：本文核心实体/协议须perf-architecture独立通过后编码；UI状态由impl-reader先补稿冻结，后台子包不改布局。UI-SCROLL-001由Reader承接，本模块无滚动容器。
 
@@ -64,5 +64,13 @@
 ## 7. 具体验证
 
 在本模块内编写：空库/空文件、UTF8/UTF16分缓冲及长行完整覆盖、SHA/FNV已知向量、实际FTS搜索、metadata-only、同源复用、不发布半代、旧快照重建可搜、CAS/取消/sourceFence拒绝、旧代租约/GC/明确过期、成员与parse一致、坏编码/路径/容量失败、恢复。
+
+## 8. 2026-11-22 完整配对优化采用关系
+
+上文为最初v1设计记录。当前快照使用v2 suffix存储；检索/hit读取按member.contextVersion兼容旧v1全文+suffix/空回退与新v2，未知格式显式拒绝。批次已为512行/2MiB、独立行64KiB，短事务复用prepared INSERT；磁盘guard同时按时间/写载荷驱动并在optimize后发布前复检。普通连续正文与canonicalUTF8/原件source-byte区别仍有效。
+
+现行增量：[LLD-CR055-FEAT008-PAIRED-v1](LLD-CR055-FEAT008-配对优化.md)。先在隔离执行上下文编码，再由独立只读CLI复审、主代理验before hash和LF/CRLF后集成；当前原工作区debug/release均216 passed／0 failed／2 ignored。[完整配对与标准](../Test/REPORT-CR055-完整配对优化与性能标准.md)记录同真实文件组实际大小与秒数，而非中途外推。
+
+本批只针对索引/既有读取定位，不改UI/权限/AI完整源hash、不接入新检索引擎、不声称整个Story性能验收完成。旧API网关游标、路径needle、混合单字Han、旧P0截断提示等存量问题仍另行留账。
 
 ignored规模基准按环境变量配置0/1/2/5GiB或任意MiB，默认不生成GB夹具；生成器流式分配固定小块并检查索引配额，记录真实字节/耗时/峰值批载荷，清理仅本测试临时目录。暂不运行cargo/build，由lead统一；实现后报告实际运行结果与未执行项，不把编写单测当通过。

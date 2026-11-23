@@ -86,11 +86,12 @@ html[data-theme="dark"] .approval { border-color: #4a3a1e; } html[data-theme="da
 .ai-task.done { color: var(--muted); }
 .ai-task .tstat { margin-left: auto; font-size: 10.5px; color: var(--muted); }
 
-.ai-composer-wrap { flex: 0 0 auto; padding: 8px 12px 12px; border-top: 1px solid var(--line-soft); background: var(--surface); }
-.ai-stats { display: flex; align-items: center; gap: 12px; padding: 0 2px 7px; font-size: 10.5px; color: var(--muted); }
+.ai-composer-wrap { flex: 0 0 auto; padding: 8px 12px 12px; background: var(--surface); }
+.ai-stats { display: flex; align-items: center; justify-content: center; gap: 12px; min-height: 25px; padding: 0 2px 7px; font-size: 10.5px; color: var(--muted); }
+.ai-stats.is-empty { visibility: hidden; }
 .ai-stats .s { display: inline-flex; align-items: center; gap: 4px; }
 .ai-stats .s b { color: var(--ink-2); font-weight: 550; font-variant-numeric: tabular-nums; }
-.ai-stats .ctx { flex: 1; display: flex; align-items: center; gap: 6px; }
+.ai-stats .ctx { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
 .ai-stats .ctx .bar { width: 64px; height: 4px; }
 .ai-composer { border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); transition: border-color .15s var(--ease), box-shadow .15s var(--ease); }
 .ai-composer:focus-within { border-color: var(--primary); box-shadow: var(--ring); }

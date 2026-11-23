@@ -1,0 +1,166 @@
+/* CR-063：会话历史分批加载与全项目搜索（UI-CR063-v2）
+   只作用于历史浮层；滚动条沿用 base.css 的 .scrollbar-active 按需显示规则（UI-SCROLL-001）。 */
+
+/* 计数胶囊：与正式软件 .chat-history-count 对齐（10px + 1px 边框），不使用 base.css 的 12px 无边框 .caption */
+.ai-history-h .caption {
+  font-size: 10px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 6px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+/* ---------- 搜索行 ---------- */
+.ai-history-search {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 7px 10px;
+  background: var(--surface);
+}
+.ai-history-search .ahs-ico { display: inline-flex; color: var(--muted); flex: 0 0 auto; }
+.ai-history-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 24px;
+  padding: 0 2px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 11.5px;
+  outline: none;
+}
+.ai-history-search input::placeholder { color: var(--muted); }
+.ai-history-search input:focus-visible {
+  border-color: var(--primary-line);
+  background: var(--surface-2);
+}
+.ai-history-search input::-webkit-search-cancel-button { display: none; }
+.ai-history-search .ahs-all {
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 20px;
+  cursor: pointer;
+}
+.ai-history-search .ahs-all:hover { color: var(--ink); border-color: var(--primary-line); }
+.ai-history-search .ahs-all.on { color: var(--primary-strong); border-color: var(--primary-line); background: var(--primary-soft); }
+
+/* ---------- 当前会话钉住 ---------- */
+.ai-hist-pinned {
+  position: relative;
+  margin: 9px 0 2px;
+  padding: 2px;
+  border: 1px solid var(--primary-line);
+  border-radius: var(--r-sm);
+  background: var(--primary-soft);
+}
+.ai-hist-pinned .ahp-tag {
+  position: absolute;
+  top: -8px;
+  left: 10px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--primary-strong);
+  color: #fff;
+  font-size: 9px;
+  line-height: 14px;
+  pointer-events: none;
+}
+.ai-hist-pinned .ai-session,
+.ai-hist-pinned .ai-session.active {
+  border-color: transparent;
+  background: transparent;
+  padding-right: 10px;
+}
+/* 钉住行右侧保留删除入口，状态文字让位给徽标语义 */
+.ai-hist-pinned .ai-session .s-state { display: none; }
+
+/* ---------- 行内删除（沿用正式软件既有能力：hover 显示） ---------- */
+.ai-history .ai-session { cursor: pointer; border: 1px solid transparent; background: transparent; font: inherit; color: inherit; }
+.ai-history .ai-hist-del {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  visibility: hidden;
+}
+.ai-history .ai-session:hover .ai-hist-del,
+.ai-history .ai-session:focus-within .ai-hist-del { visibility: visible; }
+.ai-history .ai-hist-del:hover { background: var(--danger-bg, rgba(220, 38, 38, .1)); color: var(--danger, #b91c1c); }
+.ai-history .ai-hist-del:focus-visible { outline: 2px solid var(--primary-line); outline-offset: 1px; visibility: visible; }
+
+/* ---------- 继续加载 / 到底 / 空态 / 加载中 / 失败 ---------- */
+/* 用户原话为「文字按钮」：纯文字，不加实框与虚线框 */
+.ai-hist-more {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 10px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+  cursor: pointer;
+}
+.ai-hist-more:hover { color: var(--primary-strong); }
+.ai-hist-more:focus-visible { outline: 2px solid var(--primary-line); outline-offset: 1px; border-radius: var(--r-sm); }
+.ai-hist-more.loading { cursor: default; color: var(--muted); }
+.ai-hist-end {
+  padding: 10px 6px 4px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.ai-hist-loading {
+  padding: 22px 10px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.ai-hist-error {
+  margin: 4px 0;
+  padding: 9px 10px;
+  border: 1px solid var(--danger-line, var(--line));
+  border-radius: var(--r-sm);
+  background: var(--danger-bg, var(--surface-2));
+  color: var(--danger, var(--ink));
+  font-size: 11px;
+  line-height: 1.7;
+}
+.ai-hist-error .link-btn { display: block; margin-top: 2px; }
+.ai-hist-empty {
+  padding: 18px 10px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.9;
+}
+.ai-hist-empty .link-btn { display: block; margin: 2px auto 0; }
+
+/* 深色下保持同一层级，仅补边线对比 */
+html[data-theme="dark"] .ai-history-search { background: var(--surface); }
+html[data-theme="dark"] .ai-hist-pinned { background: var(--primary-soft); }
+
+@media (max-width: 960px) {
+  .ai-history-search { padding-left: 12px; }
+}

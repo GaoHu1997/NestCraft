@@ -205,7 +205,7 @@
       <div class="ws-tabs" role="tablist">
         ${tabs.map(([k, label, n]) => `<button class="ws-tab" role="tab" aria-selected="${store.projectTab === k}" data-act="project-tab" data-tab="${k}">${label}${n != null ? `<span class="n">${n}</span>` : ""}</button>`).join("")}
         <span class="spacer"></span>
-        <button class="icon-btn ai-toggle-btn ${store.aiOpen ? "on" : ""}" data-act="ai-toggle" title="${store.aiOpen ? "收起 AI 侧栏" : "展开 AI 侧栏"}" aria-label="AI 侧栏">${icon("panelRight")}</button>
+        <button class="icon-btn ai-toggle-btn ${store.aiOpen ? "on" : ""}" data-act="ai-toggle" title="${store.aiOpen ? "收起 AI 侧栏" : "展开 AI 侧栏"}" aria-label="AI 侧栏">${icon("aiBot")}</button>
       </div>
       ${body}
     </div>`;

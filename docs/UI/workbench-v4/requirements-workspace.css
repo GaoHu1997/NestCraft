@@ -56,28 +56,74 @@
 .req-error { color:var(--danger); }
 .req-empty { padding:24px; color:var(--muted); font-size:12px; }
 .req-toc-list { flex:1; min-height:0; overflow:auto; padding:8px; }
-.req-toc-link { display:block; width:100%; text-align:left; font-size:11px; color:var(--muted); padding:6px 6px 6px calc(6px + (var(--toc-level,1) - 1)*8px); line-height:1.5; overflow-wrap:anywhere; }
+/* UI-CR066：目录按层级折叠子章节。 */
+.req-toc-item { display:flex; align-items:flex-start; gap:2px; }
+.req-toc-caret { flex:0 0 16px; width:16px; height:24px; display:grid; place-items:center; color:var(--muted); }
+.req-toc-caret:hover { color:var(--primary); }
+.req-toc-link { flex:1; min-width:0; display:block; text-align:left; font-size:11px; color:var(--muted); padding:5px 6px 5px calc(6px + (var(--toc-level,1) - 1)*8px); line-height:1.5; overflow-wrap:anywhere; }
+.req-toc-item .req-toc-link { padding-left:calc(2px + (var(--toc-level,1) - 1)*8px); }
 .req-toc-link:hover { color:var(--primary); background:var(--surface-2); }
 .req-preview-intro { border-bottom:1px solid var(--line); padding-bottom:18px; margin-bottom:26px; }
 .req-preview-intro h1 { font-size:24px; }
 .req-preview-intro p { color:var(--muted); font-size:12px; }
-.req-map-area { flex:0 0 44%; min-height:150px; max-height:50%; display:flex; flex-direction:column; border-bottom:1px solid var(--line); background:var(--surface-2); }
+/* UI-CR066：标准层级思维导图。整块为画布 + 右侧悬浮详情框，不再是「上导图下正文」。
+   层级 Vision → Epic → Feature → Story，父左子右，贝塞尔连线。 */
+.req-map-area { flex:1; min-height:0; display:flex; flex-direction:column; background:var(--surface); overflow:hidden; }
 .req-map-controls { display:flex; align-items:center; gap:6px; padding:6px 10px; flex:0 0 auto; overflow:auto hidden; font-size:11px; white-space:nowrap; border-bottom:1px solid var(--line-soft); }
 .req-map-controls .btn { font-size:10px; }
-.req-map-scroll { flex:1; min-height:0; overflow:auto; }
-.req-map-scale { min-width:max-content; padding:20px; }
-.req-map-tree, .req-map-tree ul { list-style:none; padding:0; margin:0; }
-.req-map-tree li { display:flex; align-items:flex-start; gap:24px; padding:7px 0; }
-.req-map-tree ul { padding-left:20px; border-left:1px solid var(--line); }
-.req-map-node { display:flex; min-width:190px; max-width:240px; border:1px solid var(--line); border-radius:5px; background:var(--surface); }
-.req-map-node.on { border-color:var(--primary); background:var(--primary-soft); }
-.req-map-open { padding:9px 12px; text-align:left; flex:1; min-width:0; }
-.req-map-open small { display:block; font-size:9px; color:var(--muted); margin-bottom:4px; }
-.req-map-open b { font-size:11px; font-weight:500; display:block; }
-.req-map-fold { width:24px; flex:0 0 24px; color:var(--muted); }
-.req-map-unavailable { display:grid; gap:5px; max-width:270px; padding:12px; border:1px dashed var(--line); color:var(--muted); font-size:11px; }
-.req-map-unavailable small { font-size:10px; }
-.req-map-help { padding:5px 10px; color:var(--muted); font-size:10px; }
+.req-map-zoom { min-width:40px; text-align:center; font:10px var(--mono); color:var(--muted); }
+.req-map-stage { flex:1; min-height:0; display:flex; align-items:stretch; position:relative; }
+.req-map-scroll { flex:1; min-width:0; min-height:0; overflow:auto; background:radial-gradient(circle at 1px 1px, var(--line-soft) 1px, transparent 0) 0 0/16px 16px; }
+.req-map-scaled { position:relative; }
+.req-map-inner { position:relative; }
+.req-map-edges { position:absolute; inset:0; pointer-events:none; overflow:visible; }
+.req-map-edges path { fill:none; stroke:var(--line); stroke-width:1.4; }
+.req-map-node { position:absolute; display:flex; align-items:center; border:1px solid var(--line); border-radius:7px; background:var(--surface); box-shadow:0 1px 2px #0000000a; overflow:hidden; }
+.req-map-node:hover { border-color:var(--primary); }
+.req-map-node.on { border-color:var(--primary); background:var(--primary-soft); box-shadow:0 0 0 2px var(--primary-soft); }
+.req-map-node.vision { border-color:var(--violet); }
+.req-map-node.broken { border-style:dashed; border-color:var(--danger); }
+.req-map-node-hit { flex:1; min-width:0; height:100%; padding:5px 8px 5px 10px; text-align:left; display:grid; align-content:center; gap:2px; }
+.req-map-node-hit small { font-size:9px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.req-map-node-hit b { font-size:11.5px; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.req-map-node-tools { flex:0 0 auto; display:flex; align-items:center; gap:1px; padding-right:4px; }
+.req-map-node-tools button { width:22px; height:22px; display:grid; place-items:center; border-radius:4px; color:var(--muted); }
+.req-map-node-tools button:hover { background:var(--surface-3); color:var(--primary); }
+/* UI-CR066 r2：折叠控件放在父子连线的连接处，悬浮连线或控件时才显示，
+   避免与节点内的「新增下级」图标重叠。 */
+.req-map-foldpoint { position:absolute; z-index:3; width:18px; height:18px; margin:-9px 0 0 -9px; display:grid; place-items:center;
+  border:1px solid var(--line); border-radius:50%; background:var(--surface); color:var(--muted);
+  opacity:0; pointer-events:none; transition:opacity .12s ease; }
+.req-map-foldpoint[aria-expanded="false"] { opacity:1; border-color:var(--primary); color:var(--primary); }
+.req-map-inner:hover .req-map-foldpoint { opacity:1; pointer-events:auto; }
+/* 验证辅助：禁用 hover 触发，用于读取折叠控件的默认隐藏状态。 */
+.req-map-inner.req-map-no-hover:hover .req-map-foldpoint { opacity:0; pointer-events:none; }
+.req-map-foldpoint:hover { background:var(--surface-3); color:var(--primary); }
+.req-map-detail { position:absolute; right:0; top:0; bottom:0; width:320px; flex:0 0 320px; min-width:0; display:flex; flex-direction:column; border-left:1px solid var(--line); background:var(--surface); box-shadow:-10px 0 24px #00000014; z-index:6; }
+.req-map-detail-head { display:flex; align-items:center; gap:8px; padding:9px 10px; border-bottom:1px solid var(--line-soft); }
+.req-map-detail-head b { font:11px var(--mono); color:var(--muted); }
+.req-map-detail-head .icon-btn { margin-left:auto; }
+.req-map-detail-scroll { flex:1; min-height:0; overflow:auto; padding:12px; }
+.req-map-detail h3 { font-size:14px; margin:0 0 10px; line-height:1.5; }
+.req-map-detail h4 { font-size:12px; margin:16px 0 6px; }
+.req-map-detail-meta { display:grid; grid-template-columns:auto minmax(0,1fr); gap:5px 10px; margin:0 0 12px; font-size:11px; }
+.req-map-detail-meta dt { color:var(--muted); }
+.req-map-detail-meta dd { margin:0; overflow-wrap:anywhere; }
+.req-map-detail-summary { font-size:11.5px; line-height:1.7; color:var(--ink); margin:0 0 8px; }
+.req-map-detail-acs .req-ac { padding:8px 0; border-bottom:1px solid var(--line-soft); }
+.req-map-detail-foot { flex:0 0 auto; display:flex; gap:6px; padding:9px 10px; border-top:1px solid var(--line-soft); }
+.req-map-outline .req-tree-row { min-height:30px; }
+.req-map-help { flex:0 0 auto; padding:5px 10px; color:var(--muted); font-size:10px; border-top:1px solid var(--line-soft); }
+/* UI-CR066 r2：模型是项目级独立分支，视觉上与需求实体区分；虚线为关联线。 */
+.req-map-node.model { border-style:dashed; }
+.req-map-node.model .req-map-node-hit small { color:var(--teal, var(--primary)); }
+.req-map-edges path.dashed { stroke-dasharray:5 4; }
+.req-kind.model { color:var(--teal, var(--primary)); }
+.req-model-entity { border-top:1px solid var(--line); padding-top:24px; margin-top:24px; }
+.req-model-entity h2 { font-size:16px; }
+.req-model-item { border:1px dashed var(--line); border-radius:6px; padding:12px; margin-top:12px; }
+.req-model-item h3 { font-size:13px; margin:4px 0 6px; }
+
 .req-workspace.req-tree-hidden > .req-tree-pane, .req-workspace.req-toc-hidden > .req-toc-pane { display:none; }
 .task-workspace { flex:1; min-height:0; min-width:0; display:flex; background:var(--surface); }
 .task-content-pane { flex:1; min-width:0; min-height:0; display:flex; flex-direction:column; }
@@ -86,5 +132,6 @@
 .task-workspace .task-list-pane { flex:1 1 320px; min-width:0; }
 .task-workspace .task-detail-pane { flex:0 0 360px; width:360px; min-width:0; }
 @container (max-width:950px) { .req-workspace > .req-toc-pane { display:none; } .req-workspace.req-toc-forced:not(.req-toc-hidden) > .req-toc-pane { display:flex; position:absolute; right:0; top:80px; bottom:0; width:220px; z-index:8; box-shadow:-8px 0 18px #0001; } .req-workspace > .req-tree-pane { flex-basis:240px; width:240px; } }
+@container (max-width:760px) { .req-map-detail { left:0; right:0; top:auto; bottom:0; width:auto; flex:none; height:min(46%,320px); border-left:0; border-top:1px solid var(--line); box-shadow:0 -8px 20px #00000014; } }
 @container (max-width:620px) { .req-workspace > .req-tree-pane { display:none; } .req-workspace.req-tree-forced:not(.req-tree-hidden) > .req-tree-pane { display:flex; position:absolute; left:56px; top:0; bottom:0; width:min(260px,calc(100% - 56px)); z-index:9; box-shadow:8px 0 18px #0001; } .req-toolbar .caption { display:none; } .req-fields { grid-template-columns:90px minmax(0,1fr); } .req-workspace > .req-toc-pane { top:80px; max-width:calc(100% - 56px); } }
 @media (max-width:720px) { .task-workspace .task-body { display:block; overflow:auto; } .task-workspace .task-detail-pane { width:auto; } .task-workspace[data-task-view=detail] .task-list-pane { display:none; } }

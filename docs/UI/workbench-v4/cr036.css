@@ -648,3 +648,6 @@ html[data-theme="dark"] dialog.sub-dialog::backdrop { background: rgba(0, 0, 0, 
 .ai-pop-model .model-row .ctx { flex: 0 0 auto; color: var(--muted); font-size: 10.5px; }
 .ai-pop-model .model-row .fav { flex: 0 0 auto; width: 12px; text-align: center; color: #e0a03c; font-size: 10px; }
 .ai-pop-model .model-level { margin-top: 6px; padding-top: 8px; }
+
+/* CR-065：AI 侧栏开关激活态（点击后有明显颜色） */
+.ai-toggle-btn.on { background: var(--primary-soft); color: var(--primary); }
