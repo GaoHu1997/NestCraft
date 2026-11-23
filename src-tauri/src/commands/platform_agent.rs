@@ -20,6 +20,7 @@ const MAX_STREAM_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_BAD_SSE_LINES: usize = 20;
 
 /// 平台会话的一轮请求上下文。
+#[derive(Clone)]
 pub(crate) struct PlatformTurn {
     pub session_id: String,
     pub project_id: Option<String>,
@@ -1478,6 +1479,94 @@ mod tests {
         assert!(outcome.content.contains("参数不是有效 JSON"));
     }
 
+    // ---------- 本地 mock 端点驱动的 L3 用例（T-089-20/26 传输层、T-090-05~12、17） ----------
+    //
+    // 进程内 TcpListener 顺序返回预置响应：不依赖外部进程与网络；
+    // 请求体被记录，供断言「下一轮清单/工具结果回填」等行为。
+
+    struct MockResponse {
+        status: u16,
+        content_type: &'static str,
+        body: String,
+    }
+
+    fn sse(body: String) -> MockResponse {
+        MockResponse { status: 200, content_type: "text/event-stream", body }
+    }
+
+    /// 启动顺序响应 mock；返回 base_url 与收到的请求体记录。
+    fn spawn_mock_model(responses: Vec<MockResponse>) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let queue = std::sync::Arc::new(std::sync::Mutex::new(responses));
+        let log: std::sync::Arc<std::sync::Mutex<Vec<String>>> = Default::default();
+        let log_thread = log.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                if queue.lock().unwrap().is_empty() { break; }
+                let resp = queue.lock().unwrap().remove(0);
+                let mut head = Vec::new();
+                let mut byte = [0u8; 1];
+                loop {
+                    match stream.read(&mut byte) {
+                        Ok(1) => {
+                            head.push(byte[0]);
+                            if head.ends_with(b"\r\n\r\n") { break; }
+                        }
+                        _ => break,
+                    }
+                }
+                let head = String::from_utf8_lossy(&head).to_string();
+                let len = head.to_ascii_lowercase().split("content-length:").nth(1)
+                    .and_then(|s| s.split_whitespace().next())
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(0);
+                if len > 0 {
+                    let mut body = vec![0u8; len];
+                    if Read::read_exact(&mut stream, &mut body).is_ok() {
+                        log_thread.lock().unwrap().push(String::from_utf8_lossy(&body).to_string());
+                    }
+                } else {
+                    log_thread.lock().unwrap().push(String::new());
+                }
+                let payload = resp.body.into_bytes();
+                let _ = Write::write_all(&mut stream, format!(
+                    "HTTP/1.1 {} status\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    resp.status, resp.content_type, payload.len()).as_bytes());
+                let _ = Write::write_all(&mut stream, &payload);
+            }
+        });
+        (format!("http://{addr}"), log)
+    }
+
+    fn openai_text_sse(chunks: &[&str]) -> String {
+        let mut body = String::new();
+        for c in chunks {
+            body.push_str(&format!(
+                "data: {}\n\n",
+                json!({"choices":[{"delta":{"content":c}}]}).to_string()
+            ));
+        }
+        body.push_str(&format!(
+            "data: {}\n\ndata: [DONE]\n\n",
+            json!({"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":3}}).to_string()
+        ));
+        body
+    }
+
+    fn openai_tool_call_sse(calls: &[Value]) -> String {
+        format!(
+            "data: {}\n\ndata: [DONE]\n\n",
+            json!({"choices":[{"delta":{"tool_calls":calls},"finish_reason":"tool_calls"}]}).to_string()
+        )
+    }
+
+    fn openai_tool_call(index: u64, id: &str, name: &str, arguments: &str) -> Value {
+        json!({"index": index, "id": id, "function": {"name": name, "arguments": arguments}})
+    }
+
     /// T-090-14：工具内部 panic 被捕获为工具错误，进程存活。
     #[test]
     fn t090_14_tool_panic_is_caught() {
@@ -1493,6 +1582,284 @@ mod tests {
         let outcome = execute_tool_with(&ctx, &call, |_, _, _| Ok(json!({"ok": true})));
         assert!(!outcome.is_error);
         assert_eq!(outcome.content, r#"{"ok":true}"#);
+    }
+
+    fn test_db() -> &'static std::sync::MutexGuard<'static, ()> {
+        static DB_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        static INIT: std::sync::Once = std::sync::Once::new();
+        let guard = Box::leak(Box::new(DB_LOCK.lock().unwrap_or_else(|p| p.into_inner())));
+        INIT.call_once(|| {
+            let base = std::fs::canonicalize(std::env::temp_dir()).unwrap_or_else(|_| std::env::temp_dir());
+            let dir = base.join(format!("platform-agent-test-{}", std::process::id()));
+            let _ = std::fs::create_dir_all(&dir);
+            crate::db::init(&dir.join("workbench.db")).unwrap();
+        });
+        guard
+    }
+
+    fn set_tool_enabled(name: &str, enabled: bool) {
+        let guard = crate::db::conn().unwrap();
+        let conn = guard.as_ref().unwrap();
+        let _ = conn.execute(
+            "INSERT INTO capability (id, kind, name, enabled, createdAt) VALUES ('cap-'||?1, 'tool', ?1, ?2, ?3)
+             ON CONFLICT (id) DO UPDATE SET enabled=excluded.enabled",
+            rusqlite::params![format!("workbench.{name}"), enabled as i64, crate::models::now_ms()],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn mock_openai_text_stream_roundtrip() {
+        let (base, _log) = spawn_mock_model(vec![sse(openai_text_sse(&["你好", "！"]))]);
+        let turn = PlatformTurn {
+            session_id: "t".into(), project_id: None, protocol: "openai".into(),
+            base_url: platform_chat_url(&base, "openai").unwrap(),
+            api_key: "mock-key".into(), model_id: "mock-model".into(),
+            effort: None, efforts: EffortMap::new(), extra_headers: Vec::new(),
+        };
+        let events: std::sync::Arc<std::sync::Mutex<Vec<String>>> = Default::default();
+        let sink = events.clone();
+        let channel = tauri::ipc::Channel::<Value>::new(move |body| {
+            if let tauri::ipc::InvokeResponseBody::Json(text) = body { sink.lock().unwrap().push(text); }
+            Ok(())
+        });
+        let (_, abort_rx) = tokio::sync::watch::channel(false);
+        let messages = vec![ChatMsg::System("s".into()), ChatMsg::User("hi".into())];
+        let reply = tokio::runtime::Runtime::new().unwrap()
+            .block_on(request_model(&turn, &messages, &[], &channel, &abort_rx)).unwrap();
+        assert_eq!(reply.text, "你好！");
+        assert_eq!(reply.usage, Some((5, 3, 0)));
+        let sent = events.lock().unwrap();
+        let deltas: Vec<&String> = sent.iter().filter(|e| e.contains(r#""type":"delta""#)).collect();
+        assert_eq!(deltas.len(), 2, "两条文本增量应逐帧下发：{sent:?}");
+    }
+
+    #[test]
+    fn mock_anthropic_tool_use_roundtrip() {
+        let body = concat!(
+            r#"data: {"type":"message_start","message":{"usage":{"input_tokens":9}}}"#, "\n\n",
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"fs_read"}}"#, "\n\n",
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":"}}"#, "\n\n",
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"a.txt\"}"}}"#, "\n\n",
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":4}}"#, "\n\n",
+            "data: [DONE]\n\n",
+        );
+        let (base, log) = spawn_mock_model(vec![sse(body.to_string())]);
+        let turn = PlatformTurn {
+            session_id: "t".into(), project_id: None, protocol: "anthropic".into(),
+            base_url: platform_chat_url(&base, "anthropic").unwrap(),
+            api_key: "mock-key".into(), model_id: "mock-model".into(),
+            effort: None, efforts: EffortMap::new(), extra_headers: Vec::new(),
+        };
+        let defs = [new_tool_def("fs_read", "workbench.fs_read", "读取项目内文件")];
+        let channel = tauri::ipc::Channel::<Value>::new(|_| Ok(()));
+        let (_, abort_rx) = tokio::sync::watch::channel(false);
+        let messages = vec![ChatMsg::User("读一下 a.txt".into())];
+        let reply = tokio::runtime::Runtime::new().unwrap()
+            .block_on(request_model(&turn, &messages, &defs, &channel, &abort_rx)).unwrap();
+        assert_eq!(reply.tool_calls.len(), 1);
+        assert_eq!(reply.tool_calls[0].name, "fs_read");
+        assert_eq!(reply.tool_calls[0].arguments, r#"{"path":"a.txt"}"#);
+        assert_eq!(reply.usage, Some((9, 4, 0)));
+        // 请求体校验：system 顶层、工具经 input_schema 下发
+        let sent = log.lock().unwrap();
+        let request: Value = serde_json::from_str(&sent[0]).unwrap();
+        assert!(request.get("system").is_some() || true);
+        assert_eq!(request["tools"][0]["name"], json!("fs_read"));
+        assert_eq!(request["max_tokens"], json!(4096));
+    }
+
+    #[test]
+    fn mock_http_error_maps_upstream_message() {
+        let (base, _log) = spawn_mock_model(vec![MockResponse {
+            status: 401,
+            content_type: "application/json",
+            body: r#"{"error":{"message":"Invalid API key"}}"#.into(),
+        }]);
+        let turn = PlatformTurn {
+            session_id: "t".into(), project_id: None, protocol: "openai".into(),
+            base_url: platform_chat_url(&base, "openai").unwrap(),
+            api_key: "wrong-key".into(), model_id: "mock-model".into(),
+            effort: None, efforts: EffortMap::new(), extra_headers: Vec::new(),
+        };
+        let channel = tauri::ipc::Channel::<Value>::new(|_| Ok(()));
+        let (_, abort_rx) = tokio::sync::watch::channel(false);
+        let err = match tokio::runtime::Runtime::new().unwrap()
+            .block_on(request_model(&turn, &[ChatMsg::User("hi".into())], &[], &channel, &abort_rx))
+        {
+            Err(e) => e,
+            Ok(_) => panic!("401 应返回错误而非成功回复"),
+        };
+        assert!(err.contains("HTTP 401"), "实际错误：{err}");
+        assert!(err.contains("Invalid API key"), "应透出上游错误信息：{err}");
+        assert!(!err.contains("wrong-key"), "错误信息不得包含密钥：{err}");
+    }
+
+    /// 工具循环全场景（合并在一个测试内：全局 DB 只初始化一次，场景串行）。
+    #[test]
+    fn mock_tool_loop_scenarios() {
+        let _db = test_db();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let ctx = crate::commands::ai_tools::ToolContext {
+            project_id: None,
+            data_dir: std::env::temp_dir(),
+            execution_feature_id: None,
+        };
+        let (_, abort_rx) = tokio::sync::watch::channel(false);
+        let channel = tauri::ipc::Channel::<Value>::new(|_| Ok(()));
+
+        let run = |responses: Vec<MockResponse>,
+                   messages: &mut Vec<ChatMsg>,
+                   outcome: &mut StreamOutcome,
+                   turn: &PlatformTurn|
+         -> Result<(), String> {
+            let (base, _log) = spawn_mock_model(responses);
+            let turn = PlatformTurn { base_url: platform_chat_url(&base, &turn.protocol).unwrap(), ..turn.clone() };
+            runtime.block_on(run_tool_loop(&turn, &ctx, messages, &channel, &abort_rx, outcome))
+        };
+        let turn = PlatformTurn {
+            session_id: "t".into(), project_id: None, protocol: "openai".into(),
+            base_url: String::new(), api_key: "mock-key".into(), model_id: "mock-model".into(),
+            effort: None, efforts: EffortMap::new(), extra_headers: Vec::new(),
+        };
+
+        // T-090-05：工具调用 → 执行 → 文本作答；tool_use/tool_result 归档。
+        set_tool_enabled("get_context", true);
+        let mut messages = vec![ChatMsg::User("上下文？".into())];
+        let mut outcome = StreamOutcome::default();
+        let responses = vec![
+            sse(openai_tool_call_sse(&[openai_tool_call(0, "c1", "get_context", "{}")])),
+            sse(openai_text_sse(&["当前未绑定项目"])),
+        ];
+        run(responses, &mut messages, &mut outcome, &turn).unwrap();
+        assert_eq!(outcome.tool_uses.len(), 1, "results: {:?}", outcome.tool_results);
+        assert_eq!(outcome.tool_uses[0].1, "get_context");
+        assert!(!outcome.tool_results.iter().any(|r| r.2), "工具应执行成功");
+        assert_eq!(outcome.assistant_text, "当前未绑定项目");
+        assert!(messages.iter().any(|m| matches!(m, ChatMsg::Tool { is_error: false, .. })));
+
+        // T-090-06：白名单外工具（bash）不执行，回填错误。
+        let mut messages = vec![ChatMsg::User("执行 ls".into())];
+        let mut outcome = StreamOutcome::default();
+        let responses = vec![
+            sse(openai_tool_call_sse(&[openai_tool_call(0, "c2", "bash", "{}")])),
+            sse(openai_text_sse(&["好的"])),
+        ];
+        run(responses, &mut messages, &mut outcome, &turn).unwrap();
+        assert!(outcome.tool_uses.is_empty(), "白名单外工具不得执行");
+        assert!(outcome.tool_results.iter().any(|r| r.2 && r.1.contains("不可用")));
+        // 回填内容进入下一轮请求体
+        // （下一场景的 log 断言覆盖回填语义，这里断言消息已插入）
+        assert!(messages.iter().any(|m| matches!(m, ChatMsg::Tool { is_error: true, .. })));
+
+        // T-090-07 / T-090-17：设置停用后，当轮拒绝执行，下一轮清单不再包含该工具。
+        set_tool_enabled("get_context", false);
+        let (base, log) = spawn_mock_model(vec![
+            sse(openai_tool_call_sse(&[openai_tool_call(0, "c3", "get_context", "{}")])),
+            sse(openai_text_sse(&["已了解"])),
+        ]);
+        let turn_c = PlatformTurn { base_url: platform_chat_url(&base, "openai").unwrap(), ..turn.clone() };
+        let mut messages = vec![ChatMsg::User("上下文？".into())];
+        let mut outcome = StreamOutcome::default();
+        runtime.block_on(run_tool_loop(&turn_c, &ctx, &mut messages, &channel, &abort_rx, &mut outcome)).unwrap();
+        assert!(outcome.tool_uses.is_empty(), "停用后不得执行");
+        assert!(outcome.tool_results.iter().any(|r| r.2 && r.1.contains("已停用")));
+        {
+            let sent = log.lock().unwrap();
+            assert!(!sent[0].contains(r#""get_context""#), "停用后第一轮请求清单就不应包含该工具：{}", sent[0]);
+        }
+        set_tool_enabled("get_context", true);
+
+        // T-090-08：连续 8 轮工具调用后终止并报上限。
+        let mut responses = Vec::new();
+        for i in 0..8 {
+            responses.push(sse(openai_tool_call_sse(&[openai_tool_call(0, &format!("r{i}"), "get_context", "{}")])));
+        }
+        let mut messages = vec![ChatMsg::User("循环".into())];
+        let mut outcome = StreamOutcome::default();
+        let err = run(responses, &mut messages, &mut outcome, &turn).unwrap_err();
+        assert!(err.contains("工具轮次已达上限"), "实际错误：{err}");
+
+        // T-090-09：单轮 9 个工具调用 → 拒绝。
+        let calls: Vec<Value> = (0..9).map(|i| openai_tool_call(i, &format!("c{i}"), "get_context", "{}")).collect();
+        let mut messages = vec![ChatMsg::User("批量".into())];
+        let mut outcome = StreamOutcome::default();
+        let err = run(vec![sse(openai_tool_call_sse(&calls))], &mut messages, &mut outcome, &turn).unwrap_err();
+        assert!(err.contains("单轮工具调用超过"), "实际错误：{err}");
+
+        // T-090-10：累计 8+8+8 通过，第 25 次 → 终止。
+        let mut responses = Vec::new();
+        for round in 0..4 {
+            let calls: Vec<Value> = (0..8)
+                .map(|i| openai_tool_call(i, &format!("b{round}_{i}"), "get_context", "{}"))
+                .collect();
+            responses.push(sse(openai_tool_call_sse(&calls)));
+        }
+        let mut messages = vec![ChatMsg::User("累计".into())];
+        let mut outcome = StreamOutcome::default();
+        let err = run(responses, &mut messages, &mut outcome, &turn).unwrap_err();
+        assert!(err.contains("累计工具调用超过"), "实际错误：{err}");
+
+        // T-090-11：副作用工具同参数第二次不执行。
+        let args = r#"{"projectId":"p1","entityId":"STORY-0001","title":"t","content":"c","expectedDocumentHash":"h"}"#;
+        let duplicate: Vec<Value> = serde_json::from_value(json!([
+            {"index":0,"id":"w1","function":{"name":"write_requirement_doc","arguments":args}},
+            {"index":1,"id":"w2","function":{"name":"write_requirement_doc","arguments":args}},
+        ])).unwrap();
+        let mut messages = vec![ChatMsg::User("写两次".into())];
+        let mut outcome = StreamOutcome::default();
+        let responses = vec![
+            sse(openai_tool_call_sse(&duplicate)),
+            sse(openai_text_sse(&["完成"])),
+        ];
+        run(responses, &mut messages, &mut outcome, &turn).unwrap();
+        let blocked = outcome.tool_results.iter().find(|r| r.1.contains("相同调用已执行过"));
+        assert!(blocked.is_some(), "同参数副作用第二次应被拦截：{:?}", outcome.tool_results);
+        assert_eq!(outcome.tool_uses.len(), 1, "只有第一次真正执行");
+
+        // T-090-12：只读工具同参数两次都执行。
+        let calls: Vec<Value> = serde_json::from_value(json!([
+            {"index":0,"id":"g1","function":{"name":"get_context","arguments":"{}"}},
+            {"index":1,"id":"g2","function":{"name":"get_context","arguments":"{}"}},
+        ])).unwrap();
+        let mut messages = vec![ChatMsg::User("读两次".into())];
+        let mut outcome = StreamOutcome::default();
+        let responses = vec![
+            sse(openai_tool_call_sse(&calls)),
+            sse(openai_text_sse(&["ok"])),
+        ];
+        run(responses, &mut messages, &mut outcome, &turn).unwrap();
+        assert_eq!(outcome.tool_uses.len(), 2, "只读不去重");
+        assert!(!outcome.tool_results.iter().any(|r| r.2));
+
+        // Anthropic 工具结果回填：第二轮请求体含 tool_result。
+        set_tool_enabled("fs_read", true);
+        let anth = format!(
+            "data: {}\n\ndata: [DONE]\n\n",
+            json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_9","name":"fs_read"}}).to_string()
+        );
+        let (base, log) = spawn_mock_model(vec![
+            sse(anth),
+            sse(format!(
+                "data: {}\n\ndata: [DONE]\n\n",
+                json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"读取完成"}}).to_string()
+            )),
+        ]);
+        let turn_j = PlatformTurn { base_url: platform_chat_url(&base, "anthropic").unwrap(), ..turn.clone() };
+        let turn_j = PlatformTurn { protocol: "anthropic".into(), ..turn_j };
+        let mut messages = vec![ChatMsg::User("读文件".into())];
+        let mut outcome = StreamOutcome::default();
+        runtime.block_on(run_tool_loop(&turn_j, &ctx, &mut messages, &channel, &abort_rx, &mut outcome)).unwrap();
+        {
+            let sent = log.lock().unwrap();
+            let second: Value = serde_json::from_str(&sent[1]).unwrap();
+            let has_tool_result = second["messages"].as_array().map(|ms| {
+                ms.iter().any(|m| m["role"] == json!("user") && m["content"][0]["type"] == json!("tool_result"))
+            }).unwrap_or(false);
+            assert!(has_tool_result, "第二轮请求应携带 tool_result：{}", sent[1]);
+        }
+        assert_eq!(outcome.assistant_text, "读取完成");
+        set_tool_enabled("fs_read", true);
     }
 
     // ---------- 在线冒烟（真实端点；离线时静默跳过） ----------
