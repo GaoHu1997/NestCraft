@@ -1494,4 +1494,67 @@ mod tests {
         assert!(!outcome.is_error);
         assert_eq!(outcome.content, r#"{"ok":true}"#);
     }
+
+    // ---------- 在线冒烟（真实端点；离线时静默跳过） ----------
+    //
+    // 用途：T-089-31 的最小化等价验证——双协议各发一轮真实请求，断言文本增量
+    // 与最终回复。密钥经环境变量 CR069_LIVE_KEY 注入（绝不写入仓库文件或日志）；
+    // 未设置时跳过，保证 `cargo test --lib` 离线全绿不受影响。
+    // 可选环境变量：CR069_LIVE_BASE_URL（默认 https://tierflow.cn）、
+    // CR069_LIVE_MODEL（默认 tierflow；该模型同时支持 openai/anthropic 两种协议）。
+    fn live_turn(protocol: &str) -> Option<PlatformTurn> {
+        let key = std::env::var("CR069_LIVE_KEY").ok().filter(|s| !s.trim().is_empty())?;
+        let base = std::env::var("CR069_LIVE_BASE_URL")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "https://tierflow.cn".into());
+        let model = std::env::var("CR069_LIVE_MODEL")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "tierflow".into());
+        Some(PlatformTurn {
+            session_id: "live-smoke".into(),
+            project_id: None,
+            protocol: protocol.to_string(),
+            base_url: platform_chat_url(&base, protocol).unwrap(),
+            api_key: key,
+            model_id: model,
+            effort: None,
+            efforts: EffortMap::new(),
+            extra_headers: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn live_smoke_single_round_both_protocols() {
+        let Some(openai_turn) = live_turn("openai") else {
+            eprintln!("[live-smoke] 未设置 CR069_LIVE_KEY，跳过在线冒烟");
+            return;
+        };
+        let anthropic_turn = live_turn("anthropic").expect("同一密钥应同时解析 anthropic 通道");
+        for turn in [openai_turn, anthropic_turn] {
+            let events: std::sync::Arc<std::sync::Mutex<Vec<String>>> = Default::default();
+            let sink = events.clone();
+            let channel = tauri::ipc::Channel::<Value>::new(move |body| {
+                if let tauri::ipc::InvokeResponseBody::Json(text) = body {
+                    sink.lock().unwrap().push(text);
+                }
+                Ok(())
+            });
+            let (abort_tx, abort_rx) = tokio::sync::watch::channel(false);
+            let messages = vec![
+                ChatMsg::System(PLATFORM_SYSTEM_PROMPT.to_string()),
+                ChatMsg::User("只回复两个字：你好".into()),
+            ];
+            let reply = tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(request_model(&turn, &messages, &[], &channel, &abort_rx))
+                .unwrap_or_else(|e| panic!("{} 通道请求失败：{e}", turn.protocol));
+            assert!(!reply.text.trim().is_empty(), "{} 通道应返回非空文本", turn.protocol);
+            let sent = events.lock().unwrap().drain(..).collect::<Vec<_>>();
+            let has_stream_event = sent.iter().any(|e| e.contains(r#""type":"delta""#) || e.contains(r#""type":"thinking""#));
+            assert!(has_stream_event, "{} 通道应下发至少一条流式增量事件", turn.protocol);
+            let _ = abort_tx; // 保持 sender 存活
+        }
+    }
 }
