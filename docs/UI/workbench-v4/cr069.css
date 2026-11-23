@@ -6,17 +6,8 @@
   color: var(--accent, var(--brand, currentColor));
 }
 
-/* 弹层内说明行（切换限制 / 平台边界） */
-.ai-pop-runner .menu-note {
-  padding: 6px 12px 8px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--muted, var(--text-2, inherit));
-}
-
-/* 平台不可用时的引导空态 */
-.ai-pop-runner .drop-empty p {
-  margin: 2px 0 0;
+/* 平台不可用：菜单项内的「不可用」副行 */
+.ai-pop-runner .mi-main span {
   font-size: 12px;
   color: var(--muted, var(--text-2, inherit));
 }

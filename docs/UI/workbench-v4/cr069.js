@@ -54,23 +54,19 @@ window.CR069 = (function () {
     return `<button class="ai-chip runner${isPlatform() ? " platform" : ""}" id="ai-anchor-runner" data-ai-anchor="runner" data-act="ai-runner" aria-haspopup="dialog" aria-controls="ai-popup-runner" aria-expanded="${store.aiPop === "runner"}" ${busy ? 'disabled aria-disabled="true"' : ""} title="${esc(title)}" aria-label="切换运行通道：${esc(label)}">${icon("bot", "ico-14")}${esc(label)}</button>`;
   }
 
-  /* SC-069-01/02/03：运行通道弹层。默认 cli；平台不可用给设置引导，不出现“请先安装 CLI”类误导。 */
+  /* SC-069-01/02/03：运行通道弹层（v2）。默认 cli；按用户要求不在界面上放说明文字——
+     状态只用选中/禁用/「不可用」表达；不可用时保留最小引导入口，不写长文案。 */
   function runnerPopup() {
     const ok = platformAvailable();
     const busy = Boolean(store.aiBusy || store.aiRuntimeBusy);
-    const item = (id, name, desc, enabled) =>
-      `<button class="menu-item ${store.aiRunner === id ? "on" : ""}" data-act="ai-runner-set" data-id="${id}" ${busy || (id === "platform" && !enabled) ? 'disabled aria-disabled="true"' : ""}>${icon(id === "platform" ? "bot" : "terminal", "ico-14")}<span class="mi-main"><b>${esc(name)}</b><span>${esc(desc)}</span></span>${store.aiRunner === id ? `<span class="check">${icon("check", "ico-14")}</span>` : ""}</button>`;
+    const item = (id, name, enabled) =>
+      `<button class="menu-item ${store.aiRunner === id ? "on" : ""}" data-act="ai-runner-set" data-id="${id}" ${busy || (id === "platform" && !enabled) ? 'disabled aria-disabled="true"' : ""}>${icon(id === "platform" ? "bot" : "terminal", "ico-14")}<span class="mi-main"><b>${esc(name)}</b>${id === "platform" && !enabled ? '<span>不可用</span>' : ""}</span>${store.aiRunner === id ? `<span class="check">${icon("check", "ico-14")}</span>` : ""}</button>`;
     return `<div class="ai-pop ai-pop-runner" id="ai-popup-runner" data-ai-popup="runner" role="dialog" aria-label="切换运行通道" tabindex="-1">
       <div class="pop-h">运行通道<button class="icon-btn" data-ai-popup-close="runner" aria-label="关闭运行通道选择">${icon("x", "ico-14")}</button></div>
-      ${item("cli", "CLI 进程", "由已安装的 CLI 程序作答；支持原生线程续接与权限档位", true)}
-      ${item("platform", "平台主代理", ok
-        ? "由平台直接调用已配置模型作答；不依赖 CLI，工具在本工作台内按白名单执行"
-        : "需要先在设置中配置启用的供应商、端点与密钥", ok)}
-      <div class="menu-sep"></div>
-      ${ok ? "" : `<div class="drop-empty" role="note"><b>没有可用的平台模型</b><p>请在 设置 → 模型供应商 中配置启用的供应商、端点与密钥；CLI 通道不受影响。</p></div>
+      ${item("cli", "CLI 进程", true)}
+      ${item("platform", "平台主代理", ok)}
+      ${ok ? "" : `<div class="menu-sep"></div>
       <button class="menu-item" data-act="open-settings" data-tab="provider">${icon("sliders", "ico-14")}打开模型供应商设置</button>`}
-      <div class="menu-note">已有消息或运行中的会话不能切换运行通道；请新建会话。</div>
-      ${isPlatform() ? '<div class="menu-note">平台会话不使用 CLI 权限档位；可用操作由平台工具白名单决定。</div>' : ""}
     </div>`;
   }
 
