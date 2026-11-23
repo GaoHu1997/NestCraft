@@ -79,6 +79,7 @@ window.CR069 = (function () {
   actions["ai-runner-set"] = el => {
     store.aiRunner = el.dataset.id;
     store.aiPop = null;
+    document.body.classList.remove("wb-borrow-ai");
     toast(el.dataset.id === "platform" ? "已切换运行通道：平台主代理" : "已切换运行通道：CLI 进程");
     render();
   };
