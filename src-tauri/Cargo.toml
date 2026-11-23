@@ -1,6 +1,6 @@
 [package]
 name = "agent-workbench"
-version = "0.0.2"
+version = "0.0.3"
 description = "个人 Agent 工作台"
 authors = ["Agent Workbench"]
 edition = "2021"

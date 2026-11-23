@@ -1,7 +1,7 @@
 {
   "name": "agent-workbench",
   "private": true,
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "个人 Agent 工作台（Tauri 桌面应用）",
   "type": "module",
   "scripts": {

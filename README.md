@@ -13,7 +13,7 @@ npm run tauri dev    # 开发运行（首次编译 Rust 需数分钟）
 
 - 本地安装包：`npm run tauri build`（NSIS，未含签名配置）。
 - 本地免安装 exe：`npx tauri build --no-bundle --target x86_64-pc-windows-msvc`，产物在 `src-tauri/target/x86_64-pc-windows-msvc/release/`。
-- GitHub 发布：`.github/workflows/release-windows.yml` 通过手动触发或推送 `v*` 标签构建 Windows x64 免安装 exe，生成 `nestcraft-win64.json` 更新清单并创建 Release；当前只发布免安装 exe，不发布安装包。0.0.2 已发布：[v0.0.2](https://github.com/GaoHu1997/NestCraft/releases/tag/v0.0.2)，历史：[v0.0.1](https://github.com/GaoHu1997/NestCraft/releases/tag/v0.0.1)。
+- GitHub 发布：`.github/workflows/release-windows.yml` 通过手动触发或推送 `v*` 标签构建 Windows x64 免安装 exe，生成 `nestcraft-win64.json` 更新清单并创建 Release；当前只发布免安装 exe，不发布安装包。0.0.3 已发布：[v0.0.3](https://github.com/GaoHu1997/NestCraft/releases/tag/v0.0.3)，历史：[v0.0.2](https://github.com/GaoHu1997/NestCraft/releases/tag/v0.0.2)、[v0.0.1](https://github.com/GaoHu1997/NestCraft/releases/tag/v0.0.1)。
 - 持续集成：`.github/workflows/ci.yml` 在 push / PR 到 main 时执行前端类型检查与构建、`cargo check`、`cargo test --lib`。
 
 环境要求：Node 24+、Rust 1.99+（MSVC 工具链）、git、Windows WebView2。
@@ -49,4 +49,4 @@ docs/                研发文档（正式）+ tmp/（过程）+ 参考/（本�
 
 ## 状态
 
-当前版本 **0.0.2**：CR-049~CR-056 批量成果（滚动条按需显示、内置图标、页签溢出、CLI 工具选择、会话中心、编辑器与知识库性能、AI 侧栏重构）已入库；CI 与发布流水线均通过，本地验证 cargo test --lib 205 通过 / tsc / vite build；Release [v0.0.2](https://github.com/GaoHu1997/NestCraft/releases/tag/v0.0.2) 已发布 Windows x64 免安装 exe 并核验资产（SHA-256、版本号、zip 内容一致）；运行时逐项验收与安装包发布未完成。当前状态：**待用户验收**。
+当前版本 **0.0.3**：CR-057~CR-067 批量成果（示例项目随包发布、模型检测探针、设置中心调整、AI 内置工具集、移除预置供应商、子智能体只读详情、会话历史分页与搜索、grok 适配器修正、需求思维导图、Git 面板重构）已入库；本地验证 cargo test --lib 348 通过 / tsc / vite build；CI 与发布流水线结果、Release 资产核验随 v0.0.3 标签执行，运行时逐项验收与安装包发布未完成。当前状态：**待用户验收**。
