@@ -133,26 +133,36 @@ async function testCodex() {
     ok ? `回复=${JSON.stringify(text.slice(-40))}` : `code=${r.code} err=${r.err.slice(0, 200)}`);
 }
 
-/* ---------- grok：OpenAI 兼容 ---------- */
+/* ---------- grok：xAI 兼容端点 ---------- */
 async function testGrok() {
-  // 实测：grok 1.0.77 只认 xAI 官方登录态／XAI_API_KEY，不读 OPENAI_BASE_URL；
-  // 设了 XAI_API_KEY 后会去连官方端点并长时间挂起（本机实测 >15min 无返回）。
-  // 因此这里限定短超时，把「无法在本网关下真实调用」如实记为未通过，不伪装成功。
+  // 实测（grok 1.0.77）：
+  // - 端点变量是 GROK_XAI_API_BASE_URL（不读 OPENAI_BASE_URL）；
+  // - base 必须带 /v1（CLI 自己拼 /chat/completions，不带时网关 405）；
+  // - 提示词走 stdin（`grok -p -`），比 argv 免引号转义；
+  // - GROK_NO_AUTO_UPDATE=1 避免更新横幅挂住 headless 运行。
+  // 依据：docs/参考/repos/dsh-maestro-codex/src/channels/grok.ts 的 grokEnv/grokArgs。
   const r = await run(
     "grok",
-    ["-p", "请只回复两个字母：OK", "--output-format", "plain"],
-    { env: { ...process.env, XAI_API_KEY: KEY, OPENAI_API_KEY: KEY, OPENAI_BASE_URL: `${BASE}/v1` }, cwd: work },
-    45000
+    ["-p", "-", "--output-format", "plain"],
+    {
+      env: {
+        ...process.env,
+        OPENAI_BASE_URL: "",
+        OPENAI_API_KEY: "",
+        XAI_API_KEY: KEY,
+        GROK_XAI_API_BASE_URL: `${BASE}/v1`,
+        GROK_NO_AUTO_UPDATE: "1",
+      },
+      cwd: work,
+    },
+    120000,
+    "请只回复两个字母：OK"
   );
   const text = (r.out || "").trim();
-  const signedOut = /Not signed in/i.test(r.err || "");
-  const ok = /OK/i.test(text) && !r.timeout && !signedOut;
-  let detail;
-  if (ok) detail = `回复=${JSON.stringify(text.slice(-40))}`;
-  else if (r.timeout) detail = `超时 ${45000}ms 无返回（已整树停止）——grok 不认该网关端点`;
-  else if (signedOut) detail = `未登录：grok 需要 xAI 登录态或 XAI_API_KEY，不读 OPENAI_BASE_URL`;
-  else detail = `code=${r.code} err=${r.err.slice(0, 200)}`;
-  record("grok", "真实调用返回模型回复", ok, detail);
+  const ok = /OK/i.test(text) && !r.timeout;
+  record("grok", "真实调用返回模型回复", ok,
+    ok ? `回复=${JSON.stringify(text.slice(-40))}`
+       : `code=${r.code} timeout=${r.timeout} err=${r.err.slice(0, 200)} out=${text.slice(-100)}`);
 }
 
 await testClaude();

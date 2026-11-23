@@ -183,6 +183,12 @@ const [saveError, setSaveError] = useState("");
     } catch { setError(true); } finally { setLoading(false); }
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
+  /* CR-068 M06：生图入口只在设置标题行（index.tsx）出现，这里接收打开事件，不再渲染第二个入口。 */
+  useEffect(() => {
+    const openImageGen = () => setImageOpen(true);
+    window.addEventListener("settings:open-imagegen", openImageGen);
+    return () => window.removeEventListener("settings:open-imagegen", openImageGen);
+  }, []);
   const d = openId ? drafts[openId] : undefined;
   const update = (patch: Partial<EditorDraft>) => { if (openId && !busy) setDrafts(prev => ({ ...prev, [openId]: { ...prev[openId], ...patch } })); };
   const updateKey = (index: number, patch: Partial<KeyDraft>) => d && update({ keys: d.keys.map((k, i) => i === index ? { ...k, ...patch } : k) });
@@ -615,7 +621,6 @@ const [saveError, setSaveError] = useState("");
       <span className="set-caption">{list.length} 个供应商 · 拖动手柄排序 · 点击卡片展开配置</span>
       <span className="spacer" />
       <button className="btn sm primary" disabled={busy || loading || error} onClick={() => open(null)}><SettingsIcon name="plus" />新建供应商</button>
-      <button className="set-icon-btn set-image-entry" onClick={() => setImageOpen(true)} title="生图配置" aria-label="生图配置"><SettingsIcon name="image" /></button>
     </div>
     {loading && <p className="set-caption">加载供应商中…</p>}
     {error && <div className="set-note" role="alert">供应商读取失败，已有草稿保留。<button className="btn sm" disabled={busy} onClick={refresh}>重试</button></div>}

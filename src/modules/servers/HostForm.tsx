@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Modal, Field, useToast } from "@/components/ui";
 import { serverSave, type ServerHost } from "@/api";
 
@@ -29,6 +29,13 @@ export function HostForm({ initial, onClose, onSaved }: HostFormProps) {
   const [saving, setSaving] = useState(false);
   const busy = useRef(false);
   const [formErr, setFormErr] = useState<string | null>(null);
+  const errRef = useRef<HTMLDivElement | null>(null);
+
+  // 表单正文超高时由模态框原生滚动（UI-CR049-v1，不改宽度/不加遮罩）；
+  // 校验或保存错误可能落在滚动区之外，这里只把错误滚动到可见位置，不改变输入与草稿。
+  useEffect(() => {
+    if (formErr) errRef.current?.scrollIntoView({ block: "nearest" });
+  }, [formErr]);
 
   const validate = (): string | null => {
     if (!name.trim()) return "请填写主机名称";
@@ -75,87 +82,97 @@ export function HostForm({ initial, onClose, onSaved }: HostFormProps) {
   };
 
   return (
-    <div className="srv-dialog"><Modal title={editing ? "编辑主机" : "新建主机"} onClose={() => { if (!saving) onClose(); }} width={460} heightRatio={0.62}>
-      <div className="host-form">
-        <fieldset disabled={saving} className="host-fields">
-        <div className="grid2">
-          <Field label="名称">
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="如 生产-web-01" autoFocus />
-          </Field>
-          <Field label="端口">
-            <input className="input" value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" />
-          </Field>
-        </div>
-        <div className="grid2">
-          <Field label="主机">
-            <input className="input mono" value={host} onChange={(e) => setHost(e.target.value)} placeholder="192.168.1.10 或 example.com" />
-          </Field>
-          <Field label="用户名">
-            <input className="input" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="root" />
-          </Field>
-        </div>
-        <Field label="认证方式">
-          <div className="segment" role="group" aria-label="认证方式">
-            <button type="button" aria-pressed={authType === "password"} onClick={() => setAuthType("password")}>
-              密码
+    <div className="srv-dialog">
+      {/* 弹窗按内容高度（不传 heightRatio）：正文超过窗口上限时由 .modal-body 原生滚动，
+          取消/保存固定在同屏 footer，不随正文滚出，也不留大片下半空白（UI-CR068 §1.5）。 */}
+      <Modal
+        title={editing ? "编辑主机" : "新建主机"}
+        onClose={() => { if (!saving) onClose(); }}
+        width={460}
+        footer={
+          <>
+            <button className="btn" onClick={onClose} disabled={saving}>
+              取消
             </button>
-            <button type="button" aria-pressed={authType === "key"} onClick={() => setAuthType("key")}>
-              密钥
+            <button className="btn primary" onClick={submit} disabled={saving}>
+              {saving ? "保存中…" : "保存"}
             </button>
-            <button type="button" aria-pressed={authType === "none"} onClick={() => setAuthType("none")}>
-              免认证
-            </button>
-          </div>
-        </Field>
-        <div className="auth-fields">
-          {authType === "none" ? (
-            <Field label="免认证（无凭据）" hint="服务器接受 none 认证时使用；不保存任何密钥或密码">
-              <div className="small muted">该主机将以无凭据方式连接。</div>
-            </Field>
-          ) : authType === "password" ? (
-            <Field label="密码" hint={editing && initial.authType === "password" ? "留空沿用已保存密码，不读取或回传原凭据。" : undefined}>
-              <input
-                className="input"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="登录密码"
-                autoComplete="new-password"
-              />
-            </Field>
-          ) : (
-            <>
-              <Field label="私钥路径" hint={editing && initial.authType === "key" ? "留空沿用已保存私钥路径，不读取或回传原凭据。" : "本机私钥文件的完整路径，不是远端服务器路径"}>
-                <input className="input mono" value={keyPath} onChange={(e) => setKeyPath(e.target.value)} placeholder="~/.ssh/id_rsa" />
+          </>
+        }
+      >
+        <div className="host-form">
+          <fieldset disabled={saving} className="host-fields">
+            <div className="grid2">
+              <Field label="名称">
+                <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="如 生产-web-01" autoFocus />
               </Field>
-              <Field label="私钥口令（可选）" hint={editing ? "编辑时留空表示不修改口令" : undefined}>
-                <input
-                  className="input"
-                  type="password"
-                  value={passphrase}
-                  onChange={(e) => setPassphrase(e.target.value)}
-                  placeholder="无口令可留空"
-                  autoComplete="new-password"
-                />
+              <Field label="端口">
+                <input className="input" value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" />
               </Field>
-            </>
-          )}
+            </div>
+            <div className="grid2">
+              <Field label="主机">
+                <input className="input mono" value={host} onChange={(e) => setHost(e.target.value)} placeholder="192.168.1.10 或 example.com" />
+              </Field>
+              <Field label="用户名">
+                <input className="input" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="root" />
+              </Field>
+            </div>
+            <Field label="认证方式">
+              <div className="segment" role="group" aria-label="认证方式">
+                <button type="button" aria-pressed={authType === "password"} onClick={() => setAuthType("password")}>
+                  密码
+                </button>
+                <button type="button" aria-pressed={authType === "key"} onClick={() => setAuthType("key")}>
+                  密钥
+                </button>
+                <button type="button" aria-pressed={authType === "none"} onClick={() => setAuthType("none")}>
+                  免认证
+                </button>
+              </div>
+            </Field>
+            <div className="auth-fields">
+              {authType === "none" ? (
+                <Field label="免认证（无凭据）" hint="服务器接受 none 认证时使用；不保存任何密钥或密码">
+                  <div className="small muted">该主机将以无凭据方式连接。</div>
+                </Field>
+              ) : authType === "password" ? (
+                <Field label="密码" hint={editing && initial.authType === "password" ? "留空沿用已保存密码，不读取或回传原凭据。" : undefined}>
+                  <input
+                    className="input"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="登录密码"
+                    autoComplete="new-password"
+                  />
+                </Field>
+              ) : (
+                <>
+                  <Field label="私钥路径" hint={editing && initial.authType === "key" ? "留空沿用已保存私钥路径，不读取或回传原凭据。" : "本机私钥文件的完整路径，不是远端服务器路径"}>
+                    <input className="input mono" value={keyPath} onChange={(e) => setKeyPath(e.target.value)} placeholder="~/.ssh/id_rsa" />
+                  </Field>
+                  <Field label="私钥口令（可选）" hint={editing ? "编辑时留空表示不修改口令" : undefined}>
+                    <input
+                      className="input"
+                      type="password"
+                      value={passphrase}
+                      onChange={(e) => setPassphrase(e.target.value)}
+                      placeholder="无口令可留空"
+                      autoComplete="new-password"
+                    />
+                  </Field>
+                </>
+              )}
+            </div>
+            <Field label="分组标签（可选）">
+              <input className="input" value={groupTag} onChange={(e) => setGroupTag(e.target.value)} placeholder="如 生产环境" />
+            </Field>
+          </fieldset>
+          {formErr && <div className="field-err" role="alert" ref={errRef}>{formErr}</div>}
         </div>
-        <Field label="分组标签（可选）">
-          <input className="input" value={groupTag} onChange={(e) => setGroupTag(e.target.value)} placeholder="如 生产环境" />
-        </Field>
-        </fieldset>
-        {formErr && <div className="field-err" role="alert">{formErr}</div>}
-        <div className="row" style={{ justifyContent: "flex-end" }}>
-          <button className="btn" onClick={onClose} disabled={saving}>
-            取消
-          </button>
-          <button className="btn primary" onClick={submit} disabled={saving}>
-            {saving ? "保存中…" : "保存"}
-          </button>
-        </div>
-      </div>
-    </Modal></div>
+      </Modal>
+    </div>
   );
 }
 

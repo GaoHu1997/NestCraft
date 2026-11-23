@@ -549,8 +549,8 @@ function MessageRow(props: {
     );
   }
   if (m.role === "assistant") {
-    const empty = !m.content && !m.thinking;
     const hasThinking = !!m.thinking?.trim();
+    const empty = !m.content && !hasThinking;
     return (
       <div className="chat-msg assistant">
         <div className="chat-bubble">

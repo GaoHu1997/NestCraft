@@ -46,15 +46,26 @@ export function Modal({ title, onClose, children, footer, width, heightRatio }: 
   heightRatio?: number;
 }) {
   const ref = useRef<HTMLDialogElement | null>(null);
+  const restoreRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
     const element = ref.current;
+    /* CR-068 J01：记住打开前的焦点，关闭（含取消/Esc）后归还给触发按钮；
+       React 直接卸载 dialog 会丢失原生焦点恢复，这里显式兜底。 */
+    const previous = document.activeElement;
+    restoreRef.current = previous instanceof HTMLElement && previous !== document.body ? previous : null;
     if (element && !element.open) element.showModal();
-    return () => { if (element?.open) element.close(); };
+    return () => {
+      if (element?.open) element.close();
+      const target = restoreRef.current;
+      if (target && target.isConnected) target.focus({ preventScroll: true });
+    };
   }, []);
   return (
     <dialog
       ref={ref}
-      className="modal nc-dialog"
+      /* CR-068：未指定 heightRatio 的短业务弹窗按内容高度（nc-dialog-auto），
+         超高时正文在弹窗内滚动、footer 紧随正文；固定尺寸头像弹窗不经此组件，不受影响。 */
+      className={`modal nc-dialog${heightRatio ? "" : " nc-dialog-auto"}`}
       aria-label={title}
       aria-modal="true"
       style={{ width: width ?? 620, maxWidth: "calc(100vw - 24px)", maxHeight: "calc(100dvh - 48px)", height: heightRatio ? `${Math.round(heightRatio * 100)}vh` : undefined }}
@@ -126,7 +137,8 @@ export function Confirm({
   danger?: boolean;
 }) {
   return (
-    <Modal title={title} onClose={onCancel} width={420} heightRatio={0.3}>
+    /* CR-068 J01：删除确认等短弹窗按内容高度，不再用固定 30vh 撑出下半空白。 */
+    <Modal title={title} onClose={onCancel} width={420}>
       <p style={{ whiteSpace: "pre-wrap" }}>{message}</p>
       <div className="row" style={{ justifyContent: "flex-end", marginTop: 16 }}>
         <button className="btn" onClick={onCancel}>

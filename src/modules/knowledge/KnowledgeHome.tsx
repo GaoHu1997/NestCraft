@@ -147,7 +147,7 @@ function HomeView() {
       {createOpen && <CreateDialog onClose={() => setCreateOpen(false)} onCreated={() => { void reload(); void reloadGrants(); }} />}
       {iconTarget && <LibraryIconDialog library={iconTarget} onClose={() => setIconTarget(null)} onSaved={() => { setIconTarget(null); void reload(); }} />}
       {grantTarget && <GrantDialog library={grantTarget} onClose={() => setGrantTarget(null)} onSaved={() => void reloadGrants()} />}
-      {delTarget && <div className="kb-dialog kb-confirm"><Confirm title="删除知识库" message={`确定删除知识库「${delTarget.name}」？\n将移除该库及其索引记录；本地目录中的文件不受影响。`} onOk={() => void doDelete()} onCancel={() => setDelTarget(null)} danger /></div>}
+      {delTarget && <div className="kb-dialog kb-confirm kb-dialog-fit"><Confirm title="删除知识库" message={`确定删除知识库「${delTarget.name}」？\n将移除该库及其索引记录；本地目录中的文件不受影响。`} onOk={() => void doDelete()} onCancel={() => setDelTarget(null)} danger /></div>}
     </div>
   );
 }
@@ -218,13 +218,13 @@ export function GrantDialog({ library, onClose, onSaved, visible = true }: { lib
 
   if (!visible) return null;
   return (
-    <div className="kb-dialog">
+    <div className="kb-dialog kb-dialog-fit">
       <Modal title="授权知识库" width={620} onClose={() => { if (!busy.current) onClose(); }} footer={<><button className="btn" disabled={saving} onClick={onClose}>取消</button><button className="btn primary" disabled={saving || projects === null} onClick={() => void save()}>{saving ? "保存中…" : "保存授权"}</button></>}>
         <div className="kb-grant-box">
           <b>{library.name}</b>
           <p className="muted small">选择可以访问该知识库的项目，可多选。未选中的项目保持默认拒绝。</p>
           {projects === null ? (error ? <button className="btn" onClick={() => void load()}>重新加载授权</button> : <p className="muted small">授权状态加载中…</p>) : projects.length === 0 ? <Empty title="暂无项目" desc="先创建项目，再为其授权知识库。" /> : (
-            <div className="kb-grant-list">
+            <div className="kb-grant-list" role="group" aria-label="可授权的项目列表">
               {projects.map((p) => <label key={p.id} className="kb-grant-row"><input type="checkbox" checked={selected.has(p.id)} disabled={saving} onChange={(e) => { const checked = e.target.checked; setSelected((prev) => { const next = new Set(prev); if (checked) next.add(p.id); else next.delete(p.id); return next; }); }} /><ProjectIconTile project={p} size={26} /><span className="kb-grant-main"><b>{p.name}</b><span>{p.id} · {p.kind === "work" ? "办公" : "编码"}</span></span></label>)}
             </div>
           )}
@@ -256,7 +256,7 @@ function LibraryIconDialog({ library, onClose, onSaved }: { library: KnowledgeLi
     }
   };
   return (
-    <div className="kb-dialog"><Modal title="知识库图标与背景色" width={720} onClose={() => { if (!saving) onClose(); }}
+    <div className="kb-dialog kb-dialog-fit"><Modal title="知识库图标与背景色" width={720} onClose={() => { if (!saving) onClose(); }}
       footer={<><button className="btn" disabled={saving} onClick={onClose}>取消</button><button className="btn primary" disabled={saving} onClick={() => void save()}>{saving ? "保存中…" : "保存"}</button></>}>
       <div className="col">
         <b>{library.name}</b>

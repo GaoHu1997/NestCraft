@@ -38,24 +38,79 @@ fn title(rel: &str, content: &str) -> String {
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| Path::new(rel).file_stem().unwrap_or_default().to_string_lossy().to_string())
 }
+/// CR-068 K02：三类失败用稳定前缀区分，读取端据此显示不同出路，不把其它读取失败
+/// 笼统说成「文件不存在」；任何一类都不会自动改选其它文件或清除草稿。
+const ERR_SOURCE: &str = "KB_SOURCE_INVALID";
+const ERR_IDENTITY: &str = "KB_INDEX_IDENTITY";
+const ERR_MISSING: &str = "KB_FILE_MISSING";
+
+fn source_error(detail: impl AsRef<str>) -> String {
+    let detail = detail.as_ref();
+    if detail.contains(ERR_SOURCE) { detail.to_string() } else { format!("{ERR_SOURCE}: 知识库源不可用：{detail}") }
+}
+fn identity_error(note_id: &str, detail: impl AsRef<str>) -> String {
+    format!("{ERR_IDENTITY}: 索引身份不一致（ID {note_id}）：{}；未改用其它文件", detail.as_ref())
+}
+fn missing_error(note_id: &str, rel: &str) -> String {
+    format!("{ERR_MISSING}: 文件不存在（ID {note_id}｜{rel}）；未改用其它文件，草稿保留")
+}
+/// 相对 URI 对应的磁盘路径，只用于判断「确实不存在」；安全判定仍由 SafeRoot 负责。
+fn disk_path(root: &files::SafeRoot, rel: &str) -> std::path::PathBuf {
+    let mut path = root.path.clone();
+    for part in rel.split('/').filter(|part| !part.is_empty()) { path.push(part); }
+    path
+}
+/// 已由登记/索引命名的文件：区分缺失、索引身份异常与其它读取失败。
+fn resolve_named(root: &mut files::SafeRoot, note_id: &str, rel: &str, name: String) -> Result<(String, String), String> {
+    match root.file(rel) {
+        Ok(_) => Ok((rel.to_string(), name)),
+        Err(error) => {
+            if std::fs::symlink_metadata(disk_path(root, rel)).is_err() { return Err(missing_error(note_id, rel)); }
+            if error.contains("symlink") || error.contains("reparse") || error.contains("越界")
+                || error.contains("相对URI") || error.contains("文件名无效") {
+                return Err(identity_error(note_id, format!("{rel}：{error}")));
+            }
+            Err(format!("读取失败（{rel}）：{error}"))
+        }
+    }
+}
 fn resolve(conn: &Connection, root: &mut files::SafeRoot, id: &str, note_id: &str) -> Result<(String, String), String> {
     let note: Option<(String, String)> = conn.query_row(
         "SELECT relativeUri,title FROM knowledge_note_index WHERE libraryId=?1 AND noteId=?2", [id, note_id],
         |r| Ok((r.get(0)?, r.get(1)?)),
     ).optional().map_err(|e| e.to_string())?;
-    if let Some((rel, name)) = note { root.file(&rel)?; return Ok((rel, name)); }
-    if let Some((rel, name)) = performance::resolve_registered(conn, id, note_id)? {
-        root.file(&rel)?;
-        return Ok((rel, name));
+    if let Some((rel, name)) = note {
+        files::relative(&rel).map_err(|e| identity_error(note_id, format!("索引登记路径非法 {rel}：{e}")))?;
+        return resolve_named(root, note_id, &rel, name);
+    }
+    match performance::resolve_registered(conn, id, note_id) {
+        Ok(Some((rel, name))) => {
+            files::relative(&rel).map_err(|e| identity_error(note_id, format!("目录登记路径非法 {rel}：{e}")))?;
+            return resolve_named(root, note_id, &rel, name);
+        }
+        Ok(None) => {}
+        Err(error) => return Err(identity_error(note_id, error)),
     }
     // Binary/new Markdown files are visible immediately without an index migration.
     // Preserve the old decimal path-hash ID, and refuse collisions instead of guessing.
-    let mut matches = files::entries(root)?.into_iter().filter(|e| !e.is_dir && files::file_id(&e.rel) == note_id);
-    let item = matches.next().ok_or("文件不存在")?;
-    if matches.next().is_some() { return Err("文件身份冲突，不能安全解析".into()); }
-    root.file(&item.rel)?;
+    let entries = files::entries(root).map_err(|e| format!("目录清单不可读取，未判定文件是否存在：{e}"))?;
+    let mut matches = entries.into_iter().filter(|e| !e.is_dir && files::file_id(&e.rel) == note_id);
+    let item = matches.next().ok_or_else(|| missing_error(note_id, "目录中无该稳定 ID 的文件"))?;
+    if matches.next().is_some() { return Err(identity_error(note_id, "同一稳定 ID 命中多个文件")); }
     let name = item.rel.rsplit('/').next().unwrap_or("").to_string();
-    Ok((item.rel, name))
+    resolve_named(root, note_id, &item.rel, name)
+}
+/// 同一个源快照：读取前后都必须一致，源失效不得继续用旧路径冒充成功。
+fn file_root(conn: &Connection, id: &str) -> Result<(String, files::SafeRoot), String> {
+    let source = performance::source_ref(conn, id).map_err(|e| source_error(e))?;
+    let root = enabled_root(conn, id).map_err(|e| source_error(e))?;
+    Ok((source, root))
+}
+fn recheck_source(conn: &Connection, id: &str, source: &str) -> Result<(), String> {
+    if performance::source_ref(conn, id)? != source {
+        return Err(source_error("知识库根在读取期间改变（SOURCE_CHANGED），未继续使用旧路径"));
+    }
+    Ok(())
 }
 fn filename(rel: &str) -> String {
     rel.rsplit('/').next().unwrap_or_default().to_string()
@@ -354,22 +409,20 @@ pub fn kb_save_markdown(id: String, note_id: String, expected_hash: String, cont
 #[tauri::command]
 pub async fn kb_file_info(id: String, note_id: String) -> Result<KnowledgeFileInfo, String> {
     performance::blocking(move |conn| {
-        let source = performance::source_ref(&conn,&id)?;
-        let mut root = enabled_root(&conn,&id)?;
-        let (rel,title) = resolve(&conn,&mut root,&id,&note_id)?;
-        let result = files::info(&mut root,&rel,&note_id,&title)?;
-        if performance::source_ref(&conn,&id)? != source { return Err("SOURCE_CHANGED: 知识库根已改变".into()); }
+        let (source, mut root) = file_root(&conn, &id)?;
+        let (rel, title) = resolve(&conn, &mut root, &id, &note_id)?;
+        let result = files::info(&mut root, &rel, &note_id, &title)?;
+        recheck_source(&conn, &id, &source)?;
         Ok(result)
     }).await
 }
 #[tauri::command]
 pub async fn kb_read_file(id: String, note_id: String) -> Result<KnowledgeFileData, String> {
     performance::blocking(move |conn| {
-        let source = performance::source_ref(&conn,&id)?;
-        let mut root = enabled_root(&conn,&id)?;
-        let (rel,title) = resolve(&conn,&mut root,&id,&note_id)?;
-        let result = files::data(&mut root,&rel,&note_id,&title)?;
-        if performance::source_ref(&conn,&id)? != source { return Err("SOURCE_CHANGED: 知识库根已改变".into()); }
+        let (source, mut root) = file_root(&conn, &id)?;
+        let (rel, title) = resolve(&conn, &mut root, &id, &note_id)?;
+        let result = files::data(&mut root, &rel, &note_id, &title)?;
+        recheck_source(&conn, &id, &source)?;
         Ok(result)
     }).await
 }
@@ -963,9 +1016,9 @@ mod tests {
         let view = crate::commands::kb_index::gateway_read_chunk_conn(&f.conn,Some("p"),"kb",&note_id,None).unwrap();
         assert!(view.content.contains("alpha"),"AI 读取应来自派生 chunk");
         assert!(view.content.contains("传感器数据"));
-        // ③ 人类 kb_read 走原件 → 文件不可访问
+        // ③ 人类 kb_read 走原件 → 原件缺失（CR-068 K02 起用稳定前缀说明，不改派生读取语义）
         let err = read_note(&f.conn,"kb",&note_id).unwrap_err();
-        assert!(err.contains("不可访问") || err.contains("不可读取"),"实际：{err}");
+        assert!(err.starts_with(ERR_MISSING),"实际：{err}");
     }
 
     /// CR-030-D1：保存后 publish_note 在同一事务发布切片；AI 保存路径
@@ -1188,5 +1241,78 @@ mod tests {
         assert_eq!(data["text"],"body");
         assert!(data["info"]["hash"].is_string());
         assert!(data["info"]["sizeBytes"].is_u64() && data["info"]["previewSupported"].is_boolean());
+    }
+
+    /// CR-068 K02：示例式多目录/多格式原件全部按稳定 ID 定位：
+    /// 索引 noteId、目录扫描登记的 id/noteId、未登记文件的路径哈希三者指向同一相对路径；
+    /// 可读能力仍严格按真实格式返回，不因「示例」放宽 PDF 等预览边界。
+    #[test]
+    fn cr068_k02_stable_ids_resolve_example_shapes_for_every_format() {
+        let f = Fixture::new();
+        fs::create_dir_all(f.path.join("01-快速开始")).unwrap();
+        fs::create_dir_all(f.path.join("02-功能手册/子目录")).unwrap();
+        fs::write(f.path.join("01-快速开始/索引.md"), "# 索引\n\n正文").unwrap();
+        fs::write(f.path.join("02-功能手册/子目录/示例.txt"), "文本正文").unwrap();
+        fs::write(f.path.join("02-功能手册/报告.pdf"), b"%PDF-1.4 fake").unwrap();
+        assert_eq!(scan_notes(&f.conn, "kb", &mut f.root()).unwrap(), 1);
+        let mut root = f.root();
+        // Markdown：索引登记的稳定 noteId。
+        let md = files::file_id("01-快速开始/索引.md");
+        assert_eq!(resolve(&f.conn, &mut root, "kb", &md).unwrap().0, "01-快速开始/索引.md");
+        assert_eq!(files::info(&mut root, "01-快速开始/索引.md", &md, "索引").unwrap().kind, "markdown");
+        // 目录扫描登记：注册 id 与 noteId 指向同一稳定文件，两条 ID 都能定位。
+        let pdf = files::file_id("02-功能手册/报告.pdf");
+        f.conn.execute(
+            "INSERT INTO kb_perf_file(libraryId,id,noteId,relativeUri,isDir) VALUES('kb','kbf-report',?1,'02-功能手册/报告.pdf',0)",
+            [&pdf],
+        ).unwrap();
+        for id in ["kbf-report", pdf.as_str()] {
+            assert_eq!(resolve(&f.conn, &mut root, "kb", id).unwrap().0, "02-功能手册/报告.pdf");
+        }
+        let pdf_info = files::info(&mut root, "02-功能手册/报告.pdf", &pdf, "报告.pdf").unwrap();
+        assert_eq!((pdf_info.kind.as_str(), pdf_info.preview_supported, pdf_info.editable), ("pdf", false, false));
+        // 未登记文本文件：路径哈希兜底身份，且按 text 能力可读。
+        let txt = files::file_id("02-功能手册/子目录/示例.txt");
+        assert_eq!(resolve(&f.conn, &mut root, "kb", &txt).unwrap().0, "02-功能手册/子目录/示例.txt");
+        let txt_info = files::info(&mut root, "02-功能手册/子目录/示例.txt", &txt, "示例.txt").unwrap();
+        assert_eq!((txt_info.kind.as_str(), txt_info.preview_supported), ("text", true));
+        assert_eq!(files::data(&mut root, "02-功能手册/子目录/示例.txt", &txt, "示例.txt").unwrap().text.as_deref(), Some("文本正文"));
+    }
+
+    /// CR-068 K02：文件缺失、索引身份异常、源失效三类必须可区分；
+    /// 缺失不会被伪装成「换一篇」成功，源失效也不会被说成文件不存在。
+    #[test]
+    fn cr068_k02_missing_identity_and_source_failures_are_distinct() {
+        let f = Fixture::new();
+        fs::write(f.path.join("gone.md"), "# 将删除").unwrap();
+        scan_notes(&f.conn, "kb", &mut f.root()).unwrap();
+        let gone = files::file_id("gone.md");
+        fs::remove_file(f.path.join("gone.md")).unwrap();
+        let mut root = f.root();
+        let error = resolve(&f.conn, &mut root, "kb", &gone).unwrap_err();
+        assert!(error.starts_with(ERR_MISSING), "实际：{error}");
+        assert!(!error.contains("unreachable"));
+        let unknown = resolve(&f.conn, &mut root, "kb", "n-no-such-stable-id").unwrap_err();
+        assert!(unknown.starts_with(ERR_MISSING), "实际：{unknown}");
+        // 索引登记穿越路径 = 索引身份问题，不是文件缺失。
+        f.conn.execute("INSERT INTO knowledge_note_index VALUES('kb','bad-id','坏','../outside.md','h',0)", []).unwrap();
+        assert!(resolve(&f.conn, &mut root, "kb", "bad-id").unwrap_err().starts_with(ERR_IDENTITY));
+        // 目录扫描登记穿越路径同属索引身份问题。
+        f.conn.execute(
+            "INSERT INTO kb_perf_file(libraryId,id,noteId,relativeUri,isDir) VALUES('kb','kbf-bad','bad-reg','../outside.txt',0)",
+            [],
+        ).unwrap();
+        assert!(resolve(&f.conn, &mut root, "kb", "bad-reg").unwrap_err().starts_with(ERR_IDENTITY));
+        // 源失效：库停用、根目录不可用都归源问题；不冒充文件缺失。
+        f.conn.execute("UPDATE knowledge_library SET enabled=0", []).unwrap();
+        let disabled = match file_root(&f.conn, "kb") { Ok(_) => panic!("停用库不应返回源快照"), Err(error) => error };
+        assert!(disabled.starts_with(ERR_SOURCE), "实际：{disabled}");
+        f.conn.execute("UPDATE knowledge_library SET enabled=1", []).unwrap();
+        f.conn.execute("UPDATE knowledge_library SET sourceRef='Z:/nestcraft-missing-root'", []).unwrap();
+        let missing_root = match file_root(&f.conn, "kb") { Ok(_) => panic!("根不可用不应返回源快照"), Err(error) => error };
+        assert!(missing_root.starts_with(ERR_SOURCE), "实际：{missing_root}");
+        // 读取前后源一致性复检：根变化必须显式失败，不继续复用旧 root。
+        f.conn.execute("UPDATE knowledge_library SET sourceRef=?1", [f.path.to_string_lossy().as_ref()]).unwrap();
+        assert!(recheck_source(&f.conn, "kb", "Z:/nestcraft-missing-root").is_err());
     }
 }

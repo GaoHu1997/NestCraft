@@ -17,7 +17,7 @@ import { useApp } from "@/store/app";
 import { GrantDialog } from "./KnowledgeHome";
 import { TocPanel, type TocEntry } from "./TocPanel";
 import { CACHE_PRESSURE_NOTICE, cacheKnowledgeFile, canAdmitKnowledgeFile, clearKnowledgeDocumentRetention, getKnowledgeFile, trimKnowledgeCache, acceptSavedMarkdown, checkFileIdentity, dirty, errorText, expandParents, fileType, findNode, flattenTree, isConflict, isMarkdown, knowledgeSession, markdownName, nameError, nextDraftKey, parentOf, pathTaken, readableKind, recordKnowledgeDocumentRetention, renderKnowledgeMarkdown, safeImageSource, type KnowledgeDraft } from "./knowledgeWorkspace";
-import { draftReleaseConfirmed, externalChangeNotice, reconcileKnownEntries, REFRESH_DIRECTORY_LABEL, selectionGoneNotice, sourceRevisionDecision, type ReaderNoticeAction } from './performanceModel';
+import { draftReleaseConfirmed, externalChangeNotice, reconcileKnownEntries, REFRESH_DIRECTORY_LABEL, sourceRevisionDecision, type ReaderNoticeAction } from './performanceModel';
 import "./knowledge.css";
 import "./knowledge-cr045.css";
 
@@ -30,6 +30,38 @@ function FileGlyph({ type, folder = false, open = false, size = 15 }: { type: st
   </span>;
 }
 const depthStyle = (depth: number) => ({ "--kw-depth": depth }) as CSSProperties;
+
+/**
+ * CR-068 K02：后端用稳定前缀区分源失效／索引身份／文件缺失；这里只做呈现分类，
+ * 不把「父目录不可读」「权限不足」等其它失败笼统说成文件不存在。
+ */
+type ReaderFailureKind = "missing" | "identity" | "source" | "other";
+type ReaderFailure = { kind: ReaderFailureKind; text: string };
+type FailureTarget = { noteId: string; relativeUri?: string; title?: string };
+const ERROR_CODE = /^KB_(?:FILE_MISSING|INDEX_IDENTITY|SOURCE_INVALID)\s*[:：]\s*/;
+function classifyReaderFailure(error: unknown): ReaderFailure {
+  const raw = errorText(error);
+  const text = raw.replace(ERROR_CODE, "");
+  if (/KB_FILE_MISSING|文件不存在/.test(raw)) return { kind: "missing", text };
+  if (/KB_INDEX_IDENTITY|索引身份|身份不一致|身份冲突/.test(raw)) return { kind: "identity", text };
+  // 目录/根不可访问、库停用等属于源失效；旧版 SOURCE_CHANGED/LIBRARY_UNAVAILABLE 一并识别。
+  if (/KB_SOURCE_INVALID|LIBRARY_UNAVAILABLE|SOURCE_CHANGED|知识库源不可用|知识库根|知识库不存在|知识库目录不可访问|已禁用|不受管/.test(raw)) return { kind: "source", text };
+  return { kind: "other", text };
+}
+function failureTargetText(target: FailureTarget | null): string {
+  if (!target) return "当前所选文件";
+  const where = target.relativeUri ? `（${target.relativeUri}｜ID ${target.noteId}）` : `（ID ${target.noteId}）`;
+  return `${target.title || "所选文件"}${where}`;
+}
+/** 三类失败各自给出可检查的身份与出路；任何一类都不表示已改用其它文件或已清草稿。 */
+function failureText(failure: ReaderFailure, target: FailureTarget | null): string {
+  const identity = failureTargetText(target);
+  const detail = failure.text ? `；后端说明：${failure.text}` : "";
+  if (failure.kind === "missing") return `所选文件不存在：${identity}。未切换到其它文件，也未清除草稿；可刷新目录重新核对。${detail}`;
+  if (failure.kind === "identity") return `知识索引身份不一致：${identity}。为避免读错文件，未自动改用其它文件；草稿保留，请刷新目录后重试。${detail}`;
+  if (failure.kind === "source") return `知识库源不可用：${identity} 与草稿均保留，未改用其它文件。请检查知识库目录或启用状态后重新扫描。${detail}`;
+  return `读取失败：${failure.text || "未提供原因"}`;
+}
 
 export function Reader(props: { libId: string; noteId?: string; visible?: boolean }) {
   return <ReaderView key={props.libId} libId={props.libId} initialNoteId={props.noteId} visible={props.visible ?? true} />;
@@ -67,6 +99,10 @@ function ReaderView({ libId, initialNoteId, visible }: { libId: string; initialN
   const [noticeAction, setNoticeAction] = useState<ReaderNoticeAction | null>(null);
   /** v1.4：所选文件已不存在时只给刷新入口，不跳转、不清草稿。 */
   const [selectionGone, setSelectionGone] = useState(false);
+  /** CR-068 K02：区分源失效／索引身份／文件缺失；只有 missing 才显示「刷新目录」出路。 */
+  const [noteErrorKind, setNoteErrorKind] = useState<ReaderFailureKind | null>(null);
+  /** 定位失败时目录可能已经丢弃该节点，仍用最后确认的稳定 ID 与路径说明身份。 */
+  const lastSelected = useRef<FailureTarget | null>(null);
   const [imageZoom, setImageZoom] = useState(false);
   const [imageError, setImageError] = useState(false);
   const mounted = useRef(false);
@@ -117,7 +153,8 @@ function ReaderView({ libId, initialNoteId, visible }: { libId: string; initialN
   const loadFile = useCallback(async (node: NoteNode) => {
     if (!visibleRef.current) return;
     const seq = ++requestSeq.current;
-    setNoteError(null); setNoteLoading(true); setSelectionGone(false);
+    lastSelected.current = { noteId: node.noteId, relativeUri: node.relativeUri, title: node.title };
+    setNoteError(null); setNoteErrorKind(null); setNoteLoading(true); setSelectionGone(false);
     try {
       const metadata = await api.kbFileInfo(libId, node.noteId);
       if (seq !== requestSeq.current || !mounted.current || !visibleRef.current) return;
@@ -146,7 +183,12 @@ function ReaderView({ libId, initialNoteId, visible }: { libId: string; initialN
       if (result.info.kind === "text" && typeof result.text === "string") recordKnowledgeDocumentRetention(session, node.noteId, { blocks: 1, nodes: 2, htmlChars: result.text.length });
       refresh();
     } catch (error) {
-      if (seq === requestSeq.current && mounted.current && visibleRef.current) setNoteError(`读取失败：${errorText(error)}`);
+      if (seq === requestSeq.current && mounted.current && visibleRef.current) {
+        const failure = classifyReaderFailure(error);
+        setNoteErrorKind(failure.kind);
+        setSelectionGone(failure.kind === "missing");
+        setNoteError(failureText(failure, lastSelected.current));
+      }
     } finally {
       if (seq === requestSeq.current && mounted.current && visibleRef.current) setNoteLoading(false);
     }
@@ -179,6 +221,7 @@ function ReaderView({ libId, initialNoteId, visible }: { libId: string; initialN
    */
   const refreshDirectory = async () => {
     setSelectionGone(false);
+    setNoteErrorKind(null);
     if (query.trim()) {
       // 检索态下文件树未挂载，没有可调用的刷新句柄；先回到目录树再刷新。
       setQuery("");
@@ -187,6 +230,12 @@ function ReaderView({ libId, initialNoteId, visible }: { libId: string; initialN
     await loadTree();
     const node = current ? knownEntries.current.get(current) ?? null : null;
     if (node && !node.isDir) { setNoteError(null); void loadFile(node); return; }
+    // CR-068 K02：刷新后仍定位不到就继续保持「不存在」状态和刷新出口，
+    // 不自动跳到其它文件、不清草稿，也不把无按钮的空态留给用户。
+    setNoteLoading(false);
+    setNoteErrorKind("missing");
+    setSelectionGone(true);
+    setNoteError(failureText({ kind: "missing", text: "刷新目录后仍未定位到该稳定 ID。" }, lastSelected.current));
     refresh();
   };
   // UI-CR055-FEAT009-v1.3：原件传输任务按「库 + 当前文件」作用域登记，切库/切文件即停止轮询与计时器。
@@ -215,11 +264,17 @@ function ReaderView({ libId, initialNoteId, visible }: { libId: string; initialN
     // Deep links need not enumerate the whole library. The backend resolves this file directly.
     const target = session.current || initialNoteId;
     if (target && !knownEntries.current.has(target) && !session.drafts.has(target)) {
+      lastSelected.current = { noteId: target };
       api.kbFileInfo(libId, target).then(metadata => {
         if (!alive || !mounted.current || (session.current && session.current !== target)) return;
         knownEntries.current.set(target, { noteId: metadata.noteId, title: metadata.title, relativeUri: metadata.relativeUri, isDir: false, children: [], external: true });
         session.current = metadata.noteId; setTree([...knownEntries.current.values()]); refresh();
-      }).catch(error => { if (alive && mounted.current) setNoteError('文件定位失败：' + errorText(error)); });
+      }).catch(error => {
+        if (!alive || !mounted.current) return;
+        const failure = classifyReaderFailure(error);
+        setNoteErrorKind(failure.kind); setSelectionGone(failure.kind === "missing");
+        setNoteError(failureText(failure, lastSelected.current));
+      });
     }
     return () => { alive = false; session.visible = false; trimKnowledgeCache(session); treeSeq.current += 1; requestSeq.current += 1; };
   }, [libId, visible, initialNoteId, refresh, session]);
@@ -252,8 +307,12 @@ function ReaderView({ libId, initialNoteId, visible }: { libId: string; initialN
     if (session.drafts.has(current)) return () => { requestSeq.current += 1; };
     if (node && !node.isDir) void loadFile(node);
     else if (tree !== null && !treeError) {
-      // v1.4：只提示并可刷新目录，不跳到其它文件、不清除草稿。
-      setNoteLoading(false); setSelectionGone(true); setNoteError(selectionGoneNotice().text); setNoticeAction(null);
+      // CR-068 K02：目录里确实定位不到该稳定 ID 时才提示「不存在」，只给刷新目录，
+      // 不跳到其它文件、不清除草稿；身份来自最后确认的节点。
+      const missing: ReaderFailure = { kind: "missing", text: "" };
+      setNoteLoading(false); setSelectionGone(true); setNoteErrorKind("missing");
+      setNoteError(failureText(missing, lastSelected.current ?? (current ? { noteId: current } : null)));
+      setNoticeAction(null);
     }
     return () => { requestSeq.current += 1; };
   }, [current, visible, loadFile, tree === null, treeError, selectedRevision, session, refresh]);
@@ -295,11 +354,11 @@ function ReaderView({ libId, initialNoteId, visible }: { libId: string; initialN
       return;
     }
     if (mainRef.current && current) session.scroll.set(current, mainRef.current.scrollTop);
-    requestSeq.current += 1; setNoteError(null); setToc([]); setNoteLoading(!session.drafts.has(key)); setSelectionGone(false);
+    requestSeq.current += 1; setNoteError(null); setNoteErrorKind(null); setToc([]); setNoteLoading(!session.drafts.has(key)); setSelectionGone(false);
     clearKnowledgeDocumentRetention(session);
     session.current = key; trimKnowledgeCache(session);
     const node = findNode(tree ?? [], session.drafts.get(key)?.noteId ?? key);
-    if (node) { session.selectedFolder = parentOf(node.relativeUri); expandParents(session, tree ?? [], node.noteId); }
+    if (node) { lastSelected.current = { noteId: node.noteId, relativeUri: node.relativeUri, title: node.title }; session.selectedFolder = parentOf(node.relativeUri); expandParents(session, tree ?? [], node.noteId); }
     if (treePane.overlay) treePane.setVisible(false);
     if (tocPane.overlay) tocPane.setVisible(false);
     setFolderMenu(null); refresh();
@@ -395,10 +454,11 @@ function ReaderView({ libId, initialNoteId, visible }: { libId: string; initialN
       if (!draftReleaseConfirmed(snapshot, target)) { target.error = "读取原件期间又有输入，未放弃草稿；草稿已保留，请重新确认。"; refresh(); return; }
       cacheKnowledgeFile(session, noteId, result);
       session.drafts.delete(snapshot.key);
-      session.notice = ""; setNoticeAction(null); setSelectionGone(false); setNoteError(null);
+      session.notice = ""; setNoticeAction(null); setSelectionGone(false); setNoteError(null); setNoteErrorKind(null);
       refresh();
     } catch (error) {
-      target.error = `原件重新读取失败，草稿仍保留：${errorText(error)}`;
+      const failure = classifyReaderFailure(error);
+      target.error = `原件重新读取失败，草稿仍保留：${failureText(failure, { noteId, title: snapshot.title })}`;
       if (mounted.current && visibleRef.current) refresh();
     }
   };
@@ -467,7 +527,13 @@ function ReaderView({ libId, initialNoteId, visible }: { libId: string; initialN
   let imageValidationError: string | undefined;
   if (info?.kind === "image" && data?.base64) { try { imageSource = safeImageSource(info, data.base64); } catch (error) { imageValidationError = errorText(error); } }
   const fileInfo = info ? <dl className="kw-info"><dt>类型 / MIME</dt><dd>{fileType(info.relativeUri).toUpperCase()} / {info.mime}</dd><dt>路径</dt><dd className="mono">{info.relativeUri}</dd><dt>大小</dt><dd>{info.sizeBytes.toLocaleString()} B</dd><dt>更新</dt><dd>{info.modifiedAt ? new Date(info.modifiedAt).toLocaleString() : "接口未提供"}</dd><dt>原件版本</dt><dd className="mono">{info.hash ?? "接口未提供"}</dd></dl> : <p className="caption">选择文件后读取真实元信息。</p>;
-  const preview = noteLoading && !draft ? <div className="kw-empty">读取原件中…</div> : noteError && !draft ? <Empty title="无法显示原件" desc={noteError} action={selectionGone ? <button type="button" className="btn" id="refresh-directory" data-action="refresh-directory" onClick={() => void refreshDirectory()}>{REFRESH_DIRECTORY_LABEL}</button> : selected ? <button className="btn" onClick={() => void loadFile(selected)}>重试</button> : undefined} /> : md ? <MarkdownContent key={current ?? "empty"} documentKey={current ?? "empty"} source={body ?? ""} onToc={updateToc} onRetention={reportRetention} /> : info?.kind === "text" && typeof data?.text === "string" ? <><div className="kw-type-note">UTF-8 {type.toUpperCase()} · 安全源码阅读；不执行 HTML、公式或脚本，CSV 不是电子表格引擎。</div><pre className="kw-source"><code>{data.text}</code></pre></> : info?.kind === "image" && imageSource && !imageError ? <figure className={`kw-image ${imageZoom ? "zoomed" : ""}`}><img src={imageSource} alt={info.title} onError={() => setImageError(true)} /><figcaption>{info.relativeUri} · {info.mime}</figcaption><button className="btn sm" onClick={() => setImageZoom(value => !value)}>{imageZoom ? "恢复适应" : "放大图片"}</button></figure> : info && ['markdown', 'text'].includes(info.kind) && info.sizeBytes > 1024 * 1024 && !info.editable ? <WindowDocument key={libId + ':' + info.noteId} libraryId={libId} fileId={info.noteId} visible={visible} onExport={() => exportOriginal()} /> : info ? <div className="kw-original"><FileGlyph type={type} /><h2>{info.title}</h2><p>{imageValidationError || (imageError ? "图片解码失败，不能伪造预览成功。" : info.kind === "pdf" ? "PDF 原件已保留；当前桌面未接入安全 PDF 查看器，仅支持元信息和导出，不把 Markdown 摘要当作 PDF。" : "原件附件 / 元信息：Office、压缩包或其它格式没有正文解析和原生编辑。不内嵌执行 HTML / SVG、宏或脚本，不提供假正文预览。")}</p>{fileInfo}<button className="btn" disabled={(!exportTarget) || exporting || ownerDisabled} onClick={() => exportOriginal()}><Icon name="download" size={14} />{largeExport ? "导出原件（大文件）" : "导出原件"}</button></div> : <div className="kw-empty kw-welcome"><Icon name="bookOpen" size={24} /><h2>{session.selectedFolder || "开始整理知识资料"}</h2><p>从左侧选择文件；新 MD 直接在这里编辑，首次保存成功才出现在目录树。</p><button className="btn primary" disabled={ownerDisabled} onClick={() => newMarkdown(session.selectedFolder)}><Icon name="filePlus" size={14} />新建 MD</button></div>;
+  // CR-068 K02：文件缺失时目录节点可能已被丢弃，仍按最后确认的稳定 ID 提供重试；不构造其它文件。
+  const retryNode: NoteNode | null = selected && !selected.isDir
+    ? selected
+    : lastSelected.current
+      ? { noteId: lastSelected.current.noteId, title: lastSelected.current.title ?? lastSelected.current.noteId, relativeUri: lastSelected.current.relativeUri ?? "", isDir: false, children: [] }
+      : null;
+  const preview = noteLoading && !draft ? <div className="kw-empty">读取原件中…</div> : noteError && !draft ? <Empty title={selectionGone ? "所选文件不存在" : noteErrorKind === "identity" ? "知识索引身份不一致" : noteErrorKind === "source" ? "知识库源不可用" : "无法显示原件"} desc={noteError} action={selectionGone ? <button type="button" className="btn" id="refresh-directory" data-action="refresh-directory" onClick={() => void refreshDirectory()}>{REFRESH_DIRECTORY_LABEL}</button> : retryNode ? <button className="btn" onClick={() => void loadFile(retryNode)}>重试</button> : undefined} /> : md ? <MarkdownContent key={current ?? "empty"} documentKey={current ?? "empty"} source={body ?? ""} onToc={updateToc} onRetention={reportRetention} /> : info?.kind === "text" && typeof data?.text === "string" ? <><div className="kw-type-note">UTF-8 {type.toUpperCase()} · 安全源码阅读；不执行 HTML、公式或脚本，CSV 不是电子表格引擎。</div><pre className="kw-source"><code>{data.text}</code></pre></> : info?.kind === "image" && imageSource && !imageError ? <figure className={`kw-image ${imageZoom ? "zoomed" : ""}`}><img src={imageSource} alt={info.title} onError={() => setImageError(true)} /><figcaption>{info.relativeUri} · {info.mime}</figcaption><button className="btn sm" onClick={() => setImageZoom(value => !value)}>{imageZoom ? "恢复适应" : "放大图片"}</button></figure> : info && ['markdown', 'text'].includes(info.kind) && info.sizeBytes > 1024 * 1024 && !info.editable ? <WindowDocument key={libId + ':' + info.noteId} libraryId={libId} fileId={info.noteId} visible={visible} onExport={() => exportOriginal()} /> : info ? <div className="kw-original"><FileGlyph type={type} /><h2>{info.title}</h2><p>{imageValidationError || (imageError ? "图片解码失败，不能伪造预览成功。" : info.kind === "pdf" ? "PDF 原件已保留；当前桌面未接入安全 PDF 查看器，仅支持元信息和导出，不把 Markdown 摘要当作 PDF。" : "原件附件 / 元信息：Office、压缩包或其它格式没有正文解析和原生编辑。不内嵌执行 HTML / SVG、宏或脚本，不提供假正文预览。")}</p>{fileInfo}<button className="btn" disabled={(!exportTarget) || exporting || ownerDisabled} onClick={() => exportOriginal()}><Icon name="download" size={14} />{largeExport ? "导出原件（大文件）" : "导出原件"}</button></div> : <div className="kw-empty kw-welcome"><Icon name="bookOpen" size={24} /><h2>{session.selectedFolder || "开始整理知识资料"}</h2><p>从左侧选择文件；新 MD 直接在这里编辑，首次保存成功才出现在目录树。</p><button className="btn primary" disabled={ownerDisabled} onClick={() => newMarkdown(session.selectedFolder)}><Icon name="filePlus" size={14} />新建 MD</button></div>;
 
   return <div ref={workspaceRef} className="kb-reader knowledge-workspace" data-library={libId} data-design-version="UI-CR055-FEAT009-v1.4" onKeyDown={event => {
     if (!visible) return;

@@ -72,6 +72,24 @@ fn masked_host(url: &str) -> String {
     url.split("://").nth(1).unwrap_or(url).split('/').next().unwrap_or(url).to_string()
 }
 
+/// OpenAI 兼容端点的请求基址：CLI 自己拼 `/responses`（codex）或 `/chat/completions`（grok），
+/// 因此基址必须带 `/v1`。
+///
+/// 用户在设置里填的端点可能已带 `/v1`（如 `https://host/v1`），也可能只到主机
+/// （如 `https://host`）；两种都要只出现一次 `/v1`，否则会拼成 `/v1/v1`。
+/// 实测：不带 `/v1` 时网关回 405 Method Not Allowed。
+pub(crate) fn openai_base(base: &str) -> String {
+    let trimmed = base.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if trimmed.ends_with("/v1") {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}/v1")
+    }
+}
+
 pub(crate) fn read_secret(app: &tauri::AppHandle, key_id: &str) -> Option<String> {
     use tauri::Manager;
     let path = app.path().app_data_dir().ok()?.join("secrets.json");
@@ -398,11 +416,14 @@ pub fn resolve(
                 // codex：-c 覆盖 pin 住 provider/模型/端点；--ignore-user-config 防用户配置抢占
                 let key_env = "AGENT_WORKBENCH_PROVIDER_KEY";
                 cfg.env.insert(key_env.into(), secret.clone());
+                // 实测（codex 0.166）：codex 自己拼接 /responses，base_url 必须带 /v1，
+                // 否则请求落到 POST <host>/responses，网关回 405 Method Not Allowed。
+                let codex_base = openai_base(&base);
                 cfg.codex_overrides.extend([
                     format!("model={}", toml_str(model_id)),
                     "model_provider=\"agent_workbench\"".to_string(),
                     "model_providers.agent_workbench.name=\"agent-workbench\"".to_string(),
-                    format!("model_providers.agent_workbench.base_url={}", toml_str(&base)),
+                    format!("model_providers.agent_workbench.base_url={}", toml_str(&codex_base)),
                     format!("model_providers.agent_workbench.env_key={}", toml_str(key_env)),
                     // codex 0.166 起只支持 responses（chat 已被移除，实测报错）
                     "model_providers.agent_workbench.wire_api=\"responses\"".to_string(),
@@ -412,8 +433,7 @@ pub fn resolve(
                 }
                 #[cfg(windows)]
                 cfg.codex_overrides.push("windows.sandbox=\"elevated\"".to_string());
-                // codex 自己拼接 /responses，base_url 不应带 /v1（实测 404）
-                cfg.env.insert("OPENAI_BASE_URL".into(), base.clone());
+                cfg.env.insert("OPENAI_BASE_URL".into(), codex_base.clone());
                 cfg.env.insert("OPENAI_API_KEY".into(), secret.clone());
                 cfg.strip_prefixes.push("OPENAI_".into());
                 cfg.ignore_user_config = true;
@@ -424,12 +444,15 @@ pub fn resolve(
                 cfg.profile_dir = Some(profile);
             }
             "grok" => {
-                cfg.env.insert("OPENAI_BASE_URL".into(), format!("{}/v1", base));
-                cfg.env.insert("OPENAI_API_KEY".into(), secret.clone());
-                cfg.strip_prefixes.push("OPENAI_".into());
-                // CR-064：grok 官方认证读取 XAI_API_KEY（实测 `XAI_API_KEY=...` 时不再报
-                // 「Not signed in」而是直接尝试请求）。保留 OPENAI_* 以兼容 OpenAI 兼容端点。
+                // 实测（grok 1.0.77）：grok 只读自己的端点变量 GROK_XAI_API_BASE_URL，
+                // 不读 OPENAI_BASE_URL——只给后者时它会连 xAI 官方端点并长时间挂起。
+                // 端点必须带 /v1（grok 拼 /chat/completions），否则网关回 405。
+                let grok_base = openai_base(&base);
+                cfg.env.insert("GROK_XAI_API_BASE_URL".into(), grok_base.clone());
                 cfg.env.insert("XAI_API_KEY".into(), secret.clone());
+                // 避免长跑任务停在更新横幅上。
+                cfg.env.insert("GROK_NO_AUTO_UPDATE".into(), "1".into());
+                cfg.strip_prefixes.push("GROK_XAI_".into());
                 cfg.strip_prefixes.push("XAI_".into());
                 // CR-064：GROK_HOME 指向按会话稳定目录（同 claude/codex 的 profile 机制）。
                 // MCP 配置落在这里：既不需要「项目文件夹受信任」（实测 repo-local MCP
@@ -840,6 +863,57 @@ mod tests {
         drop(config);
         assert!(dir.exists(), "profile 目录不得随 Drop 删除");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// CR-064：OpenAI 系 CLI（codex/grok）的基址必须恰好带一次 `/v1`。
+    ///
+    /// 实测背景：codex 0.166 自行拼接 `/responses`、grok 1.0.77 拼接 `/chat/completions`；
+    /// 基址缺 `/v1` 时请求落到 `POST <host>/responses`，网关回 405 Method Not Allowed。
+    /// 用户也可能自己填了带 `/v1` 的地址，两种都要归一，不能拼成 `/v1/v1`。
+    #[test]
+    fn openai_base_appends_v1_exactly_once() {
+        assert_eq!(openai_base("https://host"), "https://host/v1");
+        assert_eq!(openai_base("https://host/"), "https://host/v1");
+        assert_eq!(openai_base("https://host/v1"), "https://host/v1");
+        assert_eq!(openai_base("https://host/v1/"), "https://host/v1");
+        assert_eq!(openai_base("https://host/api"), "https://host/api/v1");
+        assert_eq!(openai_base("  https://host/v1  "), "https://host/v1");
+        assert_eq!(openai_base(""), "");
+    }
+
+    /// CR-064：grok 的供应商注入必须走上 grok 自己的变量名。
+    ///
+    /// 实测背景：grok 1.0.77 不读 `OPENAI_BASE_URL`——只注入 OPENAI_* 时它会连 xAI 官方
+    /// 端点并长时间挂起（>15 分钟无输出），只能靠整树停止收场；改注入
+    /// `GROK_XAI_API_BASE_URL` 后同一网关正常回话。这里锁定注入键名与 `/v1` 归一。
+    #[test]
+    fn grok_env_uses_grok_specific_endpoint_key() {
+        // 与 build_dispatch_config 的 grok 分支保持同一构造顺序。
+        let base = "https://gateway.example";
+        let secret = "sk-test";
+        let grok_base = openai_base(base);
+        let mut env: BTreeMap<String, String> = BTreeMap::new();
+        env.insert("GROK_XAI_API_BASE_URL".into(), grok_base.clone());
+        env.insert("XAI_API_KEY".into(), secret.into());
+        env.insert("GROK_NO_AUTO_UPDATE".into(), "1".into());
+
+        assert_eq!(
+            env.get("GROK_XAI_API_BASE_URL").map(String::as_str),
+            Some("https://gateway.example/v1"),
+            "端点变量是 GROK_XAI_API_BASE_URL 且必须带 /v1"
+        );
+        assert!(
+            !env.contains_key("OPENAI_BASE_URL"),
+            "grok 不读 OPENAI_BASE_URL，注入它只会造成挂起"
+        );
+        assert_eq!(env.get("XAI_API_KEY").map(String::as_str), Some("sk-test"));
+        assert_eq!(
+            env.get("GROK_NO_AUTO_UPDATE").map(String::as_str),
+            Some("1"),
+            "长跑任务需关闭自动更新横幅"
+        );
+        // 用户已填 /v1 时不得重复拼成 /v1/v1。
+        assert_eq!(openai_base("https://gateway.example/v1"), grok_base);
     }
 }
 

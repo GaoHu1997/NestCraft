@@ -185,6 +185,26 @@ pub fn smoke_report_write_pin(app: tauri::AppHandle, content: String) -> Result<
     Ok(path.to_string_lossy().to_string())
 }
 
+/// grok 真实链路套件是否应启动（TAURI_SMOKE=1 且 SMOKE_GROK_SUITE=1）。
+#[tauri::command]
+pub fn smoke_grok_suite_flag() -> bool {
+    std::env::var("SMOKE_GROK_SUITE").map(|v| v == "1").unwrap_or(false)
+}
+
+/// grok 真实链路报告落盘（独立文件）。
+#[tauri::command]
+pub fn smoke_report_write_grok(app: tauri::AppHandle, content: String) -> Result<String, String> {
+    use tauri::Manager;
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("smoke-report-grok.md");
+    std::fs::write(&path, &content).map_err(|e| e.to_string())?;
+    println!("SMOKE-GROK-REPORT-BEGIN {}", path.to_string_lossy());
+    println!("{}", content);
+    println!("SMOKE-GROK-REPORT-END");
+    Ok(path.to_string_lossy().to_string())
+}
+
 /// 注入 JS 错误陷阱：捕获页面 error/unhandledrejection 并回传报告（诊断用）。
 #[tauri::command]
 pub fn smoke_instrument(window: tauri::WebviewWindow) -> Result<(), String> {
@@ -340,7 +360,20 @@ pub fn smoke_keep_db_flag() -> bool {
 
 /// 冒烟用：把 SDK 登记路径清空，让 claude 走 PATH 解析到真实 CLI。
 #[tauri::command]
-pub fn smoke_use_real_claude() -> Result<(), String> {    // 解析真实 claude 可执行文件（排除 mockbin，避免误用 mock）。
+pub fn smoke_use_real_claude() -> Result<(), String> {
+    smoke_use_real_cli("claude".to_string())
+}
+
+/// 冒烟用：把指定 CLI 的 SDK 登记路径改为 PATH 中的真实可执行文件。
+///
+/// 冒烟模式启动时会把 mockbin 钉进 cli_sdk，保证全量套件确定性；验证真实链路时
+/// 必须显式改回真实 CLI，否则会静默跑 mock（mock 只回固定文案，正文断言会失败）。
+#[tauri::command]
+pub fn smoke_use_real_cli(cli_id: String) -> Result<(), String> {
+    if !matches!(cli_id.as_str(), "claude" | "codex" | "grok") {
+        return Err(format!("未知 CLI：{cli_id}"));
+    }
+    // 解析真实可执行文件（排除 mockbin，避免误用 mock）。
     // Git Bash 启动时 SMOKE_MOCKBIN 会带正斜杠（D:/…），PATH 目录是反斜杠，须归一化后比较。
     let mock_dir = std::env::var("SMOKE_MOCKBIN").unwrap_or_default();
     let mock_norm = mock_dir.replace('/', "\\").trim_end_matches('\\').to_lowercase();
@@ -353,7 +386,7 @@ pub fn smoke_use_real_claude() -> Result<(), String> {    // 解析真实 claude
                 continue;
             }
             for ext in ["cmd", "exe"] {
-                let cand = dir.join(format!("claude.{}", ext));
+                let cand = dir.join(format!("{}.{}", cli_id, ext));
                 if cand.is_file() {
                     real = Some(cand);
                     break;
@@ -364,15 +397,15 @@ pub fn smoke_use_real_claude() -> Result<(), String> {    // 解析真实 claude
             }
         }
     }
-    let real = real.ok_or("未找到真实 claude CLI（PATH 中除 mockbin 外无 claude）")?;
+    let real = real.ok_or_else(|| format!("未找到真实 {cli_id} CLI（PATH 中除 mockbin 外无 {cli_id}）"))?;
     let guard = crate::db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
     conn.execute(
-        "UPDATE cli_sdk SET path=?1, installState='installed' WHERE id='claude'",
-        rusqlite::params![real.to_string_lossy()],
+        "UPDATE cli_sdk SET path=?1, installState='installed' WHERE id=?2",
+        rusqlite::params![real.to_string_lossy(), cli_id],
     )
     .map_err(|e| e.to_string())?;
-    eprintln!("[smoke] 真实 claude = {}", real.display());
+    eprintln!("[smoke] 真实 {} = {}", cli_id, real.display());
     Ok(())
 }
 
@@ -454,12 +487,23 @@ pub fn smoke_set_tierflow_key(app: tauri::AppHandle, key: String) -> Result<Stri
         )
         .map_err(|e| e.to_string())?;
     }
-    conn.execute(
-        "INSERT OR REPLACE INTO provider_key (id, providerId, alias, secretRef, masked, enabled, createdAt)
-         VALUES (?1, ?2, 'live', ?1, ?3, 1, ?4)",
-        rusqlite::params![key_id, SMOKE_PROVIDER_ID, "sk-8****BV8M", now],
-    )
-    .map_err(|e| e.to_string())?;
+    // 密钥：按协议各一把。provider.protocol 是 anthropic，空 protocol 的密钥会回退成
+    // anthropic，因此 codex/grok（要求 openai 协议）拿不到密钥——必须显式给 openai 那把。
+    // 实测背景：只插一把空 protocol 的密钥时，grok 派发报「没有启用的 openai 密钥覆盖模型」。
+    for (kid, alias, proto, masked) in [
+        ("key-tf-live", "live", "", "sk-8****BV8M"),
+        ("key-tf-live-openai", "live-openai", "Chat", "sk-8****BV8M"),
+    ] {
+        conn.execute(
+            "INSERT OR REPLACE INTO provider_key (id, providerId, alias, secretRef, masked, enabled, protocol, createdAt)
+             VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7)",
+            rusqlite::params![kid, SMOKE_PROVIDER_ID, alias, kid, masked, proto, now],
+        )
+        .map_err(|e| e.to_string())?;
+        // 两把密钥指向同一 secretRef（同一真实密钥），冒烟库内互不影响。
+        map.insert(kid.to_string(), map.get(key_id).cloned().unwrap_or_default());
+    }
+    let _ = std::fs::write(&path, serde_json::to_vec_pretty(&map).map_err(|e| e.to_string())?);
     Ok(key_id.to_string())
 }
 

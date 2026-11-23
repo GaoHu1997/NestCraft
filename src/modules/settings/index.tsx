@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { getSetting } from "@/api";
 import { UserAvatar } from "@/components/icon-tiles";
 import { useAvatarPhoto } from "@/components/avatar";
-import { usePaneWidth, ResizeHandle, PaneToggle } from "@/components/pane-resize";
+import { usePaneWidth, ResizeHandle } from "@/components/pane-resize";
 import { SettingsGeneral } from "./SettingsGeneral";
 import { SettingsModels } from "./SettingsModels";
 import { SettingsModelProbe } from "./SettingsModelProbe";
@@ -31,12 +31,18 @@ export function SettingsCenter(props: { initialTab: string; onOpenTab: (tab: str
   const settingsPhoto = useAvatarPhoto();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const layoutRef = useRef<HTMLDivElement>(null);
-  const navigation = usePaneWidth("settings", "navigation", { default: 224, min: 176, max: 320, side: "left", containerRef: layoutRef, minCenter: 320 });
+  // CR-068 S01：左分类导航常驻（不再提供右下角收展按钮），会话内残留的折叠状态不再生效。
+  const navigation = usePaneWidth("settings", "navigation", { default: 224, min: 176, max: 320, side: "left", containerRef: layoutRef, minCenter: 320, visible: true });
   useEffect(() => setTab(normalizeTab(props.initialTab)), [props.initialTab]);
   useEffect(() => {
     const dialog = dialogRef.current;
+    // CR-068 S02：关闭后焦点回到打开前的入口（X／Escape／遮罩三条路径共用）。
+    const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     dialog?.showModal();
-    return () => { if (dialog?.open) dialog.close(); };
+    return () => {
+      if (dialog?.open) dialog.close();
+      if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
+    };
   }, []);
   useEffect(() => {
     let alive = true;
@@ -57,16 +63,19 @@ export function SettingsCenter(props: { initialTab: string; onOpenTab: (tab: str
     const rect = e.currentTarget.getBoundingClientRect();
     if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) props.onClose();
   }}>
-    <div className="set-shell pane-container" ref={layoutRef} style={{ gridTemplateColumns: `${navigation.overlay ? 0 : navigation.width}px minmax(0,1fr)` }}>
+    <div className="set-shell pane-container" ref={layoutRef}>
       <nav {...navigation.paneProps} className={`${navigation.paneProps.className} set-nav`} style={navigation.style} aria-label="设置分类">
         <div className="set-user"><UserAvatar size={34} photo={settingsPhoto} /><div><b>{profile.name || "未设置名称"}</b><span>{profile.email || "未设置邮箱"}</span></div></div>
         <div className="set-nav-list">{TABS.map(t => <button key={t.id} className={`set-nav-btn ${tab === t.id ? "active" : ""}`} aria-current={tab === t.id ? "page" : undefined} onClick={() => open(t.id)}><SettingsIcon name={t.icon} />{t.label}</button>)}</div>
-        <div className="set-nav-foot"><span className="set-caption">设置与账户</span><button className="btn sm" onClick={props.onClose}>关闭</button></div>
         <ResizeHandle pane={navigation} label="设置分类" />
       </nav>
       <section className="set-body">
-        <div className="set-head"><div><h2>{selected.label}</h2><p className="set-caption">{selected.sub}</p></div><button className="set-mobile-close set-icon-btn" onClick={props.onClose} aria-label="关闭设置"><SettingsIcon name="close" /></button></div>
-        <select className="set-mobile-nav select" aria-label="设置分类" value={tab} onChange={e => open(e.target.value)}>{TABS.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}</select>
+        {/* CR-068 S01/S04：头部只放标题与说明。模型页生图图标若接到本行，按设计位于最右业务位（CSS margin-left:auto），
+            头部右侧预留 58px，右上 X 独立定位在 14px，两者不重叠。 */}
+        <div className="set-head"><div><h2>{selected.label}</h2><p className="set-caption">{selected.sub}</p></div>
+          {/* CR-068 M06：模型管理标题同行最右侧的生图入口，仅图标，不显示文字。 */}
+          {tab === "models" && <button type="button" className="set-icon-btn set-head-imagegen" onClick={() => window.dispatchEvent(new CustomEvent("settings:open-imagegen"))} title="生图配置" aria-label="生图配置"><SettingsIcon name="image" /></button>}
+        </div>
         <div className="set-scroll">
           <div hidden={tab !== "general"}><SettingsGeneral /></div>
           <div hidden={tab !== "models"}><SettingsModels /></div>
@@ -78,7 +87,8 @@ export function SettingsCenter(props: { initialTab: string; onOpenTab: (tab: str
           <div hidden={tab !== "tool"}><SettingsTool /></div>
         </div>
       </section>
-      <div className="pane-controls"><PaneToggle pane={navigation} label="设置分类" /></div>
+      {/* CR-068 S01/S02：右上角 X 关闭；左栏不再有「设置与账户」文案与关闭按钮。 */}
+      <button type="button" className="set-icon-btn set-close" aria-label="关闭设置" title="关闭设置" onClick={props.onClose}><SettingsIcon name="close" /></button>
     </div>
   </dialog>;
 }

@@ -9,6 +9,8 @@ import { formatDur } from "./sessionRuntime";
  *   底部右侧 8px 箭头指向触发控件；同一时刻只开一个；再点/外点/Escape 收起；
  * - 字段口径沿用 CR-019：轮次/模型用时/工具用时/TTFT/TPS；
  *   Token 总量/缓存命中/未缓存输入/缓存读取/输出；上下文 used/limit 与占比。
+ * - CR-068 J10：上下文是**当前窗口**（最近一次请求上报的提示词用量），不是整会话累计；
+ *   窗口上限只来自模型声明的 contextWindow；未上报的字段保持未知，不填 0、不用上限冒充用量。
  */
 
 export interface StatsData {
@@ -44,16 +46,22 @@ export function StatsBar(props: { data: StatsData }) {
   const overlay = useChatOverlay();
   const open = overlay.activeOverlay;
   const toggle = (k: "session" | "tokens" | "context", trigger: HTMLElement) => overlay.toggle(k, trigger);
-  const total = props.data.tokensIn != null && props.data.tokensOut != null ? props.data.tokensIn + props.data.tokensOut : null;
+  // CR-068 J10：Token 总量 = 未缓存输入 + 缓存读取 + 输出（互斥规范字段）；缓存未上报时只给已知部分。
+  const total = props.data.tokensIn != null && props.data.tokensOut != null
+    ? props.data.tokensIn + props.data.tokensOut + (props.data.cacheRead ?? 0)
+    : null;
+  const totalPartial = total != null && props.data.cacheRead == null;
   const cacheTotal = props.data.cacheRead != null && props.data.tokensIn != null ? props.data.cacheRead + props.data.tokensIn : null;
-  const cacheHitPct = cacheTotal && props.data.cacheRead != null ? Math.round(props.data.cacheRead / cacheTotal * 100) : null;
-  const ctxPct =
-    props.data.contextUsed != null && props.data.contextLimit ? Math.min(100, Math.round((props.data.contextUsed / props.data.contextLimit) * 100)) : null;
+  const cacheHitPct = cacheTotal != null && cacheTotal > 0 && props.data.cacheRead != null ? Math.round(props.data.cacheRead / cacheTotal * 100) : null;
+  // 上下文只取最近一次请求上报的窗口占用；窗口上限未知/0 不显示比例，也不用配置上限冒充实际用量。
+  const contextUsed = props.data.contextUsed;
+  const contextLimit = props.data.contextLimit != null && props.data.contextLimit > 0 ? props.data.contextLimit : null;
+  const ctxPct = contextUsed != null && contextLimit != null ? Math.min(100, Math.round((contextUsed / contextLimit) * 100)) : null;
   const tps = props.data.tps;
   // CR-065：无数据的统计项不显示；三项都无数据时隐藏内容但**保留占位高度**，避免输入区位移。
   const showSession = props.data.rounds > 0 || props.data.msgs > 0;
   const showTokens = total != null && total > 0;
-  const showContext = ctxPct != null;
+  const showContext = contextUsed != null;
   const empty = !showSession && !showTokens && !showContext;
 
   return (
@@ -102,7 +110,7 @@ export function StatsBar(props: { data: StatsData }) {
           <div className="chat-stat-pop" data-chat-overlay="tokens" role="dialog" aria-label="Token 用量详情">
             <div className="chat-stat-pop-head">
               <b>Token 用量</b>
-              <span className="muted">{total != null ? `${total.toLocaleString()} tok` : "用量未知"}</span>
+              <span className="muted">{total != null ? `${total.toLocaleString()} tok${totalPartial ? "（缓存读取未上报，已知部分）" : ""}` : "用量未知"}</span>
             </div>
             <div className="chat-stat-rows">
               <Row label="缓存命中" value={cacheHitPct != null ? `${cacheHitPct}%` : "—"} />
@@ -124,24 +132,26 @@ export function StatsBar(props: { data: StatsData }) {
           data-chat-overlay-trigger="context" onClick={e => toggle("context", e.currentTarget)}
         >
           <Icon name="contextUsage" size={14} aria-hidden />
-          上下文 {ctxPct != null ? `${ctxPct}%` : props.data.contextUsed != null ? fmtTok(props.data.contextUsed) : "未知"}
+          上下文 {contextUsed != null ? (ctxPct != null ? `${ctxPct}%` : `${fmtTok(contextUsed)} tok`) : "未知"}
         </button>
         {open === "context" && (
           <div className="chat-stat-pop" data-chat-overlay="context" role="dialog" aria-label="上下文详情">
             <div className="chat-stat-pop-head">
               <b>上下文</b>
               <span className="muted">
-                {props.data.contextUsed != null && props.data.contextLimit
-                  ? `已用 ${ctxPct}% · ~${fmtTok(props.data.contextUsed)} / ${fmtTok(props.data.contextLimit)}`
-                  : props.data.contextLimit != null ? "占用未上报" : "窗口未知"}
+                {contextUsed == null
+                  ? "窗口占用未上报"
+                  : contextLimit != null
+                    ? `已用 ${ctxPct}% · ~${fmtTok(contextUsed)} / ${fmtTok(contextLimit)}`
+                    : `已用 ~${fmtTok(contextUsed)} tok · 窗口上限未知`}
               </span>
             </div>
             <div className="chat-stat-rows">
-              <Row label="已用 tokens" value={props.data.contextUsed != null ? `${fmtTok(props.data.contextUsed)} tok` : "—"} />
-              <Row label="窗口上限" value={props.data.contextLimit != null ? `${fmtTok(props.data.contextLimit)} tok` : "—"} />
-              <Row label="剩余" value={props.data.contextUsed != null && props.data.contextLimit ? `${fmtTok(Math.max(0, props.data.contextLimit - props.data.contextUsed))} tok` : "—"} />
+              <Row label="已用 tokens" value={contextUsed != null ? `~${fmtTok(contextUsed)} tok` : "—"} />
+              <Row label="窗口上限" value={contextLimit != null ? fmtTok(contextLimit) + " tok" : "未知"} />
+              <Row label="剩余" value={contextUsed != null && contextLimit != null ? `${fmtTok(Math.max(0, contextLimit - contextUsed))} tok` : "—"} />
             </div>
-            <div className="chat-stat-rows"><Row label="系统提示词" value="未知（未上报）" /><Row label="工具定义" value="未知（未上报）" /><Row label="对话消息" value="未知（未上报）" /></div><div className="chat-stat-pop-foot">上下文占用不使用累计 Token 估算</div>
+            <div className="chat-stat-rows"><Row label="系统提示词" value="未知（未上报）" /><Row label="工具定义" value="未知（未上报）" /><Row label="对话消息" value="未知（未上报）" /></div><div className="chat-stat-pop-foot">取最近一次请求上报的当前窗口占用；不累加历史窗口，不用累计 Token 或配置上限推算</div>
           </div>
         )}
       </span>

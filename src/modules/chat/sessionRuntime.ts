@@ -5,6 +5,8 @@
  * - 子智能体 / 后台任务下拉：CR-042 §3.1 顶部下拉为合成演示（脚注标注），
  *   按会话隔离；「清空已结束」只清当前会话展示。
  * - 统计：TTFT / TPS / 模型用时 / 工具用时在发送侧测量；失败会话保留失败状态。
+ * - CR-068 J10：Token 为整会话累计（按 requestId 去重）；上下文只取最近一次请求上报的
+ *   提示词用量（当前窗口），不累计历史窗口，未上报保持 null（未知不填 0）。
  */
 
 export type StepState = "running" | "done" | "todo" | "failed";
@@ -96,6 +98,15 @@ export interface SessionRuntime {
   /** 最近一轮输出 tokens / 耗时（用于 TPS 估算） */
   lastOutTokens: number;
   lastStreamMs: number;
+  /** 最近一轮扣掉工具调用后的生成窗口（ms）；TPS 分母，未知保持 0。 */
+  lastGenMs: number;
+  /**
+   * CR-068 J10：最近一次请求上报的提示词用量（未缓存输入 + 缓存读取，互斥字段相加）。
+   * 上下文是**当前窗口**占用，不是整会话累计；没有上报时保持 null（未知不填 0）。
+   */
+  lastPromptTokens: number | null;
+  /** 最近一次记录窗口用量的请求代次，只允许不早于它的请求覆盖，旧事件不能改写当前窗口。 */
+  lastPromptSeq: number | null;
   status: SessionStatus;
   /** 步骤是否为合成演示（仅演示会话为 true，显示「推进演示」） */
   stepsDemo: boolean;
@@ -134,6 +145,9 @@ function blank(): SessionRuntime {
     ttftMs: null,
     lastOutTokens: 0,
     lastStreamMs: 0,
+    lastGenMs: 0,
+    lastPromptTokens: null,
+    lastPromptSeq: null,
     status: "read",
     stepsDemo: false,
     stepsOpen: true,
@@ -276,6 +290,7 @@ export function markStreamStart(sid: string): number {
   rt.ttftMs = null;
   rt.lastOutTokens = 0;
   rt.lastStreamMs = 0;
+  rt.lastGenMs = 0;
   rt.toolStart.clear();
   if (rt.stepsDemo) rt.steps = [];
   rt.stepsDemo = false;
@@ -321,10 +336,21 @@ export function markStreamEnd(sid: string, outTokens: number) {
     rt.lastStreamMs = total;
     rt.lastOutTokens = outTokens;
     // 工具用时在 recordToolResult 时已累计进 rt.toolMs，模型用时=总耗时-工具用时
-    rt.modelMs += Math.max(0, total - rt.turnToolMs);
+    const modelMs = Math.max(0, total - rt.turnToolMs);
+    rt.lastGenMs = modelMs;
+    rt.modelMs += modelMs;
     rt.timingKnown = true;
     rt.streamStart = null;
   }
+}
+
+/**
+ * CR-068 J10：最近一轮输出速度（tok/s）。
+ * 只有「本轮输出 tokens」和「扣除工具调用后的生成窗口」都已知时才给值；否则保持未知（null），不推算。
+ */
+export function outputTps(rt: SessionRuntime): number | null {
+  if (!(rt.lastOutTokens > 0) || !(rt.lastGenMs > 0)) return null;
+  return Math.round((rt.lastOutTokens * 1000) / rt.lastGenMs);
 }
 
 /* ---------- 步骤：真实工具执行记录（不伪造） ---------- */
@@ -488,18 +514,30 @@ export function addUsage(sid: string, input: number, output: number, cacheRead: 
   rt.tokensOut += next.output - prior.output;
   rt.cacheRead += next.cache - prior.cache;
   rt.usageByRequest.set(requestId, next);
+  // CR-068 J10：上下文窗口取最近一次请求的提示词用量（互斥字段相加），不累加历史窗口。
+  const seq = Number(requestId);
+  if (!Number.isFinite(seq)) rt.lastPromptTokens = next.input + next.cache;
+  else if (rt.lastPromptSeq === null || seq >= rt.lastPromptSeq) {
+    rt.lastPromptTokens = next.input + next.cache;
+    rt.lastPromptSeq = seq;
+  }
   rt.usageKnown = true;
   rt.cacheKnown = true;
 }
 
-/** 落库消息为整会话权威值；历史未上报的缓存/耗时保持未知。 */
-export function hydrateUsage(sid: string, input: number, output: number, known: boolean, cache?: number) {
+/** 落库消息为整会话权威值；历史未上报的缓存/耗时保持未知。
+ *  CR-068 J10：`lastPrompt` 是最近一条带 usage 的消息的提示词用量（当前窗口），不传则保持未知。 */
+export function hydrateUsage(sid: string, input: number, output: number, known: boolean, cache?: number, lastPrompt?: number | null) {
   const rt = getRuntime(sid);
   if (rt.active) return;
   rt.tokensIn = input;
   rt.tokensOut = output;
   rt.usageKnown = known;
   if (cache !== undefined) { rt.cacheRead = cache; rt.cacheKnown = true; }
+  if (lastPrompt !== undefined) {
+    rt.lastPromptTokens = lastPrompt;
+    rt.lastPromptSeq = null;
+  }
 }
 
 export function dropRuntime(sid: string) { store.delete(sid); }

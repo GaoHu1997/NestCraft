@@ -19,7 +19,7 @@ export function SettingsDialog({ title, subtitle, children, footer, onClose, wid
   }} aria-label={title}>
     <div className="set-dialog-head"><div><h2>{title}</h2>{subtitle && <p className="set-caption">{subtitle}</p>}</div><button className="set-icon-btn" aria-label={`关闭${title}`} disabled={busy} onClick={onClose}><SettingsIcon name="close" /></button></div>
     <div className="set-dialog-body">{children}</div>
-    {footer && <div className="set-dialog-foot">{footer}</div>}
+    {footer && <div className="set-dialog-foot" role="group" aria-label={`${title}操作`}>{footer}</div>}
   </dialog>;
 }
 

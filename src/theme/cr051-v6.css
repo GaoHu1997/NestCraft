@@ -160,6 +160,9 @@ html[data-theme='dark'] .cr51-upload-error { background: #331d1d; color: #ff7b76
 .nc-avatar-frame .cr51-avatar { width: 30px; height: 30px; }
 .nc-avatar-frame .cr51-avatar-edit { width: 18px; height: 18px; right: -2px; bottom: -2px; }
 .nc-side-avatar-frame { position: relative; display: flex; width: 100%; }
+/* CR-068 H01：账户/设置入口真贴底。auto 外边距必须落在侧栏（flex 列）的直接子项上；
+   放在内部按钮或内层 span 上，在行向 flex 里没有可分配空间，会被中间包裹层挤离底部。 */
+.nc-side-avatar-frame { margin-top: auto; }
 .nc-side-avatar-frame .cr51-avatar-edit { width: 18px; height: 18px; right: -2px; bottom: -2px; }
 
 /* 与UI-CR051-v6一致：固定取景框、实时预览、完整色块。 */
@@ -181,3 +184,18 @@ html[data-theme='dark'] .cr51-upload-error { background: #331d1d; color: #ff7b76
 .cr51-swatch:not(.cr51-swatch-clear) { background:currentColor; }
 .cr51-avatar-modal-h { min-height:52px; }
 .cr51-avatar-modal-f { min-height:56px; }
+
+/* CR-068 J02：项目编辑默认只显示当前图标；点击当前图标才展开 50 图标与 10 色卡。
+   收起时不铺满弹窗；展开面板自身滚动（max-height:290px，UI-SCROLL-001：仅实际滚动时显示滑块，
+   不隐藏溢出、不改宽度），因此不走 overflow:hidden。 */
+.cr51-icon-disclosure summary { display: flex; align-items: center; gap: 10px; cursor: pointer; width: max-content; }
+.cr51-icon-disclosure[open] summary { margin-bottom: 12px; }
+.cr51-icon-disclosure .cr51-picker-groups { max-height: 290px; overflow-y: auto; }
+
+/* CR-068 K01：知识库图标短弹窗按内容高度，超高时选择器在正文内滚动，底部无大片空白。
+   knowledge.css 为了旧布局写了 height:auto !important；这里用更高优先级的同类规则收敛为 fit-content，
+   不改动其它知识库弹窗，也不影响固定 680×660 的头像更换弹窗。
+   选择器本身限高滚动，色卡与组合预览、footer 始终可见；滚动条仍遵守 UI-SCROLL-001（仅实际滚动时显示）。 */
+.kb-dialog.kb-dialog-fit .modal { height: fit-content !important; min-height: 0; }
+.kb-dialog.kb-dialog-fit .modal-body { flex: 0 1 auto; }
+.kb-dialog.kb-dialog-fit .cr51-picker-groups { max-height: 290px; overflow-y: auto; }

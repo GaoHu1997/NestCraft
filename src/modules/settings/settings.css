@@ -23,7 +23,8 @@ html[data-theme="dark"] .set-modal::backdrop, html[data-theme="dark"] .set-sub-d
 .set-modal { width: 1040px; height: 700px; max-width: calc(100vw - 32px); max-height: calc(100dvh - 40px); overflow: hidden; }
 .set-modal *, .set-sub-dialog * { box-sizing: border-box; }
 .set-modal h2, .set-sub-dialog h2, .set-modal h3, .set-sub-dialog h3, .set-modal p, .set-sub-dialog p { margin: 0; }
-.set-shell { display: grid; grid-template-columns: 224px minmax(0,1fr); height: 100%; }
+/* CR-068 S01：左分类栏宽度仍由栏宽控制（列宽跟随分类栏自身宽度；浮层时该列自然为 0），窄屏媒体查询改单列堆叠。 */
+.set-shell { display: grid; grid-template-columns: auto minmax(0,1fr); height: 100%; }
 .set-nav { display: flex; flex-direction: column; min-height: 0; background: var(--set-surface-2); border-right: 1px solid var(--set-line); }
 .set-user { display: flex; align-items: center; gap: 10px; padding: 16px 14px; border-bottom: 1px solid var(--set-line-soft); }
 .set-user div { display: flex; flex-direction: column; min-width: 0; }
@@ -34,10 +35,14 @@ html[data-theme="dark"] .set-modal::backdrop, html[data-theme="dark"] .set-sub-d
 .set-nav-btn { border: 0; background: transparent; display: flex; align-items: center; gap: 8px; text-align: left; border-radius: 6px; padding: 8px 10px; color: var(--set-ink-2); font: inherit; cursor: pointer; }
 .set-nav-btn:hover { background: var(--set-surface-3); }
 .set-nav-btn.active { background: var(--set-primary-soft); color: var(--set-primary); font-weight: 550; }
-.set-nav-foot { margin-top: auto; padding: 12px; border-top: 1px solid var(--set-line-soft); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .set-body { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
-.set-head { display: flex; align-items: center; justify-content: space-between; padding: 18px 24px 12px; border-bottom: 1px solid var(--set-line-soft); }
+/* CR-068 S01/S04：头部右侧预留 58px 给右上 X；业务图标（如模型页生图）接在头部最右，始终在 X 左侧。
+   对齐沿用设计稿的顶端对齐（cr059 的 .set-head），标题行首个子项与图标同一基线。 */
+.set-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 18px 58px 12px 24px; border-bottom: 1px solid var(--set-line-soft); }
+.set-head > div { min-width: 0; }
 .set-head h2 { font-size: 18px; font-weight: 650; }
+.set-head > .set-icon-btn, .set-head > .set-head-imagegen, .set-head > .set-head-actions { margin-left: auto; flex: 0 0 auto; }
+.set-head > .set-head-actions { display: flex; align-items: center; gap: 6px; }
 .set-scroll { flex: 1; min-height: 0; overflow: auto; padding: 18px 24px 28px; }
 .set-scroll > [hidden] { display: none; }
 .set-caption { font-size: 11px; color: var(--set-muted); }
@@ -45,6 +50,9 @@ html[data-theme="dark"] .set-modal::backdrop, html[data-theme="dark"] .set-sub-d
 .set-nav-btn .set-icon { width: 14px; height: 14px; }
 .set-icon-btn { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 28px; height: 28px; border: 0; padding: 0; background: transparent; border-radius: 5px; color: var(--set-muted); cursor: pointer; }
 .set-icon-btn:hover { background: var(--set-surface-3); color: var(--set-ink); }
+/* CR-068 S01/S02：右上角 X 关闭（32px，与设计 ico-18 一致），不再有左栏底部关闭按钮。 */
+.set-shell > .set-close { position: absolute; top: 14px; right: 14px; z-index: 5; width: 32px; height: 32px; }
+.set-shell > .set-close .set-icon { width: 18px; height: 18px; }
 .set-modal button:disabled, .set-sub-dialog button:disabled { cursor: not-allowed; opacity: .5; }
 .set-modal .btn, .set-sub-dialog .btn { min-height: 30px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; font-size: 12px; }
 .set-modal .input, .set-modal .select, .set-sub-dialog .input, .set-sub-dialog .select, .set-sub-dialog .textarea { background: var(--set-surface); color: var(--set-ink); border: 1px solid var(--set-line-strong); border-radius: 6px; min-width: 0; font-size: 12px; width: 100%; }
@@ -55,7 +63,6 @@ html[data-theme="dark"] .set-modal::backdrop, html[data-theme="dark"] .set-sub-d
 .set-modal .switch, .set-sub-dialog .switch { width: 30px; height: 17px; flex: 0 0 auto; border-radius: 10px; }
 .set-modal .switch::after, .set-sub-dialog .switch::after { width: 13px; height: 13px; top: 2px; left: 2px; }
 .set-modal .switch[aria-checked="true"]::after, .set-sub-dialog .switch[aria-checked="true"]::after { left: 15px; }
-.set-mobile-nav, .set-mobile-close { display: none; }
 .set-fieldset { margin: 0; padding: 0; border: 0; min-width: 0; width: 100%; }
 .set-section { margin-bottom: 24px; }
 .set-section h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
@@ -64,7 +71,9 @@ html[data-theme="dark"] .set-modal::backdrop, html[data-theme="dark"] .set-sub-d
 .set-field-label b { display: block; font-size: 12.5px; font-weight: 550; }
 .set-field-label span { font-size: 11px; color: var(--set-muted); }
 .set-field-control { min-width: 0; }
-.set-actions { display: flex; align-items: center; gap: 12px; padding-top: 8px; }
+/* CR-068 S03：保存/取消/放弃统一为表单右侧按钮组；说明文字留在组内左侧。 */
+.set-actions { display: flex; align-items: center; gap: 12px; padding-top: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.set-actions .set-caption { order: -1; margin-right: auto; }
 .set-num { max-width: 90px; }
 .set-tabsize { max-width: 120px; }
 .set-default-user { max-width: 140px; }
@@ -188,17 +197,20 @@ html[data-theme="dark"] .set-modal::backdrop, html[data-theme="dark"] .set-sub-d
 .set-tool-table td:first-child { overflow-wrap: anywhere; }
 @media (max-width: 1100px) {
   .set-modal { width: calc(100vw - 24px); height: calc(100dvh - 32px); }
-  .set-shell { grid-template-columns: 190px minmax(0,1fr); }
   .set-field { grid-template-columns: 150px minmax(0,1fr); }
   .set-key-row { flex-wrap: wrap; }
   .set-key-actions { margin-left: auto; }
 }
 @media (max-width: 720px) {
-  .set-shell { grid-template-columns: minmax(0,1fr); }
-  .set-nav { display: none; }
-  .set-mobile-nav { display: block; margin: 10px 16px 0; width: calc(100% - 32px) !important; }
-  .set-mobile-close { display: inline-flex; }
-  .set-head { padding: 16px; }
+  /* CR-068 S01：分类导航保留并重排到页头（不再 display:none，也不再使用下拉选择），右侧留给右上角 X。 */
+  .set-shell { grid-template-columns: minmax(0,1fr); grid-template-rows: auto minmax(0,1fr); }
+  .set-nav { width: auto !important; max-width: none !important; border-right: 0; border-bottom: 1px solid var(--set-line); }
+  .set-shell .set-nav.pane-overlay { position: relative !important; z-index: auto; box-shadow: none !important; max-width: none !important; background: var(--set-surface-2); }
+  .set-nav > .pane-handle { display: none; }
+  .set-user { display: none; }
+  .set-nav-list { display: flex; flex-wrap: wrap; padding: 8px 42px 8px 8px; }
+  .set-nav-btn { width: auto; height: 32px; padding: 0 10px; }
+  .set-head { padding: 16px 58px 16px 16px; }
   .set-scroll { padding: 16px; }
   .set-field { grid-template-columns: minmax(0,1fr); gap: 6px; }
   .set-form-grid { grid-template-columns: minmax(0,1fr); }
@@ -332,7 +344,7 @@ html[data-theme="dark"] .probe-section { --set-warning: #e0a23c; --set-warning-s
 .set-endpoint-proto { min-width: 72px; flex: 0 0 auto; }
 
 /* 密钥行内表单与模型表单底部：按钮右置、取消在前。 */
-.set-form-actions { justify-content: flex-end; }
+.set-form-actions { justify-content: flex-end; flex-wrap: wrap; }
 .set-form-actions .spacer { flex: 1; }
 .set-thinking-row { align-items: center; gap: 8px; }
 .set-thinking-row .small { flex: 0 0 auto; }
@@ -501,3 +513,14 @@ html[data-theme="dark"] .set-save-error { border-color: rgba(255, 123, 118, .4);
   .probe-result-summary { padding-left: 0; }
   .probe-result .probe-tags .tag { font-size: 10px; padding: 1px 4px; }
 }
+
+/* ============ CR-068 S03：保存/取消/放弃/确认统一右侧按钮组，取消、放弃在主按钮左侧 ============ */
+/* 说明文字留在组内左侧，主按钮固定在组内最右；这些 order 只纠正“主按钮先出现”的表单，
+   已经是“取消在前、主按钮在后”的表单顺序不变。 */
+.set-dialog-foot > .btn.primary, .set-dialog-foot > .btn.danger,
+.set-provider-foot > .btn.primary,
+.set-form-actions > .btn.primary, .set-form-actions > .btn.danger { order: 2; }
+/* SDK CLI 偏好行：保存/放弃/重新检测归入右侧，说明留在左侧（标记沿用现有结构，只改对齐与顺序）。 */
+.set-cli-body > .set-fieldset > .row { justify-content: flex-end; flex-wrap: wrap; }
+.set-cli-body > .set-fieldset > .row > .caption { order: -1; margin-right: auto; }
+.set-cli-body > .set-fieldset > .row > .btn.primary { order: 2; }

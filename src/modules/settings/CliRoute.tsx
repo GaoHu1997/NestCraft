@@ -1,5 +1,5 @@
 import { Icon } from "@/components/icons";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type * as api from "@/api";
 import type { ModelCandidate } from "@/api";
 import { EFFORT_LEVELS } from "./shared";
@@ -7,13 +7,18 @@ import { EFFORT_LEVELS } from "./shared";
 /**
  * CR-059 D3：CLI 任务模型路由（单行折叠）。
  *
- * 规则（CR-059 §4.4，UI-CR059-v6 SC-059-07）：
+ * 规则（CR-059 §4.4，UI-CR059-v6 SC-059-07；CR-068 C01 增补折叠切换）：
  * - 整块只有一个折叠行：行首为「兜底模型」「模型1…模型5」切换标签，未达上限时末尾有「＋新增」，
  *   行尾为 `N/5`（0 个时「仅兜底」）与折叠箭头；默认收起并选中兜底；
- * - 点行/箭头展开其下方唯一详情区；点标签切换详情并保证展开；同一时刻只渲染当前标签；
+ * - 点行/箭头展开其下方唯一详情区；点已选中标签＝收起/展开切换，点其它标签＝切换详情并保证展开；
+ *   同一时刻只渲染当前标签；
+ * - 折叠只改可见性：已选标签、未保存草稿（route 由调用方持有）与折叠前焦点都不丢失；
  * - 模型标签悬浮（或键盘聚焦）时右侧出现 ×，点击即删除；兜底标签永不出现 ×；
  * - 模型标签＝模型下拉（协议兼容过滤）＋思考等级＋13 类任务 chips＋删除；兜底＝模型下拉＋思考等级＋说明；
+ * - 模型候选只读调用方传入的 `models`（已按 CLI 协议与模型模态过滤）；已保存值不在候选中时
+ *   显示「已保存模型不可用」并保留原值，不静默清空；
  * - 槽位为变长数组 0～5，顺序即路由优先级；兜底实时跟随主 agent（本组件不写死主 agent 选择）。
+ *   本组件只落配置结构与界面，不消费路由，更不代表调度已生效。
  */
 
 export const TASK_TYPES = [
@@ -73,6 +78,10 @@ export function parseRoute(raw: unknown): { route: RouteConfig; trimmed: boolean
 
 const modelValue = (m: ModelCandidate) => `${m.providerId}/${m.modelId}`;
 
+/**
+ * CR-068 C02：候选只来自调用方过滤后的 `models`（协议＋模态），本组件不再另立来源；
+ * 已保存值不在候选中时补一条「已保存模型不可用」并保留该值，绝不静默清空或回落到其它模型。
+ */
 function ModelSelect(props: {
   value: string; models: ModelCandidate[]; label: string; placeholder: string;
   disabled: boolean; onChange: (value: string) => void;
@@ -107,6 +116,8 @@ export function CliRoute(props: {
   const { route, models, disabled } = props;
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<string>("fallback");
+  const detailRef = useRef<HTMLDivElement | null>(null);
+  const tabRefs = useRef(new Map<string, HTMLButtonElement>());
   const atLimit = route.slots.length >= MAX_SLOTS;
   const slotIndex = selected === "fallback" ? -1 : Number(selected);
   const slot = slotIndex >= 0 ? route.slots[slotIndex] ?? null : null;
@@ -120,13 +131,46 @@ export function CliRoute(props: {
     }
   }, [route.slots.length, selected]);
 
+  const focusTab = useCallback((key: string) => { tabRefs.current.get(key)?.focus(); }, []);
+
+  // 兜底：详情区卸载若把焦点交给 body（部分浏览器点击按钮不聚焦），折回当前标签，不让折叠丢焦点。
+  const wasOpen = useRef(open);
+  useEffect(() => {
+    if (wasOpen.current && !open) {
+      const active = document.activeElement;
+      if (!active || active === document.body) focusTab(selected);
+    }
+    wasOpen.current = open;
+  }, [open, selected, focusTab]);
+
+  /** 折叠前若焦点在详情区，先移回当前标签，避免详情卸载后焦点掉到 body。 */
+  const collapse = () => {
+    const active = document.activeElement as HTMLElement | null;
+    if (detailRef.current && active && detailRef.current.contains(active)) focusTab(selected);
+    setOpen(false);
+  };
+
+  /** CR-068 C01：点已选中标签＝收起/展开切换；切到其它标签＝切换详情并保证展开。 */
+  const selectTab = (key: string) => {
+    if (selected === key) {
+      if (open) collapse(); else setOpen(true);
+      return;
+    }
+    setSelected(key);
+    setOpen(true);
+  };
+
   const updateSlot = (index: number, patch: Partial<RouteSlot>) =>
     props.onChange({ ...route, slots: route.slots.map((item, i) => i === index ? { ...item, ...patch } : item) });
   const removeSlot = (index: number) => {
     if (disabled) return;
     const slots = route.slots.filter((_, i) => i !== index);
+    const next = slots.length ? String(Math.min(index, slots.length - 1)) : "fallback";
+    // 触发删除的 × / 详情按钮会随重排卸载：先把焦点交给新的选中标签，不把焦点丢到 body。
+    const active = document.activeElement as HTMLElement | null;
+    if (active && (active.closest(".route-x") || detailRef.current?.contains(active))) focusTab(next);
     props.onChange({ ...route, slots });
-    setSelected(slots.length ? String(Math.min(index, slots.length - 1)) : "fallback");
+    setSelected(next);
   };
   const addSlot = () => {
     if (atLimit || disabled) return;
@@ -138,9 +182,10 @@ export function CliRoute(props: {
 
   const renderTab = (key: string, label: string, removable: boolean) => <span key={key} className="route-tab-wrap">
     <button type="button" role="tab" aria-selected={selected === key}
+      ref={node => { if (node) tabRefs.current.set(key, node); else tabRefs.current.delete(key); }}
       className={`route-tab ${selected === key ? "on" : ""} ${removable ? "removable" : ""}`}
       disabled={disabled}
-      onClick={() => { setSelected(key); setOpen(true); }}>{label}</button>
+      onClick={() => selectTab(key)}>{label}</button>
     {removable && <button type="button" className="route-x"
       tabIndex={-1} title={`删除${label}`} aria-label={`删除${label}`} disabled={disabled}
       onClick={event => { event.stopPropagation(); removeSlot(Number(key)); }}>
@@ -161,11 +206,11 @@ export function CliRoute(props: {
       <span className="spacer" />
       <span className="route-sum">{route.slots.length ? `${route.slots.length}/${MAX_SLOTS}` : "仅兜底"}</span>
       <button type="button" className="route-toggle" aria-expanded={open} disabled={disabled}
-        aria-label={open ? "收起模型配置" : "展开模型配置"} onClick={() => setOpen(value => !value)}>
+        aria-label={open ? "收起模型配置" : "展开模型配置"} onClick={() => (open ? collapse() : setOpen(true))}>
         <Icon name={open ? "chevronUp" : "chevronDown"} size={14} />
       </button>
     </div>
-    {open && <div className="route-detail">
+    {open && <div className="route-detail" ref={detailRef}>
       {selected === "fallback" ? <>
         <div className="two-col">
           <div><label>兜底模型</label>

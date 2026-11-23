@@ -13,7 +13,7 @@ import { ModelPicker, effectiveEfforts, permissionSupported } from "./ModelPicke
 import { StatsBar } from "./StatsBar";
 import { StepsBox } from "./StepsBox";
 import { ChatOverlayProvider, useChatOverlay } from "./overlay";
-import { addUsage, finishOnce, getRuntime, hydrateUsage, isCurrentTurn, markFirstDelta, markStreamStart, recordToolResult, recordToolUse, rebuildStepsFromPairs, clearEndedBackground, dropRuntime, setStatus, setGoal, updateGoalState, addSessionTask, upsertSubagent, hasBlockingChildren, settleSubagents } from "./sessionRuntime";
+import { addUsage, finishOnce, getRuntime, hydrateUsage, isCurrentTurn, markFirstDelta, markStreamStart, outputTps, recordToolResult, recordToolUse, rebuildStepsFromPairs, clearEndedBackground, dropRuntime, setStatus, setGoal, updateGoalState, addSessionTask, upsertSubagent, hasBlockingChildren, settleSubagents } from "./sessionRuntime";
 import { officeFileContentText } from "@/modules/office/office-model";
 import { requestPanel } from "./panelRequest";
 import type { PanelKind, PanelRequest } from "./panelRequest";
@@ -87,11 +87,24 @@ const REASON_TEXT: Record<string, string> = {
 };
 const reasonLabel = (code: string | null | undefined) =>
   (code && REASON_TEXT[code]) || code || "原因未知";
+/**
+ * CR-068 J12 / AC-STORY-032-CR068-02：正常会话（native / fresh）不再常驻「已续接」标签。
+ * 只有需要用户处理的绑定状态才显示短标签，原因与出路由消息流断点卡和下方阻塞横幅承担；
+ * 不因为存在原生引用就宣称本轮已经续接成功。
+ */
 const BINDING_PILL: Record<string, string> = {
-  native: "已续接",
-  fresh: "fresh 上下文",
   freshPending: "待确认",
   blocked: "不可续接",
+};
+/** CR-068 J11：发送失败要有可读的真实原因，不吞成空串/[object Object]。 */
+const sendFailureText = (e: unknown): string => {
+  if (e instanceof Error) return e.message || String(e);
+  if (typeof e === "string") return e;
+  if (e && typeof e === "object" && "message" in e) {
+    const message = (e as { message?: unknown }).message;
+    if (message != null && String(message).trim()) return String(message);
+  }
+  return String(e);
 };
 interface Turn {
   sid: string;
@@ -332,7 +345,17 @@ function Panel(props: PanelProps) {
     }
     rebuildStepsFromPairs(sid, pairs);
     const known = ms.some(m => m.usage);
-    hydrateUsage(sid, ms.reduce((n, m) => n + (m.usage?.input ?? 0), 0), ms.reduce((n, m) => n + (m.usage?.output ?? 0), 0), known);
+    const withUsage = ms.filter(m => m.usage);
+    const lastUsage = withUsage.length ? withUsage[withUsage.length - 1].usage : null;
+    hydrateUsage(
+      sid,
+      withUsage.reduce((n, m) => n + (m.usage?.input ?? 0), 0),
+      withUsage.reduce((n, m) => n + (m.usage?.output ?? 0), 0),
+      known,
+      undefined,
+      // CR-068 J10：历史恢复的当前窗口取最近一条带 usage 的消息；0/未上报保持未知，不填 0。
+      lastUsage && lastUsage.input > 0 ? lastUsage.input : null,
+    );
   };
   const markRead = async (meta: SessionMeta, targetScope = scope) => {
     if (!meta.unread || !visibleRef.current || !viewing(meta.id, targetScope)) return;
@@ -764,25 +787,33 @@ function Panel(props: PanelProps) {
           turn.msgs.push(mkMsg({ id: `retry-${request.sid}-${generation}-${ev.attempt}`, role: "system", kind: "retrying", content: `供应商暂时不可用（${ev.reason}），${ev.delayMs}ms 后重试（${ev.attempt}/${ev.maxAttempts}）`, createdAt: Date.now() }));
           publish(turn); bumpRt(); break;
         case "error": void finalize(turn, ev.message); break;
-        case "done": void finalize(turn); break;
+        case "done":
+          // CR-068 J11：原生续接失败不再按成功收尾（后端 done 带 blocked 时显式失败 + 真实原因）。
+          if (ev.blocked) void finalize(turn, `原线程续接失败：${reasonLabel(ev.reasonCode)}。本轮没有开始新上下文，消息与历史已保留。`);
+          else {
+            // 适配器静默换线不是正常续接：明确告知并保留消息流断点卡，不静默 fresh。
+            if (ev.freshContext) toast("CLI 未回到原线程，已写入上下文断点卡；历史保留，不再自动送入模型", "warn");
+            void finalize(turn);
+          }
+          break;
       }
     };
     try {
       const meta = await api.chatSessionGet(request.sid);
       const permissionId = request.permissionId || "default";
-      // CR-037：freshPending/blocked 会话在后端被拒（用户消息未持久化，草稿保留）。
+      // CR-037 / CR-068：freshPending/blocked 会话在后端被拒（用户消息未持久化，草稿保留）。
+      // 横幅与弹窗使用后端返回的真实绑定状态，不靠前端猜测；原因与出路同时给出。
       const b = meta.binding;
-      if (b?.state === "freshPending") {
+      if (b?.state === "freshPending" || (b?.state === "blocked" && b.reasonCode !== "REF_NOT_READY")) {
         turn.msgs = turn.msgs.filter(m => m.id !== uid);
         rejectBeforeSend(turn);
-        setFreshConfirm(b);
-        toast("当前会话需要确认重建上下文后才能发送", "warn");
-        return false;
-      }
-      if (b?.state === "blocked" && b.reasonCode !== "REF_NOT_READY") {
-        turn.msgs = turn.msgs.filter(m => m.id !== uid);
-        rejectBeforeSend(turn);
-        toast(`原线程不可续接（${reasonLabel(b.reasonCode)}），请重建上下文或另建会话`, "err");
+        updateSessionRow(meta);
+        if (b.state === "freshPending") {
+          setFreshConfirm(b);
+          toast(`当前会话需要确认重建上下文后才能发送（${reasonLabel(b.reasonCode)}）；草稿已保留`, "warn");
+        } else {
+          toast(`原线程不可续接（${reasonLabel(b.reasonCode)}），草稿已保留；请重建上下文或另建会话`, "err");
+        }
         return false;
       }
       await api.chatSend({ sessionId: request.sid, content: request.text, refs: request.refs, attachments: request.atts, ...(permissionId ? { permissionId } : {}) }, onEvent);
@@ -790,9 +821,9 @@ function Panel(props: PanelProps) {
       return true;
     } catch (e) {
       turn.msgs = turn.msgs.filter(m => m.id !== uid);
-      // 后端绑定拒绝（BINDING_FRESH_REQUIRED/BINDING_BLOCKED）：打开确认弹窗而非报错。
-      const msg = String(e);
-      const bindMatch = /BINDING_(FRESH_REQUIRED|BLOCKED)\|([^|]*)\|(\d+)\|/.exec(msg);
+      // 后端绑定拒绝（BINDING_FRESH_REQUIRED/BINDING_BLOCKED）：打开确认弹窗/横幅而非只留一次提示。
+      const msg = sendFailureText(e);
+      const bindMatch = /BINDING_(FRESH_REQUIRED|BLOCKED)\|([^|]*)\|(\d+)\|([^|]*)/.exec(msg);
       if (bindMatch) {
         const info: SessionBinding = {
           state: bindMatch[1] === "FRESH_REQUIRED" ? "freshPending" : "blocked",
@@ -801,11 +832,15 @@ function Panel(props: PanelProps) {
           expectedRevision: Number(bindMatch[3]),
         };
         rejectBeforeSend(turn);
+        // 以真实落库的绑定状态刷新横幅（原因 + 出路），不只依赖会消失的 toast。
+        try { updateSessionRow(await api.chatSessionGet(request.sid)); } catch { /* 刷新失败不覆盖已有提示 */ }
         if (bindMatch[1] === "FRESH_REQUIRED") setFreshConfirm(info);
-        else toast(`原线程不可续接（${reasonLabel(info.reasonCode)}），请重建上下文或另建会话`, "err");
+        const detail = bindMatch[4]?.trim() || reasonLabel(info.reasonCode);
+        toast(`发送被拒绝（${detail}）；草稿已保留，可重建上下文或另建会话`, bindMatch[1] === "FRESH_REQUIRED" ? "warn" : "err");
         return false;
       }
-      void finalize(turn, msg);
+      // CR-068 J11：请求未获接受时草稿仍在输入框，错误卡显示真实原因而不是掩盖成成功。
+      void finalize(turn, `${msg}（草稿已保留，可修改后重试）`);
       return false;
     }
   };
@@ -955,26 +990,38 @@ function Panel(props: PanelProps) {
     finally { cfgLock.current = false; setCfgBusy(false); }
   };
 
-  const statsData = useMemo(() => ({
-    rounds: msgs.filter(m => m.role === "user").length, msgs: msgs.length,
-    modelMs: curRt?.timingKnown ? curRt.modelMs : null, toolMs: curRt?.timingKnown ? curRt.toolMs : null,
-    ttftMs: curRt?.ttftMs ?? null, tps: null,
-    tokensIn: curRt?.usageKnown ? curRt.tokensIn : null, tokensOut: curRt?.usageKnown ? curRt.tokensOut : null,
-    cacheRead: curRt?.cacheKnown ? curRt.cacheRead : null, contextUsed: null,
-    contextLimit: models.find(m => m.providerId === cur?.providerId && m.modelId === cur?.modelId)?.contextWindow ?? null,
-  }), [msgs, cur, models, curRt?.tokensIn, curRt?.tokensOut, curRt?.cacheRead, curRt?.timingKnown, curRt?.ttftMs]);
-  const agentCount = curRt?.subagents.length ?? 0, bgCount = curRt?.background.length ?? 0;
+  const statsData = useMemo(() => {
+    const model = models.find(m => m.providerId === cur?.providerId && m.modelId === cur?.modelId);
+    return {
+      rounds: msgs.filter(m => m.role === "user").length, msgs: msgs.length,
+      modelMs: curRt?.timingKnown ? curRt.modelMs : null, toolMs: curRt?.timingKnown ? curRt.toolMs : null,
+      ttftMs: curRt?.ttftMs ?? null,
+      // CR-068 J10：TPS 只在「本轮输出 tokens + 生成窗口」都已知时给值，否则保持未知。
+      tps: curRt ? outputTps(curRt) : null,
+      tokensIn: curRt?.usageKnown ? curRt.tokensIn : null, tokensOut: curRt?.usageKnown ? curRt.tokensOut : null,
+      cacheRead: curRt?.cacheKnown ? curRt.cacheRead : null,
+      // 上下文是最近一次请求上报的当前窗口占用，不是累计 tokens；上限只认模型声明的 contextWindow。
+      contextUsed: curRt?.lastPromptTokens ?? null,
+      contextLimit: model?.contextWindow ?? null,
+    };
+  }, [msgs, cur?.id, cur?.providerId, cur?.modelId, models, curRt?.tokensIn, curRt?.tokensOut, curRt?.cacheRead, curRt?.timingKnown, curRt?.ttftMs, curRt?.lastPromptTokens, curRt?.lastOutTokens, curRt?.lastGenMs]);
+  const agentRows = curRt?.subagents ?? [], bgRows = curRt?.background ?? [];
+  const agentCount = agentRows.length, bgCount = bgRows.length;
+  // CR-068 J12：只有真正需要用户处理（重建/另建）的绑定状态才显示标签与横幅；
+  // REF_NOT_READY 是可直接重试的竞态（composerLocked 已放行），失败原因由本轮错误卡与提示承担。
+  const bindingBlocks = !!binding && (binding.state === "freshPending" || (binding.state === "blocked" && binding.reasonCode !== "REF_NOT_READY"));
+  const bindingPill = bindingBlocks && binding ? BINDING_PILL[binding.state] ?? null : null;
   const newButton = <button className="chat-iconbtn" title="新会话" aria-label="新会话" onClick={newSession}><Icon name="plus" /></button>;
   return <div ref={overlay.scopeRef} className={`chat-panel ${props.className ?? ""}`} hidden={props.visible === false} aria-label="AI 会话" data-ai-scope={scope} style={{ height: props.height ?? "100%", ...(props.width ? { width: Math.min(620, Math.max(320, props.width)) } : {}) }}>
     <div className="chat-head">
       {props.variant !== "workbench" && <button className={`chat-iconbtn ${overlay.activeOverlay === "history" ? "active" : ""}`} data-chat-overlay-trigger="history" title="会话历史" aria-label="会话历史" aria-expanded={overlay.activeOverlay === "history"} onClick={e => { if (overlay.activeOverlay !== "history") void loadSessionPage("", "first"); overlay.toggle("history", e.currentTarget); }}><HistoryIcon /></button>}
       {agentCount > 0 && <div className="chat-drop-wrap"><button className="chat-count-btn" data-chat-overlay-trigger="agents" aria-expanded={overlay.activeOverlay === "agents"} onClick={e => overlay.toggle("agents", e.currentTarget)}><Icon name="users" size={14} />{agentCount} 子智能体 <Icon name="chevronDown" size={12} /></button>
-        {overlay.activeOverlay === "agents" && <div className="chat-drop" data-chat-overlay="agents" role="dialog" aria-label="子智能体"><div className="chat-drop-h"><b>子智能体</b><span className="chat-drop-cap">{agentCount} 个 · 仅本会话</span></div><div className="chat-drop-list">{curRt!.subagents.map(a => <button type="button" key={a.id} className="chat-agent-row" title={`查看子智能体：${a.title}`} aria-label={`查看子智能体 ${a.title}，只读`} onClick={() => { overlay.close(false); if (cur) props.onOpenAgent?.(cur.id, a.id); }}><CliLogo id={a.cli ?? "unknown"} size={20} /><span className="chat-agent-main"><b>{a.title}</b><span>{a.cli ?? "CLI 未知"} · {a.model ?? "模型未知"} · {a.duration ?? "耗时未知"} · {a.tokens ?? "tokens 未知"}</span></span><span className={`tag ${a.status === "失败" ? "bad" : a.status === "待确认" ? "warn" : "good"}`}>{a.status}</span><Icon name="chevronRight" size={12} /></button>)}</div><div className="chat-drop-f">{curRt!.recordsDemo ? "合成演示 · " : ""}点击行查看只读详情；记录仅本次运行可见</div></div>}
+        {overlay.activeOverlay === "agents" && <div className="chat-drop" data-chat-overlay="agents" role="dialog" aria-label="子智能体"><div className="chat-drop-h"><b>子智能体</b><span className="chat-drop-cap">{agentCount} 个 · 仅本会话</span></div><div className="chat-drop-list">{agentRows.map(a => <button type="button" key={a.id} className="chat-agent-row" title={`查看子智能体：${a.title}`} aria-label={`查看子智能体 ${a.title}，只读`} onClick={() => { overlay.close(false); if (cur) props.onOpenAgent?.(cur.id, a.id); }}><CliLogo id={a.cli ?? "unknown"} size={20} /><span className="chat-agent-main"><b>{a.title}</b><span>{a.cli ?? "CLI 未知"} · {a.model ?? "模型未知"} · {a.duration ?? "耗时未知"} · {a.tokens ?? "tokens 未知"}</span></span><span className={`tag ${a.status === "失败" ? "bad" : a.status === "待确认" ? "warn" : "good"}`}>{a.status}</span><Icon name="chevronRight" size={12} /></button>)}</div><div className="chat-drop-f">{curRt?.recordsDemo ? "合成演示 · " : ""}点击行查看只读详情；记录仅本次运行可见</div></div>}
       </div>}
       {bgCount > 0 && <div className="chat-drop-wrap"><button className="chat-count-btn" data-chat-overlay-trigger="bg" aria-expanded={overlay.activeOverlay === "bg"} onClick={e => overlay.toggle("bg", e.currentTarget)}><Icon name="terminal" size={14} />{bgCount} 后台任务 <Icon name="chevronDown" size={12} /></button>
-        {overlay.activeOverlay === "bg" && <div className="chat-drop chat-drop-bg" data-chat-overlay="bg" role="dialog" aria-label="后台任务"><div className="chat-drop-h"><b>后台任务</b><span className="chat-drop-cap">仅本会话</span></div><div className="chat-drop-list">{[true, false].map(active => { const rows = curRt!.background.filter(b => (b.state === "运行中") === active); return <div className="chat-bg-group" key={String(active)}><div className="chat-bg-group-h"><span>{active ? "进行中" : "已结束"} {rows.length}</span>{!active && <button className="chat-bg-clear" disabled={!rows.length} onClick={() => { clearEndedBackground(cur!.id); setBgOpenId(null); if (!getRuntime(cur!.id).background.length) overlay.close(false); bumpRt(); }}>清空已结束</button>}</div>{!rows.length && <div className="chat-bg-empty">暂无记录</div>}{rows.map(b => <div className="chat-bg-row" key={b.id}><button className="chat-bg-head" aria-expanded={bgOpenId === b.id} onClick={() => setBgOpenId(prev => prev === b.id ? null : b.id)}><span className={`chat-bg-dot ${b.state === "运行中" ? "run" : b.state === "完成" ? "ok" : "fail"}`} /><span className="chat-bg-main"><b>{b.cmd}</b><span>{b.state} · 退出码 {b.exit} · {b.duration}</span></span><Icon name="chevronDown" size={12} /></button>{bgOpenId === b.id && <div className="chat-bg-detail"><span className="chat-bg-jobid">jobId {b.id}</span><pre>{b.output || "暂无输出"}</pre></div>}</div>)}</div>; })}</div><div className="chat-drop-f">{curRt!.recordsDemo ? "合成演示 · " : ""}只清展示，不终止任务</div></div>}
+        {overlay.activeOverlay === "bg" && cur && <div className="chat-drop chat-drop-bg" data-chat-overlay="bg" role="dialog" aria-label="后台任务"><div className="chat-drop-h"><b>后台任务</b><span className="chat-drop-cap">仅本会话</span></div><div className="chat-drop-list">{[true, false].map(active => { const rows = bgRows.filter(b => (b.state === "运行中") === active); return <div className="chat-bg-group" key={String(active)}><div className="chat-bg-group-h"><span>{active ? "进行中" : "已结束"} {rows.length}</span>{!active && <button className="chat-bg-clear" disabled={!rows.length} onClick={() => { clearEndedBackground(cur.id); setBgOpenId(null); if (!getRuntime(cur.id).background.length) overlay.close(false); bumpRt(); }}>清空已结束</button>}</div>{!rows.length && <div className="chat-bg-empty">暂无记录</div>}{rows.map(b => <div className="chat-bg-row" key={b.id}><button className="chat-bg-head" aria-expanded={bgOpenId === b.id} onClick={() => setBgOpenId(prev => prev === b.id ? null : b.id)}><span className={`chat-bg-dot ${b.state === "运行中" ? "run" : b.state === "完成" ? "ok" : "fail"}`} /><span className="chat-bg-main"><b>{b.cmd}</b><span>{b.state} · 退出码 {b.exit} · {b.duration}</span></span><Icon name="chevronDown" size={12} /></button>{bgOpenId === b.id && <div className="chat-bg-detail"><span className="chat-bg-jobid">jobId {b.id}</span><pre>{b.output || "暂无输出"}</pre></div>}</div>)}</div>; })}</div><div className="chat-drop-f">{curRt?.recordsDemo ? "合成演示 · " : ""}只清展示，不终止任务</div></div>}
       </div>}
-      <span className="spacer" />{cur?.sessionRole === "executor" && cur.featureId && <span className="chat-scope-tag" title={`执行特性：${cur.featureTitle ?? cur.featureId}；本会话仅实现该Feature`} aria-label={`执行特性：${cur.featureTitle ?? cur.featureId}，单特性执行会话`}>FEAT · <b>{cur.featureId}</b></span>}{binding && <span className={`chat-binding-pill ${binding.state}`} title={binding.state === "blocked" ? `原线程不可续接：${reasonLabel(binding.reasonCode)}` : binding.state === "freshPending" ? "上下文需要确认重建后才能发送" : binding.state === "fresh" ? "已确认重建上下文" : "已绑定原线程，续轮自动续接"}>{BINDING_PILL[binding.state] ?? binding.state}</span>}{newButton}
+      <span className="spacer" />{cur?.sessionRole === "executor" && cur.featureId && <span className="chat-scope-tag" title={`执行特性：${cur.featureTitle ?? cur.featureId}；本会话仅实现该Feature`} aria-label={`执行特性：${cur.featureTitle ?? cur.featureId}，单特性执行会话`}>FEAT · <b>{cur.featureId}</b></span>}{bindingPill && binding && <span className={`chat-binding-pill ${binding.state}`} title={binding.state === "blocked" ? `原线程不可续接：${reasonLabel(binding.reasonCode)}` : "上下文需要确认重建后才能发送"}>{bindingPill}</span>}{newButton}
     </div>
     <div className="chat-fade" />
     {overlay.activeOverlay === "history" && <SessionHistory
@@ -1001,7 +1048,7 @@ function Panel(props: PanelProps) {
       onClose={() => overlay.close(true)}
     />}
     <MessageList msgs={msgs} projectId={props.projectId} rootUri={props.rootUri} officeFiles={props.officeFiles} visible={props.visible} working={working} onOpenAgent={id => { if (cur) props.onOpenAgent?.(cur.id, id); }} stepsSlot={<>{queued > 0 && <div className="chat-queued">已排队 {queued} 条，当前静止后发送</div>}{curRt && curRt.steps.length > 0 && <StepsBox steps={curRt.steps} demo={curRt.stepsDemo} preview={Boolean((window as unknown as { __DESIGN_PREVIEW__?: boolean }).__DESIGN_PREVIEW__)} open={curRt.stepsOpen} sid={cur!.id} onToggle={() => { curRt.stepsOpen = !curRt.stepsOpen; bumpRt(); }} bump={bumpRt} />}</>} />
-    {(binding?.state === "blocked" || binding?.state === "freshPending") && <div className="chat-block-banner" role="alert" aria-label="绑定阻塞横幅">
+    {bindingBlocks && binding && <div className="chat-block-banner" role="alert" aria-label="绑定阻塞横幅">
       <span className="chat-block-ico" aria-hidden>!</span>
       <div className="chat-block-main">
         <div className="chat-block-title">{binding.state === "blocked" ? "原线程不可续接，已暂停发送" : "上下文待确认重建"}</div>

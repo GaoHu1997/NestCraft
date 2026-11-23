@@ -121,36 +121,44 @@ function ProjectFormModal({ project, onClose, onSaved }: { project?: api.Project
         <Field label="类型"><select className="input" value={kind} disabled={!!project || busy} onChange={e => setKind(e.target.value as "code" | "work")}><option value="code">编码项目</option><option value="work">办公项目</option></select></Field>
       </div>
       {project && <Field label="图标与背景色" hint="项目与知识库共用 50 个图标；图标 + 背景色成对保存。清空回类型默认（编码 code + 蓝、办公 briefcase + 琥珀）。旧项目保持原显示，手动修改后才写入。">
-        <div className="cr51-picker-groups" role="group" aria-label="项目图标选择">
-          {ICON_GROUPS.map(group => <div key={group.name} className="cr51-picker-group">
-            <div className="cr51-picker-group-h"><b>{group.name}</b><span>{group.hint} · {group.icons.length}</span></div>
-            <div className="cr51-picker">
-              {group.icons.map(id => <button key={id} type="button" className="cr51-picker-cell" aria-pressed={iconDraft === id}
-                onClick={() => setIconDraft(id)} title={ICON_LABELS[id] ?? id}>
-                <Icon name={id} size={20} /><span className="cr51-picker-name">{ICON_LABELS[id] ?? id}</span>
-              </button>)}
-            </div>
-          </div>)}
-          <button type="button" className="cr51-picker-cell cr51-picker-clear" aria-pressed={iconDraft === null}
-            onClick={() => setIconDraft(null)} title="清空回类型默认">
-            <Icon name="x" size={14} /><span className="cr51-picker-name">默认</span>
-          </button>
-        </div>
-        <div className="cr51-swatches" role="group" aria-label="背景色卡（10 色，无文字）">
-          {ICON_COLORS.map(sw => <button key={sw.id} type="button" className={`cr51-swatch cr51-color-${sw.id}`}
-            aria-pressed={colorDraft === sw.id} aria-label={`背景色 ${sw.id}`} title=""
-            onClick={() => setColorDraft(sw.id)} />)}
-          <button type="button" className="cr51-swatch cr51-swatch-clear" aria-pressed={colorDraft === null}
-            onClick={() => setColorDraft(null)} title="清空回默认色">
-            <Icon name="x" size={12} />
-          </button>
-        </div>
-        <div className="cr51-combo-preview">
-          <span className={`cr51-tile cr51-color-${colorDraft ?? (project.kind === "work" ? "amber" : "blue")}`}>
-            <Icon name={iconDraft ?? (project.kind === "work" ? "briefcase" : "code")} size={20} />
-          </span>
-          <span className="caption">组合预览：{ICON_LABELS[iconDraft ?? (project.kind === "work" ? "briefcase" : "code")] ?? "默认"} · {colorDraft ?? "默认色"}</span>
-        </div>
+        {/* CR-068 J02：默认只显示当前图标，点击当前图标才展开样式（50 图标）与配色（10 色卡）；
+            选择即时预览，切换图标不重置名称/目录等其它字段草稿，保存才成对写入。 */}
+        <details className="cr51-icon-disclosure">
+          <summary>
+            <ProjectIconTile project={{ icon: iconDraft, kind: project.kind, iconColor: colorDraft }} size={36} />
+            <span className="muted small">点击当前图标选择样式与配色</span>
+          </summary>
+          <div className="cr51-picker-groups" role="group" aria-label="项目图标选择">
+            {ICON_GROUPS.map(group => <div key={group.name} className="cr51-picker-group">
+              <div className="cr51-picker-group-h"><b>{group.name}</b><span>{group.hint} · {group.icons.length}</span></div>
+              <div className="cr51-picker">
+                {group.icons.map(id => <button key={id} type="button" className="cr51-picker-cell" aria-pressed={iconDraft === id}
+                  onClick={() => setIconDraft(id)} title={ICON_LABELS[id] ?? id}>
+                  <Icon name={id} size={20} /><span className="cr51-picker-name">{ICON_LABELS[id] ?? id}</span>
+                </button>)}
+              </div>
+            </div>)}
+            <button type="button" className="cr51-picker-cell cr51-picker-clear" aria-pressed={iconDraft === null}
+              onClick={() => setIconDraft(null)} title="清空回类型默认">
+              <Icon name="x" size={14} /><span className="cr51-picker-name">默认</span>
+            </button>
+          </div>
+          <div className="cr51-swatches" role="group" aria-label="背景色卡（10 色，无文字）">
+            {ICON_COLORS.map(sw => <button key={sw.id} type="button" className={`cr51-swatch cr51-color-${sw.id}`}
+              aria-pressed={colorDraft === sw.id} aria-label={`背景色 ${sw.id}`} title=""
+              onClick={() => setColorDraft(sw.id)} />)}
+            <button type="button" className="cr51-swatch cr51-swatch-clear" aria-pressed={colorDraft === null}
+              onClick={() => setColorDraft(null)} title="清空回默认色">
+              <Icon name="x" size={12} />
+            </button>
+          </div>
+          <div className="cr51-combo-preview">
+            <span className={`cr51-tile cr51-color-${colorDraft ?? (project.kind === "work" ? "amber" : "blue")}`}>
+              <Icon name={iconDraft ?? (project.kind === "work" ? "briefcase" : "code")} size={20} />
+            </span>
+            <span className="caption">组合预览：{ICON_LABELS[iconDraft ?? (project.kind === "work" ? "briefcase" : "code")] ?? "默认"} · {colorDraft ?? "默认色"}</span>
+          </div>
+        </details>
       </Field>}
       <Field label="负责人"><input className="input" placeholder="未接入项目负责人存储" disabled /></Field>
       <Field label="项目描述"><textarea className="textarea" rows={3} placeholder="未接入项目描述存储" disabled /></Field>

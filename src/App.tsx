@@ -196,7 +196,7 @@ export default function App() {
           <button className="nav-item" onClick={() => currentProject ? go({ page: "project", projectId: currentProject.id, tab: "design" }) : go({ page: "projects" })}><Icon name="book" /><span>设计资料</span></button>
           <span className="cr51-avatar-frame nc-side-avatar-frame">
             <button className="nc-side-user" onClick={() => setSettingsOpen(true)} aria-label="设置与账户">
-              <UserAvatar size={30} photo={avatarPhoto} /><span className="grow"><b>{profile.name}</b><small>{profile.role} · 设置与账户</small></span><Icon name="settings" size={15} />
+              <UserAvatar size={30} photo={avatarPhoto} /><span className="grow"><b>{profile.name}</b><small>{profile.role}</small></span><Icon name="settings" size={15} />
             </button>
             <AvatarHoverEdit style={normalizeAvatarStyle(avatarStyle)} photo={avatarPhoto}
               onApply={next => { setAvatarStyle(next.style); setAvatarPhoto(api.avatarPhotoSrc(next.photo)); }} />

@@ -54,6 +54,13 @@ async function mountApp() {
       await module.runPinSuite();
       return;
     }
+    // grok 真实链路（产品代码 dispatch 注入）：TAURI_SMOKE=1 且 SMOKE_GROK_SUITE=1。
+    const grokSuite = await invoke<boolean>("smoke_grok_suite_flag").catch(() => false);
+    if (grokSuite && (await invoke<boolean>("smoke_should_run").catch(() => false))) {
+      const module = await import("./smoke/grok-suite");
+      await module.runGrokSuite();
+      return;
+    }
     const autorun = await invoke<boolean>("smoke_autorun_flag").catch(() => false);
     if (requested || autorun) {
       const run = await invoke<boolean>("smoke_should_run");

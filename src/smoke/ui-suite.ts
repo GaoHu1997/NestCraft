@@ -113,7 +113,7 @@ export async function runUiSuite(): Promise<void> {
 
   /* ---------- 设置中心 ---------- */
   await ui("设置中心", "打开设置并渲染六项页签", async () => {
-    click(byText("设置与账户"), "设置入口");
+    click(q('button[aria-label="设置与账户"]'), "设置入口");
     const modal = await waitFor(() => q('[aria-label="设置中心"]'), 4000, "设置弹框");
     const tabs = qa('nav[aria-label="设置页签"] button').map((b) => (b.textContent ?? "").trim());
     for (const need of ["基础设置", "模型设置", "SDK", "Skill", "MCP", "Tool"]) {

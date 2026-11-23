@@ -1610,7 +1610,12 @@ async fn run_cli_stream(
         let _ = child.kill().await;
         return Ok(StreamOutcome { assistant_text: "[已停止]".into(), aborted: true, ..Default::default() });
     }
-    let timeout_secs = if std::env::var_os("SMOKE_MOCKBIN").is_some() { 20 } else { 30 * 60 };
+    // 冒烟模式默认压到 20s，防止 mock 链路挂起拖慢套件；但验证真实 CLI 时必须给足时间
+    // （真实 grok 首轮要加载插件与工具清单，实测远超 20s）。
+    // SMOKE_REAL_CLI=1 表示「本轮冒烟会跑真实 CLI」，此时不压缩超时。
+    let smoke_fast = std::env::var_os("SMOKE_MOCKBIN").is_some()
+        && std::env::var("SMOKE_REAL_CLI").map(|v| v != "1").unwrap_or(true);
+    let timeout_secs = if smoke_fast { 20 } else { 30 * 60 };
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
     tokio::select! {
         result = write_stdin(&mut child, prompt) => {
@@ -1770,6 +1775,62 @@ fn parse_cli_line(
         let _ = c.send(ev);
     };
     let typ = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    // CR-064/BUG-002：grok `--output-format streaming-json` 的帧把增量放在 `data`，
+    // 形如 {"type":"text","data":"OK"} / {"type":"thought","data":"…"} /
+    // {"type":"usage","usage":{…}} / {"type":"end","stopReason":"end_turn","sessionId":"…"}。
+    // 与 claude 的 {type:…, message/event:…} 结构不同，必须单独分支，否则正文会静默丢失。
+    if cli_id == "grok" {
+        match typ {
+            "text" => {
+                if let Some(text) = v.get("data").and_then(|d| d.as_str()) {
+                    if !text.is_empty() {
+                        out.mark_content();
+                        out.assistant_text.push_str(text);
+                        send(channel, serde_json::json!({ "type": "delta", "delta": text }));
+                    }
+                }
+                return;
+            }
+            "thought" => {
+                if let Some(text) = v.get("data").and_then(|d| d.as_str()) {
+                    if !text.is_empty() {
+                        out.mark_thinking();
+                        out.thinking_text.push_str(text);
+                        send(channel, serde_json::json!({ "type": "thinking", "delta": text }));
+                    }
+                }
+                return;
+            }
+            "usage" => {
+                if let Some(u) = v.get("usage") {
+                    let (i, o, c) = extract_usage(u);
+                    out.usage = Some((i, o, c));
+                    send(channel, serde_json::json!({
+                        "type": "usage", "inputTokens": i, "outputTokens": o, "cacheReadTokens": c
+                    }));
+                }
+                return;
+            }
+            "end" => {
+                // 无头单轮运行的终帧；会话引用留在后端内存，供续接判定。
+                if let Some(sid) = v.get("sessionId").and_then(|s| s.as_str()) {
+                    out.emitted_ref = Some(sid.to_string());
+                }
+                return;
+            }
+            "error" => {
+                let msg = v
+                    .get("data")
+                    .or_else(|| v.get("message"))
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("未知错误");
+                send(channel, serde_json::json!({ "type": "error", "message": msg }));
+                return;
+            }
+            // available_commands 等元信息帧：不进正文。
+            _ => return,
+        }
+    }
     match (cli_id, typ) {
         // ---------- claude stream-json ----------
         (_, "system") => {

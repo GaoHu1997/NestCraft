@@ -2,6 +2,8 @@
 //!
 //! 职责（LLD-CR037 §5.1/§5.2、DB-FEAT-001「CR-037 普通会话的持久绑定」）：
 //! - spawn 前 `resolve_binding`：按绑定快照与当前环境决定 create/resume/fresh/blocked；
+//!   `fresh` 只在 `confirm_fresh` 写过 `fresh-…` 标记后成立——普通轮次结算的 `turn-…`
+//!   不算重建确认，避免第二轮在引用丢失时静默换新上下文（CR-068 J11）；
 //! - 兼容键：服务端规范键 = cli + cli 版本 + 运行模式（本适配器为 headless，权限模式为逐轮
 //!   参数不影响线程存储，不计入）+ provider 身份指纹（协议+端点主机+providerId 的 sha256 前16）
 //!   + 范围（project:<id> / server:<id> / global）；原引用永不进入键、前端或日志；
@@ -34,6 +36,19 @@ pub const REASON_CODES: [&str; 10] = [
 /// claude/codex 具备原生续接通道；grok 的 `--print --json` 通道无线程概念（本轮登记不支持）。
 pub fn cli_supported(cli_id: &str) -> bool {
     matches!(cli_id, "claude" | "codex")
+}
+
+/// 用户显式「重建上下文」确认的标记前缀（`confirm_fresh` 用 `new_id("fresh")` 写入）。
+///
+/// CR-068 J11：普通轮次结算写入的是 `turn-…`，不能当成「已确认 fresh」。否则一旦旧引用丢失
+/// （历史缺绑定、引用被清理等），第二轮就会**静默**换新上下文。只有 `fresh-…` 才允许按
+/// fresh 发送；其余情况必须回到 FreshPending，由用户显式确认后才开始新上下文。
+const FRESH_CONFIRM_PREFIX: &str = "fresh-";
+
+fn explicit_fresh_confirmed(confirmed_turn_id: Option<&str>) -> bool {
+    confirmed_turn_id
+        .map(|value| value.starts_with(FRESH_CONFIRM_PREFIX))
+        .unwrap_or(false)
 }
 
 pub fn reason_text(code: &str) -> &'static str {
@@ -142,7 +157,7 @@ pub fn load_binding(conn: &rusqlite::Connection, session_id: &str) -> Result<Bin
 pub enum BindingDecision {
     /// 直接发送；requested=Some 时携带 resume 引用（仅后端内存，不进前端/日志）。
     Send { mode: &'static str, requested: Option<String> },
-    /// 有历史但无法续接且未确认重建：拒绝发送，前端弹确认。
+    /// 有历史但无法续接且用户未显式确认重建：拒绝发送，前端弹确认（CR-068：普通轮次不算确认）。
     FreshPending { reason: &'static str },
     /// 明确阻塞（兼容键失配 / 撤权）：拒绝发送，保留草稿与历史。
     Blocked { reason: &'static str },
@@ -176,16 +191,17 @@ pub fn resolve_binding(
     // 无引用：CLI 不支持（grok）→ 有历史须确认 fresh，首轮直接 create。
     if !cli_supported(cli_id) {
         if has_history {
-            if snapshot.confirmed_turn_id.is_some() {
+            if explicit_fresh_confirmed(snapshot.confirmed_turn_id.as_deref()) {
                 return BindingDecision::Send { mode: "fresh", requested: None };
             }
             return BindingDecision::FreshPending { reason: "UNSUPPORTED_CLI" };
         }
         return BindingDecision::Send { mode: "create", requested: None };
     }
-    // 支持续接的 CLI 但无引用：有历史且未确认 → freshPending；确认过 → fresh 重建；首轮 → create。
+    // 支持续接的 CLI 但无引用：有历史且**用户显式确认重建** → fresh；否则 freshPending。
+    // CR-068 J11：普通轮次结算的 confirmed_turn_id 不能当作重建确认，避免静默 fresh。
     if has_history {
-        if snapshot.confirmed_turn_id.is_some() {
+        if explicit_fresh_confirmed(snapshot.confirmed_turn_id.as_deref()) {
             return BindingDecision::Send { mode: "fresh", requested: None };
         }
         return BindingDecision::FreshPending { reason: "REF_MISSING" };
@@ -572,7 +588,9 @@ pub fn derive_view(
     if let Some(reference) = thread_ref {
         return Some(view("native", None, Some(fingerprint_ref(reference))));
     }
-    if confirmed_turn_id.is_some() {
+    // CR-068 J11/J12：只有用户显式确认过重建才派生 fresh（无需处理、不显示常驻标签）；
+    // 普通轮次的 confirmed_turn_id 说明有历史但没有可用引用，仍按待确认暴露原因与出路。
+    if explicit_fresh_confirmed(confirmed_turn_id) {
         return Some(view("fresh", None, None));
     }
     if message_count > 0 {
@@ -634,10 +652,22 @@ mod tests {
     // ---------- 解析：grok / freshPending / 兼容键与撤权 ----------
 
     #[test]
+    fn only_explicit_fresh_marker_allows_silent_fresh() {
+        // CR-068 J11：普通结算轮（turn-…）与空值都不得被当成“已确认重建”，否则会静默 fresh。
+        assert!(!explicit_fresh_confirmed(None));
+        assert!(!explicit_fresh_confirmed(Some("turn-abc")));
+        assert!(!explicit_fresh_confirmed(Some("fresh")));
+        assert!(explicit_fresh_confirmed(Some("fresh-1")));
+    }
+
+    #[test]
     fn grok_first_round_creates_then_requires_confirmation() {
         let mut snap = snapshot();
         assert!(matches!(resolve_binding(&snap, "grok", "k", 0, false), BindingDecision::Send { mode: "create", requested: None }));
         // 有历史且未确认 → freshPending（直接 IPC 会被拒，前端弹确认）
+        assert!(matches!(resolve_binding(&snap, "grok", "k", 0, true), BindingDecision::FreshPending { reason: "UNSUPPORTED_CLI" }));
+        // CR-068 J11：普通结算轮（turn-…）不是重建确认，不能静默 fresh。
+        snap.confirmed_turn_id = Some("turn-2b0f".into());
         assert!(matches!(resolve_binding(&snap, "grok", "k", 0, true), BindingDecision::FreshPending { reason: "UNSUPPORTED_CLI" }));
         snap.confirmed_turn_id = Some("fresh-1".into());
         assert!(matches!(resolve_binding(&snap, "grok", "k", 0, true), BindingDecision::Send { mode: "fresh", requested: None }));
@@ -672,6 +702,12 @@ mod tests {
         let snap = snapshot();
         assert!(matches!(resolve_binding(&snap, "claude", "k", 0, false), BindingDecision::Send { mode: "create", requested: None }));
         assert!(matches!(resolve_binding(&snap, "claude", "k", 0, true), BindingDecision::FreshPending { reason: "REF_MISSING" }));
+        // CR-068 J11：已结算的普通轮（turn-…）不代表用户确认重建，第二轮不得静默 fresh。
+        let mut settled = snapshot();
+        settled.confirmed_turn_id = Some("turn-7c1a".into());
+        settled.binding_revision = 2;
+        assert!(matches!(resolve_binding(&settled, "claude", "k", 0, true), BindingDecision::FreshPending { reason: "REF_MISSING" }));
+        // 只有 confirm_fresh 写入的 fresh-… 标记才允许以 fresh 发送。
         let mut confirmed = snapshot();
         confirmed.confirmed_turn_id = Some("fresh-9".into());
         confirmed.binding_revision = 3;
@@ -821,8 +857,11 @@ mod tests {
         assert_eq!(v.ref_fingerprint.as_deref(), Some(fingerprint_ref("r").as_str()));
         let v = derive_view("ordinary", "claude", Some("r"), 1, None, Some("confirmed"), None, 5).unwrap();
         assert_eq!(v.state, "native");
-        let v = derive_view("ordinary", "claude", None, 2, Some("fresh"), Some("confirmed"), None, 5).unwrap();
+        let v = derive_view("ordinary", "claude", None, 2, Some("fresh-9"), Some("confirmed"), None, 5).unwrap();
         assert_eq!(v.state, "fresh");
+        // 普通结算轮的 turn-… 不是重建确认：引用缺失仍按待确认暴露原因（CR-068 J11/J12）。
+        let v = derive_view("ordinary", "claude", None, 2, Some("turn-9"), Some("confirmed"), None, 5).unwrap();
+        assert_eq!((v.state.as_str(), v.reason_code.as_deref()), ("freshPending", Some("REF_MISSING")));
         let v = derive_view("ordinary", "claude", None, 0, None, None, None, 3).unwrap();
         assert_eq!((v.state.as_str(), v.reason_code.as_deref()), ("freshPending", Some("REF_MISSING")));
         // grok：freshPending 原因按 UNSUPPORTED_CLI 展示
