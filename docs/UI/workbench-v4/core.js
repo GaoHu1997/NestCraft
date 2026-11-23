@@ -5,7 +5,7 @@ window.UI = (function () {
      按设计说明的「内联 sprite」实施方式，这里注入与 icon-sprite.svg 同步的内联副本，
      icon() 改用同文档引用（#id），http 与 file:// 下都可见。
      icon-sprite.svg 仍是唯一维护来源；修改符号后必须重新生成本段
-     （本段来源 hash：92dd13b1ea39，与 UI-CR051 原型同步记录一致）。 */
+     （本段来源 hash：dc7f286bc750，与 UI-CR051 原型同步记录一致）。 */
   const SPRITE_INLINE = `<title>UI-ICON-001-v1</title>
 <symbol id="home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V21h13V9.5"/><path d="M9.5 21v-6h5v6"/></symbol>
 <symbol id="grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
@@ -128,7 +128,46 @@ window.UI = (function () {
 <symbol id="fileVideo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H5v18h14V8l-5-5v5h5"/><path d="M10 13v5l4.2-2.5z"/></symbol>
 <symbol id="fileUnknown" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H5v18h14V8l-5-5v5h5"/><path d="M9.4 12.4h5.2v5.2H9.4z" stroke-dasharray="1.8 2.2"/></symbol>
 <symbol id="briefcase" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7.4" width="18" height="12.4" rx="2"/><path d="M9 7.4V6.2A2.2 2.2 0 0 1 11.2 4h1.6A2.2 2.2 0 0 1 15 6.2v1.2"/><path d="M3 12.6h18"/><path d="M10.4 12.6v2h3.2v-2"/></symbol>
-<symbol id="library" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4.5h3.4v14.6H4zM9 4.5h3.4v14.6H9z"/><path d="m14.6 5.4 3.2.9-3 12.8-2.3-.6z"/><path d="M3 20.4h18"/></symbol>`;
+<symbol id="library" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4.5h3.4v14.6H4zM9 4.5h3.4v14.6H9z"/><path d="m14.6 5.4 3.2.9-3 12.8-2.3-.6z"/><path d="M3 20.4h18"/></symbol>
+  <symbol id="building" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="3" width="15" height="18" rx="1.6"/><path d="M8.5 7h2M13.5 7h2M8.5 11h2M13.5 11h2M8.5 15h2M13.5 15h2M10 21v-3.5h4V21"/></symbol>
+  <symbol id="calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 9.5h17M8 3v4M16 3v4M8 13h2.5M13.5 13H16M8 17h2.5"/></symbol>
+  <symbol id="clipboard" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4.5" width="14" height="16.5" rx="2"/><path d="M9 4.5V3.2h6v1.3M8.5 10h7M8.5 14h7M8.5 18h4"/></symbol>
+  <symbol id="presentation" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3.5" width="18" height="11.5" rx="1.6"/><path d="M12 15v5M8 20.5l4-5.5 4 5.5"/><path d="m7 11 3-3 2.5 2 3.5-3.5"/></symbol>
+  <symbol id="mail" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4.2 7 7.8 5.8L19.8 7"/></symbol>
+  <symbol id="idBadge" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10.5" r="2"/><path d="M6.5 16a2.8 2.8 0 0 1 5 0M14 9.5h4M14 12.5h4M14 15.5h3"/></symbol>
+  <symbol id="chartBar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16"/><rect x="6" y="12" width="3" height="6" rx="0.8"/><rect x="10.5" y="8" width="3" height="10" rx="0.8"/><rect x="15" y="4" width="3" height="14" rx="0.8"/></symbol>
+  <symbol id="chartLine" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16"/><path d="m5 16 4.5-4 3.5 2 5.5-7"/><circle cx="19" cy="6.5" r="1.3"/></symbol>
+  <symbol id="chartPie" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 9 9h-9z"/><path d="M14 3.4A9 9 0 0 1 20.6 10H14z"/></symbol>
+  <symbol id="wallet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><circle cx="17" cy="14.5" r="1.2"/></symbol>
+  <symbol id="receipt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6M9 16h3"/></symbol>
+  <symbol id="cart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h2l2.2 10.5h10.6l2.2-8H6"/><circle cx="9.5" cy="19" r="1.4"/><circle cx="17" cy="19" r="1.4"/></symbol>
+  <symbol id="tag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r="1.4"/></symbol>
+  <symbol id="scale" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M8 21h8M4 7h16"/><path d="M6 7 3 14h6zM18 7l3 7h-6z"/></symbol>
+  <symbol id="megaphone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5A1.5 1.5 0 0 1 4.5 9H7l9-3.5v13L7 15H4.5A1.5 1.5 0 0 1 3 13.5z"/><path d="M7 15v3a2 2 0 0 0 4 0v-1.2M19 9.5a3 3 0 0 1 0 5"/></symbol>
+  <symbol id="camera" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l1.6-2.2h6.8L17 8h3a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 20 20H4a1.5 1.5 0 0 1-1.5-1.5v-9A1.5 1.5 0 0 1 4 8z"/><circle cx="12" cy="13.5" r="3.4"/></symbol>
+  <symbol id="music" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.4"/><circle cx="16.5" cy="16" r="2.4"/></symbol>
+  <symbol id="video" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="12.5" height="12" rx="2"/><path d="m15.5 10.8 5.5-2.8v7.8l-5.5-2.8z"/></symbol>
+  <symbol id="mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="10" rx="3"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4M9 21h6"/></symbol>
+  <symbol id="newspaper" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h13v15H5.5A1.5 1.5 0 0 1 4 18.5z"/><path d="M17 8h2.5A1.5 1.5 0 0 1 21 9.5v9a1.5 1.5 0 0 1-1.5 1.5H17"/><path d="M7 9h7M7 12h7M7 15h4"/></symbol>
+  <symbol id="pen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l4.2-1L19 8.2a2.1 2.1 0 0 0-3-3L5.2 16z"/><path d="m14.5 6.5 3 3M5.2 16 4 20"/></symbol>
+  <symbol id="brush" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20c2.5 0 4-1.5 4-4l8-8 2 2-8 8c0 2.5-3.5 2-6 2z"/><path d="m16 6 2-2 2 2-2 2z"/></symbol>
+  <symbol id="rocket" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c4 2.4 6 6.4 6 10.8L15 16H9l-3-2.2C6 9.4 8 5.4 12 3z"/><circle cx="12" cy="9.5" r="2"/><path d="m9 16-1.5 4.5L11 18M15 16l1.5 4.5L13 18"/></symbol>
+  <symbol id="bug" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 9a3.5 3.5 0 0 1 7 0v5a3.5 3.5 0 0 1-7 0z"/><path d="M8.5 11H5M19 11h-3.5M8.5 14H5M19 14h-3.5M7.5 8 5.5 6M16.5 8l2-2M7.5 18l-2 2M16.5 18l2 2"/></symbol>
+  <symbol id="puzzle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6v3a2 2 0 1 0 4 0V3h2v6h-3a2 2 0 1 0 0 4h3v8h-8v-3a2 2 0 1 0-4 0v3H3v-8h3a2 2 0 1 0 0-4H3V3h6z"/></symbol>
+  <symbol id="flag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4"/><path d="M5 4h12.5l-2.2 4.5 2.2 4.5H5"/></symbol>
+  <symbol id="compass" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></symbol>
+  <symbol id="flask" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.8 3h10.4a2 2 0 0 0 1.8-3l-5-9V3"/><path d="M7.2 15h9.6"/></symbol>
+  <symbol id="robot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="11" rx="2"/><path d="M12 4v4M9 4h6"/><circle cx="9" cy="13" r="1.2"/><circle cx="15" cy="13" r="1.2"/><path d="M9.5 16.5h5"/></symbol>
+  <symbol id="cloud" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18h10a4 4 0 0 0 .6-8A6 6 0 0 0 6 11a3.5 3.5 0 0 0 1 7z"/></symbol>
+  <symbol id="school" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-5 9 5-9 5z"/><path d="M7 11.5V17c0 1.5 2.2 2.5 5 2.5s5-1 5-2.5v-5.5M21 9v6"/></symbol>
+  <symbol id="heart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20s-7-4.3-7-9a4 4 0 0 1 7-2.6A4 4 0 0 1 19 11c0 4.7-7 9-7 9z"/></symbol>
+  <symbol id="star" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></symbol>
+  <symbol id="hand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 11V5.5a1.5 1.5 0 0 1 3 0V11"/><path d="M11 10.5V4a1.5 1.5 0 0 1 3 0v6.5"/><path d="M14 10.5V5.5a1.5 1.5 0 0 1 3 0V13"/><path d="M17 9.5a1.5 1.5 0 0 1 3 0V14a7 7 0 0 1-7 7h-1.5a6 6 0 0 1-4.7-2.3L4 15.2a1.6 1.6 0 0 1 2.4-2.1L8 15"/></symbol>
+<symbol id="sessionStats" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5h16"/><path d="M7.5 19.5v-6"/><path d="M12 19.5V8"/><path d="M16.5 19.5v-9"/></symbol>
+<symbol id="tokenUsage" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="6" width="15" height="12" rx="2"/><path d="M8 10h8"/><path d="M8 13.5h5"/></symbol>
+<symbol id="contextUsage" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="4.5" width="10" height="8" rx="1.5"/><path d="M4.5 9.5v6A1.5 1.5 0 0 0 6 17h8.5"/></symbol>
+<symbol id="aiMark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 19 7.4 5l3.9 14"/><path d="M5.1 14.2h4.6"/><path d="M14.3 5h4.4"/><path d="M16.5 5v14"/><path d="M14.3 19h4.4"/></symbol>
+<symbol id="aiBot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="7.5" width="15" height="10.5" rx="3"/><path d="M12 7.5V4.8"/><circle cx="12" cy="3.7" r="1"/><path d="M9.2 11.2v1.8"/><path d="M14.8 11.2v1.8"/><path d="M9.5 15.3h5"/></symbol>`;
   if (!document.getElementById("cr051-inline-sprite")) {
     document.body.insertAdjacentHTML("afterbegin",
       `<svg id="cr051-inline-sprite" aria-hidden="true" focusable="false" style="position:absolute;width:0;height:0;overflow:hidden">${SPRITE_INLINE}</svg>`);
@@ -266,9 +305,10 @@ window.UI = (function () {
     briefcase: '<rect x="3" y="7.4" width="18" height="12.4" rx="2"/><path d="M9 7.4V6.2A2.2 2.2 0 0 1 11.2 4h1.6A2.2 2.2 0 0 1 15 6.2v1.2"/><path d="M3 12.6h18"/><path d="M10.4 12.6v2h3.2v-2"/>',
     library: '<path d="M4 4.5h3.4v14.6H4zM9 4.5h3.4v14.6H9z"/><path d="m14.6 5.4 3.2.9-3 12.8-2.3-.6z"/><path d="M3 20.4h18"/>'
   };
+  const iconIds = new Set([...SPRITE_INLINE.matchAll(/<symbol id="([^"]+)"/g)].map(m => m[1]));
   const iconAliases = { project: "folder", knowledge: "book", directory: "folder", fileExcel: "fileSheet", filePpt: "fileSlides", fileDoc: "fileWord", warning: "alert", success: "checkCircle", delete: "trash", externalLink: "external", windowMinimize: "minimize", windowMaximize: "maximize", windowRestore: "restore", windowClose: "close", markdown: "fileMarkdown", html: "fileHtml" };
   function icon(name, cls) {
-    const canonical = Object.prototype.hasOwnProperty.call(P, name) ? name : iconAliases[name];
+    const canonical = iconIds.has(name) ? name : iconAliases[name];
     const missing = !canonical;
     return `<svg class="ico ${esc(cls || "")}${missing ? " icon-missing" : ""}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ${missing ? `role="img" aria-label="缺失图标：${esc(name)}" data-missing-icon="${esc(name)}"` : 'aria-hidden="true"'}>${missing ? `<title>缺失图标：${esc(name)}</title>` : ""}<use href="#${canonical || "error"}"></use></svg>`;
   }
@@ -347,7 +387,7 @@ window.UI = (function () {
     amber: ["var(--tile-amber)", "var(--fic-project-work)"],
     green: ["var(--tile-green)", "var(--success)"]
   };
-  function registeredIcon(id) { return id && Object.prototype.hasOwnProperty.call(P, id) ? id : null; }
+  function registeredIcon(id) { return id && iconIds.has(id) ? id : null; }
   function registeredColor(id) { return id && ICON_COLORS.some(c => c.id === id) ? id : null; }
   /** 色卡 id → [承载底, 图形色]（CSS 变量对，浅深主题各自取值）；未登记 id 返回 null。 */
   function iconColorPair(id) {
@@ -510,7 +550,7 @@ window.UI = (function () {
     /** CR-062：当前查看的子智能体 id；null 表示主会话视图。 */
     aiAgent: null,
     aiBgOpen: null,
-    aiStepsOpen: true,
+    aiStepsOpen: false,
     aiModelQuery: "",
     aiMenu: null,
     aiMenuQuery: "",
@@ -751,7 +791,7 @@ window.UI = (function () {
         <span class="avatar-frame side-avatar">
           <button class="side-user merged" data-act="open-settings" title="设置与账户">
             <span class="avatar">${avatarImg()}</span>
-            <span class="u-meta"><b>${esc(D.user.name)}</b><span>${esc(D.user.role)} · 设置与账户</span></span>
+            <span class="u-meta"><b>${esc(D.user.name)}</b><span>${esc(D.user.role)}</span></span>
             <span class="u-gear">${icon("settings", "ico-14")}</span>
           </button>
           <button class="avatar-edit" type="button" data-act="avatar-edit" aria-label="更换头像" title="更换头像">${icon("camera", "ico-14")}</button>
@@ -873,7 +913,7 @@ window.UI = (function () {
     if (host) host.outerHTML = window.AIPanel.menuHtml();
   }
 
-  return { D, $, $$, esc, icon, iconNames: Object.keys(P), iconAliases, cliLogo, fileIcon, fileMeta, avatarImg, avatarHtml, AVATAR_LABELS, projIconId, projTile, kbIconId, kbTileColor, iconColorPair, registeredIcon, registeredColor, ICON_GROUPS, ICON_COLORS, ICON_COLOR_LABELS, PROJECT_ICON_IDS, KB_ICON_IDS, md, toc, store, render, openWindow, switchWindow, closeWindow, windowControl, activeWindow, toast, openDialog, openSubDialog, closeDialog, closeSubDialog, closeTopDialog, dlgShell, renderReqMenu, renderAIMenu };
+  return { D, $, $$, esc, icon, iconNames: [...iconIds], iconAliases, cliLogo, fileIcon, fileMeta, avatarImg, avatarHtml, AVATAR_LABELS, projIconId, projTile, kbIconId, kbTileColor, iconColorPair, registeredIcon, registeredColor, ICON_GROUPS, ICON_COLORS, ICON_COLOR_LABELS, PROJECT_ICON_IDS, KB_ICON_IDS, md, toc, store, render, openWindow, switchWindow, closeWindow, windowControl, activeWindow, toast, openDialog, openSubDialog, closeDialog, closeSubDialog, closeTopDialog, dlgShell, renderReqMenu, renderAIMenu };
 })();
 
 

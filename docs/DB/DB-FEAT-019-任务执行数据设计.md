@@ -5,7 +5,7 @@
 > CR-031现行r2以[事件审批与产物记录](DB-CR031-事件审批与产物记录.md)细化：完整InvocationBinding/普通sessionTurn、根调用每Attempt唯一而子Job共享父Attempt、子generation不改Task fence/currentAttemptId；暂停/可恢复blocked保activeKey，资源锁另判；原seq全局主键与项目cursor、内部Parent结果与外部通知、最终参数/effect去重和报告封存。本文Attempt/Task为业务根权威，子工作不得创建同Task并行Attempt。普通会话的资源/effect/budget按r2明确扩来源，不造Task；完整正文文件职责沿CR-028。[需求/WP与G-PLAN](../PRD/CR-031-受管执行可靠性需求与实施分解.md)、[契约](../LLD/LLD-CR031-受管执行可靠性契约.md)、[测试](../Test/TEST-CR031-受管执行可靠性验证.md)；只文档，表/迁移均未实施。
 
 - 关联：[PRD-002](../PRD/PRD-002-需求派发与自主执行.md)、FEAT-018～020 / STORY-038～043、[ADR-003](../LLD/ADR-003-任务执行权威与调度边界.md)。
-- 状态：2026-11-19 数据设计首版；**新增表、约束、迁移脚本均未实施，本轮不操作正式 workbench.db**。
+- 状态：2026-11-19 数据设计首版；**2026-11-23 已实施 M0 子集**（`execution_batch/task/step/attempt/dependency/event/checkpoint/work_package/work_package_story/obligation/obligation_mapping`，见 `src-tauri/src/commands/execution.rs` 与 [验证记录](../Test/REPORT-CR047-执行账本M0与写入保护验证.md)）；资源锁、槽、产物、证据、集成、交付与 outbox 仍为计划，未迁移、未真实执行。
 - 共用范围：FEAT-018 使用批次/快照/活动任务/投影；FEAT-019 使用 DAG/步骤/租约/资源/effects；FEAT-020 使用产物/证据/集成/交付/outbox。不创建三份重复数据正文。
 
 ## 1. 权威、复用和存储边界

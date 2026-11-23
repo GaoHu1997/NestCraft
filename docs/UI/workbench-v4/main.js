@@ -210,7 +210,7 @@
     "project-filter": el => { store.projectFilter = el.dataset.kind; render(); },
     "proj-search": () => {},
     "project-new": () => { store.projectPathDraft = ""; store.projectDraft = null; S().projectModal("new"); },
-    "project-edit": el => { store.projectPathDraft = ""; S().projectModal("edit", el.dataset.id); },
+    "project-edit": el => { store.projectFormDraft = null; store.projectIconExpanded = false; store.projectIconDraft = null; store.projectColorDraft = null; store.projectPathDraft = ""; S().projectModal("edit", el.dataset.id); },
     "project-save": el => {
       const mode = el.dataset.mode;
       const data = {
@@ -498,14 +498,18 @@
     "provider-save": el => {
       const p = D.settings.providers.find(x => x.id === el.dataset.id);
       if (p) {
-        p.name = val("pm-name") || p.name;
-        /* #6：名称可改，ID 只读不改。模型字段与供应商一并保存。 */
+        /* CR-068：先完整校验，再提交同一个保存动作。 */
         const open = store.modelOpen && p.models.find(m => m.id === store.modelOpen);
+        let ctx, max;
+        if (open) {
+          try { ctx = CR068.parseCapacity(val("m-ctx")); max = CR068.parseCapacity(val("m-max")); }
+          catch (err) { CR068.showSaveError(p.id, err.message); return; }
+        }
+        p.name = val("pm-name") || p.name;
         if (open) {
           open.name = val("m-name") || open.name;
-          const ctx = parseInt(val("m-ctx"), 10); if (ctx > 0) open.context = ctx;
-          const max = parseInt(val("m-max"), 10); if (max > 0) open.maxOutput = max;
-          const def = val("m-default"); if (def) open.defaultLevel = def;
+          open.context = ctx; open.maxOutput = max;
+          const def = val("m-default"); open.defaultLevel = open.thinking ? (def || open.defaultLevel) : "不下发";
         }
         p.updated = "刚刚";
         /* r8/r9：保存后异步探测每个启用密钥支持的模型（多密钥才探测；单密钥跳过）。
@@ -514,6 +518,7 @@
           setTimeout(() => probeKeyScopes(p, null), 120);
         }
       }
+      store.providerOpen = null; store.modelOpen = null;
       S().refreshSettings();
       toast("供应商与模型修改已保存");
     },
@@ -550,7 +555,6 @@
       if (!p) return;
       p.protocol = el.value;
       const wire = p.protocol === "Anthropic" ? "Anthropic" : "OpenAI";
-      p.endpoints.forEach(e => { e.protocol = wire; });
       S().refreshSettings(); toast(`协议已切换为 ${p.protocol}，端点联动为 ${wire}（演示）`);
     },
     "provider-header-add": () => { const p = D.settings.providers.find(x => x.id === store.providerOpen); if (p) { p.headers.push({ name: "", value: "" }); S().refreshSettings(); } },
@@ -608,7 +612,7 @@
     },
     "model-autoconfig": () => { const p = D.settings.providers.find(x => x.id === store.providerOpen); const m = p && p.models.find(x => x.id === store.modelEdit); if (m) { Object.assign(m, autoModel(m)); S().refreshSettings(); toast("已按模型能力自动配置"); } },
     "model-modality": el => { const p = D.settings.providers.find(x => x.id === store.providerOpen); const m = p && p.models.find(x => x.id === store.modelEdit); if (m) { const v = el.dataset.v; m.modalities = m.modalities.includes(v) ? m.modalities.filter(x => x !== v) : m.modalities.concat(v); S().refreshSettings(); } },
-    "model-thinking": () => { const p = D.settings.providers.find(x => x.id === store.providerOpen); const m = p && p.models.find(x => x.id === store.modelEdit); if (m) { m.thinking = !m.thinking; S().refreshSettings(); } },
+    "model-thinking": () => { const p = D.settings.providers.find(x => x.id === store.providerOpen); const m = p && p.models.find(x => x.id === store.modelEdit); if (m) { m.thinking = !m.thinking; if (!m.thinking) m.defaultLevel = "不下发"; S().refreshSettings(); } },
     "model-level": el => { const p = D.settings.providers.find(x => x.id === store.providerOpen); const m = p && p.models.find(x => x.id === store.modelEdit); if (m) { const v = el.dataset.v; m.levels = m.levels.includes(v) ? m.levels.filter(x => x !== v) : m.levels.concat(v); S().refreshSettings(); } },
     "model-delete": el => { const p = D.settings.providers.find(x => x.id === store.providerOpen); if (!p) return; if (p.models.length <= 1) { toast("至少保留一个模型"); return; } p.models = p.models.filter(x => x.id !== el.dataset.id); if (store.modelOpen === el.dataset.id) store.modelOpen = null; S().refreshSettings(); toast("已删除模型"); },
     /* CR-059 r3：#6 供应商默认协议改成一行均分卡片（点击即切换，端点联动）。 */
@@ -617,7 +621,6 @@
       if (!p) return;
       p.protocol = el.dataset.v;
       const wire = { "Chat": "OpenAI", "Responses": "OpenAI", "Anthropic": "Anthropic" }[el.dataset.v] || "OpenAI";
-      p.endpoints.forEach(e => { e.protocol = wire; });
       S().refreshSettings(); toast(`协议已切换为 ${p.protocol}，端点联动为 ${wire}（演示）`);
     },
     /* CR-059 r3 #5 / r8：密钥协议悬浮下拉点选即写入并收起；
@@ -899,9 +902,10 @@
     "cli-slot-select": el => {
       const id = el.dataset.id;
       store.cliRouteSel = store.cliRouteSel || {};
+      const same = store.cliRouteSel[id] === el.dataset.slot || (!store.cliRouteSel[id] && el.dataset.slot === "fallback");
       store.cliRouteSel[id] = el.dataset.slot;
       store.cliRouteOpen = store.cliRouteOpen || {};
-      store.cliRouteOpen[id] = true;
+      store.cliRouteOpen[id] = same ? !store.cliRouteOpen[id] : true;
       S().refreshSettings();
     },
     /* CR-059 r4：新增模型槽（最多 5 个），新增后选中并展开该槽。 */

@@ -282,6 +282,12 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     migrate_cr059_model_config(conn)?;
     // CR-059 / BUG-CR059-01 二期：跨进程待审批命令（DB-CR059 §5.1）。
     migrate_cr059_pending_approval(conn)?;
+    // CR-047 / FEAT-019 基线：任务执行账本、工作包义务与检查点（DB-FEAT-019 / DB-CR047 的 M0 子集）。
+    crate::commands::execution::ensure_schema(conn)?;
+    // CR-032 / FEAT-004/005 基线：双向同步共同基线、批次与目标写入日志（DB-CR032 的 M0 子集）。
+    crate::commands::sync::ensure_schema(conn)?;
+    // CR-047：重启后回收过期租约，把可能已中断的运行置为 blocked，不自动重跑。
+    crate::commands::execution::recover_interrupted(conn, now_ms_static())?;
 
     let now = chrono::Utc::now().timestamp_millis();
     conn.execute(

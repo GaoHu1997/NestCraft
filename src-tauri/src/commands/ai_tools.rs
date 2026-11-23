@@ -27,6 +27,9 @@ use std::path::{Path, PathBuf};
 pub struct ToolContext {
     pub project_id: Option<String>,
     pub data_dir: PathBuf,
+    /// CR-047：执行会话绑定的唯一 Feature；普通会话为空。
+    /// 非空时，工作台需求写入只能落在该 Feature 子树内。
+    pub execution_feature_id: Option<String>,
 }
 
 /// 解析 `--app-mcp-stdio` 模式参数。返回 None 表示不是该模式。
@@ -40,6 +43,7 @@ pub fn parse_stdio_args(args: &[String]) -> Option<Result<ToolContext, String>> 
 fn parse_stdio_args_inner(args: &[String]) -> Result<ToolContext, String> {
     let mut data_dir: Option<PathBuf> = None;
     let mut project_id: Option<String> = None;
+    let mut execution_feature_id: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -51,12 +55,16 @@ fn parse_stdio_args_inner(args: &[String]) -> Result<ToolContext, String> {
                 i += 1;
                 project_id = args.get(i).cloned().filter(|v| !v.trim().is_empty());
             }
+            "--execution-feature-id" => {
+                i += 1;
+                execution_feature_id = args.get(i).cloned().filter(|v| !v.trim().is_empty());
+            }
             _ => {}
         }
         i += 1;
     }
     let data_dir = data_dir.ok_or("缺少 --app-data-dir 参数，无法定位应用数据目录")?;
-    Ok(ToolContext { project_id, data_dir })
+    Ok(ToolContext { project_id, data_dir, execution_feature_id })
 }
 
 /// stdio 主循环：初始化数据库后逐行处理 JSON-RPC，直到 stdin 关闭。
@@ -264,6 +272,7 @@ fn workbench_tools() -> [ToolDef; TOOL_COUNT] {
                     "entityId": { "type": "string", "description": "更新模式：要修改的既有编号" },
                     "status": { "type": "string", "description": "如 待确认/已确认/开发中" },
                     "owner": { "type": "string" },
+                    "expectedDocumentHash": { "type": "string", "description": "更新既有需求时必填：read_requirement_doc 返回的 documentHash；不一致则拒绝覆盖" },
                     "projectId": { "type": "string" }
                 }),
                 &["kind", "title"],
@@ -704,7 +713,8 @@ fn tool_read_requirement_doc(ctx: &ToolContext, args: &Value) -> Result<Value, S
         return Err("缺少 entityId 或 sourceUri 参数".to_string());
     };
     let content = crate::commands::projects::read_doc(source_uri.clone())?;
-    Ok(json!({ "sourceUri": source_uri, "content": content }))
+    let document_hash = crate::commands::projects::document_hash(&content);
+    Ok(json!({ "sourceUri": source_uri, "content": content, "documentHash": document_hash }))
 }
 
 /// 文件名安全净化：去非法字符与首尾空白，限长（按字符截断）。
@@ -838,6 +848,39 @@ fn strip_front_matter(text: &str) -> String {
     text.to_string()
 }
 
+/// CR-047：判断需求实体是否位于执行 Feature 的子树内（含 Feature 自身）。
+/// 父链来自 requirement_index 投影；过深或缺失按拒绝处理，不放行。
+fn entity_within_feature(
+    conn: &rusqlite::Connection,
+    project_id: &str,
+    entity_id: &str,
+    feature_id: &str,
+) -> Result<bool, String> {
+    let mut current = Some(entity_id.trim().to_string());
+    let mut depth = 0;
+    while let Some(id) = current {
+        if id == feature_id {
+            return Ok(true);
+        }
+        depth += 1;
+        if depth > 32 {
+            return Err("需求父链过深或成环，拒绝写入".into());
+        }
+        let row: Option<Option<String>> = conn
+            .query_row(
+                "SELECT parentId FROM requirement_index WHERE projectId=?1 AND entityId=?2",
+                rusqlite::params![project_id, id],
+                |r| r.get(0),
+            )
+            .ok();
+        match row {
+            None => return Ok(false),
+            Some(parent) => current = parent.filter(|p| !p.trim().is_empty()),
+        }
+    }
+    Ok(false)
+}
+
 fn tool_write_requirement_doc(ctx: &ToolContext, args: &Value) -> Result<Value, String> {
     let project_id = resolve_project_id(ctx, args)?;
     let kind = req_str(args, "kind")?.to_lowercase();
@@ -870,11 +913,31 @@ fn tool_write_requirement_doc(ctx: &ToolContext, args: &Value) -> Result<Value, 
     if let Some(entity_id) = str_arg(args, "entityId").filter(|v| !v.trim().is_empty()) {
         // 更新模式：定位既有文档，保留原编号/位置
         let entity_id = entity_id.trim().to_string();
+        if let Some(feature_id) = ctx.execution_feature_id.as_deref() {
+            let guard = db::conn()?;
+            let conn = guard.as_ref().ok_or("db not initialized")?;
+            if !entity_within_feature(conn, &project_id, &entity_id, feature_id)? {
+                return Err(format!(
+                    "CR-047 执行范围限制：{entity_id} 不属于执行特性 {feature_id}，拒绝写入"
+                ));
+            }
+        }
         let node = nodes
             .iter()
             .find(|n| n.entity_id == entity_id)
             .ok_or_else(|| format!("要更新的需求编号不存在：{entity_id}"))?;
         let old = crate::commands::projects::read_doc(node.source_uri.clone())?;
+        // CR-032／双向同步最小安全底线：更新既有文档必须带读取时拿到的 documentHash，
+        // 否则拒绝，避免用过期建议覆盖并发人工修改。
+        let expected = str_arg(args, "expectedDocumentHash")
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        let Some(expected) = expected else {
+            return Err(format!(
+                "DOCUMENT_HASH_REQUIRED：更新既有需求必须提供 expectedDocumentHash（当前 {}）。请先调用 workbench_read_requirement_doc 获取 documentHash 后再提交。",
+                crate::commands::projects::document_hash(&old)
+            ));
+        };
         let fm = crate::commands::projects::parse_front_matter(&old);
         let old_kind = fm.get("type").cloned().unwrap_or_else(|| kind.clone());
         let old_body = strip_front_matter(&old);
@@ -893,26 +956,41 @@ fn tool_write_requirement_doc(ctx: &ToolContext, args: &Value) -> Result<Value, 
             owner.as_deref().or(fm.get("owner").map(|s| s.as_str())),
             body,
         );
-        crate::commands::projects::write_doc(node.source_uri.clone(), content)?;
+        crate::commands::projects::write_doc_checked(&node.source_uri, &content, &expected)?;
         crate::commands::projects::read_requirements(project_id)?; // 刷新投影
         return Ok(json!({
             "mode": "updated", "entityId": entity_id,
             "sourceUri": node.source_uri, "title": final_title,
+            "documentHash": crate::commands::projects::document_hash(&content),
         }));
     }
 
     // 新建模式：分配编号并写文档
+    // CR-047：执行会话只能在本 Feature 子树内新建需求，不能新建无父项或跨 Feature 文档。
+    if let Some(feature_id) = ctx.execution_feature_id.as_deref() {
+        let parent = parent_arg.as_deref().ok_or_else(|| {
+            format!("CR-047 执行范围限制：执行会话不能新建无父项需求；父项必须位于 {feature_id} 子树内")
+        })?;
+        let guard = db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        if !entity_within_feature(conn, &project_id, parent, feature_id)? {
+            return Err(format!(
+                "CR-047 执行范围限制：父项 {parent} 不属于执行特性 {feature_id}，拒绝新建"
+            ));
+        }
+    }
     std::fs::create_dir_all(plan_dir.join(subdir)).map_err(|e| format!("创建需求目录失败：{e}"))?;
     let entity_id = allocate_entity_id(&plan_dir, subdir, prefix)?;
     let file_name = format!("{}-{}.md", entity_id, sanitize_filename(&title));
     let source_uri = plan_dir.join(subdir).join(&file_name);
     let body = str_arg(args, "content").unwrap_or("");
     let content = compose_doc(&entity_id, &kind, parent_arg.as_deref(), title.trim(), &status, owner.as_deref(), body);
-    crate::commands::projects::write_doc(source_uri.to_string_lossy().to_string(), content)?;
+    crate::commands::projects::write_doc(source_uri.to_string_lossy().to_string(), content.clone())?;
     crate::commands::projects::read_requirements(project_id.clone())?; // 刷新投影并验证
     Ok(json!({
         "mode": "created", "entityId": entity_id,
         "sourceUri": source_uri.to_string_lossy(), "title": title.trim(),
+        "documentHash": crate::commands::projects::document_hash(&content),
         "hint": "文档已进入需求树；继续为同父项添加内容时再次调用即可自动递增编号",
     }))
 }
@@ -1286,9 +1364,14 @@ mod tests {
     }
 
     fn ctx(db: &TestDb, project: Option<&str>) -> ToolContext {
+        ctx_exec(db, project, None)
+    }
+
+    fn ctx_exec(db: &TestDb, project: Option<&str>, feature: Option<&str>) -> ToolContext {
         ToolContext {
             project_id: project.map(|s| s.to_string()),
             data_dir: db.dir.clone(),
+            execution_feature_id: feature.map(|s| s.to_string()),
         }
     }
 
@@ -1298,6 +1381,62 @@ mod tests {
         let text = resp.pointer("/content/0/text").and_then(Value::as_str).unwrap_or("").to_string();
         let parsed: Value = serde_json::from_str(&text).unwrap_or(json!(text));
         (is_err, parsed)
+    }
+
+    #[test]
+    fn execution_scope_blocks_cross_feature_requirement_writes() {
+        let db = TestDb::new("exec-scope");
+        let root = db.dir.join("exec-root");
+        std::fs::create_dir_all(&root).unwrap();
+        let c = ctx(&db, None);
+        let (_, created) = call(&c, "create_project", json!({"name": "范围项目", "kind": "code", "rootUri": root.to_string_lossy()}));
+        let pid = created.get("projectId").unwrap().as_str().unwrap().to_string();
+        let cp = ctx(&db, Some(&pid));
+
+        let (err, epic) = call(&cp, "write_requirement_doc", json!({"kind": "epic", "title": "目标"}));
+        assert!(!err, "{epic}");
+        let (err, feat) = call(&cp, "write_requirement_doc", json!({"kind": "feature", "title": "特性", "parentEntityId": "EPIC-001"}));
+        assert!(!err, "{feat}");
+        let (err, story) = call(&cp, "write_requirement_doc", json!({"kind": "story", "title": "故事", "parentEntityId": "FEAT-001"}));
+        assert!(!err, "{story}");
+        assert_eq!(story.get("entityId").unwrap(), "STORY-001");
+
+        // 执行会话绑定 FEAT-001：只能写它自己的子树。
+        let ep = ctx_exec(&db, Some(&pid), Some("FEAT-001"));
+        let (_, before) = call(&ep, "read_requirement_doc", json!({"entityId": "STORY-001"}));
+        let hash = before.get("documentHash").unwrap().as_str().unwrap().to_string();
+        let (err, _) = call(&ep, "write_requirement_doc", json!({
+            "kind": "story", "entityId": "STORY-001", "title": "故事（范围内）", "content": "范围内更新",
+            "expectedDocumentHash": hash
+        }));
+        assert!(!err, "同 Feature 子树更新应允许");
+
+        // 跨 Feature（写 Epic）必须拒绝。
+        let (_, epic_doc) = call(&ep, "read_requirement_doc", json!({"entityId": "EPIC-001"}));
+        let epic_hash = epic_doc.get("documentHash").unwrap().as_str().unwrap().to_string();
+        let (err, msg) = call(&ep, "write_requirement_doc", json!({
+            "kind": "epic", "entityId": "EPIC-001", "title": "越界", "content": "不应写入",
+            "expectedDocumentHash": epic_hash
+        }));
+        assert!(err);
+        assert!(msg.as_str().unwrap().contains("CR-047 执行范围限制"));
+
+        // 无父项新建必须拒绝。
+        let (err, msg) = call(&ep, "write_requirement_doc", json!({"kind": "epic", "title": "越界新 Epic"}));
+        assert!(err);
+        assert!(msg.as_str().unwrap().contains("CR-047 执行范围限制"));
+
+        // 跨 Feature 父项新建必须拒绝。
+        let (err, _) = call(&ep, "write_requirement_doc", json!({
+            "kind": "story", "title": "越界故事", "parentEntityId": "EPIC-001"
+        }));
+        assert!(err);
+
+        // 本 Feature 子树内新建允许。
+        let (err, allowed) = call(&ep, "write_requirement_doc", json!({
+            "kind": "story", "title": "范围内新故事", "parentEntityId": "FEAT-001"
+        }));
+        assert!(!err, "同 Feature 子树新建应允许：{allowed}");
     }
 
     #[test]
@@ -1520,9 +1659,12 @@ mod tests {
         assert!(!err);
         assert_eq!(epic2.get("entityId").unwrap(), "EPIC-002");
 
-        // 更新模式：改标题与状态，不新建文件
+        // 更新模式：改标题与状态，不新建文件（必须先读 documentHash 再提交）
+        let (_, before) = call(&cp, "read_requirement_doc", json!({"entityId": "STORY-001"}));
+        let before_hash = before.get("documentHash").unwrap().as_str().unwrap().to_string();
         let (err, updated) = call(&cp, "write_requirement_doc", json!({
-            "kind": "story", "entityId": "STORY-001", "title": "首个故事（改名）", "status": "开发中", "content": "更新后的正文"
+            "kind": "story", "entityId": "STORY-001", "title": "首个故事（改名）", "status": "开发中", "content": "更新后的正文",
+            "expectedDocumentHash": before_hash
         }));
         assert!(!err, "更新 story 失败：{updated}");
         assert_eq!(updated.get("mode").unwrap(), "updated");
@@ -1532,6 +1674,22 @@ mod tests {
         assert!(raw.contains("parent: EPIC-001"));
         assert!(raw.contains("status: 开发中"));
         assert!(raw.contains("更新后的正文"));
+
+        // CR-032：更新缺失 documentHash → 拒绝，磁盘不写入
+        let (err, msg) = call(&cp, "write_requirement_doc", json!({
+            "kind": "story", "entityId": "STORY-001", "title": "无 hash 更新", "content": "不应写入"
+        }));
+        assert!(err);
+        assert!(msg.as_str().unwrap().contains("DOCUMENT_HASH_REQUIRED"));
+
+        // 过期 hash → DOCUMENT_CHANGED，保留原正文
+        let (err, msg) = call(&cp, "write_requirement_doc", json!({
+            "kind": "story", "entityId": "STORY-001", "title": "过期更新", "content": "不应写入",
+            "expectedDocumentHash": "sha256:deadbeef"
+        }));
+        assert!(err);
+        assert!(msg.as_str().unwrap().contains("DOCUMENT_CHANGED"));
+        assert!(std::fs::read_to_string(&story_uri).unwrap().contains("更新后的正文"));
 
         // 读回：entityId 与 sourceUri 两条路径
         let (err, doc) = call(&cp, "read_requirement_doc", json!({"entityId": "STORY-001"}));

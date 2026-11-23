@@ -8,10 +8,16 @@ window.AIPanel = (function () {
   const statusDot = s => s === "success" ? '<span class="sdot green"></span>' : s === "failed" ? '<span class="sdot red"></span>' : s === "pending" ? '<span class="sdot amber"></span>' : '<span class="sdot none"></span>';
   const statusText = s => s === "success" ? "成功" : s === "failed" ? "失败" : s === "pending" ? "待处理" : "已读";
 
-  function message(m, idx) {
+  function message(m, idx, format = text => UI.md(text).replace(/^<p>|<\/p>$/g, "")) {
     if (m.role === "continuity-break") {
       const cli = D.settings.clis.find(item => item.id === m.cli)?.name || m.cli;
       return `<div class="cr037-break" role="note"><b>原生上下文断点</b><span>${esc(cli)} · ${esc(m.previousRef || "原引用缺失")} → ${esc(m.sessionRef)}</span><span>以上聊天记录保留。后续请求从新上下文开始。</span></div>`;
+    }
+    if (Array.isArray(m.blocks)) {
+      const block = b => b.type === "thinking" ? `<details class="msg-think"><summary><span>${b.status === "streaming" ? "思考中…" : "思考"}</span><span class="caption">${esc(String(b.text || "").length)} 字</span></summary><div class="mt-body">${esc(b.text || "")}</div></details>`
+        : b.type === "tool" ? `<details class="tool msg-tool-block"><summary><span class="mono">${esc(b.name)}</span><span class="caption">${esc(b.status || "结果未返回")}</span></summary><div class="t-arg">${esc(b.args || "")}</div><pre class="t-detail">${esc(b.result ?? "暂无输出")}</pre></details>`
+        : b.type === "text" ? `<div class="text">${format(b.text || "")}</div>` : "";
+      return `<div class="msg assistant"><div class="msg-body">${m.blocks.map(block).join("")}<div class="msg-time">${esc(m.time || "")}</div></div></div>`;
     }
     const tools = (m.tools || []).map(t => `<div class="tool">
       <span class="t-ico">${icon(t.name === "fs.read" ? "file" : t.name === "fs.write" ? "edit" : t.name === "code-search" ? "search" : "terminal", "ico-14")}</span>
@@ -19,10 +25,10 @@ window.AIPanel = (function () {
         <div class="t-arg">${esc(t.arg)}</div><div class="t-detail">${esc(t.detail)}</div></span></div>`).join("");
     const approval = m.approval ? `<div class="approval"><b>${esc(m.approval.title)}</b><p>${esc(m.approval.detail)}</p>
       <div class="acts"><button class="btn primary" data-act="ai-approve" data-idx="${idx}">允许一次</button><button class="btn" data-act="ai-deny" data-idx="${idx}">拒绝</button><button class="btn ghost" data-act="ai-show-cmd" data-idx="${idx}">查看命令</button></div></div>` : "";
-    if (m.role === "user") return `<div class="msg user"><div class="msg-body"><div class="msg-time">${esc(m.time)}</div><div class="msg-user-block">${esc(m.text)}</div></div></div>`;
+    if (m.role === "user") return `<div class="msg user"><div class="msg-body"><div class="msg-user-block">${esc(m.text)}</div><div class="msg-time">${esc(m.time)}</div></div></div>`;
     return `<div class="msg assistant"><div class="msg-body"><div class="msg-time">${esc(m.time)}</div>
-      ${m.thinking ? `<details class="msg-think"><summary><span class="mt-mark">${icon("sparkles", "ico-12")}</span><span>思考</span><span class="mt-meta">持续 ${esc(m.thinkMs || "6 秒")}</span></summary><div class="mt-body">${esc(m.thinking)}</div></details>` : ""}
-      <div class="text">${UI.md(m.text).replace(/^<p>|<\/p>$/g, "")}</div>${tools}${approval}${window.OfficeAI ? OfficeAI.messageExtra(m) : ""}
+      ${m.thinking ? `<details class="msg-think"><summary><span class="mt-mark">${icon("sparkles", "ico-12")}</span><span>思考</span><span class="mt-meta">${m.thinkMs ? "持续 " + esc(m.thinkMs) : esc(m.thinking.length) + " 字"}</span></summary><div class="mt-body">${esc(m.thinking)}</div></details>` : ""}
+      <div class="text">${format(m.text)}</div>${tools}${approval}${window.OfficeAI ? OfficeAI.messageExtra(m) : ""}
       <div class="msg-acts"><button class="msg-act" data-act="ai-copy" data-idx="${idx}">${icon("copy", "ico-12")}复制</button></div></div></div>`;
   }
 
@@ -375,11 +381,11 @@ window.AIPanel = (function () {
       ${store.aiHistory ? historyRail() : ""}
       <div class="ai-top">
         <button class="icon-btn" data-act="ai-history" title="会话历史" aria-label="会话历史" aria-expanded="${store.aiHistory}">${icon("history")}</button>
-        <div class="ai-drop-wrap">
+        <div class="ai-drop-wrap" ${D.ai.subagents.length ? "" : "hidden"}>
           <button class="ai-count" data-act="ai-subagents" aria-expanded="${store.aiTop === "agents"}">${icon("users", "ico-14")}${D.ai.subagents.length} 子智能体${icon("chevronDown", "ico-12")}</button>
           ${store.aiTop === "agents" ? aiTopPop() : ""}
         </div>
-        <div class="ai-drop-wrap">
+        <div class="ai-drop-wrap" ${D.ai.background.length ? "" : "hidden"}>
           <button class="ai-count" data-act="ai-background" aria-expanded="${store.aiTop === "bg"}">${icon("terminal", "ico-14")}${D.ai.background.length} 后台任务${icon("chevronDown", "ico-12")}</button>
           ${store.aiTop === "bg" ? aiTopPop() : ""}
         </div>
@@ -390,14 +396,14 @@ window.AIPanel = (function () {
       </div>
       <div class="ai-fade"></div>
       <div class="ai-scroll" id="ai-scroll">
-        ${msgs.length ? msgs.map(message).join("") : `<div class="ai-empty"><span class="mark">${icon("sparkles", "ico-20")}</span><b>新会话</b><p>说清目标与范围，我会先核对证据再动手。</p></div>`}
+        ${msgs.length ? msgs.map((m, i) => message(m, i)).join("") : `<div class="ai-empty"><span class="mark">${icon("sparkles", "ico-20")}</span><b>新会话</b><p>说清目标与范围，我会先核对证据再动手。</p></div>`}
         ${store.aiBusy ? workingRow() : ""}
         ${store.aiQueue.length ? `<div class="ai-queued">${icon("clock", "ico-14")}已排队 ${store.aiQueue.length} 条，当前完成后发送</div>` : ""}
-        ${stepsBlock()}
         ${window.OfficeAI ? OfficeAI.extra(OfficeAI.projectId()) : ""}
         ${window.CR037?.chatCard() || ""}
       </div>
       <div class="ai-composer-wrap">
+        <div class="ai-plan-dock">${stepsBlock()}</div>
         ${store.aiMenu ? menuHtml() : ""}
         <div class="ai-composer">
           <textarea id="ai-input" placeholder="${window.OfficeAI && OfficeAI.isActive() ? "描述办公意图，/ 调用指令，@ 项目资料或对话" : "描述你想构建的内容，/ 调用指令，@ 文件或对话"}">${esc(store.aiInput)}</textarea>
@@ -405,7 +411,7 @@ window.AIPanel = (function () {
             <button class="ai-chip icon-only" data-act="ai-menu-open" data-tab="add" title="添加" aria-label="添加">${icon("plus")}</button>
             ${anchorSlot("cli", `<button class="ai-chip cli" id="ai-anchor-cli" data-ai-anchor="cli" data-act="ai-cli" aria-haspopup="dialog" aria-controls="ai-popup-cli" aria-expanded="${store.aiPop === "cli"}" ${cliDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : cliDisabled ? "没有可用 CLI" : "切换 CLI：" + esc(cli.name)}" aria-label="切换 CLI：${esc(cli.name)}">${cliLogo(cli.id, 16)}</button>`)}
             ${anchorSlot("perm", `<button class="ai-chip perm" id="ai-anchor-perm" data-ai-anchor="perm" data-act="ai-permission" aria-haspopup="dialog" aria-controls="ai-popup-perm" aria-expanded="${store.aiPop === "perm"}" ${permDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : "权限模式"}" aria-label="权限模式">${icon("shield")}${esc(store.aiPermission)}</button>`)}
-            ${anchorSlot("model", `<button class="ai-chip model" id="ai-anchor-model" data-ai-anchor="model" data-act="ai-model" aria-haspopup="dialog" aria-controls="ai-popup-model" aria-expanded="${store.aiPop === "model"}" ${modelDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : modelDisabled ? "没有可用模型" : !usableModel(cm) ? "当前模型失效，请重新选择" : "选择模型"}" aria-label="选择模型">${esc(cm.name)} · ${esc(cm.thinking ? D.ai.modelCatalog.current.level : "无思考档位")}</button>`)}
+            ${anchorSlot("model", `<button class="ai-chip model" id="ai-anchor-model" data-ai-anchor="model" data-act="ai-model" aria-haspopup="dialog" aria-controls="ai-popup-model" aria-expanded="${store.aiPop === "model"}" ${modelDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : modelDisabled ? "没有可用模型" : !usableModel(cm) ? "当前模型失效，请重新选择" : "选择模型"}" aria-label="选择模型">${esc(cm.name)}${cm.available === false ? "（不可用）" : ""} · ${esc(cm.thinking ? D.ai.modelCatalog.current.level : "无思考档位")}</button>`)}
             <button class="ai-send" data-act="ai-send" title="${store.aiBusy && !store.aiInput.trim() ? "停止" : "发送"}" aria-label="${store.aiBusy && !store.aiInput.trim() ? "停止" : "发送"}">${icon(store.aiBusy && !store.aiInput.trim() ? "stop" : "arrowUp", "ico-18")}</button>
           </div>
         </div>
@@ -484,6 +490,7 @@ window.AIPanel = (function () {
     state.aiMessages.push({ role: "user", time, text });
     state.aiInput = "";
     state.aiBusy = true;
+    state.aiWorkStartedAt = Date.now(); state.aiWorkElapsed = "0 秒";
     state.aiStick = true;
     s.status = "pending";
     s.messages = state.aiMessages;
@@ -542,5 +549,5 @@ window.AIPanel = (function () {
     if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
   }
 
-  return { render, afterRender, send, approve, insert, switchSession, newSession, menuHtml, advanceStep, cliLogo, activeSession, currentModel, visibleModels };
+  return { message, workingRow, statsRow, agentDrop, backgroundDrop, render, afterRender, send, approve, insert, switchSession, newSession, menuHtml, advanceStep, cliLogo, activeSession, currentModel, visibleModels };
 })();

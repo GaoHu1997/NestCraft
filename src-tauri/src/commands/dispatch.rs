@@ -193,7 +193,8 @@ fn ai_tools_enabled_from_setting(value: Option<String>) -> bool {
 fn built_in_workbench_config(
     app: &tauri::AppHandle,
     project_id: Option<&str>,
-) -> Result<Option<(PathBuf, Option<String>)>, String> {
+    execution_feature_id: Option<&str>,
+) -> Result<Option<(PathBuf, Option<String>, Option<String>)>, String> {
     if std::env::var("TAURI_SMOKE").is_ok() {
         return Ok(None);
     }
@@ -214,11 +215,21 @@ fn built_in_workbench_config(
     }
     use tauri::Manager;
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    Ok(Some((dir, project_id.filter(|p| !p.is_empty()).map(|p| p.to_string()))))
+    Ok(Some((
+        dir,
+        project_id.filter(|p| !p.is_empty()).map(|p| p.to_string()),
+        execution_feature_id
+            .filter(|f| !f.is_empty())
+            .map(|f| f.to_string()),
+    )))
 }
 
 /// CR-059：构造内置 workbench MCP 行（命令=应用自身，stdio 模式；纯函数便于单测）。
-fn built_in_workbench_row(data_dir: &std::path::Path, project_id: Option<&str>) -> McpRow {
+fn built_in_workbench_row(
+    data_dir: &std::path::Path,
+    project_id: Option<&str>,
+    execution_feature_id: Option<&str>,
+) -> McpRow {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("agent-workbench"));
     let mut args = vec![
         "--app-mcp-stdio".to_string(),
@@ -228,6 +239,11 @@ fn built_in_workbench_row(data_dir: &std::path::Path, project_id: Option<&str>) 
     if let Some(pid) = project_id {
         args.push("--project-id".to_string());
         args.push(pid.to_string());
+    }
+    // CR-047：执行会话把唯一 Feature 传给工作台 MCP，工具侧据此拒绝跨范围写入。
+    if let Some(feature_id) = execution_feature_id {
+        args.push("--execution-feature-id".to_string());
+        args.push(feature_id.to_string());
     }
     McpRow {
         id: "builtin-workbench".into(),
@@ -242,10 +258,15 @@ fn built_in_workbench_row(data_dir: &std::path::Path, project_id: Option<&str>) 
 }
 
 /// CR-059：把内置 workbench 行并入用户自配 MCP 清单（同名时用户配置优先；纯函数便于单测）。
-fn merge_built_in_workbench(servers: Vec<McpRow>, data_dir: &std::path::Path, project_id: Option<&str>) -> Vec<McpRow> {
+fn merge_built_in_workbench(
+    servers: Vec<McpRow>,
+    data_dir: &std::path::Path,
+    project_id: Option<&str>,
+    execution_feature_id: Option<&str>,
+) -> Vec<McpRow> {
     let mut servers = servers;
     if !servers.iter().any(|s| s.name == "workbench") {
-        servers.insert(0, built_in_workbench_row(data_dir, project_id));
+        servers.insert(0, built_in_workbench_row(data_dir, project_id, execution_feature_id));
     }
     servers
 }
@@ -262,8 +283,33 @@ pub fn resolve(
     cwd: Option<&std::path::Path>,
 ) -> Result<Option<DispatchConfig>, String> {
     let mut mcp_servers = enabled_mcp_servers()?;
-    if let Some((dir, pid)) = built_in_workbench_config(app, project_id)? {
-        mcp_servers = merge_built_in_workbench(mcp_servers, &dir, pid.as_deref());
+    // CR-047：执行会话的唯一 Feature 身份来自持久会话，不接受前端自报。
+    let execution_feature = {
+        let guard = db::conn().ok();
+        guard
+            .as_ref()
+            .and_then(|g| g.as_ref())
+            .and_then(|conn| {
+                conn.query_row(
+                    "SELECT featureId FROM session WHERE id=?1",
+                    [session_id],
+                    |r| r.get::<_, Option<String>>(0),
+                )
+                .ok()
+                .flatten()
+            })
+    };
+    if let Some((dir, pid, feature)) = built_in_workbench_config(
+        app,
+        project_id,
+        execution_feature.as_deref(),
+    )? {
+        mcp_servers = merge_built_in_workbench(
+            mcp_servers,
+            &dir,
+            pid.as_deref(),
+            feature.as_deref(),
+        );
     }
     let has_provider = provider_id.map(|p| !p.is_empty()).unwrap_or(false);
 
@@ -634,7 +680,7 @@ mod tests {
     #[test]
     fn built_in_workbench_row_carries_stdio_command_and_context() {
         let dir = std::path::Path::new("D:/app-data");
-        let row = built_in_workbench_row(dir, Some("proj-1"));
+        let row = built_in_workbench_row(dir, Some("proj-1"), None);
         assert_eq!(row.name, "workbench");
         assert_eq!(row.transport, "stdio");
         assert_eq!(row.auth_status, "unauthenticated");
@@ -646,7 +692,7 @@ mod tests {
         assert_eq!(row.args[3], "--project-id");
         assert_eq!(row.args[4], "proj-1");
         // 未绑定项目时省略 --project-id
-        let row2 = built_in_workbench_row(dir, None);
+        let row2 = built_in_workbench_row(dir, None, None);
         assert!(!row2.args.iter().any(|a| a == "--project-id"));
     }
 
@@ -659,14 +705,14 @@ mod tests {
             command: Some("node".into()), args: vec!["x.js".into()], env: BTreeMap::new(),
             url: None, auth_status: "unauthenticated".into(),
         };
-        let merged = merge_built_in_workbench(vec![user.clone()], dir, Some("p1"));
+        let merged = merge_built_in_workbench(vec![user.clone()], dir, Some("p1"), None);
         assert_eq!(merged.len(), 2);
         assert_eq!(merged[0].name, "workbench", "内置服务器应置于清单首位");
         assert_eq!(merged[1].name, "user-mcp");
         // 用户已自配同名 workbench：用户配置优先，不重复注入
         let clash = McpRow { id: "m2".into(), name: "workbench".into(), transport: "stdio".into(),
             command: Some("node".into()), args: vec![], env: BTreeMap::new(), url: None, auth_status: "unauthenticated".into() };
-        let merged2 = merge_built_in_workbench(vec![clash], dir, None);
+        let merged2 = merge_built_in_workbench(vec![clash], dir, None, None);
         assert_eq!(merged2.len(), 1);
         assert_eq!(merged2[0].id, "m2");
     }
@@ -684,7 +730,7 @@ mod tests {
     #[test]
     fn claude_dispatch_includes_builtin_workbench_and_allows_it() {
         let dir = std::path::Path::new("D:/app-data");
-        let servers = vec![built_in_workbench_row(dir, Some("proj-1"))];
+        let servers = vec![built_in_workbench_row(dir, Some("proj-1"), None)];
         let (payload, allowed) = claude_mcp_config(&servers, &|_| Ok(None)).unwrap();
         assert_eq!(allowed, vec!["mcp__workbench".to_string()]);
         let entry = &payload["mcpServers"]["workbench"];
@@ -701,7 +747,7 @@ mod tests {
     #[test]
     fn codex_dispatch_emits_workbench_toml_override() {
         let dir = std::path::Path::new("D:/app-data");
-        let servers = vec![built_in_workbench_row(dir, None)];
+        let servers = vec![built_in_workbench_row(dir, None, None)];
         let (overrides, envs) = codex_mcp_overrides(&servers, &|_| Ok(None)).unwrap();
         assert_eq!(overrides.len(), 1);
         let line = &overrides[0];

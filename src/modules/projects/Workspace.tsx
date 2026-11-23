@@ -528,28 +528,430 @@ function projectRelativePath(root: string, path: string): string {
   return normalized.toLowerCase().startsWith(`${base.toLowerCase()}/`) ? normalized.slice(base.length + 1) : normalized;
 }
 
+const PLAN_BLOCKER: Record<string, string> = {
+  NO_AUTHORIZATION: "未授权",
+  AUTHORIZATION_EXPIRED: "授权过期",
+  TASK_NOT_READY: "任务状态不可执行",
+};
+
+const TASK_STATUS: Record<string, { label: string; cls: string }> = {
+  queued: { label: "排队", cls: "queued" },
+  waiting_dependency: { label: "等待依赖", cls: "wait" },
+  waiting_resource: { label: "等待资源", cls: "wait" },
+  preparing: { label: "准备中", cls: "run" },
+  running: { label: "运行中", cls: "run" },
+  verifying: { label: "验证中", cls: "verify" },
+  integrating: { label: "集成中", cls: "verify" },
+  succeeded: { label: "已完成", cls: "ok" },
+  retry_wait: { label: "等待重试", cls: "wait" },
+  blocked: { label: "阻塞", cls: "block" },
+  paused: { label: "已暂停", cls: "queued" },
+  cancelled: { label: "已取消", cls: "queued" },
+  failed: { label: "失败", cls: "fail" },
+};
+
+function taskClock(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function eventDescription(event: api.ExecutionEvent): string {
+  switch (event.eventType) {
+    case "task.claimed":
+      return "执行者领取任务，登记租约与 fence";
+    case "task.running":
+      return "进入运行";
+    case "task.verifying":
+      return "进入验证，等待证据";
+    case "task.succeeded":
+      return "完成并通过当前门槛";
+    case "task.failed":
+      return "失败，保留证据";
+    case "task.blocked":
+      return "阻塞，需人工处理";
+    case "task.checkpoint":
+      return "写入检查点";
+    case "task.recovery_resume":
+      return "受控恢复，fencingToken 前进";
+    case "approval.requested":
+      return "登记工具审批请求";
+    case "approval.decided":
+      return "审批已决定";
+    case "approval.expired":
+      return "审批已过期";
+    default:
+      return event.payloadJson ?? "";
+  }
+}
+
 function TasksPane({ project, onRequirements }: { project: api.Project; onRequirements: () => void }) {
-  const [view, setView] = useState<"tree" | "detail">("tree");
+  const [view, setView] = useState<"tree" | "detail" | "sync">("tree");
   const rootRef = useRef<HTMLDivElement>(null), detailRef = useRef<HTMLElement>(null), listRef = useRef<HTMLElement>(null);
   const detailPane = usePaneWidth(`project:${project.id}`, "task-detail", { default: 360, min: 240, max: 520, side: "right", containerRef: rootRef, reserve: 88, minCenter: 320, overlayInset: 56 });
-  const selectView = (next: "tree" | "detail") => {
+  const [tasks, setTasks] = useState<api.ExecutionTask[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [events, setEvents] = useState<api.ExecutionEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [plan, setPlan] = useState<api.PlanCheck | null | undefined>(undefined);
+  const [approvals, setApprovals] = useState<api.ApprovalView[]>([]);
+
+  const reload = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    api.executionTaskList(project.id)
+      .then(list => {
+        setTasks(list);
+        setSelected(prev => (prev && list.some(t => t.id === prev) ? prev : (list[0]?.id ?? null)));
+      })
+      .catch(e => setError(String(e)))
+      .finally(() => setLoading(false));
+  }, [project.id]);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  useEffect(() => {
+    if (!selected) { setEvents([]); return; }
+    let alive = true;
+    api.executionEventList(project.id, selected, 50)
+      .then(list => { if (alive) setEvents(list); })
+      .catch(() => { if (alive) setEvents([]); });
+    return () => { alive = false; };
+  }, [project.id, selected]);
+
+  const batches = useMemo(() => {
+    const map = new Map<string, api.ExecutionTask[]>();
+    for (const task of tasks) {
+      const list = map.get(task.batchId) ?? [];
+      list.push(task);
+      map.set(task.batchId, list);
+    }
+    return [...map.entries()];
+  }, [tasks]);
+
+  const counts = useMemo(() => ({
+    batches: batches.length,
+    tasks: tasks.length,
+    running: tasks.filter(t => ["preparing", "running", "verifying", "integrating"].includes(t.status)).length,
+    waiting: tasks.filter(t => ["queued", "waiting_dependency", "waiting_resource", "retry_wait"].includes(t.status)).length,
+    done: tasks.filter(t => t.status === "succeeded").length,
+  }), [tasks, batches.length]);
+
+  const current = tasks.find(t => t.id === selected) ?? null;
+  const approvalRisk = approvals.some(item => item.risk === "high")
+    ? "高风险"
+    : approvals.some(item => item.risk === "medium")
+      ? "中风险"
+      : approvals.length
+        ? "低风险"
+        : null;
+
+  useEffect(() => {
+    const taskId = current?.id;
+    if (!taskId) { setPlan(undefined); return; }
+    let alive = true;
+    setPlan(undefined);
+    api.planTaskStatus(project.id, taskId)
+      .then(value => { if (alive) setPlan(value); })
+      .catch(() => { if (alive) setPlan(null); });
+    return () => { alive = false; };
+  }, [project.id, current?.id]);
+
+  useEffect(() => {
+    const taskId = current?.id;
+    if (!taskId) { setApprovals([]); return; }
+    let alive = true;
+    api.approvalPending(project.id)
+      .then(list => {
+        if (alive) setApprovals(list.filter(item => item.taskId === taskId || item.taskId === null));
+      })
+      .catch(() => { if (alive) setApprovals([]); });
+    return () => { alive = false; };
+  }, [project.id, current?.id]);
+
+  const selectView = (next: "tree" | "detail" | "sync") => {
     setView(next);
     if (next === "detail") detailPane.setVisible(view !== "detail" || !detailPane.visible);
     requestAnimationFrame(() => (next === "detail" ? detailRef.current : listRef.current)?.focus({ preventScroll: true }));
   };
-  return <div ref={rootRef} className="task-workspace" data-task-view={view} data-ui-version="UI-CR045-v1.1">
+
+  return <div ref={rootRef} className="task-workspace" data-task-view={view} data-ui-version="UI-FEAT-019-v1">
     <nav className="req-rail" aria-label="任务工作区">
       <button className={`rail-btn ${view === "tree" ? "on" : ""}`} aria-label="派发树" aria-pressed={view === "tree"} onClick={() => selectView("tree")}><Icon name="workflow" size={18} /><span>派发树</span></button>
       <button className={`rail-btn ${view === "detail" ? "on" : ""}`} aria-label="任务详情" aria-pressed={view === "detail"} onClick={() => selectView("detail")}><Icon name="fileText" size={18} /><span>详情</span></button>
+      <button className={`rail-btn ${view === "sync" ? "on" : ""}`} aria-label="同步批次" aria-pressed={view === "sync"} onClick={() => selectView("sync")}><Icon name="git" size={18} /><span>同步</span></button>
     </nav>
     <div className="tasks-pane">
-      <div className="task-stats">{["派发批次", "子任务", "执行中", "等待依赖", "已交付 / 待验收"].map(label => <div key={label}><span className="small muted">{label}</span><b>—</b></div>)}</div>
-      <div className="task-body"><section ref={listRef} className="task-list-pane" tabIndex={-1}><div className="task-pane-head"><h3>派发树</h3><span className="small muted">{project.name} · 每次派发一棵</span></div>
-        <div className="task-columns small muted"><span>任务 / 执行器</span><span>状态</span><span>耗时</span></div>
-        <Empty title="该项目还没有可读取的运行" desc="任务与 runner API 尚未接入，不能派发、暂停、重试或验收；此处不展示虚构任务数据或成功状态。" action={<button className="btn primary" onClick={onRequirements}>查看需求</button>} />
-      </section><aside {...detailPane.paneProps} ref={detailRef} className={`task-detail-pane ${detailPane.paneProps.className}`} tabIndex={-1}><ResizeHandle pane={detailPane} label="任务详情" /><Empty title="未选择任务" desc="接入真实运行记录后，显示协调者、子任务、日志、产物与用量。" /></aside></div>
+      {view === "sync" ? <SyncPane project={project} /> : (<>
+      <div className="task-stats">
+        {([["派发批次", counts.batches], ["任务", counts.tasks], ["运行中", counts.running], ["等待", counts.waiting], ["已完成", counts.done]] as const).map(([label, value]) => (
+          <div key={label}><span className="small muted">{label}</span><b>{value}</b></div>
+        ))}
+      </div>
+      <div className="task-body">
+        <section ref={listRef} className="task-list-pane" tabIndex={-1}>
+          <div className="task-pane-head"><h3>派发树</h3><span className="small muted">{project.name} · 只读</span></div>
+          {loading ? <Empty title="读取任务…" /> : error ? (
+            <Empty title="无法读取任务" desc={error} action={<button className="btn sm" onClick={reload}>重试</button>} />
+          ) : !tasks.length ? (
+            <Empty
+              title="该项目还没有可读取的运行"
+              desc="任务执行账本已就绪，但真实 CLI runner 尚未接入。派发、暂停、重试与验收在 runner 与审批界面完成前保持不可用。"
+              action={<button className="btn primary" onClick={onRequirements}>查看需求</button>}
+            />
+          ) : (
+            <div className="task-batch-list">
+              {batches.map(([batchId, list]) => (
+                <div className="task-batch" key={batchId}>
+                  <div className="task-batch-head"><span>{batchId}</span><span className="small muted">{list.length} 任务</span></div>
+                  {list.map(task => {
+                    const meta = TASK_STATUS[task.status] ?? { label: task.status, cls: "queued" };
+                    return <button
+                      key={task.id}
+                      className={`task-row ${task.id === selected ? "sel" : ""}`}
+                      onClick={() => { setSelected(task.id); selectView("detail"); }}
+                    >
+                      <span className="task-id">{task.id.replace(/^task-/, "").slice(0, 8)}</span>
+                      <span className="task-name">{task.storyId}</span>
+                      <span className={`task-badge ${meta.cls}`}>{meta.label}</span>
+                    </button>;
+                  })}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+        <aside {...detailPane.paneProps} ref={detailRef} className={`task-detail-pane ${detailPane.paneProps.className}`} tabIndex={-1}>
+          <ResizeHandle pane={detailPane} label="任务详情" />
+          {!current ? <Empty title="未选择任务" desc="从左侧选择任务查看状态与事件。" /> : (
+            <div className="task-detail">
+              <div className="task-detail-head">
+                <div><h3>{current.storyId}</h3><p className="small muted">{current.id} · {current.featureId ?? "未绑定特性"}</p></div>
+                <span className={`task-badge ${(TASK_STATUS[current.status] ?? { cls: "queued" }).cls}`}>{(TASK_STATUS[current.status] ?? { label: current.status }).label}</span>
+              </div>
+              <div className="task-detail-grid">
+                <div className="task-cell"><span className="small muted">状态</span><b>{current.status}</b></div>
+                <div className="task-cell"><span className="small muted">Fence</span><b>{current.fencingToken}</b></div>
+                <div className="task-cell"><span className="small muted">Revision</span><b>{current.revision}</b></div>
+                <div className="task-cell"><span className="small muted">活动键</span><b>{current.activeKeyHeld ? "持有" : "释放"}</b></div>
+              </div>
+              {current.blockedReason && <div className="task-callout warn">{current.blockedReason}</div>}
+              <div className="task-section-title">执行计划</div>
+              {plan === undefined ? <p className="small muted">读取执行计划…</p> : plan === null ? (
+                <div className="task-plan-card"><span className="small muted">尚未冻结执行计划；真实执行前必须有不可变计划与有效授权。</span></div>
+              ) : (
+                <div className="task-plan-card">
+                  <div><span className="small muted">计划 hash</span><b>{plan.plan.planHash.slice(0, 18)}…</b></div>
+                  <div><span className="small muted">CLI · 档位</span><b>{plan.plan.selectedCli}{plan.plan.effort ? ` · ${plan.plan.effort}` : ""}</b></div>
+                  <div><span className="small muted">授权</span><b className={plan.ready ? "task-plan-ok" : "task-plan-warn"}>{plan.ready ? "有效" : plan.blockers.map(item => PLAN_BLOCKER[item] ?? item).join(" / ")}</b></div>
+                </div>
+              )}
+              {approvals.length > 0 && (
+                <div className="task-approval-line">
+                  <span className="task-badge wait">待审批 {approvals.length}</span>
+                  {approvalRisk && (
+                    <span className={`task-badge ${approvalRisk === "高风险" ? "fail" : "wait"}`}>{approvalRisk}</span>
+                  )}
+                  <span className="small muted">高风险命令需人工确认后才能执行</span>
+                </div>
+              )}
+              <div className="task-section-title">事件时间线</div>
+              {events.length ? <div className="task-timeline">{events.slice().reverse().map(event => (
+                <div className="task-event" key={event.seq}>
+                  <span className="t">{taskClock(event.createdAt)}</span>
+                  <span className="type">{event.eventType}</span>
+                  <span className="desc">{eventDescription(event)}</span>
+                </div>
+              ))}</div> : <p className="small muted">暂无事件</p>}
+              <div className="task-callout info">只读视图：暂停、取消与重试需 runner 控制通道与审批界面，当前不可用。</div>
+            </div>
+          )}
+        </aside>
+      </div>
+      </>)}
     </div>
   </div>;
+}
+
+const SYNC_STATE: Record<string, { label: string; cls: string }> = {
+  prepared: { label: "待应用", cls: "wait" },
+  applied_pending_reconcile: { label: "待对账", cls: "run" },
+  reconciled: { label: "已对账", cls: "ok" },
+  conflict: { label: "冲突", cls: "fail" },
+  rejected: { label: "已拒绝", cls: "queued" },
+  cancelled: { label: "已取消", cls: "queued" },
+  failed: { label: "失败", cls: "fail" },
+};
+
+const TARGET_STATE: Record<string, { label: string; cls: string }> = {
+  staged: { label: "待写入", cls: "wait" },
+  applied: { label: "已应用", cls: "ok" },
+  pending: { label: "待重试", cls: "wait" },
+  conflict: { label: "冲突", cls: "fail" },
+  compensated: { label: "已补偿", cls: "queued" },
+};
+
+function SyncPane({ project }: { project: api.Project }) {
+  const [batches, setBatches] = useState<api.SyncBatchSummary[]>([]);
+  const [batchId, setBatchId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<api.SyncBatchDetail | null>(null);
+  const [targetId, setTargetId] = useState<string | null>(null);
+  const [preview, setPreview] = useState<api.SyncTargetPreview | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    api.syncBatchList(project.id)
+      .then(list => {
+        setBatches(list);
+        setBatchId(prev => (prev && list.some(b => b.id === prev) ? prev : (list[0]?.id ?? null)));
+      })
+      .catch(e => setError(String(e)))
+      .finally(() => setLoading(false));
+  }, [project.id]);
+
+  useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!batchId) { setDetail(null); setTargetId(null); return; }
+    let alive = true;
+    api.syncBatchGet(project.id, batchId)
+      .then(d => {
+        if (!alive) return;
+        setDetail(d);
+        setTargetId(prev => (prev && d.targets.some(t => t.targetId === prev) ? prev : (d.targets[0]?.targetId ?? null)));
+      })
+      .catch(e => { if (alive) setError(String(e)); });
+    return () => { alive = false; };
+  }, [project.id, batchId]);
+
+  useEffect(() => {
+    if (!batchId || !targetId) { setPreview(null); return; }
+    let alive = true;
+    api.syncTargetPreview(project.id, batchId, targetId)
+      .then(p => { if (alive) setPreview(p); })
+      .catch(() => { if (alive) setPreview(null); });
+    return () => { alive = false; };
+  }, [project.id, batchId, targetId]);
+
+  const reconcile = async () => {
+    setBusy(true);
+    try {
+      await api.syncReconcilePending(project.id);
+      load();
+      if (batchId) setDetail(await api.syncBatchGet(project.id, batchId));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const publish = async () => {
+    if (!batchId) return;
+    setBusy(true);
+    try {
+      await api.syncPublishBaseline(project.id, batchId);
+      load();
+      setDetail(await api.syncBatchGet(project.id, batchId));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const targets = detail?.targets ?? [];
+  const pendingCount = targets.filter(t => t.applyState !== "applied").length;
+  const conflictCount = targets.filter(t => t.applyState === "conflict").length;
+  const appliedCount = targets.filter(t => t.applyState === "applied").length;
+  const oldLines = preview ? preview.diff.filter(line => line.kind !== "add") : [];
+  const newLines = preview ? preview.diff.filter(line => line.kind !== "remove") : [];
+
+  return <>
+    <div className="task-stats">
+      <div><span className="small muted">批次</span><b>{batches.length}</b></div>
+      <div><span className="small muted">待对账目标</span><b>{pendingCount}</b></div>
+      <div><span className="small muted">冲突</span><b>{conflictCount}</b></div>
+      <div><span className="small muted">已应用</span><b>{appliedCount}</b></div>
+    </div>
+    <div className="sync-body">
+      <aside className="sync-batch-list">
+        {loading ? <p className="small muted">读取批次…</p> : error ? <p className="small muted">{error}</p> : !batches.length ? (
+          <div className="empty" style={{ padding: "24px 8px" }}>
+            <h3>还没有同步批次</h3>
+            <p>同步批次由文档或代码变更提案创建；发布唯一共同基线后才能开始增量同步。</p>
+          </div>
+        ) : batches.map(batch => (
+          <button
+            key={batch.id}
+            className={`sync-batch ${batch.id === batchId ? "sel" : ""}`}
+            onClick={() => setBatchId(batch.id)}
+          >
+            <div className="sync-batch-head"><span>{batch.id}</span><span className="small muted">{batch.origin === "document" ? "文档 → 代码" : batch.origin === "code" ? "代码 → 文档" : "逆向"}</span></div>
+            <div className="sync-batch-meta">
+              <span>{batch.targetCount} 个目标 · {batch.conflictCount} 冲突</span>
+              <span className={`task-badge ${(SYNC_STATE[batch.state] ?? { cls: "queued" }).cls}`}>{(SYNC_STATE[batch.state] ?? { label: batch.state }).label}</span>
+            </div>
+          </button>
+        ))}
+      </aside>
+      <section className="sync-detail">
+        {!detail ? <Empty title="选择一个批次" desc="从左侧选择同步批次查看目标对账。" /> : (<>
+          <div className="task-detail-head">
+            <div><h3>{detail.id}</h3><p className="small muted">{detail.origin} · revision {detail.revision}</p></div>
+            <span className={`task-badge ${(SYNC_STATE[detail.state] ?? { cls: "queued" }).cls}`}>{(SYNC_STATE[detail.state] ?? { label: detail.state }).label}</span>
+          </div>
+          <div className="sync-targets">
+            {targets.map(target => {
+              const meta = TARGET_STATE[target.applyState] ?? { label: target.applyState, cls: "queued" };
+              return <button
+                key={target.targetId}
+                className={`sync-target ${target.targetId === targetId ? "sel" : ""}`}
+                onClick={() => setTargetId(target.targetId)}
+              >
+                <span className="task-name">{target.targetId}</span>
+                <span className={`task-badge ${meta.cls}`}>{meta.label}</span>
+                <span className="small muted sync-target-hash">{target.applyState === "conflict" ? "第三方内容" : `${target.newHash.slice(0, 16)}…`}</span>
+              </button>;
+            })}
+            {!targets.length && <p className="small muted" style={{ padding: 10 }}>该批次还没有登记目标。</p>}
+          </div>
+          {preview ? (<>
+            <div className="sync-semantic">
+              {preview.semantic.addedHeadings.length > 0 && <span>新增章节：{preview.semantic.addedHeadings.join("、")}</span>}
+              {preview.semantic.removedHeadings.length > 0 && <span>删除章节：{preview.semantic.removedHeadings.join("、")}</span>}
+              {preview.semantic.addedAcs.length > 0 && <span>新增 AC：{preview.semantic.addedAcs.join("、")}</span>}
+              {preview.semantic.removedAcs.length > 0 && <span>删除 AC：{preview.semantic.removedAcs.join("、")}</span>}
+            </div>
+            <div className="sync-diff-head"><span>当前内容（人工稿）</span><span>提案内容</span></div>
+            <div className="sync-diff">
+              <div className="sync-diff-col">{oldLines.map((line, i) => (
+                <div key={i} className={`sync-diff-line ${line.kind}`}><span className="no">{i + 1}</span><span>{line.text}</span></div>
+              ))}</div>
+              <div className="sync-diff-col">{newLines.map((line, i) => (
+                <div key={i} className={`sync-diff-line ${line.kind}`}><span className="no">{i + 1}</span><span>{line.text}</span></div>
+              ))}</div>
+            </div>
+            {!preview.diff.length && <p className="small muted">暂无可显示的差异（内容缺失或被截断）。</p>}
+          </>) : <p className="small muted">选择目标查看当前与提案差异。</p>}
+          {conflictCount > 0 && <div className="task-callout warn">冲突目标未被覆盖：磁盘内容既不是基线也不是提案，系统保留人工稿，等待核对或重新生成提案。</div>}
+          <div className="row">
+            <button className="btn sm" onClick={reconcile} disabled={busy}>{busy ? "对账中…" : "重新对账"}</button>
+            <button
+              className="btn sm"
+              onClick={publish}
+              disabled={busy || !detail || detail.state !== "reconciled" || conflictCount > 0}
+            >完成并发布基线</button>
+          </div>
+        </>)}
+      </section>
+    </div>
+  </>;
 }
 
 function WorkspaceIcon({ name }: { name: string }) {

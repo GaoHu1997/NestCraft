@@ -107,7 +107,7 @@
   }
 
   function projectModal(mode, id) {
-    const p = mode === "edit" ? projectById(id) : Object.assign({ id: "", key: "", name: "", kind: "code", owner: D.user.name, desc: "", path: "", members: [] }, store.projectDraft || {});
+    const p = mode === "edit" ? Object.assign({}, projectById(id), store.projectFormDraft || {}) : Object.assign({ id: "", key: "", name: "", kind: "code", owner: D.user.name, desc: "", path: "", members: [] }, store.projectDraft || {});
     if (store.projectPathDraft) p.path = store.projectPathDraft;
     store.projectModal = { mode, id };
     if (store.projectIconDraft == null) store.projectIconDraft = mode === "edit" ? (p.icon || "") : "";
@@ -127,7 +127,7 @@
     const body = `<div class="form-grid">
       <div class="form-row"><label>项目名称</label><input class="input" id="pf-name" value="${esc(p.name)}" placeholder="例如：活动签到"></div>
       <div class="form-row two"><div><label>项目标识</label><input class="input" id="pf-key" value="${esc(p.key)}" placeholder="BOOKING"></div><div><label>类型</label><select class="select" id="pf-kind"><option value="code" ${p.kind === "code" ? "selected" : ""}>编码项目</option><option value="work" ${p.kind === "work" ? "selected" : ""}>办公项目</option></select></div></div>
-      <div class="form-row"><label>项目图标</label>${picker}<small>50 选 1（通用／办公／商业／内容／产品／生活 6 组）+ 10 个背景色卡；图标与背景色成对保存。保存后卡片、侧栏与授权弹窗同步。</small></div>
+      <div class="form-row"><label>项目图标</label><details class="project-icon-disclosure" ${store.projectIconExpanded ? "open" : ""}><summary>${projTile({ icon: draft || null, iconColor: colorDraft || null, kind: p.kind }, "", "ico-20")}<span class="caption">点击当前图标选择样式与配色</span></summary>${picker}</details><small>50 选 1（通用／办公／商业／内容／产品／生活 6 组）+ 10 个背景色卡；图标与背景色成对保存。保存后卡片、侧栏与授权弹窗同步。</small></div>
       <div class="form-row"><label>负责人</label><input class="input" id="pf-owner" value="${esc(p.owner)}"></div>
       <div class="form-row"><label>项目描述</label><textarea class="textarea" id="pf-desc" rows="3">${esc(p.desc)}</textarea></div>
       <div class="form-row"><label>本地目录</label><div class="input-with-btn"><input class="input" id="pf-path" value="${esc(p.path || "")}" placeholder="尚未选择"><button class="btn" type="button" data-act="dir-pick">${icon("folder", "ico-14")}浏览…</button></div><small>从本机目录树选择，不手工输入路径。</small></div>
@@ -139,6 +139,12 @@
 
   /* CR-051：项目图标/色卡选择器交互。main.js 的 project-save 不知道图标草稿；
      这里用捕获阶段监听：选择/清空即时预览，保存时把「图标 + 背景色」成对落到项目上（main.js 覆盖其余字段，不触碰 icon/iconColor）。 */
+  function captureProjectForm() {
+    const field = id => document.getElementById(id)?.value;
+    store.projectFormDraft = { name: field('pf-name'), key: field('pf-key'), kind: field('pf-kind'), owner: field('pf-owner'), desc: field('pf-desc'), path: field('pf-path'), members: (field('pf-members') || '').split('、').filter(Boolean) };
+    store.projectIconExpanded = true;
+  }
+  document.addEventListener('toggle', e => { if (e.target.matches?.('.project-icon-disclosure')) store.projectIconExpanded = e.target.open; }, true);
   document.addEventListener("click", e => {
     const pick = e.target.closest("[data-act='proj-icon-pick']");
     const clear = e.target.closest("[data-act='proj-icon-clear']");
@@ -146,6 +152,7 @@
     const colorClear = e.target.closest("[data-act='proj-color-clear']");
     const save = e.target.closest("[data-act='project-save']");
     if (pick || clear) {
+      captureProjectForm();
       e.preventDefault();
       e.stopPropagation();
       store.projectIconDraft = clear ? "" : pick.dataset.id;
@@ -154,6 +161,7 @@
       return;
     }
     if (colorPick || colorClear) {
+      captureProjectForm();
       e.preventDefault();
       e.stopPropagation();
       store.projectColorDraft = colorClear ? "" : colorPick.dataset.id;

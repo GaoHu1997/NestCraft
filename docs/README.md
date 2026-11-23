@@ -1,5 +1,47 @@
 # 项目文档导航
 
+## HANDOFF：执行与同步 M0 交接（2026-11-23）
+
+本批已完成执行账本／调度／恢复、G-PLAN、适配器与 worktree、审批记录、双向同步基线与差异、任务页与同步页只读界面；**完整正式实现未达成**。交接文档列出已验证范围、未完成项与继续方式：[HANDOFF](HANDOFF-执行与同步M0交接.md)／[阶段收口](Test/REPORT-STAGE-执行与同步M0收口.md)。
+
+## CR-068：界面评审差异与会话可用性（需求／设计，部分设计已验证）
+
+2026-11-23 用户30项评审已完整登记到原17个Story／11个Feature，追加35条AC。本轮只读核查与可操作设计调整，**没有修复正式软件**。已调整模型清单复选框、思考关闭／全量映射／K/M、保存收起、设置X与右侧按钮、CLI标签折叠、项目当前图标、有序消息与计划浮层、固定输入和统计复用；核心设计浏览器检查通过，未验证的场景明确保留。第二轮发送、示例文件和SSH等待的具体根因仍待复现。
+
+[完整30项与归属](PRD/CR-068-界面评审差异与会话可用性补正.md)／[当前原型](UI/仿真原型UI.html)／[UI版本与覆盖](UI/文档/UI-CR068-界面评审差异与会话可用性.md)／[静态诊断与实际验证](Test/REPORT-CR068-界面评审诊断与设计验证.md)／[待授权单Feature工作包](LLD/LLD-CR068-分特性修复工作包.md)。旧稿被替代的部分已标记；不把设计截图说成软件一致。
+
+## CR-069：平台主代理运行时与受管执行接入（仅需求／设计，待确认）
+
+用户 2026-11-23 指出「AI 侧栏／工作台都需要用户选择使用哪个 CLI，并且 CLI 不是所有协议都支持」，要求结合本项目出完整需求／设计／方案。本轮只做需求与设计：未改正式源码、依赖或运行配置。
+
+**核心判断**：本项目模型、端点、密钥、Skill、知识与工具已由平台持有；真正的断点是普通对话仍被 CLI 绑定（`chat.rs:550`、`chat.rs:596-608`、`ChatPanel.tsx:823`）。因此新增平台会话通道 `runner=platform`，而不是再建网关或 CLI 认证管理。
+
+方案要点：`session.runner` 默认 `cli`（旧行为不变）；平台双协议模型客户端；硬编码工具白名单作为唯一来源（三重上限＋每轮重读 `capability`）；`dispatch_work` 只创建 `queued` 记录，不含授权／领取／状态推进。
+
+**已知限制**：真实 worker 执行未接通（`execution.rs:1708-1710` 为 M0 模拟）；派发后任务停留 `queued`；UI 设计缺失，界面不得开发；52 条测试用例全部未执行。
+
+[需求](PRD/CR-069-平台主代理运行时与受管执行接入.md)／[方案](LLD/LLD-CR069-平台主代理运行时实现.md)／[数据](DB/DB-CR069-会话运行通道与派发记录.md)／[测试设计](Test/TEST-CR069-平台主代理运行时验证.md)／[UI 准入](UI/文档/UI-CR069-平台主代理会话准入.md)／[Feature](Plan/Feature/FEAT-025-平台主代理运行时.md)／[STORY-089](Plan/Story/STORY-089-平台主代理会话与模型调用.md)／[STORY-090](Plan/Story/STORY-090-平台工具调用循环与自干边界.md)／[STORY-091](Plan/Story/STORY-091-主代理派发与受管执行接入.md)。
+
+## UI-FEAT-004：同步批次（设计稿 v1，已接入只读）
+
+2026-11-23 补任务页「同步」视图并接入：批次列表、目标对账、当前／提案两栏行级差异、冲突横幅；「重新对账」可用，「完成并发布基线」禁用。**1440 浅色／深色、390 窄屏与滚动条三帧已对照**，修复窄屏目标列表被压缩；真实 Tauri 数据、WebView2 与自动合并未验证。[设计稿](UI/sync-batches/index.html)／[版本与 hash](UI/文档/UI-FEAT-004-同步批次.md)／[接入验证](Test/REPORT-FEAT004-同步视图只读接入验证.md)
+
+## UI-FEAT-019：任务执行状态（设计稿 v1，已接入只读）
+
+2026-11-23 补任务页只读状态设计并接入：空态、批次／任务列表、任务详情与事件时间线、执行计划与授权、待审批与风险等级、旧 writer 阻塞、同步第三方冲突；`TasksPane` 读取 `execution_task_list`／`execution_event_list`／`execution_plan_task_status`／`execution_approval_pending`，控制操作仍不可用。**1440 浅色／深色、390 窄屏与滚动条三帧已对照**，已知差异为真实壳层、窄屏详情抽屉与事件描述换行；真实 Tauri 数据与 WebView2 表现未验证。[设计稿](UI/task-execution-status/index.html)／[版本与 hash](UI/文档/UI-FEAT-019-任务执行状态.md)／[接入验证](Test/REPORT-FEAT019-任务页只读接入验证.md)
+
+## CR-047／FEAT-019：执行账本 M0、工作包义务与写入保护（已实现，待验收）
+
+2026-11-23 用户「Office 先不做，其他的你完成一下」授权正式编码。已实现执行账本 M0：`execution_batch/task/step/attempt/dependency/event/checkpoint/work_package/work_package_story/obligation/obligation_mapping` 表、13 态状态机、活动任务唯一键、租约/fence CAS、依赖 gate、检查点与工作包确认门禁；`execution_*` 命令已注册，并新增 M0 调度循环 `dispatch_once`（依赖顺序、退避重试、重试耗尽，不 spawn CLI）。同时补双向同步最小安全底线：`read_requirement_doc` 返回 `documentHash`，`write_requirement_doc` 更新必须携带 `expectedDocumentHash`，缺失或过期拒绝覆盖；执行会话的 `featureId` 注入工作台 MCP，`write_requirement_doc` 拒绝跨 Feature 与无父项新建。**cargo test --lib 399 通过／0 失败／8 ignored，npm run build 通过**；真实环境 CLI 验证、UI 审批与能力验证、CLI 原生写入硬拦截、完整语义合并仍未实现（[验证记录](Test/REPORT-CR047-执行账本M0与写入保护验证.md)）。
+
+[DB-FEAT-019](DB/DB-FEAT-019-任务执行数据设计.md)／[FEAT-019](Plan/Feature/FEAT-019-依赖调度与受管执行.md)／[STORY-068](Plan/Story/STORY-068-单特性执行会话与范围门禁.md)／[CR-047](PRD/CR-047-单特性执行与需求设计防遗漏.md)／[实现](../src-tauri/src/commands/execution.rs)／[阶段收口](Test/REPORT-STAGE-执行与同步M0收口.md)
+
+## CR-032／FEAT-004：双向同步 M0（已实现，待验收）
+
+2026-11-23 同批实现共同基线、同步批次与逐目标写入日志：`sync_baseline`／`sync_batch`／`sync_target_journal`，document/code 增量必须引用当前基线，recovery 禁止引用历史基线，第三方 hash 对账为冲突且不覆盖人工稿；批次状态机为 `prepared → applied_pending_reconcile → reconciled`，仅全部目标应用后才可发布新基线。`sync_target_write` 支持暂存内容在目标仍为 base 时条件写回，路径限制在项目根内。**sync 单测 14/14、全量 cargo test 395 通过／0 失败／8 ignored**；完整语义合并与逆向管线仍未实现（[验证记录](Test/REPORT-CR032-双向同步M0验证.md)）。
+
+[DB-CR032](DB/DB-CR032-同步基线与语义追踪.md)／[FEAT-004](Plan/Feature/FEAT-004-设计评审与跨文档同步.md)／[CR-032](PRD/CR-032-需求设计与代码双向变更及高保真逆向.md)／[实现](../src-tauri/src/commands/sync.rs)
+
 ## CR-066：需求思维导图与阅读视图重构（已实现：正式软件，待验收）
 
 用户 2026-11-23 三条指令＋追加要求：① 编码项目需求 Tab 的「愿景」改为 **Vision**，与下方 Epic／Feature／Story 对应；② 原思维导图「上面是导图、下面是内容」不是思维导图，要求**整块是标准思维导图**（Xmind／ProcessOn 式：愿景连史诗、史诗连特性、**有连线**、**有目录**、**点击节点在右侧出现悬浮框展示内容**），且**用户可在导图页直接添加史诗／特性／用户故事**；③ 左侧菜单已有「预览」和「思维导图」，**顶部不再重复**。追加：预览中移除左侧需求树（不同菜单各自独立），右侧目录树支持折叠子目录。实现：新增 `requirementMindmap.ts`（导图几何／连线／层级）与 `RequirementMindmapPane.tsx`（画布／目录／悬浮详情／页内新增／缩放折叠），`RequirementsReading.tsx` 改为三种阅读方式各自分离、预览按 Vision H2／Epic H3／Feature H4／Story H5 分级（目录因此具备真实父子层级）。**同日追加三点**：折叠控件移到连线连接处且默认隐藏、悬浮才显示（节点内只留新增下级／打开文档，不再与折叠图标冲突）；预览目录改为 **Vision→Epic→Feature→Story 四级需求菜单**，四类需求全量显示；**模型（项目 `docs/DB/` 设计文档）作为 Vision 下独立分支融入导图与预览**（虚线关联，不做 Story 第二父项）。**设计断言 34 项＋软件断言 38 项全部通过／npm run build 通过／UI-SCROLL-001 滚动条四帧通过／700px 窄屏详情回落通过**；真实 Tauri 端到端、深色主题软件截图与真实项目 Epic／模型归位显示未验证（[REPORT](Test/REPORT-CR066-需求思维导图与阅读视图验证.md)）。

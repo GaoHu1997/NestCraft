@@ -881,6 +881,134 @@ let avatarImage: { path: string; hash: string } | null = null;
     for (const s of [...sessions].filter(s => s.projectId === p.id)) { messages.delete(s.id); sessions.splice(sessions.indexOf(s), 1); }
     projects.splice(projects.indexOf(p), 1); disks.delete(p.id); grants.delete(p.id); gitStates.delete(p.id); officeStates.delete(p.id); return null;
   });
+  // UI-FEAT-019：任务执行状态设计夹具（仿真，不代表真实运行）。
+  function executionTasks(projectId: string) {
+    const base = {
+      projectId,
+      featureId: "FEAT-019",
+      revision: 1,
+      currentAttemptId: null,
+      stopPending: false,
+      finalBlocked: false,
+      blockedReason: null as string | null,
+    };
+    return [
+      { ...base, id: "task-01", batchId: "B-2401", storyId: "STORY-040", status: "running", fencingToken: 2, activeKeyHeld: true },
+      { ...base, id: "task-02", batchId: "B-2401", storyId: "STORY-042", status: "waiting_dependency", fencingToken: 0, activeKeyHeld: true },
+      { ...base, id: "task-03", batchId: "B-2401", storyId: "STORY-043", status: "verifying", fencingToken: 1, activeKeyHeld: true },
+      { ...base, id: "task-04", batchId: "B-2401", storyId: "STORY-055", status: "succeeded", fencingToken: 1, activeKeyHeld: false },
+      { ...base, id: "task-05", batchId: "B-2402", storyId: "STORY-018", status: "blocked", fencingToken: 3, activeKeyHeld: true, blockedReason: "OLD_WRITER_MAY_BE_ALIVE：旧执行者租约未过期，恢复被拒绝" },
+      { ...base, id: "task-06", batchId: "B-2402", storyId: "STORY-019", status: "queued", fencingToken: 0, activeKeyHeld: true },
+    ];
+  }
+  function executionEvents(taskId: string) {
+    const now = Date.now();
+    const base = { taskId, attemptId: "attempt-demo", taskRevision: 1, taskFence: 2, payloadJson: null };
+    return [
+      { ...base, seq: 1, eventId: "evt-1", eventType: "task.claimed", createdAt: now - 90_000 },
+      { ...base, seq: 2, eventId: "evt-2", eventType: "task.running", createdAt: now - 88_000 },
+      { ...base, seq: 3, eventId: "evt-3", eventType: "task.checkpoint", createdAt: now - 40_000 },
+      { ...base, seq: 4, eventId: "evt-4", eventType: "task.verifying", createdAt: now - 12_000 },
+    ];
+  }
+  on("execution_task_list", a => copy(executionTasks(str(a, "projectId"))));
+  on("execution_event_list", a => copy(executionEvents(String(a.taskId ?? ""))));
+  function syncBatches() {
+    const now = Date.now();
+    return [
+      { id: "B-2402", origin: "document", state: "conflict", revision: 3, createdAt: now - 600_000, updatedAt: now, targetCount: 3, conflictCount: 1 },
+      { id: "B-2401", origin: "code", state: "reconciled", revision: 2, createdAt: now - 1_200_000, updatedAt: now, targetCount: 2, conflictCount: 0 },
+    ];
+  }
+  function syncBatchDetail(batchId: string) {
+    const summary = syncBatches().find(b => b.id === batchId) ?? syncBatches()[0];
+    const targets = batchId === "B-2402"
+      ? [
+          { targetId: "STORY-018 设计一致调整", kind: "document", baseHash: "sha256:base", newHash: "sha256:4c1e9f2a", applyState: "conflict", targetUri: null },
+          { targetId: "LLD-CR032 同步契约", kind: "document", baseHash: "sha256:base2", newHash: "sha256:9f2a4c1e", applyState: "applied", targetUri: null },
+          { targetId: "TEST-CR032 验证设计", kind: "document", baseHash: "sha256:base3", newHash: "sha256:7711", applyState: "pending", targetUri: null },
+        ]
+      : [{ targetId: "STORY-040 依赖调度", kind: "document", baseHash: "sha256:b1", newHash: "sha256:n1", applyState: "applied", targetUri: null }];
+    return { ...summary, baseId: "syncbase-demo", documentConsistency: "consistent", codeReconcileState: "verified", targets };
+  }
+  function syncPreview(targetId: string) {
+    return {
+      targetId,
+      targetUri: null,
+      baseHash: "sha256:base",
+      newHash: "sha256:new",
+      applyState: "conflict",
+      currentHash: "sha256:third",
+      currentMatchesBase: false,
+      currentMatchesNew: false,
+      currentText: null,
+      stagedText: null,
+      diff: [
+        { kind: "same", text: "## 范围" },
+        { kind: "same", text: "文档与代码共用基线。" },
+        { kind: "remove", text: "冲突时自动合并，不提示。" },
+        { kind: "add", text: "冲突时保留人工稿，等待核对。" },
+        { kind: "same", text: "保留历史验收。" },
+      ],
+      semantic: {
+        addedHeadings: ["新章节"],
+        removedHeadings: [],
+        addedAcs: ["AC-2"],
+        removedAcs: [],
+      },
+      truncated: false,
+    };
+  }
+  on("sync_batch_list", () => copy(syncBatches()));
+  on("sync_batch_get", a => copy(syncBatchDetail(String(a.batchId ?? ""))));
+  on("sync_target_preview", a => copy(syncPreview(String(a.targetId ?? ""))));
+  on("sync_reconcile_pending", () => ({ checked: 3, applied: 0, pending: 2, conflict: 1, skipped: 0 }));
+  on("sync_publish_baseline", a => ({
+    id: "syncbase-demo",
+    projectId: String(a.projectId ?? ""),
+    branchRef: null,
+    headCommit: null,
+    codeManifestRef: `batch:${String(a.batchId ?? "")}`,
+    codeManifestHash: "sha256:demo-manifest",
+    sourceRefs: [],
+    coverage: "complete-in-scope",
+    publishedBatchId: String(a.batchId ?? ""),
+    createdAt: Date.now(),
+  }));
+  on("execution_approval_pending", a => [{
+    id: "approval-demo",
+    projectId: String(a.projectId ?? ""),
+    planHash: "sha256:7c9a4e2b1d",
+    taskId: "task-01",
+    toolCallId: "tool-demo",
+    finalArgsHash: "sha256:args",
+    risk: "high",
+    decision: "pending",
+    decidedBy: null,
+    createdAt: Date.now(),
+    decidedAt: null,
+    expiresAt: null,
+  }]);
+  on("execution_plan_task_status", a => {
+    const taskId = String(a.taskId ?? "");
+    if (taskId !== "task-01") return null;
+    const planHash = "sha256:7c9a4e2b1d";
+    return {
+      plan: {
+        id: "plan-demo", projectId: String(a.projectId ?? ""), taskId, phase: "implement",
+        planHash, hashRuleVersion: "v1", requirementHash: "sha256:req", designHash: "sha256:des",
+        acHash: "sha256:ac", authorizationRef: "auth:demo", selectedCli: "claude",
+        modelRef: "demo-model", effort: "high", permissionPolicyHash: "sha256:perm",
+        capabilityManifestHash: "sha256:cap", createdAt: Date.now(),
+      },
+      authorization: {
+        id: "planauth-demo", planHash, actorRef: "user:demo", source: "user", scope: "task",
+        expiresAt: null, revokedAt: null, createdAt: Date.now(),
+      },
+      blockers: [],
+      ready: true,
+    };
+  });
   on("read_requirements", a => copy(requirements(projectById(str(a, "projectId")))));
   on("read_requirement_sources", a => {
     const p = projectById(str(a, "projectId")), indexed = new Map<string, RequirementNode>();

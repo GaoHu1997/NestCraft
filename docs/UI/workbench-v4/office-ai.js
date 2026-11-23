@@ -3,7 +3,7 @@ window.OfficeAI = (function () {
   "use strict";
   const { D, store, esc, icon } = UI;
   const codeAI = D.ai, projects = new Map(), codeState = {};
-  const defaults = { aiHistory: false, aiTop: null, aiBgOpen: null, aiStepsOpen: true, aiMenu: null, aiMenuQuery: "", aiStats: null, aiMenuTab: "add", aiBusy: false, aiGen: 0, aiPermission: "默认模式", aiCli: "claude", aiInput: "", aiStick: true, aiQueue: [], aiPop: null, aiModelQuery: "", aiModelMenu: false, aiPermissionMenu: false, aiCliMenu: false, aiSubagents: false, aiBackground: false, aiContext: false, aiTokens: false };
+  const defaults = { aiHistory: false, aiTop: null, aiBgOpen: null, aiStepsOpen: false, aiMenu: null, aiMenuQuery: "", aiStats: null, aiMenuTab: "add", aiBusy: false, aiGen: 0, aiPermission: "默认模式", aiCli: "claude", aiInput: "", aiStick: true, aiQueue: [], aiPop: null, aiModelQuery: "", aiModelMenu: false, aiPermissionMenu: false, aiCliMenu: false, aiSubagents: false, aiBackground: false, aiContext: false, aiTokens: false };
   const keys = [...Object.keys(defaults), "aiMessages", "aiSession", "aiOpen"];
   let pid = null, serial = 0;
   const clone = x => structuredClone(x);

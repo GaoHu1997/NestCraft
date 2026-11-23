@@ -119,9 +119,10 @@
       <aside class="set-nav">
         <div class="set-user">${avatarHtml("md", "")}<div><b>${esc(g.profile.name)}</b><span>${esc(g.profile.email)}</span></div></div>
         <div class="set-nav-list">${SET_NAV.map(([k, label, ic]) => `<button class="s-item" aria-selected="${tab === k}" data-act="settings-tab" data-tab="${k}">${icon(ic, "ico-14")}${label}</button>`).join("")}</div>
-        <div class="set-nav-f"><span class="caption">UI-CR036-v4 · 演示</span><button class="btn sm" data-act="close-dialog">关闭</button></div>
+        <div class="set-nav-f"><span class="caption">设计演示 · UI-CR068-v2</span></div>
       </aside>
       <section class="set-body">
+        <button class="icon-btn settings-close" data-act="close-dialog" aria-label="关闭设置" title="关闭设置">${icon("x", "ico-18")}</button>
         <div class="set-head"><div><h2>${esc((SET_NAV.find(x => x[0] === tab) || [])[1])}</h2><p class="caption">${esc(setSub(tab))}</p></div>${tab === "models" ? `<button class="icon-btn set-head-imagegen" data-act="imagegen-open" title="生图配置" aria-label="生图配置">${icon("image", "ico-18")}</button>` : ""}</div>
         <div class="set-scroll">${setContent(tab)}</div>
       </section>
@@ -220,15 +221,7 @@
 
   function cliModelOptions(c) {
     /* 协议兼容过滤（演示）：claude→Anthropic 系；codex/grok→OpenAI 系。 */
-    const groups = D.ai.modelCatalog.providers;
-    const opts = [];
-    groups.forEach(g => g.models.forEach(m => {
-      if (m.image) return;
-      const anthropic = /tierflow|claude/i.test(g.name + m.name);
-      const ok = c.id === "claude" ? anthropic : !anthropic;
-      if (ok) opts.push(`${g.name} · ${m.name}`);
-    }));
-    return opts;
+    return window.CR068.catalog(c.id).flatMap(g => g.models.map(m => `${g.name} · ${m.name}`));
   }
 
   function cliBody(c) {
@@ -572,9 +565,11 @@
       <div class="two-col"><div><label>模型 ID</label><input class="input mono" id="m-id" value="${esc(m.id)}"></div><div><label>显示名称</label><input class="input" id="m-name" value="${esc(m.name)}"></div></div>
       <div><label>支持模态</label><div class="chips">${["文本", "图片", "生图"].map(x => `<button class="chip ${m.modalities.includes(x) ? "on" : ""}" data-act="model-modality" data-v="${x}">${x}</button>`).join("")}</div>${m.visionUnknown ? `<div class="caption">上游未提供视觉能力，当前为未知；可点「图片」明确。</div>` : ""}</div>
       <div class="row thinking-row"><label>思考</label><button class="switch" aria-checked="${m.thinking}" data-act="model-thinking" aria-label="思考开关"></button><span class="spacer"></span><button class="link-btn" data-act="model-auto-level">一键获取</button></div>
+      ${m.thinking ? `
       ${m.levelSource ? `<div class="caption">档位来源：${esc(m.levelSource)}${m.levelNote ? " · " + esc(m.levelNote) : ""}</div>` : ""}
-      <div><label>支持档位</label><div class="chips">${levels.map(x => `<button class="chip ${m.levels.includes(x) ? "on" : ""}" data-act="model-level" data-v="${x}">${x}</button>`).join("")}</div></div>
-      <div class="three-col"><div><label>默认思考强度</label><select class="select" id="m-default">${defaultOpts.map(x => `<option ${m.defaultLevel === x ? "selected" : ""}>${x}</option>`).join("")}</select></div><div><label>上下文窗口</label><input class="input" id="m-ctx" value="${m.context || ""}" placeholder="留空 = 未知"></div><div><label>最大输出</label><input class="input" id="m-max" value="${m.maxOutput || ""}" placeholder="留空 = 未知"></div></div>
+      <div><label>支持档位</label><div class="chips">${levels.map(x => `<button class="chip ${m.levels.includes(x) ? "on" : ""}" data-act="model-level" data-v="${x}" aria-pressed="${m.levels.includes(x)}">${x}</button>`).join("")}</div></div>
+      <details class="effort-mappings"><summary>档位映射 <span class="caption">全部 ${levels.length} 档 · 默认同名，需要时修改</span></summary><div class="effort-map-list">${levels.map(x => `<label class="effort-map-row"><span class="mono">${x}</span><input class="input mono" data-effort-map="${x}" value="${esc(m.mappings?.[x] ?? x)}" aria-label="${x} 映射"><span class="caption">${m.levels.includes(x) ? "启用" : "未启用"}</span></label>`).join("")}</div></details>` : ""}
+      <div class="${m.thinking ? "three-col" : "two-col"}">${m.thinking ? `<div><label>默认思考强度</label><select class="select" id="m-default">${defaultOpts.map(x => `<option ${m.defaultLevel === x ? "selected" : ""}>${x}</option>`).join("")}</select></div>` : ""}<div><label>上下文窗口</label><input class="input" id="m-ctx" value="${m.context ?? ""}" placeholder="如 128K / 1M；留空 = 未知" inputmode="decimal"></div><div><label>最大输出</label><input class="input" id="m-max" value="${m.maxOutput ?? ""}" placeholder="如 32K / 0.1M；留空 = 未知" inputmode="decimal"></div></div>
       <div class="row model-form-actions"><span class="caption">修改随「保存供应商」一并保存</span><span class="spacer"></span><button class="btn sm" data-act="model-discard" data-id="${esc(m.id)}">放弃修改</button></div>
     </div>`;
   }
@@ -598,7 +593,7 @@
           </div>
           ${open ? modelForm(p, x) : ""}
         </div>`;
-      }).join("") || `<div class="empty" style="padding:24px"><b>还没有模型</b><p>点击「获取模型」从上游拉取清单并点选卡片。</p></div>`}</div>`;
+      }).join("") || `<div class="empty" style="padding:24px"><b>还没有模型</b><p>点击「获取模型」从上游拉取清单并勾选所需模型。</p></div>`}</div>`;
   }
 
   /* CR-059 B1：获取模型只拉清单（ID＋显示名＋上游明确给出的上下文），不请求思考等级/模态；卡片点选。 */
@@ -606,12 +601,19 @@
     const existing = new Set(p.models.map(m => m.id));
     const available = (p.availableModels || []).filter(m => !existing.has(m.id));
     if (!store.modelPick) store.modelPick = {};
-    const body = `<div class="pick-cards pick-grid">${available.map(m => {
+    const request = store.modelDiscovery?.[p.id];
+    if (request?.phase === "loading" || request?.phase === "error") {
+      const loading = request.phase === "loading";
+      const body = `<div class="discovery-status" role="${loading ? "status" : "alert"}">${loading ? icon("loader", "ico-20") : icon("alert", "ico-20")}<b>${loading ? "获取模型清单中…" : "获取模型失败"}</b><p>${loading ? "仅加载清单；不等待能力检测。" : esc(request.message || "无法读取模型清单，请重试。")}</p><p class="caption">设计演示 · 已保存模型及已选项目均保留</p></div>`;
+      openSubDialog(dlgShell("获取模型", `${p.name} · 清单加载`, body, `<button class="btn" data-act="close-sub">取消</button>${loading ? `<button class="btn primary" disabled>保存所选</button>` : `<button class="btn primary" data-cr068-retry="${esc(p.id)}">重试</button>`}`, "modal-md"));
+      return;
+    }
+    const body = `<div class="model-pick-list" role="group" aria-label="从上游选择模型">${available.map(m => {
       const on = !!store.modelPick[m.id];
-      return `<button type="button" class="pick-card ${on ? "on" : ""}" data-act="model-pick-toggle" data-id="${esc(m.id)}" aria-pressed="${on}"><b>${esc(m.name)}</b><span class="mono">${esc(m.id)}</span><span class="caption">${m.context ? Math.round(m.context / 1000) + "K 上下文" : "上下文未知"}</span>${on ? `<span class="pick-check">${icon("check", "ico-14")}</span>` : ""}</button>`;
+      return `<label class="model-pick-row"><input type="checkbox" data-act="model-pick-toggle" data-id="${esc(m.id)}" ${on ? "checked" : ""}><span class="pick-model-main"><b>${esc(m.name)}</b><span class="mono">${esc(m.id)}</span></span><span class="caption">${m.context ? Math.round(m.context / 1000) + "K 上下文" : "上下文未知"}</span></label>`;
     }).join("") || `<div class="empty" style="padding:24px"><b>没有更多模型</b><p>上游返回的模型都已在列表中。</p></div>`}</div>
-      <div class="caption">只拉取模型清单，不等待思考等级/模态等能力字段；点选卡片后保存，未知能力保持未知，稍后可用「自动获取思考等级」补齐。</div>`;
-    openSubDialog(dlgShell("获取模型", `${p.name} · 从上游拉取清单`, body, `<button class="btn" data-act="close-sub">取消</button><button class="btn primary" data-act="model-pick-save">保存所选</button>`, "modal-md"));
+      <div class="caption">只拉取模型清单，不等待思考等级/模态等能力字段；勾选模型后保存，未知能力保持未知，稍后可用「自动获取思考等级」补齐。</div>`;
+    openSubDialog(dlgShell("获取模型", `${p.name} · 从上游拉取清单`, body, `<button class="btn" data-act="close-sub">取消</button><button class="btn primary" data-act="model-pick-save"${available.some(m => store.modelPick[m.id]) ? "" : " disabled"}>保存所选</button>`, "modal-md"));
   }
 
   /* ================= CR-059 r3 #4：生图配置（模型管理大标题同行最右侧图标按钮进入）。
@@ -724,7 +726,7 @@
     } else if (st.result) {
       resultBlock = `<div class="probe-result done">
         <div class="probe-result-top">
-          <span class="probe-score"><b>${st.result.score}</b><span class="caption">/ 100</span></span>
+          <span class="probe-result-title">已检测</span><span class="probe-score"><b>${st.result.score}</b><span class="caption">/ 100</span></span>
           ${probeGradeBadge(st.result.grade)}
           <span class="probe-tags">${probeVerdictTag(st.result.verdict)}<span class="tag gray">渠道 · ${esc(st.result.channel)}</span><span class="tag gray">${esc(st.result.duration)}</span></span>
         </div>

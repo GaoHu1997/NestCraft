@@ -184,7 +184,7 @@ window.WorkbenchUI = (function () {
     const failed = steps.some(x => x.state === "failed");
     const allDone = done === steps.length;
     const state = running ? "进行中" : failed ? "有失败" : allDone ? "已完成" : "等待继续";
-    const open = store.wbStepsOpen !== false;
+    const open = store.wbStepsOpen === true;
     return `<section class="ai-steps ${open ? "open" : "collapsed"}" aria-label="执行步骤">
       <button class="steps-h" data-act="wb-steps-toggle" aria-expanded="${open}">
         ${icon("steps", "ico-14")}<b>执行步骤</b><span class="steps-count">${done}/${steps.length}</span>
@@ -245,28 +245,7 @@ window.WorkbenchUI = (function () {
     if (!msgs.length) {
       return `<div class="wb-chat-empty"><b>这条会话还没有消息</b><span>在下方输入即可开始；不会自动新建会话。</span></div>`;
     }
-    /* 结构与类名对齐 AI 侧栏 message()：.msg(.user/.assistant) + .msg-body + .msg-time +
-       .msg-user-block / .text + .tool，不加「我 / AI」角色前缀（CR-056）。 */
-    return msgs.map(m => {
-      if (m.role === "user") {
-        return `<div class="msg user"><div class="msg-body"><div class="msg-time">${esc(m.time || "")}</div>
-          <div class="msg-user-block">${esc(m.text)}</div></div></div>`;
-      }
-      const tools = (m.tools || []).map(t => {
-        const hit = allTargets().find(x => (x.kind === "file" || x.kind === "office") && (t.arg === x.path || (t.arg || "").endsWith(x.path)));
-        const arg = hit
-          ? `<button class="wb-link" data-act="wb-open" data-key="${esc(hit.key)}">${esc(t.arg)}</button>`
-          : esc(t.arg);
-        return `<div class="tool">
-          <span class="t-ico">${icon(t.name === "fs.read" ? "file" : t.name === "fs.write" ? "edit" : t.name === "code-search" ? "search" : "terminal", "ico-14")}</span>
-          <span class="t-main"><span class="t-head"><span class="t-name">${esc(t.name)}</span><span class="t-state ${t.state === "完成" ? "done" : "run"}">${esc(t.state)}</span></span>
-            <div class="t-arg">${arg}</div>${t.detail ? `<div class="t-detail">${esc(t.detail)}</div>` : ""}</span></div>`;
-      }).join("");
-      return `<div class="msg assistant"><div class="msg-body"><div class="msg-time">${esc(m.time || "")}</div>
-        <div class="text">${linkify(m.text)}</div>${tools}
-        <div class="msg-acts"><button class="msg-act">${icon("copy", "ico-12")}复制</button></div>
-      </div></div>`;
-    }).join("");
+    return msgs.map((m, i) => AI().message(m, i, linkify)).join("");
   }
 
   /* ---------- 输入区：完整复用 AI 侧栏结构 ----------
@@ -286,20 +265,17 @@ window.WorkbenchUI = (function () {
     const running = busy;
     const canStop = running && !String(store.aiInput || "").trim();
 
-    const stats = `<div class="ai-stats">
-      <span class="s">${icon("sessionStats", "ico-14")}${esc(String((D.ai.stats && D.ai.stats.rounds) || 0))} 轮 · ${esc((D.ai.stats && D.ai.stats.tps) || "—")}</span>
-      <span class="s">${icon("tokenUsage", "ico-14")}${esc((D.ai.stats && D.ai.stats.tokens && D.ai.stats.tokens.total) || "—")} · 命中 ${esc((D.ai.stats && D.ai.stats.tokens && D.ai.stats.tokens.cacheHit) || "—")}</span>
-      <span class="s">${icon("contextUsage", "ico-14")}上下文 ${esc((D.ai.stats && D.ai.stats.context && D.ai.stats.context.used) || "—")}</span>
-    </div>`;
+    const stats = AI().statsRow();
 
     return `<div class="ai-composer-wrap wb-composer">
+      <div class="ai-plan-dock">${stepsOf(currentSession())}</div>
       <div class="ai-composer">
         <textarea id="wb-input" placeholder="描述你想构建的内容，/ 调用指令，@ 文件或对话">${esc(store.aiInput || "")}</textarea>
         <div class="ai-tools">
           <button class="ai-chip icon-only" data-act="wb-menu-open" title="添加" aria-label="添加">${icon("plus")}</button>
           <button class="ai-chip cli" data-act="wb-cli" data-wb-anchor="cli" aria-haspopup="dialog" aria-expanded="false" ${cliDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : cliDisabled ? "没有可用 CLI" : "切换 CLI：" + esc(cli.name)}" aria-label="切换 CLI：${esc(cli.name)}">${AI().cliLogo(cli.id, 16)}</button>
           <button class="ai-chip perm" data-act="wb-perm" data-wb-anchor="perm" aria-haspopup="dialog" aria-expanded="false" ${permDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : "权限模式"}" aria-label="权限模式">${icon("shield")}${esc(store.aiPermission || "默认模式")}</button>
-          <button class="ai-chip model" data-act="wb-model" data-wb-anchor="model" aria-haspopup="dialog" aria-expanded="false" ${modelDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : modelDisabled ? "没有可用模型" : "选择模型"}" aria-label="选择模型">${esc(cm.name)} · ${esc(cm.thinking ? D.ai.modelCatalog.current.level : "无思考档位")}</button>
+          <button class="ai-chip model" data-act="wb-model" data-wb-anchor="model" aria-haspopup="dialog" aria-expanded="false" ${modelDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : modelDisabled ? "没有可用模型" : !usableModel(cm) ? "当前模型失效，请重新选择" : "选择模型"}" aria-label="选择模型">${esc(cm.name)}${cm.available === false ? "（不可用）" : ""} · ${esc(cm.thinking ? D.ai.modelCatalog.current.level : "无思考档位")}</button>
           <button class="ai-send" data-act="wb-send" title="${canStop ? "停止" : "发送"}" aria-label="${canStop ? "停止" : "发送"}">${icon(canStop ? "stop" : "arrowUp", "ico-18")}</button>
         </div>
       </div>
@@ -311,21 +287,24 @@ window.WorkbenchUI = (function () {
     const s = currentSession();
     const p = project();
     const isWork = p && p.kind === "work";
-    const running = s && (D.ai.runningIds || []).includes(s.id);
+    const running = Boolean(s && ((D.ai.runningIds || []).includes(s.id) || store.aiBusy || store.aiRuntimeBusy));
     const title = s ? s.title : "新会话";
-    const sub = s ? `${p ? p.name : ""} · ${running ? "运行中" : "已完成"}` : `${p ? p.name : ""} · 尚未开始`;
+    const stateLabel = running ? "运行中" : !s?.messages?.length ? "尚未开始" : s.status === "failed" ? "失败" : s.status === "pending" ? "待处理" : s.status === "success" ? "已完成" : "状态未知";
+    const sub = `${p ? p.name : ""} · ${stateLabel}`;
     return `<section class="wb-conv" aria-label="当前会话">
       <div class="wb-ch">
         <button class="icon-btn wb-drawer-btn" data-act="wb-drawer-left" aria-label="会话历史">${icon("panelLeft", "ico-14")}</button>
         <div class="wb-ct"><b>${linkifyTitle(title)}</b><span>${esc(sub)}</span></div>
         <span class="spacer"></span>
+        <div class="ai-drop-wrap" ${D.ai.subagents.length ? "" : "hidden"}><button class="ai-count" data-act="ai-subagents" aria-expanded="${store.aiTop === "agents"}">${icon("users", "ico-14")}${D.ai.subagents.length} 智能体${icon("chevronDown", "ico-12")}</button>${store.aiTop === "agents" ? AI().agentDrop() : ""}</div>
+        <div class="ai-drop-wrap" ${D.ai.background.length ? "" : "hidden"}><button class="ai-count" data-act="ai-background" aria-expanded="${store.aiTop === "bg"}">${icon("terminal", "ico-14")}${D.ai.background.length} 后台任务${icon("chevronDown", "ico-12")}</button>${store.aiTop === "bg" ? AI().backgroundDrop() : ""}</div>
         ${running ? `<span class="wb-pill run">${icon("clock", "ico-12")}运行中</span>` : ""}
         <span class="wb-pill" title="工作台与右侧 AI 栏读取同一会话集合">${icon("message", "ico-12")}项目级共享</span>
         <button class="icon-btn ${aux().open ? "on" : ""}" data-act="wb-aux-toggle" aria-label="辅助栏" aria-expanded="${aux().open}">${icon("panelRight", "ico-14")}</button>
       </div>
       <div class="wb-scroll" id="wb-scroll">
         ${messages(s)}
-        ${stepsOf(s)}
+        ${store.aiBusy ? AI().workingRow() : ""}
       </div>
       ${composerBlock()}
     </section>`;
@@ -664,7 +643,7 @@ window.WorkbenchUI = (function () {
     "wb-drawer-close": () => { store.wbDrawer = null; UI.render(); },
     "wb-hist-more": () => { store.wbHistLimit = Math.max(HIST_PAGE, Number(store.wbHistLimit) || HIST_PAGE) + HIST_PAGE; UI.render(); },
     "wb-hist-reset": () => { store.wbHistQuery = ""; UI.render(); },
-    "wb-steps-toggle": () => { store.wbStepsOpen = store.wbStepsOpen === false; UI.render(); },
+    "wb-steps-toggle": () => { store.wbStepsOpen = !store.wbStepsOpen; UI.render(); },
     "wb-send": () => {
       toast("原型演示：工作台与 AI 侧栏共用会话，发送请使用右侧 AI 栏");
     },

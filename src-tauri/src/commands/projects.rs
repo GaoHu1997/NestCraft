@@ -356,6 +356,33 @@ fn md5_lite(s: &str) -> u64 {
     h
 }
 
+/// CR-032／双向同步最小安全底线：文档正文的 SHA-256 指纹（带算法前缀）。
+pub fn document_hash(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!("sha256:{:x}", Sha256::digest(text.as_bytes()))
+}
+
+/// 条件写入：先读当前内容比对 expectedDocumentHash，不符则拒绝覆盖，再原子替换。
+///
+/// 说明：文件系统没有跨进程原子 CAS，这里把校验窗口缩到最小；真正的并发写
+/// 竞争防护仍需上层共同基线／三方合并（CR-032 完整能力，尚未实现）。
+pub fn write_doc_checked(
+    source_uri: &str,
+    content: &str,
+    expected_document_hash: &str,
+) -> Result<String, String> {
+    let current = std::fs::read_to_string(source_uri)
+        .map_err(|e| format!("读取当前文档失败：{e}"))?;
+    let actual = document_hash(&current);
+    if actual != expected_document_hash {
+        return Err(format!(
+            "DOCUMENT_CHANGED：磁盘文档已变化（当前 {actual}），拒绝覆盖；请重新读取后再提交"
+        ));
+    }
+    write_doc(source_uri.to_string(), content.to_string())?;
+    Ok(document_hash(content))
+}
+
 /// 读取项目需求树；同时刷新投影。
 #[tauri::command]
 pub fn read_requirements(project_id: String) -> Result<Vec<RequirementNode>, String> {

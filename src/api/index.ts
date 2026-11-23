@@ -1148,3 +1148,189 @@ export const kbGateway = (args: { projectId?: string | null; tool: string; argsJ
     tool: args.tool,
     argsJson: args.argsJson ?? null,
   });
+
+// ---------- 任务执行与同步（FEAT-019 / FEAT-004 / CR-047） ----------
+
+export interface ExecutionTask {
+  id: string;
+  projectId: string;
+  batchId: string;
+  storyId: string;
+  featureId: string | null;
+  status: string;
+  revision: number;
+  fencingToken: number;
+  currentAttemptId: string | null;
+  activeKeyHeld: boolean;
+  stopPending: boolean;
+  finalBlocked: boolean;
+  blockedReason: string | null;
+}
+
+export interface ExecutionEvent {
+  seq: number;
+  eventId: string;
+  eventType: string;
+  taskId: string | null;
+  attemptId: string | null;
+  taskRevision: number | null;
+  taskFence: number | null;
+  payloadJson: string | null;
+  createdAt: number;
+}
+
+export interface SyncBatchSummary {
+  id: string;
+  origin: string;
+  state: string;
+  revision: number;
+  createdAt: number;
+  updatedAt: number;
+  targetCount: number;
+  conflictCount: number;
+}
+
+/** 只读：按项目（可选批次）列任务。 */
+export const executionTaskList = (projectId: string, batchId?: string | null) =>
+  invoke<ExecutionTask[]>("execution_task_list", { projectId, batchId: batchId ?? null });
+
+/** 只读：任务事件时间线（按 seq 正序返回）。 */
+export const executionEventList = (projectId: string, taskId?: string | null, limit = 100) =>
+  invoke<ExecutionEvent[]>("execution_event_list", { projectId, taskId: taskId ?? null, limit });
+
+/** 只读：同步批次摘要。 */
+export const syncBatchList = (projectId: string) =>
+  invoke<SyncBatchSummary[]>("sync_batch_list", { projectId });
+
+export interface SyncTarget {
+  targetId: string;
+  kind: string;
+  baseHash: string;
+  newHash: string;
+  applyState: string;
+  targetUri: string | null;
+}
+
+export interface SyncBatchDetail extends SyncBatchSummary {
+  baseId: string | null;
+  documentConsistency: string;
+  codeReconcileState: string;
+  targets: SyncTarget[];
+}
+
+export interface SyncDiffLine {
+  kind: "same" | "add" | "remove";
+  text: string;
+}
+
+export interface SemanticDelta {
+  addedHeadings: string[];
+  removedHeadings: string[];
+  addedAcs: string[];
+  removedAcs: string[];
+}
+
+export interface SyncTargetPreview {
+  targetId: string;
+  targetUri: string | null;
+  baseHash: string;
+  newHash: string;
+  applyState: string;
+  currentHash: string | null;
+  currentMatchesBase: boolean;
+  currentMatchesNew: boolean;
+  currentText: string | null;
+  stagedText: string | null;
+  diff: SyncDiffLine[];
+  semantic: SemanticDelta;
+  truncated: boolean;
+}
+
+export const syncBatchGet = (projectId: string, batchId: string) =>
+  invoke<SyncBatchDetail>("sync_batch_get", { projectId, batchId });
+
+export const syncTargetPreview = (projectId: string, batchId: string, targetId: string) =>
+  invoke<SyncTargetPreview>("sync_target_preview", { projectId, batchId, targetId });
+
+export const syncReconcilePending = (projectId: string) =>
+  invoke<{ checked: number; applied: number; pending: number; conflict: number; skipped: number }>(
+    "sync_reconcile_pending",
+    { projectId },
+  );
+
+export interface SyncBaselineView {
+  id: string;
+  projectId: string;
+  branchRef: string | null;
+  headCommit: string | null;
+  codeManifestRef: string;
+  codeManifestHash: string;
+  sourceRefs: unknown[];
+  coverage: string;
+  publishedBatchId: string | null;
+  createdAt: number;
+}
+
+/** 从已对账批次发布共同基线；未对账或仍有冲突时后端拒绝。 */
+export const syncPublishBaseline = (projectId: string, batchId: string) =>
+  invoke<SyncBaselineView>("sync_publish_baseline", { projectId, batchId });
+
+export interface ExecutionPlan {
+  id: string;
+  projectId: string;
+  taskId: string;
+  phase: string;
+  planHash: string;
+  hashRuleVersion: string;
+  requirementHash: string;
+  designHash: string;
+  acHash: string;
+  authorizationRef: string | null;
+  selectedCli: string;
+  modelRef: string;
+  effort: string | null;
+  permissionPolicyHash: string;
+  capabilityManifestHash: string;
+  createdAt: number;
+}
+
+export interface PlanAuthorization {
+  id: string;
+  planHash: string;
+  actorRef: string;
+  source: string;
+  scope: string;
+  expiresAt: number | null;
+  revokedAt: number | null;
+  createdAt: number;
+}
+
+export interface PlanCheck {
+  plan: ExecutionPlan;
+  authorization: PlanAuthorization | null;
+  blockers: string[];
+  ready: boolean;
+}
+
+/** 只读：任务最新执行计划与授权状态；无计划返回 null。 */
+export const planTaskStatus = (projectId: string, taskId: string) =>
+  invoke<PlanCheck | null>("execution_plan_task_status", { projectId, taskId });
+
+export interface ApprovalView {
+  id: string;
+  projectId: string;
+  planHash: string;
+  taskId: string | null;
+  toolCallId: string;
+  finalArgsHash: string;
+  risk: string;
+  decision: string;
+  decidedBy: string | null;
+  createdAt: number;
+  decidedAt: number | null;
+  expiresAt: number | null;
+}
+
+/** 只读：项目内未过期且未决定的审批请求。 */
+export const approvalPending = (projectId: string) =>
+  invoke<ApprovalView[]>("execution_approval_pending", { projectId });

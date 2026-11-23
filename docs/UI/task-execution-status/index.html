@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>UI-FEAT-019 任务执行状态设计稿 v1</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --panel: #f7f8fa;
+    --panel-2: #ffffff;
+    --line: #e5e7eb;
+    --text: #1f2328;
+    --muted: #6b7280;
+    --primary: #2563eb;
+    --primary-soft: #eff6ff;
+    --green: #16a34a;
+    --green-soft: #ecfdf5;
+    --amber: #b45309;
+    --amber-soft: #fffbeb;
+    --red: #dc2626;
+    --red-soft: #fef2f2;
+    --violet: #7c3aed;
+    --violet-soft: #f5f3ff;
+    --radius: 6px;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  [data-theme="dark"] {
+    --bg: #16181d;
+    --panel: #1b1e24;
+    --panel-2: #20242b;
+    --line: #2c3038;
+    --text: #e6e8eb;
+    --muted: #9aa1ab;
+    --primary: #60a5fa;
+    --primary-soft: #1e2a3d;
+    --green: #4ade80;
+    --green-soft: #17301f;
+    --amber: #fbbf24;
+    --amber-soft: #33280f;
+    --red: #f87171;
+    --red-soft: #3a1d1d;
+    --violet: #a78bfa;
+    --violet-soft: #2a2340;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .shell { max-width: 1180px; margin: 0 auto; padding: 24px 28px 40px; }
+  .doc-head h1 { font-size: 19px; margin: 0 0 4px; }
+  .doc-head p { margin: 0; color: var(--muted); }
+  .scene { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 18px; }
+  .scene > h2 { font-size: 14px; margin: 0 0 4px; }
+  .scene > .note { color: var(--muted); margin: 0 0 12px; }
+  .frame { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--bg); }
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    height: 48px; padding: 0 16px; border-bottom: 1px solid var(--line);
+    background: var(--panel-2);
+  }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  .brand .mark {
+    width: 22px; height: 22px; border-radius: 6px; background: var(--primary);
+    display: grid; place-items: center; color: #fff; font-size: 12px;
+  }
+  .top-actions { display: flex; gap: 8px; color: var(--muted); font-size: 12px; }
+  .tabs { display: flex; gap: 2px; padding: 0 12px; border-bottom: 1px solid var(--line); background: var(--panel-2); }
+  .tab { padding: 9px 12px; color: var(--muted); border-bottom: 2px solid transparent; }
+  .tab.on { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+  .workspace { display: grid; grid-template-columns: 300px 1fr; min-height: 420px; }
+  .side { border-right: 1px solid var(--line); background: var(--panel); padding: 12px; }
+  .side h3 { font-size: 12px; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+  .batch { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); margin-bottom: 10px; }
+  .batch-head { display: flex; justify-content: space-between; padding: 8px 10px; border-bottom: 1px solid var(--line); font-weight: 600; }
+  .batch-meta { color: var(--muted); font-weight: 400; font-size: 11px; }
+  .task-row {
+    display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+    border-bottom: 1px solid var(--line); cursor: default;
+  }
+  .task-row:last-child { border-bottom: 0; }
+  .task-row.sel { background: var(--primary-soft); }
+  .task-row .id { font-family: ui-monospace, Consolas, monospace; font-size: 11px; color: var(--muted); }
+  .task-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px;
+    border-radius: 999px; font-size: 11px; border: 1px solid transparent;
+    white-space: nowrap;
+  }
+  .b-queued { background: var(--panel); color: var(--muted); border-color: var(--line); }
+  .b-wait { background: var(--amber-soft); color: var(--amber); }
+  .b-run { background: var(--primary-soft); color: var(--primary); }
+  .b-verify { background: var(--violet-soft); color: var(--violet); }
+  .b-ok { background: var(--green-soft); color: var(--green); }
+  .b-fail { background: var(--red-soft); color: var(--red); }
+  .b-block { background: var(--amber-soft); color: var(--amber); }
+  .main { padding: 16px 20px 20px; }
+  .main-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+  .main-head h2 { font-size: 16px; margin: 0 0 2px; }
+  .main-head .sub { color: var(--muted); margin: 0; }
+  .detail-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 14px 0 18px; }
+  .cell { border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; background: var(--panel); }
+  .cell .k { color: var(--muted); font-size: 11px; }
+  .cell .v { margin-top: 2px; font-weight: 600; }
+  .section-title { font-size: 12px; color: var(--muted); margin: 16px 0 8px; font-weight: 600; }
+  .plan-card { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; }
+  .plan-card > div:first-child { grid-column: 1 / -1; }
+  .plan-card > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .plan-card .k { color: var(--muted); font-size: 11px; }
+  .plan-card .v { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .plan-card .ok { color: var(--green); }
+  .plan-card .wait { color: var(--amber); }
+  .approval-line { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12px; }
+  .timeline { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  .ev { display: grid; grid-template-columns: 84px 150px 1fr; gap: 10px; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+  .ev:last-child { border-bottom: 0; }
+  .ev .t { color: var(--muted); font-size: 11px; font-family: ui-monospace, Consolas, monospace; }
+  .ev .type { font-family: ui-monospace, Consolas, monospace; font-size: 11px; color: var(--primary); }
+  .ev .desc { color: var(--muted); }
+  .callout { display: flex; gap: 10px; padding: 10px 12px; border-radius: var(--radius); border: 1px solid; margin-top: 12px; }
+  .callout.warn { border-color: var(--amber); background: var(--amber-soft); color: var(--amber); }
+  .callout.err { border-color: var(--red); background: var(--red-soft); color: var(--red); }
+  .callout.info { border-color: var(--primary); background: var(--primary-soft); color: var(--primary); }
+  .muted { color: var(--muted); }
+  .empty { padding: 48px 20px; text-align: center; }
+  .empty h3 { margin: 0 0 6px; font-size: 14px; }
+  .empty p { margin: 0 auto 14px; max-width: 440px; color: var(--muted); }
+  .btn { display: inline-flex; align-items: center; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); font: inherit; }
+  .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .btn[disabled] { opacity: .45; }
+  .conflict-row { display: grid; grid-template-columns: 1fr 180px 120px; gap: 10px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  .conflict-row:last-child { border-bottom: 0; }
+  @media (max-width: 760px) {
+    .shell { padding: 16px; }
+    .workspace { grid-template-columns: 1fr; }
+    .side { border-right: 0; border-bottom: 1px solid var(--line); }
+    .detail-grid { grid-template-columns: 1fr 1fr; }
+    .ev { grid-template-columns: 70px 1fr; }
+    .ev .desc { grid-column: 1 / -1; }
+    .conflict-row { grid-template-columns: 1fr auto; }
+    .conflict-row > span:last-child { grid-column: 1 / -1; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <header class="doc-head">
+    <h1>UI-FEAT-019：任务执行状态设计稿 v1</h1>
+    <p>覆盖执行会话任务页的空态、运行中列表、任务详情、阻塞与同步冲突。只读展示；不提供未实现的派发／暂停按钮。</p>
+  </header>
+
+  <section class="scene">
+    <h2>SC-019-01 空态：项目还没有可读取的运行</h2>
+    <p class="note">不伪造任务；明确说明接入边界。</p>
+    <div class="frame">
+      <div class="topbar"><div class="brand"><span class="mark">栖</span>栖造 NestCraft<span class="muted" style="font-weight:400">· 示例项目</span></div><div class="top-actions">更新　设置</div></div>
+      <nav class="tabs"><span class="tab">工作台</span><span class="tab">需求</span><span class="tab">设计</span><span class="tab on">任务</span><span class="tab">编码</span></nav>
+      <div class="workspace">
+        <aside class="side"><h3>派发树</h3><div class="empty" style="padding:24px 8px"><p>暂无派发批次</p></div></aside>
+        <section class="main">
+          <div class="empty">
+            <h3>该项目还没有可读取的运行</h3>
+            <p>任务执行账本已就绪，但真实 CLI runner 尚未接入。派发、暂停、重试与验收在 runner 与审批界面完成前保持不可用。</p>
+            <button class="btn" disabled>派发任务</button>
+            <button class="btn">查看需求</button>
+          </div>
+        </section>
+      </div>
+    </div>
+  </section>
+
+  <section class="scene">
+    <h2>SC-019-02 运行中：批次、依赖等待与任务列表</h2>
+    <p class="note">左侧按批次分组；状态徽章区分排队、等待依赖、运行、验证、完成、失败。选中行右侧显示详情。</p>
+    <div class="frame">
+      <div class="topbar"><div class="brand"><span class="mark">栖</span>栖造 NestCraft<span class="muted" style="font-weight:400">· 示例项目</span></div><div class="top-actions">更新　设置</div></div>
+      <nav class="tabs"><span class="tab">工作台</span><span class="tab">需求</span><span class="tab">设计</span><span class="tab on">任务</span><span class="tab">编码</span></nav>
+      <div class="workspace">
+        <aside class="side">
+          <h3>派发树</h3>
+          <div class="batch">
+            <div class="batch-head"><span>B-2401 特性交付</span><span class="batch-meta">4 任务</span></div>
+            <div class="task-row sel"><span class="id">T-01</span><span class="name">实现依赖调度</span><span class="badge b-run">运行中</span></div>
+            <div class="task-row"><span class="id">T-02</span><span class="name">补齐验证证据</span><span class="badge b-wait">等待依赖</span></div>
+            <div class="task-row"><span class="id">T-03</span><span class="name">集成与回归</span><span class="badge b-verify">验证中</span></div>
+            <div class="task-row"><span class="id">T-04</span><span class="name">交付报告</span><span class="badge b-ok">已完成</span></div>
+          </div>
+          <div class="batch">
+            <div class="batch-head"><span>B-2402 缺陷修复</span><span class="batch-meta">2 任务</span></div>
+            <div class="task-row"><span class="id">T-05</span><span class="name">修复保存冲突</span><span class="badge b-block">阻塞</span></div>
+            <div class="task-row"><span class="id">T-06</span><span class="name">补充回归</span><span class="badge b-queued">排队</span></div>
+          </div>
+        </aside>
+        <section class="main">
+          <div class="main-head">
+            <div><h2>实现依赖调度</h2><p class="sub">T-01 · FEAT-019 · STORY-040</p></div>
+            <span class="badge b-run">运行中</span>
+          </div>
+          <div class="detail-grid">
+            <div class="cell"><div class="k">执行 CLI</div><div class="v">Claude</div></div>
+            <div class="cell"><div class="k">尝试</div><div class="v">第 1 次</div></div>
+            <div class="cell"><div class="k">当前步骤</div><div class="v">implement</div></div>
+            <div class="cell"><div class="k">Fence</div><div class="v">2</div></div>
+          </div>
+          <div class="section-title">执行计划</div>
+          <div class="plan-card">
+            <div><span class="k">计划 hash</span><span class="v">sha256:7c9a…</span></div>
+            <div><span class="k">CLI · 档位</span><span class="v">Claude · high</span></div>
+            <div><span class="k">授权</span><span class="v ok">有效</span></div>
+          </div>
+          <div class="approval-line"><span class="badge b-wait">待审批 1</span><span class="badge b-fail">高风险</span><span class="muted">高风险命令需人工确认后才能执行</span></div>
+          <div class="section-title">事件时间线</div>
+          <div class="timeline">
+            <div class="ev"><span class="t">10:24:03</span><span class="type">task.claimed</span><span class="desc">runner-1 领取，租约 30s</span></div>
+            <div class="ev"><span class="t">10:24:03</span><span class="type">task.running</span><span class="desc">进程已启动，步骤 implement</span></div>
+            <div class="ev"><span class="t">10:24:41</span><span class="type">task.checkpoint</span><span class="desc">检查点 ckpt-01，源版本 sha256:9f2a…</span></div>
+            <div class="ev"><span class="t">10:25:12</span><span class="type">task.verifying</span><span class="desc">进入验证，等待证据</span></div>
+          </div>
+          <div class="callout info">只读视图：暂停、取消与重试需 runner 控制通道与审批界面，当前不可用。</div>
+        </section>
+      </div>
+    </div>
+  </section>
+
+  <section class="scene">
+    <h2>SC-019-03 阻塞：旧 writer 未确认停止</h2>
+    <p class="note">阻塞原因、可恢复条件与需要人工确认的证据必须可见；不提供“强制恢复”。</p>
+    <div class="frame">
+      <div class="topbar"><div class="brand"><span class="mark">栖</span>栖造 NestCraft<span class="muted" style="font-weight:400">· 示例项目</span></div><div class="top-actions">更新　设置</div></div>
+      <nav class="tabs"><span class="tab">工作台</span><span class="tab">需求</span><span class="tab">设计</span><span class="tab on">任务</span><span class="tab">编码</span></nav>
+      <div class="workspace">
+        <aside class="side"><h3>派发树</h3>
+          <div class="batch"><div class="batch-head"><span>B-2402 缺陷修复</span><span class="batch-meta">2 任务</span></div>
+            <div class="task-row sel"><span class="id">T-05</span><span class="name">修复保存冲突</span><span class="badge b-block">阻塞</span></div>
+            <div class="task-row"><span class="id">T-06</span><span class="name">补充回归</span><span class="badge b-queued">排队</span></div>
+          </div>
+        </aside>
+        <section class="main">
+          <div class="main-head"><div><h2>修复保存冲突</h2><p class="sub">T-05 · FEAT-004 · STORY-018</p></div><span class="badge b-block">阻塞</span></div>
+          <div class="callout warn"><div><strong>OLD_WRITER_MAY_BE_ALIVE</strong><br />旧执行者租约未过期，无法证明进程已停止。恢复被拒绝，需先确认整棵进程树已退出并提供停止证据。</div></div>
+          <div class="detail-grid">
+            <div class="cell"><div class="k">检查点</div><div class="v">ckpt-07</div></div>
+            <div class="cell"><div class="k">检查点 Fence</div><div class="v">3</div></div>
+            <div class="cell"><div class="k">当前 Fence</div><div class="v">3</div></div>
+            <div class="cell"><div class="k">源版本</div><div class="v">已记录</div></div>
+          </div>
+          <div class="section-title">阻塞项</div>
+          <div class="timeline">
+            <div class="ev"><span class="t">—</span><span class="type">OLD_WRITER</span><span class="desc">attempt att-09 仍为 claimed，租约剩余 18s</span></div>
+            <div class="ev"><span class="t">—</span><span class="type">RESUME</span><span class="desc">需人工确认停止后才能恢复，不提供强制忽略</span></div>
+          </div>
+          <div style="margin-top:12px"><button class="btn" disabled>恢复执行</button> <button class="btn" disabled>取消任务</button></div>
+        </section>
+      </div>
+    </div>
+  </section>
+
+  <section class="scene">
+    <h2>SC-019-04 同步冲突：第三方修改不被覆盖</h2>
+    <p class="note">同步批次与冲突目标列表；只展示事实与下一步，不自动合并。</p>
+    <div class="frame">
+      <div class="topbar"><div class="brand"><span class="mark">栖</span>栖造 NestCraft<span class="muted" style="font-weight:400">· 示例项目</span></div><div class="top-actions">更新　设置</div></div>
+      <nav class="tabs"><span class="tab">工作台</span><span class="tab on">需求</span><span class="tab">设计</span><span class="tab">任务</span><span class="tab">编码</span></nav>
+      <div style="padding:16px 20px">
+        <div class="main-head"><div><h2>同步批次</h2><p class="sub">B-2402 · 文档 → 代码 · 3 个目标</p></div><span class="badge b-fail">冲突</span></div>
+        <div class="section-title">目标对账</div>
+        <div class="timeline">
+          <div class="conflict-row" style="border-bottom:1px solid var(--line)"><span>STORY-018 设计一致调整</span><span class="badge b-ok">已应用</span><span class="muted">sha256:4c1e…</span></div>
+          <div class="conflict-row" style="border-bottom:1px solid var(--line)"><span>LLD-CR032 同步契约</span><span class="badge b-fail">冲突</span><span class="muted">第三方修改</span></div>
+          <div class="conflict-row"><span>TEST-CR032 验证设计</span><span class="badge b-wait">待应用</span><span class="muted">base 未变</span></div>
+        </div>
+        <div class="callout err"><div><strong>冲突目标未被覆盖</strong><br />磁盘内容既不是基线也不是提案版本；系统保留人工稿，等待人工核对或重新生成提案。</div></div>
+        <div style="margin-top:12px"><button class="btn">重新对账</button> <button class="btn" disabled>完成并发布基线</button></div>
+      </div>
+    </div>
+  </section>
+</div>
+<div hidden id="theme-toggle"></div>
+<script>
+  // 主题切换仅用于同一稿的深色检查；默认浅色。
+  const p = new URLSearchParams(location.search);
+  if (p.get("theme") === "dark") document.documentElement.setAttribute("data-theme", "dark");
+</script>
+</body>
+</html>

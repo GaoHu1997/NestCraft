@@ -15,7 +15,6 @@
     { root: ".kb-reader", center: ".kb-article", fixed: 0, min: 320, panes: [[".kb-nav", "知识文件", "left", 260, 180, 480], [".kb-toc", "知识目录", "right", 220, 160, 360]] },
     { root: ".srv-shell", center: ".srv-term", fixed: 0, min: 320, panes: [[".srv-files", "服务器文件", "left", 248, 180, 480], [".srv-monitor", "监控", "right", 300, 220, 440]] },
     { root: ".office-layout", center: ".office-main", fixed: 0, min: 320, panes: [[".office-files", "办公文件", "left", 260, 180, 480]] },
-    { root: "div.settings-dialog", center: ".set-body", fixed: 0, min: 320, panes: [[".set-nav", "设置分类", "left", 224, 176, 320]] },
     { root: ".office-presentation", center: ".office-slide-area", fixed: 0, min: 240, panes: [[".office-thumbnails", "幻灯片缩略图", "left", 124, 96, 220]] },
     { root: ".ai-pop-model .model-grid", center: ".model-list", fixed: 0, min: 160, panes: [[".model-providers", "模型供应商", "left", 112, 96, 180]] },
     { root: ".ai-panel", center: null, fixed: 0, min: 0, overlay: true, panes: [[".ai-history", "会话历史", "left", 296, 240, 420]] }
