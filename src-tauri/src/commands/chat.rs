@@ -418,32 +418,41 @@ pub fn chat_session_delete(id: String) -> Result<(), String> {
 }
 
 /// CR-065：置顶/取消置顶。只改 pinnedAt，不动 updatedAt（置顶不是内容更新）。
+///
+/// 注意：`db::conn()` 是全局不可重入 `Mutex`，持锁期间不得调用任何自己会
+/// `db::conn()` 的命令（如 `chat_session_get`），否则同线程二次加锁会永久死锁。
+/// 因此写操作先用块作用域释放 guard，再单独读取回执。
 #[tauri::command]
 pub fn chat_session_pin(id: String, pinned: bool) -> Result<SessionMeta, String> {
-    let guard = db::conn()?;
-    let conn = guard.as_ref().ok_or("db not initialized")?;
-    let value = if pinned { now_ms() } else { 0 };
-    let changed = conn
-        .execute("UPDATE session SET pinnedAt=?1 WHERE id=?2", rusqlite::params![value, &id])
-        .map_err(|e| e.to_string())?;
-    if changed == 0 {
-        return Err("会话不存在".into());
+    {
+        let guard = db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        let value = if pinned { now_ms() } else { 0 };
+        let changed = conn
+            .execute("UPDATE session SET pinnedAt=?1 WHERE id=?2", rusqlite::params![value, &id])
+            .map_err(|e| e.to_string())?;
+        if changed == 0 {
+            return Err("会话不存在".into());
+        }
     }
     chat_session_get(id)
 }
 
 /// CR-065：分叉会话——复制元信息与消息上下文，不继承原生线程绑定。
+/// 同上：先释放 guard 再读回执，避免 `db::conn()` 重入死锁。
 #[tauri::command]
 pub fn chat_session_fork(id: String) -> Result<SessionMeta, String> {
-    let guard = db::conn()?;
-    let conn = guard.as_ref().ok_or("db not initialized")?;
-    {
-        let running = RUNNING.lock().map_err(|_| "会话运行状态不可用".to_string())?;
-        if running.contains_key(&id) {
-            return Err("会话正在运行，结束或停止后再分叉".into());
+    let new_session_id = {
+        let guard = db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        {
+            let running = RUNNING.lock().map_err(|_| "会话运行状态不可用".to_string())?;
+            if running.contains_key(&id) {
+                return Err("会话正在运行，结束或停止后再分叉".into());
+            }
         }
-    }
-    let new_session_id = fork_session(conn, &id)?;
+        fork_session(conn, &id)?
+    };
     chat_session_get(new_session_id)
 }
 

@@ -15,6 +15,7 @@ pub mod kb_index;
 pub mod knowledge;
 pub mod model_probe;
 pub mod projects;
+pub(crate) mod model_route;
 pub mod image_gen;
 pub mod providers;
 // CR-059：内置思考等级知识库（由 scripts/gen-think-kb.mjs 生成）

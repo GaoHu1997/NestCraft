@@ -2,6 +2,7 @@ import { Icon, CliLogo } from "@/components/icons";
 import { ResizeHandle, usePaneWidth } from "@/components/pane-resize";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { EffortMap, ModelCandidate, SdkState } from "@/api";
+import { protocolAllowed } from "@/modules/settings/modelCapacity";
 import { ChatConfigPopup, useChatOverlay } from "./overlay";
 
 /** null 是“不下发参数”的有效档位；思考能力只看非 off 的有效 wire 映射。 */
@@ -65,10 +66,20 @@ export function ModelPicker(props: {
   }, [registerTrigger]);
   const [query, setQuery] = useState("");
   const [provider, setProvider] = useState(props.providerId);
-  const models = props.models.filter(m => {
-    const extra = m as ModelCandidate & { image?: boolean; imageGen?: boolean; text?: boolean; modalities?: string[] };
-    return !extra.image && !extra.imageGen && extra.text !== false && !extra.modalities?.includes("生图");
-  });
+  // CR-068 J06：只展示当前 CLI 可执行协议的候选；同一 provider/model 的双协议候选只保留一条，
+  // 选择键仍是 providerId/modelId，由后端按有效 combo 解析端点与密钥。
+  const models = useMemo(() => {
+    const seen = new Set<string>();
+    return props.models.filter(m => {
+      const extra = m as ModelCandidate & { image?: boolean; imageGen?: boolean; text?: boolean; modalities?: string[] };
+      if (!protocolAllowed(m.protocol, props.cliId)) return false;
+      if (extra.image || extra.imageGen || extra.text === false || extra.modalities?.includes("生图")) return false;
+      const identity = `${m.providerId}\u0000${m.modelId}`;
+      if (seen.has(identity)) return false;
+      seen.add(identity);
+      return true;
+    });
+  }, [props.models, props.cliId]);
   const curModel = models.find(m => m.providerId === props.providerId && m.modelId === props.modelId) ?? null;
   const groups = useMemo(() => {
     const map = new Map<string, { id: string; name: string; models: ModelCandidate[] }>();
@@ -77,7 +88,7 @@ export function ModelPicker(props: {
       map.get(m.providerId)!.models.push(m);
     }
     return [...map.values()];
-  }, [props.models]);
+  }, [models]);
   useEffect(() => {
     if (overlay.activeOverlay === "model") { setProvider(props.providerId ?? groups[0]?.id ?? null); setQuery(""); }
   }, [overlay.activeOverlay]);
@@ -114,7 +125,7 @@ export function ModelPicker(props: {
       <div className="chat-pop-head">模型 <span>{curModel?.providerName ?? "未配置"} · {curModel?.displayName ?? props.modelId ?? "未配置"}</span><button className="chat-iconbtn chat-pop-close" aria-label="关闭模型选择" onClick={() => overlay.close(true)}><Icon name="x" size={14} /></button></div>
       <label className="chat-model-search"><SearchIcon /><input value={query} onChange={e => setQuery(e.target.value)} autoFocus placeholder="搜索模型…" aria-label="搜索模型" /></label>
       <div ref={modelGridRef} className="chat-model-grid pane-container"><div className={`chat-model-provider-pane ${providerPane.paneProps.className}`} style={providerPane.style} data-pane-side="left" data-pane-scope={providerPane.scope} data-pane-name={providerPane.pane}><div id={`${overlay.scopeId}-model-providers`} className="chat-model-providers">{groups.map(g => <button className={`chat-provider-row ${g.id === currentProvider?.id ? "on" : ""}`} key={g.id} disabled={props.locked} onClick={() => setProvider(g.id)}><span className="ellipsis">{g.name}</span><span>{g.models.length}</span></button>)}</div><ResizeHandle pane={providerPane} label="模型供应商列" controls={`${overlay.scopeId}-model-providers`} /></div>
-        <div className="chat-model-list">{rows.map(m => <button className={`chat-model-row ${m.providerId === props.providerId && m.modelId === props.modelId ? "on" : ""}`} key={m.modelRowId} disabled={props.locked} title={m.modelId} onClick={() => { void props.onChange({ providerId: m.providerId, modelId: m.modelId, effort: defaultEffort(m) }); }}><span className="mr-name ellipsis">{m.displayName || m.modelId}</span><span className="mr-caps"><span className="m-cap ctx" title={`上下文 ${fmtCtx(m.contextWindow)}`} aria-label={`上下文 ${fmtCtx(m.contextWindow)}`}><GaugeIcon /><b>{fmtCtx(m.contextWindow)}</b></span><span className={`m-cap vision ${m.vision ? "on" : "off"}`} title={`视觉：${m.vision ? "支持" : "不支持"}`} aria-label={`视觉：${m.vision ? "支持" : "不支持"}`}><EyeIcon /></span><span className={`m-cap think ${supportsThinking(m.efforts) ? "on" : "off"}`} title={`思考：${supportsThinking(m.efforts) ? "支持" : "未声明"}`} aria-label={`思考：${supportsThinking(m.efforts) ? "支持" : "未声明"}`}><BulbIcon /></span></span></button>)}
+        <div className="chat-model-list">{rows.map(m => <button className={`chat-model-row ${m.providerId === props.providerId && m.modelId === props.modelId ? "on" : ""}`} key={`${m.modelRowId}:${m.protocol}`} disabled={props.locked} title={m.modelId} onClick={() => { void props.onChange({ providerId: m.providerId, modelId: m.modelId, effort: defaultEffort(m) }); }}><span className="mr-name ellipsis">{m.displayName || m.modelId}</span><span className="mr-caps"><span className="m-cap ctx" title={`上下文 ${fmtCtx(m.contextWindow)}`} aria-label={`上下文 ${fmtCtx(m.contextWindow)}`}><GaugeIcon /><b>{fmtCtx(m.contextWindow)}</b></span><span className={`m-cap vision ${m.vision ? "on" : "off"}`} title={`视觉：${m.vision ? "支持" : "不支持"}`} aria-label={`视觉：${m.vision ? "支持" : "不支持"}`}><EyeIcon /></span><span className={`m-cap think ${supportsThinking(m.efforts) ? "on" : "off"}`} title={`思考：${supportsThinking(m.efforts) ? "支持" : "未声明"}`} aria-label={`思考：${supportsThinking(m.efforts) ? "支持" : "未声明"}`}><BulbIcon /></span></span></button>)}
           {!rows.length && <div className="chat-menu-hint">{groups.length ? "没有匹配，换个关键词。" : "无可用模型；请在设置中配置供应商、密钥与端点。"}</div>}
         </div>
       </div>

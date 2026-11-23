@@ -1,10 +1,11 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "@/api";
-import type { EffortMap, ImageGenConfig, KeyProbeOutcome, Provider, ProviderDraft } from "@/api";
+import type { EffortMap, KeyProbeOutcome, Provider, ProviderDraft } from "@/api";
 import { Field, useToast } from "@/components/ui";
 import { EFFORT_LEVELS, errMsg } from "./shared";
 import { SettingsConfirm, SettingsDialog, SettingsIcon, SettingsSwitch } from "./SettingsDialog";
 import { SettingsImageGen } from "./SettingsImageGen";
+import { capacityError, capacityLabel, compileEffortMap, formatCapacity, parseCapacity } from "./modelCapacity";
 
 /** CR-059：密钥协议 → 端点 wire（'' 沿用供应商默认）。 */
 const KEY_WIRE: Record<string, "openai" | "anthropic"> = { Chat: "openai", Responses: "openai", Anthropic: "anthropic" };
@@ -24,6 +25,8 @@ interface EndpointDraft { id?: string; protocol: string; baseUrl: string; enable
 interface ModelDraft {
   id?: string; modelId: string; displayName: string; text: boolean; vision: boolean | null; imageGen: boolean;
   efforts: EffortMap; defaultEffort: string | null; contextWindow: string; maxTokens: string; thinking?: boolean | null;
+  /** CR-068：全量七档映射草稿（仅编辑态；未选档也可编辑）。 */
+  mappings: Record<string, string>;
   sortOrder: number;
 }
 interface EditorDraft {
@@ -36,7 +39,7 @@ const NEW = "__new_provider__";
 const SUBTABS: [SubTab, string][] = [["provider", "供应商配置"], ["models", "模型配置"]];
 const emptyModel = (sortOrder = 0): ModelDraft => ({
   modelId: "", displayName: "", text: true, vision: null, imageGen: false,
-  efforts: {}, defaultEffort: null, contextWindow: "", maxTokens: "", thinking: null, sortOrder,
+  efforts: {}, mappings: {}, defaultEffort: null, contextWindow: "", maxTokens: "", thinking: null, sortOrder,
 });
 const emptyDraft = (): EditorDraft => ({
   name: "", protocol: "openai", disabled: false, headers: [],
@@ -60,8 +63,9 @@ function toDraft(p: Provider): EditorDraft {
     models: p.models.map((m, index) => ({
       ...m,
       efforts: { ...m.efforts },
-      contextWindow: m.contextWindow == null ? "" : String(m.contextWindow),
-      maxTokens: m.maxTokens == null ? "" : String(m.maxTokens),
+      mappings: Object.fromEntries(Object.entries(m.efforts).map(([level, wire]) => [level, wire ?? level])),
+      contextWindow: formatCapacity(m.contextWindow),
+      maxTokens: formatCapacity(m.maxTokens),
       sortOrder: m.sortOrder ?? index,
     })),
   };
@@ -108,18 +112,24 @@ function buildDraft(d: EditorDraft): ProviderDraft | string {
     const modelId = m.modelId.trim();
     if (!modelId || ids.has(modelId)) throw new Error("模型 ID 不能为空或重复");
     ids.add(modelId);
-    for (const value of [m.contextWindow, m.maxTokens]) {
-      if (value.trim() && (!Number.isSafeInteger(Number(value)) || Number(value) <= 0)) throw new Error("上下文窗口与最大输出需为正整数，未知请留空");
+    const thinkingOn = m.thinking !== false && (m.thinking === true || Object.keys(m.efforts).length > 0);
+    const efforts: EffortMap = thinkingOn ? compileEffortMap(EFFORT_LEVELS, m.mappings) : {};
+    const defaultEffort = thinkingOn && m.defaultEffort ? m.defaultEffort : null;
+    if (defaultEffort && !efforts[defaultEffort]) throw new Error("默认思考档位必须已经配置下发拼写");
+    let contextWindow: number | null;
+    let maxTokens: number | null;
+    try {
+      contextWindow = parseCapacity(m.contextWindow);
+      maxTokens = parseCapacity(m.maxTokens);
+    } catch (e) {
+      throw new Error(`${m.displayName || modelId}：${errMsg(e)}`);
     }
-    const efforts: EffortMap = {};
-    for (const level of EFFORT_LEVELS) if (Object.prototype.hasOwnProperty.call(m.efforts, level)) efforts[level] = m.efforts[level]?.trim() || null;
-    if (m.defaultEffort && !efforts[m.defaultEffort]) throw new Error("默认思考档位必须已经配置下发拼写");
     models.push({
       id: m.id, modelId, displayName: m.displayName.trim() || modelId,
       text: m.text, vision: m.vision ?? false, imageGen: m.imageGen,
-      efforts, defaultEffort: m.defaultEffort,
-      contextWindow: m.contextWindow.trim() ? Number(m.contextWindow) : null,
-      maxTokens: m.maxTokens.trim() ? Number(m.maxTokens) : null,
+      efforts, defaultEffort,
+      contextWindow,
+      maxTokens,
       sortOrder: index,
     });
   });
@@ -130,6 +140,13 @@ function buildDraft(d: EditorDraft): ProviderDraft | string {
   };
 }
 const capability = (value: boolean | null | undefined) => value == null ? "未知" : value ? "支持" : "不支持";
+
+/** CR-068：自动获取档位时保留用户已改写的映射，只补缺失档位。 */
+const mergeResolvedMappings = (current: Record<string, string>, resolved: EffortMap): Record<string, string> => {
+  const next = { ...current };
+  for (const [level, wire] of Object.entries(resolved)) if (next[level] === undefined) next[level] = wire ?? level;
+  return next;
+};
 
 export function SettingsModels() {
   const toast = useToast();
@@ -145,10 +162,11 @@ export function SettingsModels() {
   const [busy, setBusy] = useState(false);
   const [resolving, setResolving] = useState(false);
   const [imageOpen, setImageOpen] = useState(false);
+const [saveError, setSaveError] = useState("");
   const lock = useRef(false);
   const [deleteProvider, setDeleteProvider] = useState<Provider | null>(null);
   const [deleteModel, setDeleteModel] = useState<string | null>(null);
-  const [picker, setPicker] = useState<{ id: string; loading: boolean; error: boolean; models: DiscoveredModel[]; selected: string[] } | null>(null);
+  const [picker, setPicker] = useState<{ id: string; loading: boolean; error: boolean; errorMsg?: string; models: DiscoveredModel[]; selected: string[] } | null>(null);
   const discoveryRequest = useRef(0);
   const recoveryIds = useRef(new Set<string>());
   const dragRef = useRef<{ kind: "provider" | "model"; index: number } | null>(null);
@@ -175,20 +193,28 @@ export function SettingsModels() {
     if (openId === id) { setOpenId(null); return; }
     try { if (!drafts[id]) setDrafts(prev => ({ ...prev, [id]: p ? toDraft(p) : emptyDraft() })); }
     catch { return toast("供应商配置读取失败，请检查已有请求头数据", "err"); }
-    setOpenId(id); setSubTab("provider"); setOpenModel(null); setKeyEdit(null); setKeyValue("");
+    setOpenId(id); setSubTab("provider"); setOpenModel(null); setKeyEdit(null); setKeyValue(""); setSaveError("");
   };
   const notify = () => window.dispatchEvent(new CustomEvent("app:settings-changed", { detail: { keys: ["providers"] } }));
   const persist = async (draft: EditorDraft, oldId: string): Promise<{ id: string; draft: EditorDraft } | null> => {
-    if (recoveryIds.current.has(oldId)) { toast("上次保存后刷新失败，请先重新读取供应商配置", "warn"); return null; }
+    const fail = (message: string) => { setSaveError(message); toast(message, "warn"); return null; };
+    if (recoveryIds.current.has(oldId)) return fail("上次保存后刷新失败，请先重新读取供应商配置");
     let built: ProviderDraft | string;
     try { built = buildDraft(draft); }
-    catch (e) { toast(errMsg(e), "warn"); return null; }
-    if (typeof built === "string") { toast(built, "warn"); return null; }
-    const id = await api.providerSave(built);
+    catch (e) { return fail(errMsg(e)); }
+    if (typeof built === "string") return fail(built);
+    let id: string;
+    try {
+      id = await api.providerSave(built);
+    } catch (e) {
+      const message = `保存失败，草稿已保留：${errMsg(e)}`;
+      setSaveError(message);
+      throw e;
+    }
     setKeyEdit(null); setKeyValue("");
     const safeDraft = { ...draft, id, keys: draft.keys.map(k => ({ ...k, secret: "" })) };
     setDrafts(prev => { const next = { ...prev }; delete next[oldId]; next[id] = safeDraft; return next; });
-    setOpenId(id); notify();
+    setOpenId(id); notify(); setSaveError("");
     try {
       const providers = await api.providerList();
       setList(providers);
@@ -198,6 +224,7 @@ export function SettingsModels() {
       return { id, draft: toDraft(saved) };
     } catch {
       recoveryIds.current.add(id); setError(true);
+      setSaveError("供应商已保存，但刷新失败；编辑器与草稿保持展开，请先重新读取配置，避免重复新增密钥。");
       toast("供应商已保存，但刷新失败；请先重新读取配置，避免重复新增密钥", "warn");
       return null;
     }
@@ -229,10 +256,16 @@ export function SettingsModels() {
     try {
       const saved = await persist(draft, openId);
       if (saved) {
+        setSaveError("");
+        setOpenId(null); setOpenModel(null); setKeyEdit(null); setKeyValue("");
         toast("供应商与模型修改已保存");
         void probeAfterSave(saved.id);
       }
-    } catch (e) { toast(`保存失败，草稿已保留：${errMsg(e)}`, "err"); }
+    } catch (e) {
+      const message = `保存失败，草稿已保留：${errMsg(e)}`;
+      setSaveError(message);
+      toast(message, "err");
+    }
     finally { lock.current = false; setBusy(false); }
   };
   const discover = async () => {
@@ -240,18 +273,28 @@ export function SettingsModels() {
     if (keyEdit && ["value", "alias"].includes(keyEdit.mode)) return toast("请先保存密钥行草稿或取消，再获取模型", "warn");
     const token = ++discoveryRequest.current;
     const originalId = openId;
+    const keepSelected = picker?.selected ?? [];
     lock.current = true; setBusy(true);
-    setPicker({ id: originalId, loading: true, error: false, models: [], selected: [] });
+    setPicker({ id: originalId, loading: true, error: false, models: [], selected: keepSelected });
     try {
       const saved = await persist(d, originalId);
-      if (!saved) { if (token === discoveryRequest.current) setPicker(null); return; }
       if (token !== discoveryRequest.current) return;
+      if (!saved) {
+        setPicker(prev => prev && ({ ...prev, loading: false, error: true, errorMsg: "供应商保存或配置读取失败，已保存模型与已选项均保留，请重试。" }));
+        return;
+      }
       setPicker(prev => prev && ({ ...prev, id: saved.id }));
       const models = await api.providerDiscoverModels(saved.id);
       if (token !== discoveryRequest.current) return;
       const existing = new Set(saved.draft.models.map(m => m.modelId));
-      setPicker({ id: saved.id, loading: false, error: false, models: models.filter(m => !existing.has(m.modelId)), selected: [] });
-    } catch { if (token === discoveryRequest.current) setPicker(prev => prev && ({ ...prev, loading: false, error: true })); }
+      const available = models.filter(m => !existing.has(m.modelId));
+      setPicker({
+        id: saved.id, loading: false, error: false, models: available,
+        selected: keepSelected.filter(id => available.some(m => m.modelId === id)),
+      });
+    } catch (e) {
+      if (token === discoveryRequest.current) setPicker(prev => prev && ({ ...prev, loading: false, error: true, errorMsg: errMsg(e) }));
+    }
     finally { lock.current = false; setBusy(false); }
   };
   const saveSelected = async () => {
@@ -262,7 +305,7 @@ export function SettingsModels() {
     const added = selected.map((m, i) => ({
       ...emptyModel(base + i),
       modelId: m.modelId, displayName: m.displayName,
-      contextWindow: m.contextWindow == null ? "" : String(m.contextWindow),
+      contextWindow: formatCapacity(m.contextWindow),
       thinking: m.thinking,
     }));
     lock.current = true; setBusy(true);
@@ -294,10 +337,11 @@ export function SettingsModels() {
           return {
             ...m,
             efforts: { ...hit.efforts },
+            mappings: mergeResolvedMappings(m.mappings, hit.efforts),
             defaultEffort: hit.defaultEffort,
             thinking: true,
-            contextWindow: m.contextWindow || (hit.contextWindow == null ? "" : String(hit.contextWindow)),
-            maxTokens: m.maxTokens || (hit.maxTokens == null ? "" : String(hit.maxTokens)),
+            contextWindow: m.contextWindow || formatCapacity(hit.contextWindow),
+            maxTokens: m.maxTokens || formatCapacity(hit.maxTokens),
           };
         });
         return { ...prev, [saved.id]: { ...draft, models } };
@@ -322,9 +366,9 @@ export function SettingsModels() {
         return;
       }
       updateModel(model.id || model.modelId, {
-        efforts: { ...hit.efforts }, defaultEffort: hit.defaultEffort, thinking: true,
-        contextWindow: model.contextWindow || (hit.contextWindow == null ? "" : String(hit.contextWindow)),
-        maxTokens: model.maxTokens || (hit.maxTokens == null ? "" : String(hit.maxTokens)),
+        efforts: { ...hit.efforts }, mappings: mergeResolvedMappings(model.mappings, hit.efforts), defaultEffort: hit.defaultEffort, thinking: true,
+        contextWindow: model.contextWindow || formatCapacity(hit.contextWindow),
+        maxTokens: model.maxTokens || formatCapacity(hit.maxTokens),
       });
       toast(`已获取该模型 ${Object.keys(hit.efforts).length} 个档位`);
     } catch (e) { toast(errMsg(e), "err"); }
@@ -356,7 +400,7 @@ export function SettingsModels() {
     if (!openId) return;
     const saved = list.find(p => p.id === openId);
     setDrafts(prev => ({ ...prev, [openId]: saved ? toDraft(saved) : emptyDraft() }));
-    setKeyEdit(null); setKeyValue(""); setOpenModel(null);
+    setKeyEdit(null); setKeyValue(""); setOpenModel(null); setSaveError("");
     toast("已放弃未保存修改");
   };
   /* CR-059 G3：模型拖动排序（指针 + 键盘等价）。 */
@@ -372,6 +416,7 @@ export function SettingsModels() {
     const wireHint = d.protocol === "anthropic" ? "Anthropic" : "OpenAI";
     return <div className="set-provider-inline">
       <div className="set-tabs" role="tablist" aria-label="供应商配置页签">{SUBTABS.map(([id, label]) => <button key={id} role="tab" aria-selected={subTab === id} disabled={busy} onClick={() => setSubTab(id)}>{label}</button>)}</div>
+      {saveError && <div className="set-save-error" role="alert">{saveError}</div>}
       <fieldset className="set-fieldset set-provider-body" disabled={busy}>
         {subTab === "provider" && <>
           <section className="set-pm-section"><div className="row"><b>API 密钥</b><span className="spacer" /><button className="btn sm" disabled title="没有独立密钥探测契约；请在模型配置获取模型">自动探测</button></div>
@@ -486,6 +531,9 @@ export function SettingsModels() {
           <div className="set-model-list">{d.models.map((m, index) => {
             const key = m.id || m.modelId;
             const opened = openModel === key;
+            const thinkingOn = m.thinking === false ? false : m.thinking === true || Object.keys(m.efforts).length > 0;
+            const ctxError = capacityError(m.contextWindow);
+            const maxError = capacityError(m.maxTokens);
             return <div className="set-model-item" key={key} draggable
               onDragStart={() => { dragRef.current = { kind: "model", index }; }}
               onDragOver={e => e.preventDefault()}
@@ -500,9 +548,9 @@ export function SettingsModels() {
                     {m.vision && <span className="tag">图片</span>}
                     {m.vision == null && <span className="tag">视觉未知</span>}
                     {m.imageGen && <span className="tag">生图</span>}
-                    {!m.imageGen && !Object.keys(m.efforts).length && <span className="tag warn">档位未配</span>}
+                    {!m.imageGen && m.thinking !== false && !Object.keys(m.efforts).length && <span className="tag warn">档位未配</span>}
                   </span>
-                  <span className="set-model-context">{m.contextWindow ? `${Math.round(Number(m.contextWindow) / 1000)}K` : "—"}</span>
+                  <span className="set-model-context">{capacityLabel(m.contextWindow)}</span>
                   <SettingsIcon name={opened ? "up" : "down"} />
                 </button>
                 <button className="set-icon-btn set-model-delete" aria-label={`删除模型 ${m.modelId || index + 1}`} onClick={() => setDeleteModel(key)}><SettingsIcon name="trash" /></button>
@@ -514,13 +562,37 @@ export function SettingsModels() {
                   else if (field === "imageGen") updateModel(key, { imageGen: !m.imageGen, text: !m.imageGen ? false : m.text, vision: !m.imageGen ? false : m.vision });
                   else updateModel(key, { vision: m.vision !== true, imageGen: m.vision !== true ? false : m.imageGen });
                 }}>{label}</button>)}</div></Field>
-                <div className="row set-thinking-row"><b className="small">思考</b><SettingsSwitch checked={m.thinking === true || Object.keys(m.efforts).length > 0} label="思考开关" onChange={() => updateModel(key, { thinking: !(m.thinking === true || Object.keys(m.efforts).length > 0), efforts: Object.keys(m.efforts).length ? {} : m.efforts })} /><span className="spacer" /><button className="set-link" onClick={() => resolveOne(m)}>一键获取</button></div>
-                <Field label="支持档位" hint="只配置已核实的档位与下发拼写；未命中知识库时不会按名称猜测。"><div className="set-chips">{EFFORT_LEVELS.map(level => <button key={level} className={`set-chip ${Object.prototype.hasOwnProperty.call(m.efforts, level) ? "on" : ""}`} aria-pressed={Object.prototype.hasOwnProperty.call(m.efforts, level)} onClick={() => updateModel(key, { efforts: { ...m.efforts, [level]: Object.prototype.hasOwnProperty.call(m.efforts, level) ? undefined as never : "" }, defaultEffort: m.defaultEffort === level ? null : m.defaultEffort })}>{level}</button>)}</div><div className="set-effort-grid">{EFFORT_LEVELS.filter(level => Object.prototype.hasOwnProperty.call(m.efforts, level)).map(level => <Fragment key={level}><span className="mono small">{level}</span><input className="input mono" aria-label={`${level} 下发拼写`} placeholder="填写已核实的 wire 参数值" value={m.efforts[level] || ""} onChange={e => updateModel(key, { efforts: { ...m.efforts, [level]: e.target.value } })} /></Fragment>)}</div></Field>
-                <div className="set-form-grid three">
-                  <Field label="默认思考强度"><select className="select" aria-label="默认思考强度" value={m.defaultEffort || ""} onChange={e => updateModel(key, { defaultEffort: e.target.value || null })}><option value="">跟随记忆</option>{EFFORT_LEVELS.filter(level => m.efforts[level]?.trim()).map(level => <option key={level}>{level}</option>)}</select></Field>
-                  <Field label="上下文窗口"><input className="input" type="number" min={1} value={m.contextWindow} placeholder="留空 = 未知" aria-label="上下文窗口" onChange={e => updateModel(key, { contextWindow: e.target.value })} /></Field>
-                  <Field label="最大输出"><input className="input" type="number" min={1} value={m.maxTokens} placeholder="留空 = 未知" aria-label="最大输出" onChange={e => updateModel(key, { maxTokens: e.target.value })} /></Field>
+                <div className="row set-thinking-row"><b className="small">思考</b><SettingsSwitch checked={thinkingOn} label="思考开关" onChange={() => updateModel(key, { thinking: !thinkingOn })} /><span className="spacer" /><button className="set-link" onClick={() => resolveOne(m)}>一键获取</button></div>
+                {thinkingOn && <>
+                  <Field label="支持档位" hint="只配置已核实的档位与下发拼写；未命中知识库时不会按名称猜测。">
+                    <div className="set-chips">{EFFORT_LEVELS.map(level => {
+                      const enabled = Object.prototype.hasOwnProperty.call(m.efforts, level);
+                      return <button key={level} type="button" className={`set-chip ${enabled ? "on" : ""}`} aria-pressed={enabled} onClick={() => {
+                        if (enabled) {
+                          const next = { ...m.efforts };
+                          delete next[level];
+                          updateModel(key, { efforts: next, defaultEffort: m.defaultEffort === level ? null : m.defaultEffort });
+                        } else {
+                          updateModel(key, { efforts: { ...m.efforts, [level]: m.mappings[level] ?? level } });
+                        }
+                      }}>{level}</button>;
+                    })}</div>
+                  </Field>
+                  <details className="set-effort-mappings">
+                    <summary>档位映射 <span className="set-caption">全部 7 档 · 同名预填，未选档也可编辑</span></summary>
+                    <div className="set-effort-map-list">{EFFORT_LEVELS.map(level => <label className="set-effort-map-row" key={level}>
+                      <span className="mono small">{level}</span>
+                      <input className="input mono" aria-label={`${level} 映射`} value={m.mappings[level] ?? level} onChange={e => updateModel(key, { mappings: { ...m.mappings, [level]: e.target.value } })} />
+                      <span className="set-caption">{Object.prototype.hasOwnProperty.call(m.efforts, level) ? "启用" : "未启用"}</span>
+                    </label>)}</div>
+                  </details>
+                </>}
+                <div className={`set-form-grid ${thinkingOn ? "three" : ""}`}>
+                  {thinkingOn && <Field label="默认思考强度"><select className="select" aria-label="默认思考强度" value={m.defaultEffort || ""} onChange={e => updateModel(key, { defaultEffort: e.target.value || null })}><option value="">跟随记忆</option>{EFFORT_LEVELS.filter(level => Object.prototype.hasOwnProperty.call(m.efforts, level)).map(level => <option key={level}>{level}</option>)}</select></Field>}
+                  <Field label="上下文窗口" hint="留空 = 未知；支持 128K / 1M"><input className="input" inputMode="decimal" value={m.contextWindow} placeholder="留空 = 未知" aria-label="上下文窗口" aria-invalid={!!ctxError} onChange={e => updateModel(key, { contextWindow: e.target.value })} /></Field>
+                  <Field label="最大输出" hint="留空 = 未知；支持 128K / 1M"><input className="input" inputMode="decimal" value={m.maxTokens} placeholder="留空 = 未知" aria-label="最大输出" aria-invalid={!!maxError} onChange={e => updateModel(key, { maxTokens: e.target.value })} /></Field>
                 </div>
+                {(ctxError || maxError) && <p className="set-field-error" role="alert">{ctxError ? `上下文窗口：${ctxError}` : `最大输出：${maxError}`}</p>}
                 <div className="row set-form-actions"><span className="set-caption">修改随「保存供应商」一并保存</span><span className="spacer" /><button className="btn sm" onClick={() => {
                   const saved = list.find(p => p.id === d.id)?.models.find(x => x.modelId === m.modelId);
                   if (saved) {
@@ -543,7 +615,7 @@ export function SettingsModels() {
       <span className="set-caption">{list.length} 个供应商 · 拖动手柄排序 · 点击卡片展开配置</span>
       <span className="spacer" />
       <button className="btn sm primary" disabled={busy || loading || error} onClick={() => open(null)}><SettingsIcon name="plus" />新建供应商</button>
-      <button className="btn sm" onClick={() => setImageOpen(true)} title="生图配置"><SettingsIcon name="image" />生图配置</button>
+      <button className="set-icon-btn set-image-entry" onClick={() => setImageOpen(true)} title="生图配置" aria-label="生图配置"><SettingsIcon name="image" /></button>
     </div>
     {loading && <p className="set-caption">加载供应商中…</p>}
     {error && <div className="set-note" role="alert">供应商读取失败，已有草稿保留。<button className="btn sm" disabled={busy} onClick={refresh}>重试</button></div>}
@@ -576,15 +648,35 @@ export function SettingsModels() {
     {deleteProvider && <SettingsConfirm title="删除供应商" message={`确定删除「${deleteProvider.name}」？其密钥、端点与模型配置将一并移除。`} busy={busy} onCancel={() => setDeleteProvider(null)} onOk={removeProvider} />}
     {deleteModel != null && d && <SettingsConfirm title="删除模型" message="确认从供应商草稿移除此模型？保存供应商后生效。" onCancel={() => setDeleteModel(null)} onOk={() => { update({ models: d.models.filter(m => (m.id || m.modelId) !== deleteModel) }); setDeleteModel(null); setOpenModel(null); }} />}
     {imageOpen && <SettingsImageGen onClose={() => setImageOpen(false)} onSaved={() => { toast("生图配置已保存"); void refresh(); }} />}
-    {picker && <SettingsDialog title="获取模型" subtitle={`${d?.name || "供应商"} · 保存后真实发现，未知字段不猜测`} busy={busy} onClose={() => { discoveryRequest.current++; setPicker(null); }} footer={<><button className="btn" disabled={busy} onClick={() => setPicker(null)}>取消</button><button className="btn primary" disabled={busy || picker.loading || picker.error} onClick={saveSelected}>保存所选</button></>}>
-      {picker.loading ? <p className="set-caption">保存供应商并获取模型中…</p> : picker.error ? <div className="set-note" role="alert">上游模型发现失败，未生成虚构模型。<button className="btn sm" onClick={discover}>重试</button></div> : <div className="set-model-pick-list">{picker.models.map(m => {
+    {picker && <SettingsDialog title="获取模型" subtitle={`${d?.name || "供应商"} · 保存后真实发现，未知字段不猜测`} busy={busy} onClose={() => { discoveryRequest.current++; setPicker(null); }} footer={<>
+      <button className="btn" disabled={busy} onClick={() => { discoveryRequest.current++; setPicker(null); }}>取消</button>
+      {picker.loading
+        ? <button className="btn primary" disabled>保存所选</button>
+        : picker.error
+          ? <button className="btn primary" disabled={busy} onClick={() => void discover()}>重试</button>
+          : <button className="btn primary" disabled={busy || !picker.selected.length} onClick={() => void saveSelected()}>保存所选{picker.selected.length ? `（${picker.selected.length}）` : ""}</button>}
+    </>}>
+      {picker.loading ? <div className="set-discovery-status" role="status">
+        <b>获取模型清单中…</b>
+        <p className="set-caption">保存供应商并拉取清单；不等待思考等级/模态等能力字段。</p>
+      </div> : picker.error ? <div className="set-discovery-status error" role="alert">
+        <b>获取模型失败</b>
+        <p className="set-caption">{picker.errorMsg || "上游模型发现失败，未生成虚构模型。"}</p>
+        <p className="set-caption">已保存模型与已选项目均保留；修正后可重试。</p>
+      </div> : <div className="set-model-pick-list" role="group" aria-label="从上游选择模型">{picker.models.map(m => {
         const on = picker.selected.includes(m.modelId);
-        return <button key={m.modelId} type="button" className={`set-pick-card ${on ? "on" : ""}`} aria-pressed={on} onClick={() => setPicker(prev => prev && ({ ...prev, selected: on ? prev.selected.filter(id => id !== m.modelId) : [...prev.selected, m.modelId] }))}>
-          <b>{m.displayName}</b><span className="mono set-caption">{m.modelId}</span>
-          <span className="set-caption">{m.contextWindow == null ? "上下文未知" : `${Math.round(m.contextWindow / 1000)}K`}</span>
-        </button>;
-      })}{!picker.models.length && <div className="set-empty"><b>没有更多模型</b><p>上游未返回更多未配置模型。</p></div>}</div>}
-      <p className="set-caption">只拉取模型清单，不等待思考等级/模态等能力字段；点选卡片后保存，未知能力保持未知，稍后用「自动获取思考等级」补齐。</p>
+        return <label key={m.modelId} className={`set-pick-row ${on ? "on" : ""}`}>
+          <input type="checkbox" checked={on} aria-label={`选择模型 ${m.displayName || m.modelId}`} onChange={e => {
+            const checked = e.target.checked;
+            setPicker(prev => prev && ({ ...prev, selected: checked
+              ? (prev.selected.includes(m.modelId) ? prev.selected : [...prev.selected, m.modelId])
+              : prev.selected.filter(id => id !== m.modelId) }));
+          }} />
+          <span className="set-pick-main"><b>{m.displayName || m.modelId}</b><span className="mono set-caption">{m.modelId}</span></span>
+          <span className="set-pick-ctx set-caption">{m.contextWindow == null ? "上下文未知" : `${capacityLabel(String(m.contextWindow))} 上下文`}</span>
+        </label>;
+      })}{!picker.models.length && <div className="set-empty"><b>没有更多模型</b><p>上游返回的模型都已在列表中。</p></div>}</div>}
+      <p className="set-caption">只拉取模型清单，不等待思考等级/模态等能力字段；勾选模型后保存，未知能力保持未知，稍后用「自动获取思考等级」补齐。</p>
     </SettingsDialog>}
   </>;
 }

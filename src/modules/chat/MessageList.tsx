@@ -369,12 +369,14 @@ function briefOf(inputJson: string | null): string {
 }
 
 function ToolBlock({ pair }: { pair: ToolPair }) {
-  const open = pair.result?.isError === true; // 失败时展开错误摘要（AC-02）
   const running = pair.result == null && !!pair.useMsg?.streaming;
   const orphanResult = pair.useMsg == null;
   const orphanUse = pair.result == null && !running;
   const status = running ? "run" : pair.result?.isError ? "fail" : pair.result ? "ok" : "pending";
   const statusText = orphanResult ? "来源调用未记录" : running ? "执行中" : pair.result?.isError ? "失败" : orphanUse ? "结果未返回" : "完成";
+  const failureSummary = pair.result?.isError
+    ? pair.result.content.trim().replace(/\s+/g, " ").slice(0, 160) || "工具执行失败，未返回错误详情"
+    : "";
   const { pretty } = useMemo(() => {
     let obj: Record<string, unknown> = {};
     try {
@@ -393,8 +395,9 @@ function ToolBlock({ pair }: { pair: ToolPair }) {
           <span className="spacer" />
           <span className={`chat-tool-state st-${status}`}>{statusText}</span>
         </div>
+        {failureSummary && <div className="chat-tool-fail-summary" title={pair.result?.content}>{failureSummary}</div>}
         {(pair.inputJson || pair.result) && (
-          <details className="chat-tool-detail" open={open}>
+          <details className="chat-tool-detail">
             <summary>
               {pair.result ? (pair.result.isError ? "失败摘要与输入参数" : "查看结果与输入参数") : "输入参数"}
             </summary>
@@ -419,6 +422,8 @@ export function MessageList(props: {
   rootUri?: string;
   officeFiles?: OfficeFileRef[];
   visible?: boolean;
+  /** 本轮从提交到 settled 的 working 状态；独立于 assistant 消息创建。 */
+  working?: boolean;
   stepsSlot?: React.ReactNode;
   /** CR-062：点开子智能体只读详情。 */
   onOpenAgent?: (agentId: string) => void;
@@ -454,8 +459,15 @@ export function MessageList(props: {
   }, [zoom, props.visible]);
 
   const blocks = useMemo(() => buildBlocks(props.msgs), [props.msgs]);
+  const workingSince = useMemo(() => {
+    for (let i = props.msgs.length - 1; i >= 0; i -= 1) {
+      const m = props.msgs[i];
+      if (m.role === "user" && m.createdAt != null) return m.createdAt;
+    }
+    return undefined;
+  }, [props.msgs]);
 
-  if (props.msgs.length === 0 && !props.stepsSlot) {
+  if (props.msgs.length === 0 && !props.stepsSlot && !props.working) {
     return (
       <div className="chat-msgs" style={{ justifyContent: "center" }}>
         <div className="chat-empty">
@@ -478,6 +490,11 @@ export function MessageList(props: {
           ) : (
             <MessageRow key={b.id} m={b} projectId={props.projectId} rootUri={props.rootUri} officeFiles={props.officeFiles} canLocate={canLocate} onOpenAgent={props.onOpenAgent} onImageOpen={(src, alt, el) => setZoom({ src, alt, back: el })} />
           )
+        )}
+        {props.working && (
+          <div className="chat-msg assistant chat-working-row">
+            <ThinkingIndicator since={workingSince} />
+          </div>
         )}
         {props.stepsSlot}
       </div>
@@ -515,7 +532,6 @@ function MessageRow(props: {
     return (
       <div className="chat-msg user">
         <div className="chat-bubble">
-          <div className="chat-msg-name chat-msg-time">{messageTime(m.createdAt)}</div>
           <div className="chat-bubble-user">
           {m.refs && m.refs.length > 0 && (
             <div className="chat-refs">
@@ -527,22 +543,23 @@ function MessageRow(props: {
           {m.content}
           {m.attachments?.map((a, i) => <div className="chat-attachment" key={`${a.name}-${i}`} title="仅附件元信息，未读取正文">{a.name} · 附件元信息</div>)}
           </div>
+          <div className="chat-msg-name chat-msg-time">{messageTime(m.createdAt)}</div>
         </div>
       </div>
     );
   }
   if (m.role === "assistant") {
     const empty = !m.content && !m.thinking;
+    const hasThinking = !!m.thinking?.trim();
     return (
       <div className="chat-msg assistant">
         <div className="chat-bubble">
           <div className="chat-msg-name chat-msg-time">{messageTime(m.createdAt)}</div>
         <div className="chat-card">
-          {m.streaming && <ThinkingIndicator since={m.createdAt} />}
-          {(m.thinking || (m.streaming && !m.content)) && (
+          {hasThinking && (
             <details className="chat-thinking-block">
-              <summary><span className="chat-thinking-mark">✦</span><span>{m.streaming ? "思考中…" : "思考"}</span><span className="chat-think-size">{m.thinkingMs != null ? `持续 ${formatElapsed(m.thinkingMs)}` : m.thinking ? `${m.thinking.length} 字` : "正在分析"}</span></summary>
-              <div className="chat-thinking-content">{m.thinking || "正在分析请求并准备下一步…"}</div>
+              <summary><span className="chat-thinking-mark">✦</span><span>{m.streaming && !m.content ? "思考中…" : "思考"}</span><span className="chat-think-size">{m.thinkingMs != null ? `持续 ${formatElapsed(m.thinkingMs)}` : `${m.thinking!.length} 字`}</span></summary>
+              <div className="chat-thinking-content">{m.thinking}</div>
             </details>
           )}
           {empty ? (

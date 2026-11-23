@@ -450,3 +450,54 @@ html[data-theme="dark"] .probe-section { --set-warning: #e0a23c; --set-warning-s
 .tree-tool .risk.warn { background: #fef3c7; color: #b45309; }
 .tree-tool .risk.high { background: #fee2e2; color: #b91c1c; }
 .tree-empty { padding: 10px 12px 10px 34px; font-size: 11.5px; color: var(--set-muted); }
+
+/* ============ CR-068 FEAT-014：模型清单 / 映射 / 容量 / 检测对齐 ============ */
+
+/* M01：获取模型为单列原生复选框；整行可点，键盘 Space 与鼠标一致。 */
+.set-model-pick-list { display: flex; flex-direction: column; gap: 0; max-height: min(360px, 48vh); overflow-y: auto; padding: 0; border: 1px solid var(--set-line); border-radius: 8px; }
+.set-pick-row { display: flex; align-items: center; gap: 12px; min-height: 54px; padding: 10px 10px; border-bottom: 1px solid var(--set-line-soft); cursor: pointer; }
+.set-pick-row:last-child { border-bottom: 0; }
+.set-pick-row:hover { background: var(--set-surface-2); }
+.set-pick-row.on { background: var(--set-primary-soft); }
+.set-pick-row input[type="checkbox"] { width: 16px; height: 16px; flex: 0 0 auto; accent-color: var(--set-primary); }
+.set-pick-row:focus-within { outline: 2px solid var(--set-primary); outline-offset: -2px; }
+.set-pick-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.set-pick-main b { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-pick-main .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-pick-ctx { flex: 0 0 auto; white-space: nowrap; }
+.set-discovery-status { display: grid; gap: 6px; padding: 20px 8px; text-align: center; }
+.set-discovery-status b { font-size: 13px; font-weight: 600; }
+.set-discovery-status.error { color: var(--set-danger); }
+
+/* M02：思考关闭时只保留容量两列；开启后三列。 */
+.set-effort-mappings { border: 1px solid var(--set-line); border-radius: 8px; background: var(--set-surface); }
+.set-effort-mappings > summary { padding: 9px 12px; cursor: pointer; font-size: 12px; color: var(--set-ink-2); }
+.set-effort-mappings > summary:focus-visible { outline: 2px solid var(--set-primary); outline-offset: -2px; }
+.set-effort-mappings[open] > summary { border-bottom: 1px solid var(--set-line-soft); }
+.set-effort-map-list { display: grid; gap: 8px; padding: 10px 12px 12px; max-height: 290px; overflow-y: auto; }
+.set-effort-map-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) 52px; align-items: center; gap: 10px; }
+
+/* M04/M05：容量错误内联可见；保存失败保留展开与草稿。 */
+.set-field-error { margin: 0; font-size: 11.5px; color: var(--set-danger); }
+.set-save-error { margin: 10px 16px 0; padding: 9px 12px; border: 1px solid rgba(217, 59, 59, .35); background: rgba(217, 59, 59, .08); color: var(--set-danger); border-radius: 6px; font-size: 11.5px; }
+html[data-theme="dark"] .set-save-error { border-color: rgba(255, 123, 118, .4); background: rgba(255, 123, 118, .1); }
+.set-image-entry { color: var(--set-ink-2); }
+
+/* P02：待检测/检测中/已检测同位置同 108px，只调内部对齐。 */
+.probe-result { padding: 14px 16px; }
+.probe-result-top { flex-wrap: nowrap; align-items: center; gap: 10px; min-width: 0; }
+.probe-result-title { flex: 0 0 52px; }
+.probe-result-note { flex: 1; min-width: 0; }
+.probe-result .probe-tags { flex: 1; min-width: 0; justify-content: flex-end; }
+.probe-result-summary { padding-left: 62px; }
+.probe-error { margin: 10px 0 0; }
+.probe-hist-state { display: grid; gap: 8px; padding: 12px 8px; text-align: center; }
+
+@media (max-width: 600px) {
+  .set-effort-map-row { grid-template-columns: 52px minmax(0, 1fr) 42px; }
+  .set-pick-row { flex-wrap: wrap; }
+  .probe-result-title { flex-basis: 42px; }
+  .probe-result-top { gap: 6px; }
+  .probe-result-summary { padding-left: 0; }
+  .probe-result .probe-tags .tag { font-size: 10px; padding: 1px 4px; }
+}

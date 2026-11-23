@@ -2,7 +2,9 @@
    左栏与会话区复用 AI 侧栏既有类名与样式（chat.css 的 .chat-history / .chat-hist-* / .msg 等），
    本文件只负责三栏骨架、页签与辅助栏，不重定义消息与历史列表外观。 */
 
-.wb-shell { flex: 1 1 auto; display: flex; min-height: 0; min-width: 0; position: relative; }
+/* FEAT-021 / STORY-071 CR-068：高度链兜底。父级 .pw-pane 已是纵向 flex 时 flex:1 生效；
+   若宿主仍是普通块容器，height:100% 保证工作台不被消息内容撑高。 */
+.wb-shell { flex: 1 1 auto; height: 100%; display: flex; min-height: 0; min-width: 0; position: relative; }
 
 /* ---------- 页签：纯图标工作台（与文字页签对齐） ---------- */
 .pw-tab.wb-tab-icon {
@@ -26,9 +28,10 @@
 .wb-hist-loading { padding: 18px 14px; color: var(--muted); font-size: 12px; }
 
 /* ---------- 中：当前会话 ---------- */
-.wb-conv { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+/* 消息区自身滚动、输入区固定：中间栏必须限定高度并裁掉溢出，滚动交给 .chat-msgs。 */
+.wb-conv { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 .wb-conv > .chat-panel.wb-chat-panel {
-  width: 100% !important; max-width: none; height: 100%;
+  width: 100% !important; max-width: none; height: 100%; flex: 1 1 auto; min-height: 0;
   border-left: 0; border-right: 0; background: var(--surface);
 }
 

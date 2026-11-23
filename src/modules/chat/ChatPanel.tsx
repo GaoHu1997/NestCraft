@@ -236,6 +236,8 @@ function Panel(props: PanelProps) {
   const viewing = (sid: string, targetScope = scope) => mounted.current && scopeRef.current === targetScope && currentIdRef.current === sid;
   const curRt = cur ? getRuntime(cur.id) : null;
   const running = !!cur && runningIds.includes(cur.id);
+  // J08：working 绑定本轮发送代次；本轮已结算即收起，不等待后端彻底静止或 assistant 消息创建。
+  const working = running && !turns.current.get(cur?.id ?? "")?.finished;
   // CR-037：当前会话绑定状态（阻塞时禁输入但保留草稿与历史；REF_NOT_READY 可直接重试）
   const binding = cur?.sessionRole === "executor" ? null : cur?.binding ?? null;
   const composerLocked =
@@ -975,7 +977,7 @@ function Panel(props: PanelProps) {
       onRename={(s, title) => void renameSession(s, title)}
       onClose={() => overlay.close(true)}
     />}
-    <MessageList msgs={msgs} projectId={props.projectId} rootUri={props.rootUri} officeFiles={props.officeFiles} visible={props.visible} onOpenAgent={id => { if (cur) props.onOpenAgent?.(cur.id, id); }} stepsSlot={<>{queued > 0 && <div className="chat-queued">已排队 {queued} 条，当前静止后发送</div>}{curRt && curRt.steps.length > 0 && <StepsBox steps={curRt.steps} demo={curRt.stepsDemo} preview={Boolean((window as unknown as { __DESIGN_PREVIEW__?: boolean }).__DESIGN_PREVIEW__)} open={curRt.stepsOpen} sid={cur!.id} onToggle={() => { curRt.stepsOpen = !curRt.stepsOpen; bumpRt(); }} bump={bumpRt} />}</>} />
+    <MessageList msgs={msgs} projectId={props.projectId} rootUri={props.rootUri} officeFiles={props.officeFiles} visible={props.visible} working={working} onOpenAgent={id => { if (cur) props.onOpenAgent?.(cur.id, id); }} stepsSlot={<>{queued > 0 && <div className="chat-queued">已排队 {queued} 条，当前静止后发送</div>}{curRt && curRt.steps.length > 0 && <StepsBox steps={curRt.steps} demo={curRt.stepsDemo} preview={Boolean((window as unknown as { __DESIGN_PREVIEW__?: boolean }).__DESIGN_PREVIEW__)} open={curRt.stepsOpen} sid={cur!.id} onToggle={() => { curRt.stepsOpen = !curRt.stepsOpen; bumpRt(); }} bump={bumpRt} />}</>} />
     {(binding?.state === "blocked" || binding?.state === "freshPending") && <div className="chat-block-banner" role="alert" aria-label="绑定阻塞横幅">
       <span className="chat-block-ico" aria-hidden>!</span>
       <div className="chat-block-main">

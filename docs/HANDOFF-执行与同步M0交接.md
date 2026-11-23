@@ -43,10 +43,26 @@
 ```powershell
 cd src-tauri; cargo test --offline --lib -- --test-threads=1   # 399 passed / 0 failed / 8 ignored
 cd ..; npm run build                                            # 通过（含 tsc）
-node docs/Test/design-docs-check.mjs                            # PASS：427 文档 / 5905 链接
+node docs/Test/design-docs-check.mjs                            # PASS：430 文档 / 5934 链接
 ```
 
-证据：`docs/Test/REPORT-CR047-执行账本M0与写入保护验证.md`、`REPORT-CR032-双向同步M0验证.md`、`REPORT-FEAT019-任务页只读接入验证.md`、`REPORT-FEAT004-同步视图只读接入验证.md`。
+真实 Tauri IPC 冒烟（执行账本 + 双向同步，38 通过／0 失败）：
+
+```powershell
+# 1) 调试构建走 devUrl，需 1420 提供前端；vite 必须绑 IPv4，否则 WebView2 拿不到页面
+npm run build
+npx vite preview --outDir src-tauri/dist --host 127.0.0.1 --port 1420 --strictPort
+
+# 2) 另开一个终端：双重授权 + 聚焦套件
+$env:PATH = "$PWD\mockbin;" + $env:PATH
+$env:TAURI_SMOKE = "1"; $env:SMOKE_EXEC_SUITE = "1"; $env:SMOKE_MOCKBIN = "$PWD\mockbin"
+.\src-tauri\target\debug\agent-workbench.exe
+# 报告：%APPDATA%\com.agentworkbench.app\smoke-report-execution.md
+```
+
+证据：`docs/Test/smoke-report-execution.md`、`docs/Test/REPORT-CR047-执行账本M0与写入保护验证.md`、`REPORT-CR032-双向同步M0验证.md`、`REPORT-FEAT019-任务页只读接入验证.md`、`REPORT-FEAT004-同步视图只读接入验证.md`。
+
+已知环境性卡点：历史全量套件在 `chat_session_pin / chat_session_fork` 处会无响应；与本批命令无关，故用聚焦入口单独验证。
 
 ## 3. 未完成（不得当作已交付）
 
@@ -54,7 +70,7 @@ node docs/Test/design-docs-check.mjs                            # PASS：427 文
 2. **CLI 原生写入硬拦截**：只覆盖工作台 `write_requirement_doc`；CLI 自带文件工具仍可能越界。
 3. **完整语义合并**：只有行级 diff 与标题／AC 集合摘要；没有文档模型、语义等价判断、逐段接受或自动合并。
 4. **逆向重建**：纯源码恢复管线未实现。
-5. **真实 Tauri／WebView2**：界面证据来自 Chromium 隔离预览；真实应用数据与 WebView2 表现未验证。
+5. **真实项目数据与真实窗口视觉**：IPC 已在真实 WebView2 上验证，但用隔离库与模拟执行；界面视觉对照仍为 Chromium 隔离预览，未在真实窗口内截图比对。
 
 ## 4. 如何继续（建议顺序）
 

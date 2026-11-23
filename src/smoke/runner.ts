@@ -4,6 +4,7 @@
  */
 import * as api from "@/api";
 import { runUiSuite, uiReportSuffix } from "./ui-suite";
+import { runExecutionSuite } from "./execution-suite";
 
 interface Case {
   section: string;
@@ -1444,6 +1445,9 @@ async function suite(): Promise<void> {
     await api.providerDelete(openaiOnly);
     return msg;
   });
+
+  /* ---------- FEAT-019 / FEAT-004：执行账本与双向同步（真实 IPC 命令链路） ---------- */
+  await runExecutionSuite(projectId, projDir, t);
 
   /* ---------- 真实供应商（仅当设置了 smoke.tierflowKey 时执行） ---------- */
   const liveKey = await api.getSetting("smoke.tierflowKey").catch(() => null);

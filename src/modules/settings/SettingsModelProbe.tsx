@@ -3,6 +3,7 @@ import * as api from "@/api";
 import type { ProbeHistoryItem, ProbeItemState, ProbeProgressEvent, ProbeReport, Provider } from "@/api";
 import { useToast } from "@/components/ui";
 import { SettingsIcon } from "./SettingsDialog";
+import { errMsg } from "./shared";
 
 // CR-058：模型检测十九针探针（设置左栏「模型检测」页签；r4 十九针，r5 结果区置顶 + 历史改悬浮下拉）。
 // 固定 19 针、无探针选择入口；端点与密钥取自已保存供应商配置；历史保留最近 10 次。
@@ -71,6 +72,9 @@ function ProbeRows({ slots, items }: { slots: Slot[]; items: ProbeItemState[] })
 export function SettingsModelProbe() {
   const toast = useToast();
   const [providers, setProviders] = useState<Provider[]>([]);
+  const [providerState, setProviderState] = useState<"loading" | "ready" | "error">("loading");
+  const [providerError, setProviderError] = useState("");
+  const [providerNotice, setProviderNotice] = useState("");
   const [providerId, setProviderId] = useState("");
   const [modelId, setModelId] = useState("");
   const [slots, setSlots] = useState<Slot[]>(freshSlots());
@@ -80,34 +84,92 @@ export function SettingsModelProbe() {
   const [runningLabel, setRunningLabel] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<ProbeHistoryItem[]>([]);
+  const [historyState, setHistoryState] = useState<"loading" | "ready" | "error">("loading");
+  const [historyError, setHistoryError] = useState("");
   const [viewing, setViewing] = useState<ProbeHistoryItem | null>(null);
   const historyRef = useRef<HTMLDivElement>(null);
+  const providerIdRef = useRef(providerId); providerIdRef.current = providerId;
+  const modelIdRef = useRef(modelId); modelIdRef.current = modelId;
+  const runningRef = useRef(running); runningRef.current = running;
+  const reloadTimer = useRef<number | undefined>(undefined);
+
+  /* CR-068 P01：检测页必须读取配置权威，并订阅供应商增删启停事件；读取失败保留旧候选并可重试。 */
+  const loadProviders = useCallback(async () => {
+    setProviderState(prev => (prev === "ready" ? "ready" : "loading"));
+    setProviderError("");
+    try {
+      const list = await api.providerList();
+      const enabled = list.filter(p => !p.disabled);
+      setProviders(enabled);
+      setProviderState("ready");
+      if (runningRef.current) return;
+      const pid = providerIdRef.current;
+      if (pid && !enabled.some(p => p.id === pid)) {
+        setProviderId(""); setModelId("");
+        setProviderNotice("原选择的供应商已停用或删除，候选已清理，请重新选择。");
+        return;
+      }
+      const mid = modelIdRef.current;
+      if (pid && mid) {
+        const p = enabled.find(x => x.id === pid);
+        if (!(p?.models || []).some(m => m.modelId === mid && !m.imageGen)) {
+          setModelId("");
+          setProviderNotice("原选择的模型已删除或停用，已清理该选择，请重新选择。");
+        }
+      }
+    } catch (e) {
+      setProviderState("error");
+      setProviderError(errMsg(e));
+    }
+  }, []);
+
+  const loadHistory = useCallback(async () => {
+    setHistoryState(prev => (prev === "ready" ? "ready" : "loading"));
+    setHistoryError("");
+    try {
+      setHistory(await api.modelProbeHistoryList());
+      setHistoryState("ready");
+    } catch (e) {
+      setHistoryState("error");
+      setHistoryError(errMsg(e));
+    }
+  }, []);
 
   useEffect(() => {
-    let alive = true;
-    api.providerList().then(list => { if (alive) setProviders(list.filter(p => !p.disabled)); }).catch(() => {});
-    // 历史在进入页签时即加载，空闲态要展示「上次检测」摘要。
-    api.modelProbeHistoryList().then(list => { if (alive) setHistory(list); }).catch(() => {});
-    return () => { alive = false; };
-  }, []);
+    void loadProviders();
+    void loadHistory();
+    const onChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ keys?: string[]; command?: string }>).detail;
+      const relevant = detail?.keys?.includes("providers") || /^provider_(save|delete|set_disabled)$/.test(detail?.command || "");
+      if (!relevant) return;
+      if (reloadTimer.current) window.clearTimeout(reloadTimer.current);
+      reloadTimer.current = window.setTimeout(() => { void loadProviders(); }, 120);
+    };
+    window.addEventListener("app:settings-changed", onChanged);
+    return () => {
+      window.removeEventListener("app:settings-changed", onChanged);
+      if (reloadTimer.current) window.clearTimeout(reloadTimer.current);
+    };
+  }, [loadProviders, loadHistory]);
+
   const provider = providers.find(p => p.id === providerId);
   const models = (provider?.models || []).filter(m => !m.imageGen);
   // 禁用原因必须说清，否则用户只知道按钮点不了、不知道为什么（AC-10 前端侧）。
-  const blockReason = !providerId
-    ? "先选择供应商"
-    : !provider
-      ? "该供应商不可用（已停用或已删除）"
-      : models.length === 0
-        ? "该供应商没有可检测的模型（生图模型不参与检测）"
-        : !modelId
-          ? "再选择要检测的模型"
-          : running
-            ? "检测进行中"
-            : "";
-
-  const refreshHistory = useCallback(async () => {
-    try { setHistory(await api.modelProbeHistoryList()); } catch { setHistory([]); }
-  }, []);
+  const blockReason = providerState === "error"
+    ? "供应商配置读取失败，请先重试"
+    : providerState === "loading" && !providers.length
+      ? "正在读取供应商配置…"
+      : !providerId
+        ? "先选择供应商"
+        : !provider
+          ? "该供应商不可用（已停用或已删除）"
+          : models.length === 0
+            ? "该供应商没有可检测的模型（生图模型不参与检测）"
+            : !modelId
+              ? "再选择要检测的模型"
+              : running
+                ? "检测进行中"
+                : "";
   // 历史悬浮框：点击外部或 Esc 收起（不用弹窗）。
   useEffect(() => {
     if (!historyOpen) return;
@@ -147,7 +209,7 @@ export function SettingsModelProbe() {
       setItems(finalReport.items || EMPTY_ITEMS);
       setReport(finalReport);
       toast(`检测完成：${finalReport.score} 分 · ${finalReport.grade} 级 · ${finalReport.verdict}`);
-      void refreshHistory();
+      void loadHistory();
     } catch (error) {
       toast(String(error).replace(/^Error:\s*/, "") || "检测失败", "err");
     } finally {
@@ -157,7 +219,7 @@ export function SettingsModelProbe() {
   };
 
   // 选中历史：下拉收起，结果区与 19 针列表切到该次结果。
-  const openHistory = () => { setHistoryOpen(v => !v); if (!historyOpen) void refreshHistory(); };
+  const openHistory = () => { setHistoryOpen(v => !v); if (!historyOpen) void loadHistory(); };
   const pickHistory = (h: ProbeHistoryItem) => {
     setHistoryOpen(false);
     setViewing(h);
@@ -205,23 +267,31 @@ export function SettingsModelProbe() {
             <span className="h-target">{h.providerName}<span className="mono"> · {h.modelId}</span></span>
             <span className="h-score mono">{h.score}</span>
             <span className={gradeClass(h.grade)}>{h.grade}</span>
-          </button>) : <p className="set-caption probe-hist-empty">还没有检测记录</p>}
+          </button>) : historyState === "error" ? <div className="probe-hist-state" role="alert">
+            <p className="set-caption">历史记录读取失败：{historyError}</p>
+            <button className="btn sm" onClick={() => void loadHistory()}>重试</button>
+          </div> : <p className="set-caption probe-hist-empty">{historyState === "loading" ? "正在读取历史…" : "还没有检测记录"}</p>}
         </div>}
       </div>
     </div>
 
     <div className="probe-pick">
-      <select className="select" aria-label="选择供应商" value={providerId} disabled={running} onChange={e => { setProviderId(e.target.value); setModelId(""); setSlots(freshSlots()); setItems(EMPTY_ITEMS); setReport(null); setViewing(null); }}>
+      <select className="select" aria-label="选择供应商" value={providerId} disabled={running || (providerState === "loading" && !providers.length)} onChange={e => { setProviderNotice(""); setProviderId(e.target.value); setModelId(""); setSlots(freshSlots()); setItems(EMPTY_ITEMS); setReport(null); setViewing(null); }}>
         <option value="" disabled>选择供应商</option>
         {providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
       </select>
-      <select className="select" aria-label="选择模型" value={modelId} disabled={!provider || running} onChange={e => { setModelId(e.target.value); setSlots(freshSlots()); setItems(EMPTY_ITEMS); setReport(null); setViewing(null); }}>
+      <select className="select" aria-label="选择模型" value={modelId} disabled={!provider || running} onChange={e => { setProviderNotice(""); setModelId(e.target.value); setSlots(freshSlots()); setItems(EMPTY_ITEMS); setReport(null); setViewing(null); }}>
         <option value="" disabled>{provider ? "选择模型" : "先选择供应商"}</option>
         {models.map(m => <option key={m.modelId} value={m.modelId}>{m.displayName || m.modelId} · {m.modelId}</option>)}
       </select>
-      <button className="btn sm primary" disabled={!providerId || !modelId || running} onClick={() => void run()}>{running ? "检测中…" : "开始检测"}</button>
+      <button className="btn sm primary" disabled={!providerId || !modelId || running || providerState === "error"} onClick={() => void run()}>{running ? "检测中…" : "开始检测"}</button>
       {viewing && <button className="btn sm" onClick={() => { setViewing(null); setItems(EMPTY_ITEMS); setSlots(freshSlots()); }}>退出历史回看</button>}
     </div>
+    {providerState === "error" && <div className="set-note probe-error" role="alert">
+      <span>供应商配置读取失败：{providerError}</span>
+      <button className="btn sm" disabled={running} onClick={() => void loadProviders()}>重试</button>
+    </div>}
+    {providerNotice && <p className="set-caption probe-hint" role="status">{providerNotice}<button className="set-link" onClick={() => setProviderNotice("")}>知道了</button></p>}
     {blockReason && <p className="set-caption probe-hint">{blockReason}</p>}
 
     {/* 结果区紧贴 19 针列表上方：空闲 → 进行中（进度）→ 完成 / 历史回看 */}
@@ -238,6 +308,7 @@ export function SettingsModelProbe() {
       </>}
       {!running && shown && <>
         <div className="probe-result-top">
+          <span className="probe-result-title">已检测</span>
           <span className="probe-score"><b>{shown.score}</b><span className="set-caption">/ 100</span></span>
           <span className={gradeClass(shown.grade)}>{shown.grade}</span>
           <span className="probe-tags">

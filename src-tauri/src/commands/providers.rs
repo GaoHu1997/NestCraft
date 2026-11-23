@@ -81,7 +81,7 @@ fn mask_secret(s: &str) -> String {
 
 // ---------- 查询 ----------
 
-fn load_providers_inner(conn: &rusqlite::Connection) -> Result<Vec<Provider>, String> {
+pub(crate) fn load_providers_inner(conn: &rusqlite::Connection) -> Result<Vec<Provider>, String> {
     let mut stmt = conn
         .prepare("SELECT id, name, protocol, disabled, headersJson, fingerprintJson FROM provider ORDER BY createdAt")
         .map_err(|e| e.to_string())?;
@@ -443,33 +443,7 @@ pub fn model_candidates() -> Result<Vec<ModelCandidate>, String> {
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
     let providers = load_providers_inner(conn)?;
-    let mut out = Vec::new();
-    for p in providers.iter().filter(|p| !p.disabled) {
-        let has_key = p.keys.iter().any(|k| k.enabled && !k.masked.is_empty());
-        if !has_key {
-            continue;
-        }
-        let has_endpoint = p.endpoints.iter().any(|e| e.enabled && e.protocol == p.protocol);
-        if !has_endpoint {
-            continue;
-        }
-        for m in p.models.iter().filter(|m| m.text && !m.image_gen) {
-            out.push(ModelCandidate {
-                context_window: m.context_window,
-                default_effort: m.default_effort.clone(),
-                display_name: m.display_name.clone(),
-                efforts: m.efforts.clone(),
-                model_id: m.model_id.clone(),
-                max_tokens: m.max_tokens,
-                model_row_id: m.id.clone(),
-                provider_id: p.id.clone(),
-                provider_name: p.name.clone(),
-                protocol: p.protocol.clone(),
-                vision: m.vision,
-            });
-        }
-    }
-    Ok(out)
+    Ok(crate::commands::model_route::model_candidates_from(&providers))
 }
 
 const MAX_MODELS_BODY: u64 = 1024 * 1024;
@@ -908,6 +882,7 @@ async fn probe_endpoint(url: &str, key: &str, protocol: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::model_route::{model_candidates_from, resolve_for_cli};
 
     fn database() -> rusqlite::Connection {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
@@ -998,5 +973,216 @@ mod tests {
         assert!(models[0]["vision"].is_null());
         assert!(models[0]["thinking"].is_null());
         assert!(parse_discovered_models(&vec![b' '; MAX_MODELS_BODY as usize + 1]).is_err());
+    }
+    /// CR-068 J06：路由回归使用独立内存库，secretRef 只写不可执行占位，测试绝不读取凭据。
+    fn route_database() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;
+            CREATE TABLE provider(id TEXT PRIMARY KEY,name TEXT,protocol TEXT,disabled INTEGER,headersJson TEXT,fingerprintJson TEXT,createdAt INTEGER,updatedAt INTEGER);
+            CREATE TABLE provider_key(id TEXT PRIMARY KEY,providerId TEXT REFERENCES provider(id) ON DELETE CASCADE,alias TEXT,secretRef TEXT,masked TEXT,enabled INTEGER,createdAt INTEGER,protocol TEXT NOT NULL DEFAULT '',modelsJson TEXT,scopeSource TEXT,probedAt INTEGER);
+            CREATE TABLE provider_endpoint(id TEXT PRIMARY KEY,providerId TEXT REFERENCES provider(id) ON DELETE CASCADE,protocol TEXT,baseUrl TEXT,enabled INTEGER,createdAt INTEGER);
+            CREATE TABLE model(id TEXT PRIMARY KEY,providerId TEXT REFERENCES provider(id) ON DELETE CASCADE,modelId TEXT,displayName TEXT,text INTEGER,vision INTEGER,imageGen INTEGER,effortsJson TEXT,defaultEffort TEXT,contextWindow INTEGER,maxTokens INTEGER,sortOrder INTEGER NOT NULL DEFAULT 0,createdAt INTEGER,UNIQUE(providerId,modelId));")
+            .unwrap();
+        conn
+    }
+
+    fn insert_provider(conn: &rusqlite::Connection, id: &str, protocol: &str, disabled: bool) {
+        conn.execute(
+            "INSERT INTO provider (id,name,protocol,disabled,headersJson,createdAt,updatedAt) VALUES(?1,?2,?3,?4,NULL,1,1)",
+            rusqlite::params![id, format!("provider-{id}"), protocol, disabled as i64],
+        ).unwrap();
+    }
+
+    fn insert_endpoint(conn: &rusqlite::Connection, id: &str, provider_id: &str, protocol: &str, url: &str, enabled: bool, created_at: i64) {
+        conn.execute(
+            "INSERT INTO provider_endpoint VALUES(?1,?2,?3,?4,?5,?6)",
+            rusqlite::params![id, provider_id, protocol, url, enabled as i64, created_at],
+        ).unwrap();
+    }
+
+    fn insert_key(conn: &rusqlite::Connection, id: &str, provider_id: &str, enabled: bool, protocol: &str, models_json: Option<&str>, created_at: i64) {
+        let reference = format!("unexecutable-secret-{id}");
+        conn.execute(
+            "INSERT INTO provider_key (id,providerId,alias,secretRef,masked,enabled,protocol,modelsJson,scopeSource,probedAt,createdAt)
+             VALUES(?1,?2,NULL,?3,'masked',?4,?5,?6,NULL,NULL,?7)",
+            rusqlite::params![id, provider_id, reference, enabled as i64, protocol, models_json, created_at],
+        ).unwrap();
+    }
+
+    fn insert_model(conn: &rusqlite::Connection, row_id: &str, provider_id: &str, model_id: &str, text: bool, image_gen: bool) {
+        conn.execute(
+            "INSERT INTO model VALUES(?1,?2,?3,?3,?4,0,?5,'{}',NULL,NULL,NULL,0,1)",
+            rusqlite::params![row_id, provider_id, model_id, text as i64, image_gen as i64],
+        ).unwrap();
+    }
+
+    #[test]
+    fn cr068_dual_protocol_routes_by_cli_not_provider_default() {
+        let conn = route_database();
+        insert_provider(&conn, "p-dual", "openai", false);
+        insert_endpoint(&conn, "e-openai", "p-dual", "openai", "https://openai.example/v1", true, 1);
+        insert_endpoint(&conn, "e-anthropic", "p-dual", "anthropic", "https://anthropic.example", true, 2);
+        // 显式 Anthropic 密钥先插入，旧实现会先取它并错误拒绝 Codex/Grok。
+        insert_key(&conn, "k-anthropic", "p-dual", true, "Anthropic", Some("[]"), 1);
+        insert_key(&conn, "k-openai", "p-dual", true, "", None, 2);
+        insert_model(&conn, "row-1", "p-dual", "remote-model", true, false);
+
+        let providers = load_providers_inner(&conn).unwrap();
+        let candidates = model_candidates_from(&providers);
+        let protocols: Vec<&str> = candidates.iter().map(|candidate| candidate.protocol.as_str()).collect();
+        assert_eq!(protocols, vec!["openai", "anthropic"], "默认协议在前，另一兼容协议各一条");
+        assert!(candidates.iter().all(|candidate| candidate.model_id == "remote-model" && candidate.model_row_id == "row-1"));
+
+        let claude = resolve_for_cli(&providers, "p-dual", "claude", "remote-model").unwrap();
+        assert_eq!((claude.protocol, claude.endpoint.id.as_str(), claude.key.id.as_str()), ("anthropic", "e-anthropic", "k-anthropic"));
+        let codex = resolve_for_cli(&providers, "p-dual", "codex", "remote-model").unwrap();
+        assert_eq!((codex.protocol, codex.endpoint.id.as_str(), codex.key.id.as_str()), ("openai", "e-openai", "k-openai"));
+        let grok = resolve_for_cli(&providers, "p-dual", "grok", "remote-model").unwrap();
+        assert_eq!((grok.protocol, grok.endpoint.id.as_str(), grok.key.id.as_str()), ("openai", "e-openai", "k-openai"));
+    }
+
+    #[test]
+    fn cr068_candidate_and_dispatch_resolver_agree_per_protocol() {
+        let conn = route_database();
+        insert_provider(&conn, "p-agree", "openai", false);
+        insert_endpoint(&conn, "e-openai", "p-agree", "openai", "https://openai.example/v1", true, 1);
+        insert_endpoint(&conn, "e-anthropic", "p-agree", "anthropic", "https://anthropic.example", true, 2);
+        insert_key(&conn, "k-anthropic", "p-agree", true, "Anthropic", Some("[\"remote-model\"]"), 1);
+        insert_key(&conn, "k-openai", "p-agree", true, "Responses", Some("[\"remote-model\"]"), 2);
+        insert_model(&conn, "row-1", "p-agree", "remote-model", true, false);
+
+        let providers = load_providers_inner(&conn).unwrap();
+        let candidates = model_candidates_from(&providers);
+        assert_eq!(candidates.len(), 2);
+        for candidate in candidates {
+            let cli = if candidate.protocol == "anthropic" { "claude" } else { "codex" };
+            let route = resolve_for_cli(&providers, "p-agree", cli, &candidate.model_id).unwrap();
+            assert_eq!(route.protocol, candidate.protocol);
+            assert_eq!(route.endpoint.protocol, candidate.protocol);
+            assert!(route.key.enabled);
+            assert!(route.key.models.is_empty() || route.key.models.iter().any(|id| id == &candidate.model_id));
+        }
+    }
+
+    #[test]
+    fn cr068_empty_key_protocol_inherits_provider_and_never_crosses() {
+        let conn = route_database();
+        insert_provider(&conn, "p-anth", "anthropic", false);
+        insert_endpoint(&conn, "e-anthropic", "p-anth", "anthropic", "https://anthropic.example", true, 1);
+        insert_endpoint(&conn, "e-openai", "p-anth", "openai", "https://openai.example/v1", true, 2);
+        insert_key(&conn, "k-default", "p-anth", true, "", Some("[]"), 1);
+        insert_model(&conn, "row-1", "p-anth", "remote-model", true, false);
+
+        let providers = load_providers_inner(&conn).unwrap();
+        let candidates = model_candidates_from(&providers);
+        let protocols: Vec<&str> = candidates.iter().map(|candidate| candidate.protocol.as_str()).collect();
+        assert_eq!(protocols, vec!["anthropic"], "空协议密钥只继承 Anthropic，不产生 OpenAI 候选");
+        let claude = resolve_for_cli(&providers, "p-anth", "claude", "remote-model").unwrap();
+        assert_eq!((claude.protocol, claude.endpoint.id.as_str(), claude.key.id.as_str()), ("anthropic", "e-anthropic", "k-default"));
+        let codex = resolve_for_cli(&providers, "p-anth", "codex", "remote-model").unwrap_err();
+        assert!(codex.contains("openai"), "应明确缺少 OpenAI 密钥：{codex}");
+    }
+
+    #[test]
+    fn cr068_single_protocol_rejects_opposite_cli() {
+        let conn = route_database();
+        insert_provider(&conn, "p-openai", "openai", false);
+        insert_endpoint(&conn, "e-openai", "p-openai", "openai", "https://openai.example/v1", true, 1);
+        insert_key(&conn, "k-openai", "p-openai", true, "Chat", Some("[]"), 1);
+        insert_model(&conn, "row-1", "p-openai", "remote-model", true, false);
+
+        let providers = load_providers_inner(&conn).unwrap();
+        assert_eq!(model_candidates_from(&providers).len(), 1);
+        let err = resolve_for_cli(&providers, "p-openai", "claude", "remote-model").unwrap_err();
+        assert!(err.contains("anthropic 端点"), "Claude 必须明确缺少 Anthropic 端点：{err}");
+        assert!(resolve_for_cli(&providers, "p-openai", "codex", "remote-model").is_ok());
+    }
+
+    #[test]
+    fn cr068_disabled_or_blank_endpoint_rejected() {
+        let conn = route_database();
+        insert_provider(&conn, "p-endpoint", "openai", false);
+        insert_endpoint(&conn, "e-openai", "p-endpoint", "openai", "https://openai.example/v1", false, 1);
+        insert_key(&conn, "k-openai", "p-endpoint", true, "", Some("[]"), 1);
+        insert_model(&conn, "row-1", "p-endpoint", "remote-model", true, false);
+        let providers = load_providers_inner(&conn).unwrap();
+
+        assert!(resolve_for_cli(&providers, "p-endpoint", "codex", "remote-model").unwrap_err().contains("openai 端点"));
+        assert!(model_candidates_from(&providers).is_empty());
+
+        conn.execute("UPDATE provider_endpoint SET enabled=1, baseUrl='   ' WHERE id='e-openai'", []).unwrap();
+        let providers = load_providers_inner(&conn).unwrap();
+        assert!(resolve_for_cli(&providers, "p-endpoint", "codex", "remote-model").unwrap_err().contains("openai 端点"));
+        assert!(model_candidates_from(&providers).is_empty());
+
+        conn.execute("UPDATE provider_endpoint SET baseUrl='https://openai.example/v1' WHERE id='e-openai'", []).unwrap();
+        let providers = load_providers_inner(&conn).unwrap();
+        assert!(resolve_for_cli(&providers, "p-endpoint", "codex", "remote-model").is_ok());
+        assert_eq!(model_candidates_from(&providers).len(), 1);
+    }
+
+    #[test]
+    fn cr068_key_enabled_protocol_and_scope_gate_eligibility() {
+        let conn = route_database();
+        insert_provider(&conn, "p-key", "openai", false);
+        insert_endpoint(&conn, "e-openai", "p-key", "openai", "https://openai.example/v1", true, 1);
+        insert_key(&conn, "k-main", "p-key", false, "", Some("[]"), 1);
+        insert_model(&conn, "row-1", "p-key", "remote-model", true, false);
+        let providers = load_providers_inner(&conn).unwrap();
+        assert!(resolve_for_cli(&providers, "p-key", "codex", "remote-model").is_err(), "停用密钥不得参与路由");
+        assert!(model_candidates_from(&providers).is_empty());
+
+        conn.execute("UPDATE provider_key SET enabled=1, modelsJson='[\"other-model\"]' WHERE id='k-main'", []).unwrap();
+        let providers = load_providers_inner(&conn).unwrap();
+        assert!(resolve_for_cli(&providers, "p-key", "codex", "remote-model").is_err(), "模型不在密钥范围必须拒绝");
+        assert!(model_candidates_from(&providers).is_empty());
+
+        conn.execute("UPDATE provider_key SET modelsJson=NULL WHERE id='k-main'", []).unwrap();
+        let providers = load_providers_inner(&conn).unwrap();
+        assert!(resolve_for_cli(&providers, "p-key", "codex", "remote-model").is_ok(), "NULL 范围等价全部模型");
+
+        conn.execute("UPDATE provider_key SET protocol='Anthropic' WHERE id='k-main'", []).unwrap();
+        let providers = load_providers_inner(&conn).unwrap();
+        assert!(resolve_for_cli(&providers, "p-key", "codex", "remote-model").is_err(), "密钥协议不符必须拒绝");
+
+        conn.execute("UPDATE provider_key SET protocol='OpenAI' WHERE id='k-main'", []).unwrap();
+        let providers = load_providers_inner(&conn).unwrap();
+        assert!(resolve_for_cli(&providers, "p-key", "codex", "remote-model").is_err(), "非约定协议值不得按名称猜测");
+    }
+
+    #[test]
+    fn cr068_model_must_be_remote_text_non_image() {
+        let conn = route_database();
+        insert_provider(&conn, "p-model", "openai", false);
+        insert_endpoint(&conn, "e-openai", "p-model", "openai", "https://openai.example/v1", true, 1);
+        insert_key(&conn, "k-main", "p-model", true, "", Some("[]"), 1);
+        insert_model(&conn, "row-1", "p-model", "remote-model", false, false);
+        let providers = load_providers_inner(&conn).unwrap();
+        assert!(resolve_for_cli(&providers, "p-model", "codex", "remote-model").unwrap_err().contains("不支持文本"));
+        assert!(model_candidates_from(&providers).is_empty());
+
+        conn.execute("UPDATE model SET text=1, imageGen=1 WHERE id='row-1'", []).unwrap();
+        let providers = load_providers_inner(&conn).unwrap();
+        assert!(resolve_for_cli(&providers, "p-model", "codex", "remote-model").unwrap_err().contains("生图"));
+        assert!(model_candidates_from(&providers).is_empty());
+
+        conn.execute("UPDATE model SET imageGen=0 WHERE id='row-1'", []).unwrap();
+        let providers = load_providers_inner(&conn).unwrap();
+        assert!(resolve_for_cli(&providers, "p-model", "codex", "row-1").is_err(), "会话传入行 ID 必须拒绝，不能误当远端模型 ID");
+        assert!(resolve_for_cli(&providers, "p-model", "codex", "remote-model").is_ok());
+    }
+
+    #[test]
+    fn cr068_disabled_or_missing_provider_rejected() {
+        let conn = route_database();
+        insert_provider(&conn, "p-disabled", "openai", true);
+        insert_endpoint(&conn, "e-openai", "p-disabled", "openai", "https://openai.example/v1", true, 1);
+        insert_key(&conn, "k-main", "p-disabled", true, "", Some("[]"), 1);
+        insert_model(&conn, "row-1", "p-disabled", "remote-model", true, false);
+        let providers = load_providers_inner(&conn).unwrap();
+
+        assert!(model_candidates_from(&providers).is_empty());
+        assert!(resolve_for_cli(&providers, "p-disabled", "codex", "remote-model").unwrap_err().contains("已停用"));
+        assert!(resolve_for_cli(&providers, "p-missing", "codex", "remote-model").unwrap_err().contains("不存在"));
     }
 }

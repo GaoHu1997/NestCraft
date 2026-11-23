@@ -20,6 +20,13 @@ fn write(path: &Path, content: &str) -> Result<(), String> {
     std::fs::write(path, content).map_err(|e| e.to_string())
 }
 
+/// 冒烟用：套件是否应自动启动（`SMOKE_AUTORUN=1`）。
+/// 仍需前端 `?smoke=legacy` 双重确认，本标志只免除手工输入 URL 这一操作步骤。
+#[tauri::command]
+pub fn smoke_autorun_flag() -> bool {
+    std::env::var("SMOKE_AUTORUN").map(|v| v == "1").unwrap_or(false)
+}
+
 #[tauri::command]
 pub fn smoke_should_run() -> bool {
     std::env::var("TAURI_SMOKE").is_ok()
@@ -135,6 +142,46 @@ pub fn smoke_report_write(app: tauri::AppHandle, content: String) -> Result<Stri
     println!("SMOKE-REPORT-BEGIN {}", path.to_string_lossy());
     println!("{}", content);
     println!("SMOKE-REPORT-END");
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// 聚焦套件报告（执行账本 + 双向同步）：单独落盘，不覆盖全量报告。
+#[tauri::command]
+pub fn smoke_report_write_execution(app: tauri::AppHandle, content: String) -> Result<String, String> {
+    use tauri::Manager;
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("smoke-report-execution.md");
+    std::fs::write(&path, &content).map_err(|e| e.to_string())?;
+    println!("SMOKE-EXEC-REPORT-BEGIN {}", path.to_string_lossy());
+    println!("{}", content);
+    println!("SMOKE-EXEC-REPORT-END");
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// 聚焦套件是否应启动（与全量套件相同的双重授权：TAURI_SMOKE=1 且 SMOKE_EXEC_SUITE=1）。
+#[tauri::command]
+pub fn smoke_exec_suite_flag() -> bool {
+    std::env::var("SMOKE_EXEC_SUITE").map(|v| v == "1").unwrap_or(false)
+}
+
+/// 死锁回归套件是否应启动（TAURI_SMOKE=1 且 SMOKE_PIN_SUITE=1）。
+#[tauri::command]
+pub fn smoke_pin_suite_flag() -> bool {
+    std::env::var("SMOKE_PIN_SUITE").map(|v| v == "1").unwrap_or(false)
+}
+
+/// 死锁回归报告落盘（独立文件，不覆盖其它报告）。
+#[tauri::command]
+pub fn smoke_report_write_pin(app: tauri::AppHandle, content: String) -> Result<String, String> {
+    use tauri::Manager;
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("smoke-report-pin.md");
+    std::fs::write(&path, &content).map_err(|e| e.to_string())?;
+    println!("SMOKE-PIN-REPORT-BEGIN {}", path.to_string_lossy());
+    println!("{}", content);
+    println!("SMOKE-PIN-REPORT-END");
     Ok(path.to_string_lossy().to_string())
 }
 

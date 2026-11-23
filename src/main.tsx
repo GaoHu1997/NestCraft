@@ -34,12 +34,33 @@ async function mountApp() {
       </AppProvider>
     </React.StrictMode>
   );
-  // 历史全量冒烟含外部动作，本轮必须显式双重授权才允许启动。
-  if (native && !preview && new URLSearchParams(location.search).get("smoke") === "legacy") {
-    const run = await invoke<boolean>("smoke_should_run");
-    if (run) {
-      const module = await import("./smoke/runner");
-      await module.runSmoke();
+  // 历史全量冒烟含外部动作，必须显式双重授权才允许启动：
+  // ① 进程带 TAURI_SMOKE=1；② 要么 URL 带 ?smoke=legacy，要么进程再带 SMOKE_AUTORUN=1。
+  // 两者缺一不可；autorun 只是省掉手工在窗口里输入 URL，不降低授权要求。
+  if (native && !preview) {
+    const search = new URLSearchParams(location.search);
+    const requested = search.get("smoke") === "legacy";
+    // 聚焦套件（执行账本 + 双向同步）：单独入口，同样要求 TAURI_SMOKE=1 且 SMOKE_EXEC_SUITE=1。
+    const execSuite = await invoke<boolean>("smoke_exec_suite_flag").catch(() => false);
+    if (execSuite && (await invoke<boolean>("smoke_should_run").catch(() => false))) {
+      const module = await import("./smoke/execution-runner");
+      await module.runExecutionSmoke();
+      return;
+    }
+    // 死锁回归（CR-065 pin / fork）：TAURI_SMOKE=1 且 SMOKE_PIN_SUITE=1。
+    const pinSuite = await invoke<boolean>("smoke_pin_suite_flag").catch(() => false);
+    if (pinSuite && (await invoke<boolean>("smoke_should_run").catch(() => false))) {
+      const module = await import("./smoke/pin-suite");
+      await module.runPinSuite();
+      return;
+    }
+    const autorun = await invoke<boolean>("smoke_autorun_flag").catch(() => false);
+    if (requested || autorun) {
+      const run = await invoke<boolean>("smoke_should_run");
+      if (run) {
+        const module = await import("./smoke/runner");
+        await module.runSmoke();
+      }
     }
   }
 }

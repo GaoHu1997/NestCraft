@@ -102,8 +102,13 @@ pub fn run() {
             commands::window::window_pending_close,
             // 冒烟测试支撑（TAURI_SMOKE=1）
             commands::smoke::smoke_should_run,
+            commands::smoke::smoke_autorun_flag,
             commands::smoke::smoke_prepare_fixtures,
             commands::smoke::smoke_report_write,
+            commands::smoke::smoke_report_write_execution,
+            commands::smoke::smoke_exec_suite_flag,
+            commands::smoke::smoke_pin_suite_flag,
+            commands::smoke::smoke_report_write_pin,
             commands::smoke::smoke_instrument,
             commands::smoke::smoke_spawn_probe,
             commands::smoke::smoke_mock_full,

@@ -330,63 +330,39 @@ pub fn resolve(
 
     if has_provider {
         let pid = provider_id.unwrap();
-        let (name, protocol, disabled) = {
+        let providers = {
+            let guard = db::conn()?;
+            let conn = guard.as_ref().ok_or("db not initialized")?;
+            crate::commands::providers::load_providers_inner(conn)?
+        };
+        // CR-068 J06：候选与派发共用同一资格 resolver；CLI 决定有效协议，
+        // 默认协议只作默认偏好，不覆盖另一协议端点，也不跨协议复用密钥。
+        let route = crate::commands::model_route::resolve_for_cli(&providers, pid, cli_id, model_id)?;
+        let name = providers
+            .iter()
+            .find(|provider| provider.id == pid)
+            .map(|provider| provider.name.clone())
+            .unwrap_or_default();
+        let protocol = route.protocol.to_string();
+        let base_url = route.endpoint.base_url.trim().to_string();
+        let key_id = route.key.id.clone();
+
+        // 仅在端点、密钥协议与模型范围均合格后读取 secretRef。
+        let key_ref: Option<String> = {
             let guard = db::conn()?;
             let conn = guard.as_ref().ok_or("db not initialized")?;
             conn.query_row(
-                "SELECT name, protocol, disabled FROM provider WHERE id=?1",
-                [pid],
-                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)? != 0)),
+                "SELECT secretRef FROM provider_key WHERE id=?1 AND providerId=?2",
+                rusqlite::params![key_id, pid],
+                |r| r.get(0),
             )
-            .map_err(|_| "会话绑定的供应商不存在（可能已被删除），请改选或修复设置".to_string())?
+            .ok()
+            .flatten()
         };
-        if disabled {
-            return Err(format!("供应商「{}」已停用，请启用或改选", name));
-        }
-
-        let (base_url, key_ref) = {
-            let guard = db::conn()?;
-            let conn = guard.as_ref().ok_or("db not initialized")?;
-            let base_url: Option<String> = conn
-                .query_row(
-                    "SELECT baseUrl FROM provider_endpoint WHERE providerId=?1 AND enabled=1 AND protocol=?2 ORDER BY createdAt LIMIT 1",
-                    rusqlite::params![pid, protocol],
-                    |r| r.get(0),
-                )
-                .ok();
-            let key_ref: Option<String> = conn
-                .query_row(
-                    "SELECT secretRef FROM provider_key WHERE providerId=?1 AND enabled=1 ORDER BY createdAt LIMIT 1",
-                    [pid],
-                    |r| r.get(0),
-                )
-                .ok();
-            (base_url, key_ref)
-        };
-        let base_url = base_url
-            .filter(|u| !u.trim().is_empty())
-            .ok_or_else(|| format!("供应商「{}」没有与协议 {} 匹配的启用端点", name, protocol))?;
         let secret = key_ref
             .as_deref()
             .and_then(|k| read_secret(app, k))
             .ok_or_else(|| format!("供应商「{}」没有可用密钥，请在设置中补充", name))?;
-
-        match (cli_id, protocol.as_str()) {
-            ("claude", "anthropic") => {}
-            ("codex" | "grok", "openai") => {}
-            ("claude", other) => {
-                return Err(format!(
-                    "CLI「claude」需要 Anthropic 兼容协议，当前供应商协议为 {}；请改选模型或供应商",
-                    other
-                ))
-            }
-            (c, other) => {
-                return Err(format!(
-                    "CLI「{}」需要 OpenAI 兼容协议，当前供应商协议为 {}；请改选模型或供应商",
-                    c, other
-                ))
-            }
-        }
 
         let base = base_url.trim_end_matches('/').to_string();
         match cli_id {
