@@ -1265,7 +1265,12 @@ mod tests {
         /// 共名会导致旧库数据泄漏到下一个测试。
         fn new(tag: &str) -> Self {
             let guard = DB_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-            let dir = std::env::temp_dir().join(format!("ai-tools-test-{}-{tag}", std::process::id()));
+            // 夹具目录必须直接基于规范化后的临时目录：GitHub Windows runner 的
+            // %TEMP% 可能是 8.3 短名（如 RUNNER~1），SafeRoot 会把 canonicalize
+            // 结果与原始路径不一致判为“路径已变化”，与产品行为无关。
+            let base = std::fs::canonicalize(std::env::temp_dir())
+                .unwrap_or_else(|_| std::env::temp_dir());
+            let dir = base.join(format!("ai-tools-test-{}-{tag}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             db::init(&dir.join("workbench.db")).unwrap();
