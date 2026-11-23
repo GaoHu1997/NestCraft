@@ -217,6 +217,7 @@ window.AIPanel = (function () {
 
   /* ---------------- 底部弹层：CLI / 权限 / 模型 ---------------- */
   function popups() {
+    if (store.aiPop === "runner") return window.CR069 ? CR069.runnerPopup() : "";
     if (store.aiPop === "cli") {
       const installed = D.settings.clis.filter(c => c.installed);
       return `<div class="ai-pop ai-pop-cli" id="ai-popup-cli" data-ai-popup="cli" role="dialog" aria-label="切换 CLI" tabindex="-1">
@@ -373,8 +374,9 @@ window.AIPanel = (function () {
     const msgs = store.aiMessages;
     const cli = D.settings.clis.find(c => c.id === store.aiCli) || { id: "", name: "未配置 CLI" };
     const cm = currentModel(), busy = runtimeBusy();
-    const cliDisabled = busy || !D.settings.clis.some(usableCli);
-    const permDisabled = busy || !(D.ai.permissions || []).some(p => p.available !== false && p.enabled !== false);
+    const platformRunner = !!(window.CR069 && CR069.isPlatform());
+    const cliDisabled = busy || platformRunner || !D.settings.clis.some(usableCli);
+    const permDisabled = busy || platformRunner || !(D.ai.permissions || []).some(p => p.available !== false && p.enabled !== false);
     const modelDisabled = busy || !(D.ai.modelCatalog.providers || []).some(p => p.enabled !== false && p.available !== false && visibleModels(p).some(usableModel));
     return `<aside class="ai-panel"${window.OfficeAI ? OfficeAI.panelAttrs() : ""} aria-label="AI 会话" style="width:${store.aiWidth}px">
       <div class="ai-resize" data-act="ai-resize" title="拖动调整宽度"></div>
@@ -409,8 +411,9 @@ window.AIPanel = (function () {
           <textarea id="ai-input" placeholder="${window.OfficeAI && OfficeAI.isActive() ? "描述办公意图，/ 调用指令，@ 项目资料或对话" : "描述你想构建的内容，/ 调用指令，@ 文件或对话"}">${esc(store.aiInput)}</textarea>
           <div class="ai-tools">
             <button class="ai-chip icon-only" data-act="ai-menu-open" data-tab="add" title="添加" aria-label="添加">${icon("plus")}</button>
-            ${anchorSlot("cli", `<button class="ai-chip cli" id="ai-anchor-cli" data-ai-anchor="cli" data-act="ai-cli" aria-haspopup="dialog" aria-controls="ai-popup-cli" aria-expanded="${store.aiPop === "cli"}" ${cliDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : cliDisabled ? "没有可用 CLI" : "切换 CLI：" + esc(cli.name)}" aria-label="切换 CLI：${esc(cli.name)}">${cliLogo(cli.id, 16)}</button>`)}
-            ${anchorSlot("perm", `<button class="ai-chip perm" id="ai-anchor-perm" data-ai-anchor="perm" data-act="ai-permission" aria-haspopup="dialog" aria-controls="ai-popup-perm" aria-expanded="${store.aiPop === "perm"}" ${permDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : "权限模式"}" aria-label="权限模式">${icon("shield")}${esc(store.aiPermission)}</button>`)}
+            ${window.CR069 ? anchorSlot("runner", CR069.runnerChip(busy)) : ""}
+            ${anchorSlot("cli", `<button class="ai-chip cli" id="ai-anchor-cli" data-ai-anchor="cli" data-act="ai-cli" aria-haspopup="dialog" aria-controls="ai-popup-cli" aria-expanded="${store.aiPop === "cli"}" ${cliDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : platformRunner ? "平台会话不使用 CLI；可用操作由平台工具白名单决定" : cliDisabled ? "没有可用 CLI" : "切换 CLI：" + esc(cli.name)}" aria-label="切换 CLI：${esc(cli.name)}">${cliLogo(cli.id, 16)}</button>`)}
+            ${anchorSlot("perm", `<button class="ai-chip perm" id="ai-anchor-perm" data-ai-anchor="perm" data-act="ai-permission" aria-haspopup="dialog" aria-controls="ai-popup-perm" aria-expanded="${store.aiPop === "perm"}" ${permDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : platformRunner ? "平台会话不使用 CLI 权限档位；边界由平台工具白名单决定" : "权限模式"}" aria-label="权限模式">${icon("shield")}${esc(store.aiPermission)}</button>`)}
             ${anchorSlot("model", `<button class="ai-chip model" id="ai-anchor-model" data-ai-anchor="model" data-act="ai-model" aria-haspopup="dialog" aria-controls="ai-popup-model" aria-expanded="${store.aiPop === "model"}" ${modelDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : modelDisabled ? "没有可用模型" : !usableModel(cm) ? "当前模型失效，请重新选择" : "选择模型"}" aria-label="选择模型">${esc(cm.name)}${cm.available === false ? "（不可用）" : ""} · ${esc(cm.thinking ? D.ai.modelCatalog.current.level : "无思考档位")}</button>`)}
             <button class="ai-send" data-act="ai-send" title="${store.aiBusy && !store.aiInput.trim() ? "停止" : "发送"}" aria-label="${store.aiBusy && !store.aiInput.trim() ? "停止" : "发送"}">${icon(store.aiBusy && !store.aiInput.trim() ? "stop" : "arrowUp", "ico-18")}</button>
           </div>
