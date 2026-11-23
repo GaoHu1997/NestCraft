@@ -19,8 +19,8 @@ function permissionOptions(cliId: string | null | undefined) {
     { id: "default" as const, name: "默认模式", desc: "保留 CLI 原生审批边界", enabled: known },
     { id: "plan" as const, name: "规划模式", desc: cliId === "claude" ? "Claude plan：只读规划语义" : "Codex read-only sandbox：只读执行", enabled: known },
     { id: "agent" as const, name: "代理模式", desc: cliId === "claude" ? "Claude acceptEdits：自动接受编辑" : "Codex workspace-write：保留沙箱", enabled: known },
-    { id: "auto" as const, name: "自动审批", desc: "当前版本未核验原生审查通道", enabled: false },
-    { id: "full" as const, name: "全自动", desc: "需要已核验隔离与托管策略", enabled: false },
+    { id: "auto" as const, name: "自动审核", desc: "当前版本未核验原生审查通道", enabled: false },
+    { id: "full" as const, name: "完全访问", desc: "需要已核验隔离与托管策略", enabled: false },
   ];
 }
 

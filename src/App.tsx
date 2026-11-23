@@ -30,7 +30,7 @@ const NAV_ITEMS = [
 export default function App() {
   const { route, go, openObject, windows, activateWindow, closeWindow, settingsOpen, setSettingsOpen, theme, toggleTheme } = useApp();
   const chrome = useWindowChrome();
-  const openProject = (project: api.Project, tab: "requirements" | "design" | "tasks" | "code") => openObject({ page: "project", projectId: project.id, tab });
+  const openProject = (project: api.Project, tab: "workbench" | "requirements" | "design" | "tasks" | "code") => openObject({ page: "project", projectId: project.id, tab });
   const [settingsTab, setSettingsTab] = useState("general");
   const [projects, setProjects] = useState<api.Project[]>([]);
   const [libraries, setLibraries] = useState<api.KnowledgeLibrary[]>([]);
@@ -42,6 +42,10 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  /* CR-059 二期：内置 AI 工具（ssh_exec）的高风险命令跨进程审批。
+     工具进程把待批请求写入共享 SQLite，这里轮询并在界面弹出审批卡片。 */
+  const [approvals, setApprovals] = useState<api.PendingApproval[]>([]);
+  const [approvalBusy, setApprovalBusy] = useState<string | null>(null);
   const [closingTab, setClosingTab] = useState<string | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const navigation = usePaneWidth("home", "navigation", { default: 224, min: 176, max: 320, side: "left", containerRef: bodyRef, minCenter: 480, disabled: routeKey(route) !== "home" });
@@ -96,6 +100,34 @@ export default function App() {
     window.addEventListener("keydown", listener);
     return () => window.removeEventListener("keydown", listener);
   }, []);
+
+  /* CR-059 二期：轮询待审批命令（3 秒）。失败静默——审批不是主流程，不打扰用户。 */
+  useEffect(() => {
+    let alive = true;
+    const poll = () => {
+      api.serverPendingApprovals()
+        .then(list => { if (alive) setApprovals(previous => (JSON.stringify(previous) === JSON.stringify(list) ? previous : list)); })
+        .catch(() => {});
+    };
+    poll();
+    const timer = window.setInterval(poll, 3000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, []);
+
+  const decideApproval = async (item: api.PendingApproval, decision: "approve" | "reject") => {
+    if (approvalBusy) return;
+    setApprovalBusy(item.id);
+    try {
+      await api.serverDecideApproval(item.id, decision);
+      setApprovals(previous => previous.filter(entry => entry.id !== item.id));
+    } catch (e) {
+      // 过期/已处理：从列表移除并如实提示。
+      setApprovals(previous => previous.filter(entry => entry.id !== item.id));
+      window.alert(String(e instanceof Error ? e.message : e));
+    } finally {
+      setApprovalBusy(null);
+    }
+  };
 
   const activePage = route.page === "project" ? "projects" : route.page === "knowledge-lib" ? "knowledge" : route.page === "server" ? "servers" : route.page;
   const windowTitle = (item: Route) => item.page === "project" ? projects.find(project => project.id === item.projectId)?.name ?? "项目"
@@ -155,7 +187,7 @@ export default function App() {
             </button>
           ))}
           <div className="nav-label nc-nav-section">当前项目</div>
-          {currentProject ? <button className="nc-side-project" onClick={() => openProject(currentProject, currentProject.kind === "work" ? "code" : "requirements")}>
+          {currentProject ? <button className="nc-side-project" onClick={() => openProject(currentProject, "workbench")}>
             <ProjectIconTile project={currentProject} size={26} />
             <span className="grow"><b>{currentProject.name}</b><small title={currentProject.rootUri}>{currentProject.rootUri}</small></span>
           </button> : <span className="nc-side-empty">尚未打开项目</span>}
@@ -185,13 +217,26 @@ export default function App() {
       {searchOpen && <Modal title="搜索项目、需求、文档" onClose={() => setSearchOpen(false)} width={620}>
         <input className="input" autoFocus placeholder="搜索项目名称" value={search} onChange={event => setSearch(event.target.value)} />
         <div className="nc-search-results">{projects.filter(project => project.name.toLowerCase().includes(search.toLowerCase())).map(project => <button key={project.id} className="nc-list-row" onClick={() => {
-          openObject({ page: "project", projectId: project.id, tab: project.kind === "work" ? "code" : "requirements" }); setSearchOpen(false);
+          openObject({ page: "project", projectId: project.id, tab: "workbench" }); setSearchOpen(false);
         }}>{project.name}<small>{project.kind === "code" ? "编码" : "办公"}</small></button>)}</div>
       </Modal>}
       {closingTab && <Modal title="关闭对象 Tab？" width={460} onClose={() => setClosingTab(null)} footer={<><button className="btn" onClick={() => setClosingTab(null)}>取消，保留 Tab</button><button className="btn primary" onClick={() => { closeWindow(closingTab); setClosingTab(null); }}>保留状态并关闭 Tab</button></>}><p>关闭只移除此 Tab，内存中的未保存内容和会话实例保留，重新打开可继续查看；不删除文件，不停止会话或连接。内存状态在退出应用后仍会丢失，请先保存重要内容。</p></Modal>}
       {chrome.closeToken && <Modal title="关闭栖造窗口？" width={460} onClose={() => void chrome.cancelClose()} footer={<><button className="btn" onClick={() => void chrome.cancelClose()}>取消，继续编辑</button><button className="btn danger" onClick={() => void chrome.confirmClose()}>确认退出</button></>}><p>退出会结束当前应用，尚未保存的编辑和内存仿真草稿可能丢失，正在运行的本机会话也会随进程结束。此操作不会删除项目目录。若需要保存，请取消并先保存。</p>{chrome.error && <p role="alert">{chrome.error}</p>}</Modal>}
       {chrome.error && !chrome.closeToken && <div className="nc-window-error" role="status">{chrome.error}<button aria-label="关闭窗口操作提示" onClick={chrome.clearError}><Icon name="close" size={14} /></button></div>}
       {notificationsOpen && <Modal title="通知" width={460} onClose={() => setNotificationsOpen(false)}><p>目前没有可读取的系统通知。项目的待处理需求在工作台中查看。</p></Modal>}
+      {/* CR-059 二期：内置 AI 工具提交的高风险命令待审批。批准即执行，故给出完整命令与主机。 */}
+      {approvals.length > 0 && <Modal title="高风险命令待审批" width={560} onClose={() => { /* 审批必须显式决定，不允许静默关闭 */ }} footer={<span className="small muted">批准后立即在对应主机执行一次；拒绝不执行。</span>}>
+        <p className="small">AI 通过内置工具提交了 {approvals.length} 条高风险命令，需要你逐条决定。</p>
+        {approvals.map(item => <div key={item.id} className="approval-card" style={{ marginBottom: 10 }}>
+          <b>{item.hostName ?? item.hostId} · 高风险</b>
+          <pre className="mono small" style={{ whiteSpace: "pre-wrap", margin: "6px 0" }}>{item.command}</pre>
+          <div className="row">
+            <button className="btn danger sm" disabled={approvalBusy === item.id} onClick={() => void decideApproval(item, "approve")}>{approvalBusy === item.id ? "处理中…" : "批准执行"}</button>
+            <button className="btn sm" disabled={approvalBusy === item.id} onClick={() => void decideApproval(item, "reject")}>拒绝</button>
+            <span className="small muted">提交于 {new Date(item.createdAt).toLocaleTimeString()}，10 分钟内有效</span>
+          </div>
+        </div>)}
+      </Modal>}
     </div>
   );
 }
@@ -212,7 +257,7 @@ function HomeWindow({ route, visible }: { route: Route; visible: boolean }) {
   </div>;
 }
 
-function ProjectWindow({ projectId, tab, visible }: { projectId: string; tab: "requirements" | "design" | "tasks" | "code"; visible: boolean }) {
+function ProjectWindow({ projectId, tab, visible }: { projectId: string; tab: "workbench" | "requirements" | "design" | "tasks" | "code"; visible: boolean }) {
   const { aiVisible, aiWidth, setAiWidth, featureTargets } = useApp();
   const [project, setProject] = useState<api.Project | null>(null);
   const officeVersion = useOfficeVersion();
@@ -232,15 +277,19 @@ function ProjectWindow({ projectId, tab, visible }: { projectId: string; tab: "r
   }, [ai.preferred, setAiWidth, visible]);
   const officeFiles = project?.kind === "work" ? officeFileList(project.id) : undefined;
   void officeVersion;
+  /* CR-054：工作台页签自带会话视图（全项目唯一的 ChatPanel）。
+     此页签下不再渲染侧栏 ChatPanel，避免同一会话出现两个实例与两套流式订阅。 */
+  const onWorkbench = tab === "workbench";
+  const showSidebar = preferences.visible && ai.visible && !onWorkbench;
   return (
     <div className="nc-project-window pane-container" ref={layoutRef}>
       <div className="nc-project-content"><ProjectsModule.Workspace projectId={projectId} tab={tab} visible={visible} /></div>
-      {project && <aside {...ai.paneProps} className={`${ai.paneProps.className} nc-chat-host`} style={ai.style} hidden={!preferences.visible || !ai.visible}>
+      {project && showSidebar && <aside {...ai.paneProps} className={`${ai.paneProps.className} nc-chat-host`} style={ai.style}>
         <ResizeHandle pane={ai} label="AI 侧栏" />
-        <ChatPanel projectId={project.id} rootUri={project.rootUri} office={project.kind === "work"} officeFiles={officeFiles} visible={visible && preferences.visible && ai.visible} width={ai.width}
+        <ChatPanel projectId={project.id} rootUri={project.rootUri} office={project.kind === "work"} officeFiles={officeFiles} visible={visible && showSidebar} width={ai.width}
           featureTarget={featureTargets[project.id] ?? null} />
       </aside>}
-      {preferences.visible && <div className="pane-controls"><PaneToggle pane={ai} label="AI 侧栏" /></div>}
+      {project && onWorkbench && preferences.visible && <div className="pane-controls"><span className="nc-workbench-note" title="工作台已包含会话区，此页签不显示独立 AI 侧栏">会话区已合并在工作台</span></div>}
     </div>
   );
 }

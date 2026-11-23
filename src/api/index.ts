@@ -29,7 +29,7 @@ export async function invoke<T = unknown>(cmd: string, args?: Record<string, unk
     throw new Error("未在 Tauri 环境中运行（未找到 __TAURI_INTERNALS__）。请使用 npm run tauri dev 启动。");
   }
   const raw = await _invoke(cmd, args);
-  if (/^(set_setting|set_theme|provider_(save|delete|set_disabled)|sdk_(set_enabled|run_job)|skill_(save|delete|set_enabled)|mcp_(save|delete|set_enabled)|tool_set_enabled)$/.test(cmd)) {
+  if (/^(set_setting|set_theme|provider_(save|delete|set_disabled)|sdk_(set_enabled|run_job)|skill_(save|delete|set_enabled|import_folder)|mcp_(save|delete|set_enabled|import_source)|tool_set_enabled)$/.test(cmd)) {
     window.dispatchEvent(new CustomEvent("app:settings-changed", { detail: { command: cmd } }));
   }
   if (/^(create_project|update_project|delete_project)$/.test(cmd)) {
@@ -237,6 +237,40 @@ export interface CommitFileEntry {
   deletions: number | null;
 }
 
+/** CR-067：提交历史筛选（服务端执行，避免只在已加载页内过滤）。 */
+export interface GitLogFilters {
+  all?: boolean;
+  /** CR-067：指定单分支/引用查询（优先于 all）。 */
+  branch?: string;
+  author?: string;
+  since?: string;
+}
+
+/** CR-067：一个远程（名称 + fetch 地址）。 */
+export interface RemoteEntry {
+  name: string;
+  url: string;
+}
+
+/** CR-067：国内加速配置。 */
+export interface AccelConfig {
+  enabled: boolean;
+  url: string;
+}
+
+/** CR-067：密钥列表项，只含元信息，不含令牌。 */
+export interface CredentialHostEntry {
+  host: string;
+  username: string;
+  savedAt: string;
+}
+
+/** 当前仓库远端主机的令牌配置状态（不回传令牌）。 */
+export interface GitCredentialStatus {
+  host: string | null;
+  credential: boolean;
+}
+
 export const gitStatus = (repoPath: string) => invoke<GitStatus>("git_status", { repoPath });
 export const gitStage = (repoPath: string, paths: string[]) => invoke<void>("git_stage", { repoPath, paths });
 export const gitUnstage = (repoPath: string, paths: string[]) => invoke<void>("git_unstage", { repoPath, paths });
@@ -247,14 +281,41 @@ export const gitDiffFile = (repoPath: string, path: string, staged: boolean) =>
 export const gitBranches = (repoPath: string) => invoke<BranchEntry[]>("git_branches", { repoPath });
 export const gitSwitchBranch = (repoPath: string, name: string, create: boolean) =>
   invoke<void>("git_switch_branch", { repoPath, name, create });
-export const gitLog = (repoPath: string, limit?: number, skip?: number) =>
-  invoke<CommitEntry[]>("git_log", { repoPath, limit, skip });
+export const gitLog = (repoPath: string, limit?: number, skip?: number, filters?: GitLogFilters) =>
+  invoke<CommitEntry[]>("git_log", {
+    repoPath,
+    limit,
+    skip,
+    all: filters?.all,
+    branch: filters?.branch,
+    author: filters?.author,
+    since: filters?.since,
+  });
 export const gitCommitFiles = (repoPath: string, hash: string) =>
   invoke<CommitFileEntry[]>("git_commit_files", { repoPath, hash });
 export const gitFetch = (repoPath: string) => invoke<void>("git_fetch", { repoPath });
 export const gitPullFfOnly = (repoPath: string) => invoke<void>("git_pull_ff_only", { repoPath });
 export const gitPush = (repoPath: string) => invoke<void>("git_push", { repoPath });
 export const gitBranchState = (repoPath: string) => invoke<GitStatus>("git_branch_state", { repoPath });
+
+/* ---------- CR-067：远程 / 国内加速 / 按主机令牌 ---------- */
+
+export const gitRemotes = (repoPath: string) => invoke<RemoteEntry[]>("git_remotes", { repoPath });
+export const gitRemoteSave = (repoPath: string, name: string, url: string) =>
+  invoke<void>("git_remote_save", { repoPath, name, url });
+export const gitRemoteRemove = (repoPath: string, name: string) =>
+  invoke<void>("git_remote_remove", { repoPath, name });
+export const gitAccelGet = () => invoke<AccelConfig>("git_accel_get");
+export const gitAccelSet = (enabled: boolean, url: string) =>
+  invoke<AccelConfig>("git_accel_set", { enabled, url });
+export const gitCredentialsList = () => invoke<CredentialHostEntry[]>("git_credentials_list");
+/** 令牌只上行；返回条目不含令牌，列表与界面都不回显。 */
+export const gitCredentialsSave = (host: string, token: string, username?: string) =>
+  invoke<CredentialHostEntry>("git_credentials_save", { input: { host, token, username } });
+export const gitCredentialsDelete = (host: string) =>
+  invoke<void>("git_credentials_delete", { host });
+export const gitCredentialStatus = (repoPath: string) =>
+  invoke<GitCredentialStatus>("git_credential_status", { repoPath });
 
 // ---------- 模型供应商 ----------
 
@@ -277,6 +338,14 @@ export interface ProviderKey {
   alias: string | null;
   masked: string;
   enabled: boolean;
+  /** CR-059：'' 沿用供应商默认；Chat/Responses → OpenAI 端点，Anthropic → Anthropic 端点。 */
+  protocol: string;
+  /** CR-059：该密钥可用模型（空 = 全部）。 */
+  models: string[];
+  /** CR-059：范围来源 auto / manual。 */
+  scopeSource: string | null;
+  /** CR-059：最近一次探测完成时间（毫秒）。 */
+  probedAt: number | null;
 }
 
 export interface ProviderEndpoint {
@@ -298,6 +367,8 @@ export interface ModelConfig {
   defaultEffort: string | null;
   contextWindow: number | null;
   maxTokens: number | null;
+  /** CR-059：供应商内展示与候选顺序。 */
+  sortOrder: number;
 }
 
 export interface ModelCandidate {
@@ -320,7 +391,15 @@ export interface ProviderDraft {
   protocol: "anthropic" | "openai";
   disabled: boolean;
   headersJson: string | null;
-  keys: { id?: string; alias?: string; secret?: string; enabled: boolean }[];
+  keys: {
+    id?: string;
+    alias?: string;
+    secret?: string;
+    enabled: boolean;
+    protocol?: string;
+    models?: string[];
+    scopeSource?: string | null;
+  }[];
   endpoints: { id?: string; protocol: string; baseUrl: string; enabled: boolean }[];
   models: {
     id?: string;
@@ -333,6 +412,7 @@ export interface ProviderDraft {
     defaultEffort: string | null;
     contextWindow: number | null;
     maxTokens: number | null;
+    sortOrder?: number | null;
   }[];
 }
 
@@ -351,8 +431,118 @@ export interface DiscoveredModel {
 }
 export const providerDiscoverModels = (providerId: string) =>
   invoke<DiscoveredModel[]>("provider_discover_models", { providerId });
+/** CR-059：单个模型的思考档位解析结果。 */
+export interface EffortResolution {
+  modelId: string;
+  efforts: EffortMap;
+  defaultEffort: string | null;
+  contextWindow: number | null;
+  maxTokens: number | null;
+  /** vendor / knowledge / vendor+knowledge / none */
+  source: string;
+  note: string | null;
+}
+export const providerResolveEfforts = (providerId: string, modelIds: string[]) =>
+  invoke<EffortResolution[]>("provider_resolve_efforts", { providerId, modelIds });
+
+/** CR-059：按密钥探测模型范围的结果。served=null 表示未取到清单（保留原范围）。 */
+export interface KeyProbeOutcome {
+  keyId: string;
+  alias: string | null;
+  served: string[] | null;
+  error: string | null;
+}
+export const providerProbeKeyScopes = (providerId: string) =>
+  invoke<KeyProbeOutcome[]>("provider_probe_key_scopes", { providerId });
+
+/** CR-059：生图配置。 */
+export interface ImageCandidate {
+  key: string;
+  providerId: string;
+  providerName: string;
+  modelId: string;
+  displayName: string;
+  /** Anthropic 端点无 images 接口；false 时不可用。 */
+  supported: boolean;
+}
+export interface ImageDefaults {
+  size: string;
+  quality: string;
+  n: number;
+  timeoutMin: number;
+}
+export interface ImageGenConfig {
+  enabled: boolean;
+  order: string[];
+  defaults: ImageDefaults;
+  outputDir: string;
+  candidates: ImageCandidate[];
+  unavailable: string[];
+}
+export const imageGenGet = () => invoke<ImageGenConfig>("image_gen_get");
+export const imageGenSave = (config: ImageGenConfig) => invoke<void>("image_gen_save", { config });
+
 export const fingerprintCheck = (providerId: string) =>
   invoke<{ results: { endpointId: string; url: string; status: string }[] }>("fingerprint_check", { providerId });
+
+// ---------- CR-058 模型检测十九针探针 ----------
+
+export type ProbeStatus = "pass" | "warn" | "fail" | "skip" | "na";
+export interface ProbeItemState {
+  code: string;
+  name: string;
+  status: ProbeStatus;
+  ms: number;
+  note: string;
+}
+export interface ProbeProgressEvent {
+  type: "probe";
+  index: number;
+  code: string;
+  name: string;
+  phase: "running" | "settled";
+  status?: ProbeStatus;
+  ms?: number;
+  note?: string;
+}
+export interface ProbeReport {
+  type: "report";
+  historyId: string;
+  providerId: string;
+  providerName: string;
+  modelId: string;
+  modelDisplayName: string;
+  protocol: string;
+  score: number;
+  grade: string;
+  verdict: string;
+  channel: string;
+  summary: string;
+  durationMs: number;
+  items: ProbeItemState[];
+}
+export interface ProbeHistoryItem {
+  id: string;
+  providerName: string;
+  modelId: string;
+  modelDisplayName: string;
+  protocol: string;
+  score: number;
+  grade: string;
+  verdict: string;
+  channel: string;
+  summary: string;
+  durationMs: number;
+  items: ProbeItemState[];
+  createdAt: number;
+}
+export const modelProbeRun = (providerId: string, modelId: string, onEvent: (ev: ProbeProgressEvent) => void) =>
+  import("@tauri-apps/api/core").then(({ invoke: inv, Channel }) => {
+    const ch = new Channel<ProbeProgressEvent>();
+    ch.onmessage = onEvent;
+    return inv<ProbeReport>("model_probe_run", { providerId, modelId, channel: ch });
+  });
+export const modelProbeHistoryList = () => invoke<ProbeHistoryItem[]>("model_probe_history_list");
 
 // ---------- SDK ----------
 
@@ -377,6 +567,12 @@ export interface SdkJob {
 }
 
 export const sdkList = () => invoke<SdkState[]>("sdk_list");
+/** CR-059 D5/E4：只读缓存快照（不 spawn npm），用于首帧渲染。 */
+export interface SdkSnapshot { states: SdkState[]; checkedAt: number }
+export const sdkSnapshot = () => invoke<SdkSnapshot>("sdk_snapshot");
+/** CR-059 D5/E4：单项检测；force=false 且缓存新鲜（TTL 10 分钟）时由后端短路。 */
+export const sdkDetectOne = (sdkId: string, force = false) =>
+  invoke<SdkState>("sdk_detect_one", { sdkId, force });
 export const sdkRunJob = (sdkId: string, kind: "install" | "uninstall", version?: string) =>
   invoke<string>("sdk_run_job", { sdkId, kind, version });
 export const sdkJob = (jobId: string) => invoke<SdkJob | null>("sdk_job", { jobId });
@@ -466,6 +662,27 @@ export const skillDelete = (name: string) => invoke<void>("skill_delete", { name
 export const skillSetEnabled = (name: string, enabled: boolean) =>
   invoke<void>("skill_set_enabled", { name, enabled });
 export const skillRead = (name: string) => invoke<string>("skill_read", { name });
+/** CR-059 F1：只读识别所选技能文件夹（是否有 SKILL.md、名称/说明/正文）。 */
+export interface SkillFolderPreview {
+  path: string;
+  valid: boolean;
+  name: string;
+  slug: string;
+  description: string;
+  body: string;
+}
+export const skillFolderPreview = (path: string) => invoke<SkillFolderPreview>("skill_folder_preview", { path });
+/** CR-059 F1/F3：整目录复制到受管技能目录（外部源删除不影响副本）。 */
+export interface SkillImportResult { slug: string; copied: number; skipped: string[] }
+export const skillImportFolder = (path: string, slug?: string) =>
+  invoke<SkillImportResult>("skill_import_folder", { path, slug });
+/** CR-059 F2：只读扫描其他 agent 的技能目录。 */
+export interface SkillScanItem {
+  agent: string; source: string; name: string; slug: string;
+  description: string; imported: boolean; error: string | null;
+}
+export interface SkillScanGroup { agent: string; root: string; exists: boolean; items: SkillScanItem[] }
+export const skillScanSources = () => invoke<SkillScanGroup[]>("skill_scan_sources");
 export const toolList = () => invoke<ToolEntry[]>("tool_list");
 export const toolSetEnabled = (name: string, enabled: boolean) =>
   invoke<void>("tool_set_enabled", { name, enabled });
@@ -490,6 +707,17 @@ export const mcpDiscoverTools = (serverId: string) => invoke<McpToolInfo[]>("mcp
 export const mcpAuthStart = (serverId: string) => invoke<{ status: string; authorizationUrl: string }>("mcp_auth_start", { serverId });
 export const mcpAuthStatus = (serverId: string) => invoke<string>("mcp_auth_status", { serverId });
 export const mcpAuthLogout = (serverId: string) => invoke<void>("mcp_auth_logout", { serverId });
+/** CR-059 F4：只读扫描其他 agent 的 MCP 配置（env 只回键名，不回值）。 */
+export interface McpScanItem {
+  agent: string; source: string; name: string; transport: string;
+  command: string | null; args: string[]; envKeys: string[]; url: string | null;
+  imported: boolean; error: string | null;
+}
+export interface McpScanGroup { agent: string; root: string; exists: boolean; items: McpScanItem[] }
+export const mcpScanSources = () => invoke<McpScanGroup[]>("mcp_scan_sources");
+/** CR-059 F4：把扫描到的来源导入为受管配置（重名由后端拒绝）。 */
+export const mcpImportSource = (agent: string, name: string) =>
+  invoke<string>("mcp_import_source", { agent, name });
 
 // ---------- AI 会话 ----------
 
@@ -504,6 +732,8 @@ export interface SessionMeta {
   effort: string | null;
   draft: string;
   unread: string | null;
+  /** CR-065：置顶时刻（毫秒）；0 表示未置顶。 */
+  pinnedAt?: number;
   createdAt: number;
   updatedAt: number;
   messageCount: number;
@@ -543,7 +773,7 @@ export type ChatEvent =
   | { type: "toolResult"; toolId: string; content: string; isError: boolean }
   | { type: "approvalRequest"; requestId: string; toolName: string; inputJson: string; risk: string }
   | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens: number }
-  | { type: "subagent"; id: string; task: string; status: string; cli?: string | null; model?: string | null; durationMs?: number | null; tokens?: number | null; output?: string | null; parentId?: string | null }
+  | { type: "subagent"; id: string; task: string; status: string; cli?: string | null; model?: string | null; durationMs?: number | null; tokens?: number | null; output?: string | null; parentId?: string | null; taskId?: string | null; content?: string | null; kind?: string | null; toolName?: string | null; isError?: boolean | null }
   | { type: "retrying"; attempt: number; maxAttempts: number; delayMs: number; reason: string }
   | { type: "error"; message: string }
   /** CR-037：done 不再携带原 sessionRef；判定结果 + 脱敏指纹，前端据此更新绑定状态。 */
@@ -574,6 +804,42 @@ export interface AttachmentMeta {
 
 export const chatSessions = (projectId?: string) =>
   invoke<SessionMeta[]>("chat_sessions", { projectId: projectId ?? null });
+
+/** CR-063：会话历史分页结果（游标为 updatedAt + id）。 */
+export interface SessionPage {
+  items: SessionMeta[];
+  total: number;
+  hasMore: boolean;
+  nextCursor: { pinnedAt: number; updatedAt: number; id: string } | null;
+}
+
+/** CR-063/CR-065：游标分页 + 当前作用域标题搜索；limit 缺省 20，后端钳制到 1..100。 */
+export const chatSessionsPage = (args: {
+  projectId?: string;
+  serverId?: string;
+  keyword?: string;
+  cursorPinnedAt?: number;
+  cursorUpdatedAt?: number;
+  cursorId?: string;
+  limit?: number;
+}) =>
+  invoke<SessionPage>("chat_sessions_page", {
+    projectId: args.projectId ?? null,
+    serverId: args.serverId ?? null,
+    keyword: args.keyword ?? null,
+    cursorPinnedAt: args.cursorPinnedAt ?? null,
+    cursorUpdatedAt: args.cursorUpdatedAt ?? null,
+    cursorId: args.cursorId ?? null,
+    limit: args.limit ?? null,
+  });
+
+/** CR-065：置顶/取消置顶；不改变 updatedAt。 */
+export const chatSessionPin = (id: string, pinned: boolean) =>
+  invoke<SessionMeta>("chat_session_pin", { id, pinned });
+
+/** CR-065：分叉会话（复制消息上下文，不继承原生线程绑定）。 */
+export const chatSessionFork = (id: string) =>
+  invoke<SessionMeta>("chat_session_fork", { id });
 export const chatSessionCreate = (args: {
   projectId?: string;
   serverId?: string;
@@ -687,6 +953,20 @@ export interface ExecResult {
 export const serverExec = (hostId: string, command: string) => invoke<ExecResult>("server_exec", { hostId, command });
 export const serverExecApproved = (requestId: string) => invoke<ExecResult>("server_exec_approved", { requestId });
 export const serverExecReject = (requestId: string) => invoke<void>("server_exec_reject", { requestId });
+
+/** CR-059 二期：内置 AI 工具（ssh_exec）的跨进程待审批命令。 */
+export interface PendingApproval {
+  id: string;
+  hostId: string;
+  hostName: string | null;
+  command: string;
+  risk: string;
+  createdAt: number;
+}
+export const serverPendingApprovals = () => invoke<PendingApproval[]>("server_pending_approvals");
+/** 批准时命令在主应用侧执行，结果写回审批记录，供 AI 通过 ssh_exec_status 读取。 */
+export const serverDecideApproval = (requestId: string, decision: "approve" | "reject") =>
+  invoke<{ status: string; executed?: boolean; result?: unknown }>("server_decide_approval", { requestId, decision });
 export const serverMetrics = (hostId: string) => invoke<HostMetrics>("server_metrics", { hostId });
 
 // ---------- 知识库 ----------

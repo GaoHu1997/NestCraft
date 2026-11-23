@@ -206,6 +206,205 @@ fn open_read(path: &Path) -> Result<File, String> {
     }
     Ok(file)
 }
+/// FEAT-008 immutable-index cache identity; independent of timestamps/stat tokens.
+/// Existing user-file APIs and their behavior are unchanged.
+pub(super) fn snapshot_entity_id(file:&File)->Result<String,String>{
+    #[cfg(windows)] {
+        use std::os::windows::io::AsRawHandle;
+        #[repr(C)] struct FileIdInfo {volume:u64,id:[u8;16]}
+        #[link(name="kernel32")] extern "system" {fn GetFileInformationByHandleEx(handle:*mut std::ffi::c_void,class:i32,info:*mut std::ffi::c_void,size:u32)->i32;}
+        let mut info=FileIdInfo{volume:0,id:[0;16]};
+        // FILE_ID_INFO (18) supplies the real volume + 128-bit entity identity.
+        let ok=unsafe{GetFileInformationByHandleEx(file.as_raw_handle(),18,&mut info as *mut _ as *mut std::ffi::c_void,std::mem::size_of::<FileIdInfo>()as u32)};
+        if ok==0{return Err(format!("INDEX_ENTITY_UNAVAILABLE: {}",std::io::Error::last_os_error()));}
+        Ok(format!("{:016x}:{:02x?}",info.volume,info.id))
+    }
+    #[cfg(unix)] {use std::os::unix::fs::MetadataExt;let m=file.metadata().map_err(|e|e.to_string())?;Ok(format!("{}:{}",m.dev(),m.ino()))}
+    #[cfg(not(any(windows,unix)))] {let _=file;Err("INDEX_ENTITY_UNAVAILABLE: 本平台无受检实体ID".into())}
+}
+pub(super) fn snapshot_file_identity(path:&Path)->Result<String,String>{
+    let file=open_read(path)?;snapshot_entity_id(&file)
+}
+pub(super) fn snapshot_directory_identity(path:&Path)->Result<String,String>{
+    let file=open_directory(path)?;let held=file.metadata().map_err(|e|e.to_string())?;
+    if link(&held)||!held.is_dir(){return Err("INDEX_PATH_UNSAFE".into());}snapshot_entity_id(&file)
+}
+/// FEAT-008 derived-index protection. Does not change SafeRoot/user-file behavior.
+pub(super) struct SnapshotPins { pub path:PathBuf, pins:Vec<(PathBuf,File,String)> }
+fn snapshot_probe(path:&Path,directory:bool)->Result<File,String>{
+    let mut options=OpenOptions::new();
+    #[cfg(windows)] {use std::os::windows::fs::OpenOptionsExt;options.access_mode(0x80).share_mode(7).custom_flags(0x00200000|if directory{0x02000000}else{0});}
+    #[cfg(not(windows))] {options.read(true);}
+    let file=options.open(path).map_err(|e|format!("INDEX_ENTITY_OPEN: {e}"))?;let m=file.metadata().map_err(|e|e.to_string())?;
+    if link(&m)||if directory{!m.is_dir()}else{!m.is_file()}{return Err("INDEX_PATH_UNSAFE".into());}Ok(file)
+}
+fn snapshot_pin_directory(path:&Path)->Result<File,String>{
+    let mut options=OpenOptions::new();
+    #[cfg(windows)] {use std::os::windows::fs::OpenOptionsExt;options.access_mode(0).share_mode(1).custom_flags(0x02200000);}
+    #[cfg(not(windows))] {options.read(true);}
+    options.open(path).map_err(|e|format!("INDEX_DIRECTORY_PIN: {e}"))
+}
+// Instrument only the new batch API; old file/verify behavior is untouched.
+#[cfg(test)]
+std::thread_local! {pub(super) static SNAPSHOT_BATCH_COUNTS:std::cell::Cell<(u64,u64)>=std::cell::Cell::new((0,0));}
+impl SnapshotPins {
+    fn chain(path:&Path,create:bool)->Result<Self,String>{
+        let path=normal_absolute(path)?;let mut result=Self{path:path.clone(),pins:Vec::new()};let mut cursor=PathBuf::new();
+        for component in path.components(){cursor.push(component.as_os_str());if !matches!(component,Component::RootDir|Component::Normal(_)){continue;}
+            if create&&matches!(component,Component::Normal(_))&&!cursor.exists(){
+                let parent=result.pins.last().ok_or("INDEX_PATH_UNSAFE")?;
+                match snapshot_create_directory(&parent.1,component.as_os_str()){
+                    Ok(file)=>{let id=snapshot_entity_id(&file)?;result.pins.push((cursor.clone(),file,id));continue;},
+                    Err(error)=>{if !cursor.exists(){return Err(error);}}
+                }
+            }
+            let file=snapshot_pin_directory(&cursor)?;let m=file.metadata().map_err(|e|e.to_string())?;if link(&m)||!m.is_dir(){return Err("INDEX_PATH_UNSAFE".into());}
+            let id=snapshot_entity_id(&file)?;if snapshot_entity_id(&snapshot_probe(&cursor,true)?)?!=id{return Err("INDEX_ENTITY_CHANGED".into());}
+            result.pins.push((cursor.clone(),file,id));
+        }
+        result.verify()?;Ok(result)
+    }
+    pub(super) fn new(path:&Path)->Result<Self,String>{Self::chain(path,false)}
+    pub(super) fn parent(path:&Path,create:bool)->Result<Self,String>{Self::chain(path.parent().ok_or("INDEX_PATH_UNSAFE")?,create)}
+    pub(super) fn verify(&self)->Result<(),String>{
+        for(path,file,id)in &self.pins{
+            if snapshot_entity_id(file)?!=*id||snapshot_entity_id(&snapshot_probe(path,true)?)?!=*id{return Err("INDEX_ENTITY_CHANGED".into());}
+        }Ok(())
+    }
+    pub(super) fn entity(&self)->Result<String,String>{self.pins.last().map(|p|p.2.clone()).ok_or("INDEX_PATH_UNSAFE".into())}
+    pub(super) fn create_generation(mut self,name:&std::ffi::OsStr)->Result<Self,String>{
+        self.verify()?;let child=self.path.join(name);let parent=&self.pins.last().ok_or("INDEX_PATH_UNSAFE")?.1;
+        let file=snapshot_create_directory(parent,name)?;let id=snapshot_entity_id(&file)?;
+        self.path=child.clone();self.pins.push((child,file,id));self.verify()?;Ok(self)
+    }
+    pub(super) fn delete_created(mut self)->Result<(),String>{
+        self.verify()?;let(path,file,expected)=self.pins.pop().ok_or("INDEX_PATH_UNSAFE")?;self.path=path.parent().ok_or("INDEX_PATH_UNSAFE")?.to_path_buf();
+        // Transfer only a failed creation to DELETE capability; all ancestors remain pinned.
+        // Never adopt a replacement after closing the read pin, even if the path still exists.
+        drop(file);let file=snapshot_delete_open(&path,true)?;
+        if snapshot_entity_id(&file)?!=expected||snapshot_entity_id(&snapshot_probe(&path,true)?)?!=expected{return Err("INDEX_ENTITY_CHANGED: 拒绝回收创建路径replacement".into());}
+        self.verify()?;let delete=SnapshotDelete{path,file,_parent:self};delete.remove_children()?;delete.finish()
+    }
+    /// Fresh READ_DATA for one bounded batch. Existing pins never leave this owner.
+    /// Check runs while every fresh handle is alive; exactly two successful ancestor
+    /// verifications enclose acquisition AND the caller's content/inventory checks.
+    pub(super) fn checked_read_files<T>(&self,paths:&[(PathBuf,String)],check:impl FnOnce(&[File])->Result<T,String>)->Result<(T,usize),String>{
+        if paths.is_empty()||paths.len()>4096{return Err("INDEX_BATCH_LIMIT".into());}
+        #[cfg(test)] SNAPSHOT_BATCH_COUNTS.with(|s|{let(f,v)=s.get();s.set((f,v+1));});
+        self.verify()?;
+        let mut fresh=Vec::with_capacity(paths.len());
+        for (path,expected) in paths{
+            let path=normal_absolute(path)?;
+            if path.parent()!=Some(self.path.as_path()){return Err("INDEX_PATH_UNSAFE".into());}
+            snapshot_child_name(path.file_name().ok_or("INDEX_PATH_UNSAFE")?)?;
+            let mut options=OpenOptions::new();options.read(true);
+            #[cfg(windows)] {use std::os::windows::fs::OpenOptionsExt;options.share_mode(1).custom_flags(0x00200000);}
+            // No backup semantics / attributes-only access: normal READ_DATA is
+            // checked against the CURRENT token and CURRENT DACL on every call.
+            let file=options.open(&path).map_err(|e|format!("INDEX_FRESH_READ_OPEN: {e}"))?;
+            #[cfg(test)] SNAPSHOT_BATCH_COUNTS.with(|s|{let(f,v)=s.get();s.set((f+1,v));});
+            let m=file.metadata().map_err(|e|e.to_string())?;
+            if link(&m)||!m.is_file()||snapshot_entity_id(&file)?!=*expected{return Err("INDEX_ENTITY_CHANGED".into());}
+            fresh.push(file);
+        }
+        let result=check(&fresh);
+        #[cfg(test)] SNAPSHOT_BATCH_COUNTS.with(|s|{let(f,v)=s.get();s.set((f,v+1));});
+        self.verify()?;
+        result.map(|value|(value,fresh.len()))
+    }
+    pub(super) fn file(&self,path:&Path,write:bool)->Result<File,String>{
+        self.verify()?;let path=normal_absolute(path)?;if path.parent()!=Some(self.path.as_path()){return Err("INDEX_PATH_UNSAFE".into());}
+        snapshot_child_name(path.file_name().ok_or("INDEX_PATH_UNSAFE")?)?;
+        let mut options=OpenOptions::new();options.read(true).write(write);
+        #[cfg(windows)] {use std::os::windows::fs::OpenOptionsExt;options.share_mode(1).custom_flags(0x00200000);}
+        let file=options.open(&path).map_err(|e|format!("INDEX_FILE_OPEN: {e}"))?;let m=file.metadata().map_err(|e|e.to_string())?;
+        if link(&m)||!m.is_file()||snapshot_entity_id(&file)?!=snapshot_entity_id(&snapshot_probe(&path,false)?)?{return Err("INDEX_PATH_UNSAFE".into());}
+        self.verify()?;Ok(file)
+    }
+}
+fn snapshot_child_name(name:&std::ffi::OsStr)->Result<(),String>{
+    let text=name.to_str().ok_or("INDEX_PATH_ENCODING")?;
+    if text.is_empty()||text=="."||text==".."||text.chars().any(|c|c.is_control()||"<>:\"/\\|?*".contains(c))||text.ends_with('.')||text.ends_with(' '){return Err("INDEX_PATH_UNSAFE".into());}Ok(())
+}
+#[cfg(windows)]
+fn snapshot_create_directory(parent:&File,name:&std::ffi::OsStr)->Result<File,String>{
+    use std::os::windows::{ffi::OsStrExt,io::{AsRawHandle,FromRawHandle}};
+    snapshot_child_name(name)?;let mut wide:Vec<u16>=name.encode_wide().collect();if wide.len()>32767{return Err("INDEX_PATH_UNSAFE".into());}
+    #[repr(C)] struct UnicodeString {length:u16,maximum:u16,buffer:*mut u16}
+    #[repr(C)] struct ObjectAttributes {length:u32,root:*mut std::ffi::c_void,name:*mut UnicodeString,attributes:u32,security:*mut std::ffi::c_void,qos:*mut std::ffi::c_void}
+    #[repr(C)] struct IoStatus {status:usize,information:usize}
+    #[link(name="ntdll")] extern "system" {
+        fn NtCreateFile(handle:*mut *mut std::ffi::c_void,access:u32,attributes:*mut ObjectAttributes,status:*mut IoStatus,allocation:*mut i64,file_attributes:u32,share:u32,disposition:u32,options:u32,ea:*mut std::ffi::c_void,ea_length:u32)->i32;
+        fn RtlNtStatusToDosError(status:i32)->u32;
+    }
+    let mut name=UnicodeString{length:(wide.len()*2)as u16,maximum:(wide.len()*2)as u16,buffer:wide.as_mut_ptr()};
+    let mut attributes=ObjectAttributes{length:std::mem::size_of::<ObjectAttributes>()as u32,root:parent.as_raw_handle(),name:&mut name,attributes:0x40,security:std::ptr::null_mut(),qos:std::ptr::null_mut()};
+    let mut status=IoStatus{status:0,information:0};let mut handle=std::ptr::null_mut();
+    // FILE_CREATE, relative to the pinned parent: obtain the created entity atomically.
+    // READ_ATTRIBUTES | SYNCHRONIZE, no WRITE/DELETE sharing. A DELETE-capable
+    // directory pin with this sharing blocks Windows atomic replacement of its children.
+    // Failed registration explicitly transfers to a checked DELETE handle; builds do not.
+    let result=unsafe{NtCreateFile(&mut handle,0x100080,&mut attributes,&mut status,std::ptr::null_mut(),0,1,2,0x204021,std::ptr::null_mut(),0)};
+    if result<0{return Err(format!("INDEX_ENTITY_CREATE: {}",std::io::Error::from_raw_os_error(unsafe{RtlNtStatusToDosError(result)}as i32)));}
+    Ok(unsafe{File::from_raw_handle(handle)})
+}
+#[cfg(not(windows))]
+fn snapshot_create_directory(_parent:&File,_name:&std::ffi::OsStr)->Result<File,String>{Err("INDEX_HANDLE_UNSUPPORTED: 原子受管目录创建仅验证Windows".into())}
+/// DELETE-capable generation handle plus continuously held ancestors.
+pub(super) struct SnapshotDelete { pub path:PathBuf, file:File, _parent:SnapshotPins }
+impl SnapshotDelete {
+    pub(super) fn open(path:&Path,expected:&str)->Result<Self,String>{
+        let parent=SnapshotPins::parent(path,false)?;let path=normal_absolute(path)?;let file=snapshot_delete_open(&path,true)?;
+        if snapshot_entity_id(&file)?!=expected||snapshot_entity_id(&snapshot_probe(&path,true)?)?!=expected{return Err("INDEX_ENTITY_CHANGED: 拒绝回收replacement".into());}
+        parent.verify()?;Ok(Self{path,file,_parent:parent})
+    }
+    pub(super) fn rename(&mut self,target:&Path)->Result<(),String>{
+        let target=normal_absolute(target)?;if target.parent()!=self.path.parent(){return Err("INDEX_PATH_UNSAFE".into());}
+        self._parent.verify()?;snapshot_rename_handle(&self.file,&target)?;self.path=target;self._parent.verify()
+    }
+    pub(super) fn remove_children(&self)->Result<(),String>{
+        self._parent.verify()?;
+        for entry in fs::read_dir(&self.path).map_err(|e|e.to_string())?{
+            let entry=entry.map_err(|e|e.to_string())?;snapshot_child_name(&entry.file_name())?;
+            let file=snapshot_delete_open(&entry.path(),false)?;let expected=snapshot_entity_id(&file)?;
+            if snapshot_entity_id(&snapshot_probe(&entry.path(),false)?)?!=expected{return Err("INDEX_ENTITY_CHANGED".into());}
+            snapshot_dispose(&file)?;drop(file);
+        }Ok(())
+    }
+    pub(super) fn finish(self)->Result<(),String>{self._parent.verify()?;snapshot_dispose(&self.file)?;Ok(())}
+}
+fn snapshot_delete_open(path:&Path,directory:bool)->Result<File,String>{
+    let mut options=OpenOptions::new();
+    #[cfg(windows)] {use std::os::windows::fs::OpenOptionsExt;options.access_mode(0x110080).share_mode(1).custom_flags(0x00200000|if directory{0x02000000}else{0});}
+    #[cfg(not(windows))] {let _=(path,directory);return Err("INDEX_HANDLE_UNSUPPORTED: 句柄式回收仅验证Windows".into());}
+    let file=options.open(path).map_err(|e|format!("INDEX_DELETE_OPEN: {e}"))?;let m=file.metadata().map_err(|e|e.to_string())?;
+    if link(&m)||if directory{!m.is_dir()}else{!m.is_file()}{return Err("INDEX_PATH_UNSAFE".into());}Ok(file)
+}
+#[cfg(windows)]
+fn snapshot_dispose(file:&File)->Result<(),String>{
+    use std::os::windows::io::AsRawHandle;
+    #[link(name="kernel32")] extern "system" {fn SetFileInformationByHandle(handle:*mut std::ffi::c_void,class:i32,info:*const std::ffi::c_void,size:u32)->i32;}
+    let mut delete:u8=1;let ok=unsafe{SetFileInformationByHandle(file.as_raw_handle(),4,&mut delete as *mut _ as *mut std::ffi::c_void,1)};
+    if ok==0{return Err(format!("INDEX_DELETE_ENTITY: {}",std::io::Error::last_os_error()));}Ok(())
+}
+#[cfg(not(windows))]
+fn snapshot_dispose(_file:&File)->Result<(),String>{Err("INDEX_HANDLE_UNSUPPORTED".into())}
+#[cfg(windows)]
+fn snapshot_rename_handle(file:&File,path:&Path)->Result<(),String>{
+    use std::os::windows::{ffi::OsStrExt,io::AsRawHandle};
+    #[repr(C)] struct RenameInfo {replace:u8,root:*mut std::ffi::c_void,length:u32,name:[u16;1]}
+    #[link(name="kernel32")] extern "system" {fn SetFileInformationByHandle(handle:*mut std::ffi::c_void,class:i32,info:*const std::ffi::c_void,size:u32)->i32;}
+    let wide:Vec<u16>=path.as_os_str().encode_wide().collect();let offset=std::mem::offset_of!(RenameInfo,name);let size=offset+wide.len()*2;
+    if size>u32::MAX as usize{return Err("INDEX_PATH_UNSAFE".into());}
+    // u64 storage gives the pointer-bearing native struct correct alignment; no replace flag.
+    let mut buffer=vec![0u64;(size+7)/8];let ptr=buffer.as_mut_ptr()as *mut RenameInfo;
+    unsafe{(*ptr).replace=0;(*ptr).root=std::ptr::null_mut();(*ptr).length=(wide.len()*2)as u32;std::ptr::copy_nonoverlapping(wide.as_ptr(),(ptr as *mut u8).add(offset)as *mut u16,wide.len());}
+    let ok=unsafe{SetFileInformationByHandle(file.as_raw_handle(),3,ptr as *mut std::ffi::c_void,size as u32)};
+    if ok==0{return Err(format!("INDEX_RENAME_ENTITY: {}",std::io::Error::last_os_error()));}Ok(())
+}
+#[cfg(not(windows))]
+fn snapshot_rename_handle(_file:&File,_path:&Path)->Result<(),String>{Err("INDEX_HANDLE_UNSUPPORTED".into())}
+
 pub(super) fn open_snapshot(root: &mut SafeRoot, rel: &str) -> Result<File, String> {
     let path = root.file(rel)?;
     let file = open_read(&path)?;

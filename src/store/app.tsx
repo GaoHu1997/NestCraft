@@ -4,7 +4,7 @@ import * as api from "@/api";
 export type Route =
   | { page: "workbench" }
   | { page: "projects" }
-  | { page: "project"; projectId: string; tab: "requirements" | "design" | "tasks" | "code" }
+  | { page: "project"; projectId: string; tab: "workbench" | "requirements" | "design" | "tasks" | "code" }
   | { page: "knowledge" }
   | { page: "knowledge-lib"; libId: string; noteId?: string }
   | { page: "servers" }

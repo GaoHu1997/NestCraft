@@ -1,0 +1,66 @@
+/* CR-054 / STORY-071・072：会话中心工作台。
+   左栏与会话区复用 AI 侧栏既有类名与样式（chat.css 的 .chat-history / .chat-hist-* / .msg 等），
+   本文件只负责三栏骨架、页签与辅助栏，不重定义消息与历史列表外观。 */
+
+.wb-shell { flex: 1 1 auto; display: flex; min-height: 0; min-width: 0; position: relative; }
+
+/* ---------- 页签：纯图标工作台（与文字页签对齐） ---------- */
+.pw-tab.wb-tab-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 0; padding: 0 12px; min-width: 44px;
+}
+.pw-tab.wb-tab-icon .ui-icon { transform: translateY(1px); }
+.pw-tab.wb-tab-icon[aria-selected="true"]::after { left: 10px; right: 10px; }
+
+/* ---------- 左：会话历史（常驻） ---------- */
+.wb-hist {
+  flex: 0 0 auto; display: flex; flex-direction: column;
+  min-width: 0; min-height: 0; border-right: 1px solid var(--line); background: var(--surface);
+}
+.wb-hist .wb-history {
+  position: static; inset: auto; width: 100% !important; max-width: none;
+  height: 100%; box-shadow: none; border: 0; border-radius: 0; background: transparent;
+  display: flex; flex-direction: column; min-height: 0;
+}
+.wb-hist .chat-history-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.wb-hist-loading { padding: 18px 14px; color: var(--muted); font-size: 12px; }
+
+/* ---------- 中：当前会话 ---------- */
+.wb-conv { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.wb-conv > .chat-panel.wb-chat-panel {
+  width: 100% !important; max-width: none; height: 100%;
+  border-left: 0; border-right: 0; background: var(--surface);
+}
+
+/* ---------- 右：只读辅助栏 ---------- */
+.wb-aux {
+  flex: 0 0 auto; display: flex; flex-direction: column;
+  min-width: 0; min-height: 0; border-left: 1px solid var(--line); background: var(--surface);
+}
+.wb-aux-head { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line-soft); }
+.wb-aux-head b { font-size: 12.5px; }
+.wb-aux-req { flex: 0 0 auto; display: flex; align-items: flex-start; gap: 6px; padding: 7px 10px; border-bottom: 1px solid var(--line-soft); background: var(--primary-soft); color: var(--primary-strong); font-size: 11px; }
+.wb-aux-req .chat-iconbtn { margin-left: auto; }
+.wb-aux-tabs { flex: 0 0 auto; display: flex; gap: 2px; padding: 6px 8px; border-bottom: 1px solid var(--line-soft); overflow-x: auto; }
+.wb-aux-tab { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 8px; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--muted); font: inherit; font-size: 11px; cursor: pointer; flex: 0 0 auto; max-width: 200px; }
+.wb-aux-tab:hover { background: var(--surface-3); color: var(--ink); }
+.wb-aux-tab[aria-selected="true"] { background: var(--primary-soft); color: var(--primary-strong); font-weight: 600; }
+.wb-aux-x { color: var(--muted); font-size: 10px; }
+.wb-aux-x:hover { color: var(--danger); }
+.wb-aux-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 11px 12px 14px; }
+.wb-aux-foot { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--line-soft); }
+.wb-aux-empty, .wb-aux-state { padding: 18px 8px; text-align: center; color: var(--muted); font-size: 11.5px; line-height: 1.7; }
+.wb-aux-state.error { color: var(--danger); }
+.wb-aux-state.error b { display: block; margin-bottom: 4px; }
+.wb-aux-path { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 10.5px; margin-bottom: 7px; min-width: 0; }
+.wb-aux-title { margin: 0 0 4px; font-size: 13px; font-weight: 650; line-height: 1.45; }
+.wb-aux-meta { display: flex; flex-wrap: wrap; gap: 6px; margin: 5px 0 9px; }
+.wb-aux-code { margin: 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2); color: var(--ink-2); font: 11px/1.75 var(--mono); white-space: pre-wrap; word-break: break-word; max-height: 60vh; overflow: auto; }
+.wb-aux-note { margin: 9px 0 0; padding: 7px 9px; border: 1px dashed var(--line); border-radius: var(--r-sm); color: var(--muted); font-size: 10.5px; line-height: 1.65; }
+
+/* 窄屏：左右栏改覆盖式抽屉 */
+@media (max-width: 960px) {
+  .wb-hist { position: absolute; top: 0; bottom: 0; left: 0; z-index: 45; width: min(86vw, 320px) !important; box-shadow: var(--shadow-pop); display: none; }
+  .wb-aux { position: absolute; top: 0; bottom: 0; right: 0; z-index: 45; width: min(88vw, 340px) !important; box-shadow: var(--shadow-pop); }
+  .wb-shell.wb-drawer-left .wb-hist { display: flex; }
+}

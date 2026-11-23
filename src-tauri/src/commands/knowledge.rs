@@ -190,8 +190,14 @@ pub fn kb_list() -> Result<Vec<KnowledgeLibrary>, String> {
 }
 #[tauri::command]
 pub fn kb_save(app: tauri::AppHandle, name: String, source_ref: String) -> Result<String, String> {
+    let _ = app;
+    kb_save_inner(&name, &source_ref)
+}
+
+/// CR-059：库级创建抽为可复用内函数（内置 AI 工具 create_kb 调用；语义与 UI 命令一致）。
+pub(crate) fn kb_save_inner(name: &str, source_ref: &str) -> Result<String, String> {
     if name.trim().is_empty() { return Err("知识库名称不能为空".into()); }
-    let root = files::SafeRoot::new(Path::new(&source_ref))?;
+    let root = files::SafeRoot::new(Path::new(source_ref))?;
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
     let id = new_id("kb");
@@ -199,7 +205,6 @@ pub fn kb_save(app: tauri::AppHandle, name: String, source_ref: String) -> Resul
         "INSERT INTO knowledge_library(id,name,sourceKind,sourceRef,revision,enabled,createdAt) VALUES(?1,?2,'managed-directory',?3,0,1,?4)",
         rusqlite::params![id,name.trim(),root.path.to_string_lossy(),now_ms()],
     ).map_err(|e| e.to_string())?;
-    let _ = app;
     Ok(id)
 }
 /// CR-051：设置知识库内置图标。None/空串=清空（展示层回来源默认）；其余必须命中共用 50 个白名单。
@@ -575,6 +580,11 @@ pub(crate) fn authorized(conn: &Connection, project_id: Option<&str>) -> Result<
     let rows = stmt.query_map([pid],|r| r.get::<_,String>(0)).map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string());
     rows
+}
+/// CR-059 / BUG-CR059-01：内置 AI 工具复检用的项目已授权库清单（与 AI 网关同一 SQL）。
+pub(crate) fn authorized_libraries(project_id: &str) -> Result<Vec<String>, String> {
+    let guard = db::conn()?;
+    authorized(guard.as_ref().ok_or("db not initialized")?, Some(project_id))
 }
 fn gateway_list_conn(conn: &Connection, project_id: Option<&str>) -> Result<serde_json::Value, String> {
     let mut out = vec![];

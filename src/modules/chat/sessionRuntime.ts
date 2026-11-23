@@ -39,6 +39,17 @@ export interface SessionTask {
   agentId?: string | null;
 }
 
+/** CR-062：子智能体过程事件，只读详情按时间顺序展示；未知字段不补造。 */
+export interface SubagentEvent {
+  at: number;
+  /** 事件种类：状态变化 / 正文 / 工具调用 / 工具结果 / 最终产出 */
+  kind: "status" | "text" | "tool" | "result" | "output";
+  status?: string;
+  text?: string;
+  toolName?: string;
+  isError?: boolean;
+}
+
 export interface SubagentRow {
   id: string;
   cli: string | null;
@@ -49,6 +60,10 @@ export interface SubagentRow {
   status: "运行中" | "成功" | "待确认" | "失败" | "已停止";
   output?: string | null;
   parentId?: string | null;
+  /** CR-062：执行任务标识（事件携带时显示，否则保持未知）。 */
+  taskId?: string | null;
+  /** CR-062：本次运行内的过程记录；刷新或重启后不承诺恢复。 */
+  events?: SubagentEvent[];
   startedAt?: number;
   endedAt?: number;
 }
@@ -179,11 +194,13 @@ export function hasBlockingChildren(sid: string): boolean {
   return rt.subagents.some(a => ["运行中", "待确认"].includes(a.status)) || rt.tasks.some(t => ["running", "awaiting_user"].includes(t.state));
 }
 
-export function upsertSubagent(sid: string, input: { id: string; task: string; status: string; cli?: string | null; model?: string | null; durationMs?: number | null; tokens?: number | null; output?: string | null; parentId?: string | null }) {
+export function upsertSubagent(sid: string, input: { id: string; task: string; status: string; cli?: string | null; model?: string | null; durationMs?: number | null; tokens?: number | null; output?: string | null; parentId?: string | null; taskId?: string | null; content?: string | null; kind?: string | null; toolName?: string | null; isError?: boolean | null }) {
   const rt = getRuntime(sid);
   const status = input.status === "failed" ? "失败" : input.status === "done" || input.status === "success" || input.status === "completed" ? "成功" : input.status === "stopped" ? "已停止" : input.status === "running" ? "运行中" : "待确认";
   const prior = rt.subagents.find(a => a.id === input.id);
   const now = Date.now();
+  const statusChanged = !prior || prior.status !== status;
+  const events = prior?.events ?? [];
   const row: SubagentRow = {
     id: input.id,
     cli: input.cli ?? prior?.cli ?? null,
@@ -194,15 +211,58 @@ export function upsertSubagent(sid: string, input: { id: string; task: string; s
     status,
     output: input.output ?? prior?.output ?? null,
     parentId: input.parentId ?? prior?.parentId ?? null,
+    taskId: input.taskId ?? prior?.taskId ?? null,
+    events,
     startedAt: prior?.startedAt ?? now,
     endedAt: status === "运行中" || status === "待确认" ? prior?.endedAt : prior?.endedAt ?? now,
   };
   if (prior) Object.assign(prior, row); else rt.subagents.push(row);
+  const target = prior ?? row;
+  // CR-062：状态变化与过程内容进入只读详情时间线；刷新后不承诺恢复。
+  if (statusChanged) pushAgentEvent(target, { at: now, kind: "status", status });
+  if (input.content && input.content.trim()) {
+    const kind = input.kind === "tool_use" || input.kind === "tool_result" ? "tool" : input.kind === "output" ? "output" : "text";
+    pushAgentEvent(target, { at: now, kind, text: input.content, toolName: input.toolName ?? undefined, isError: input.isError ?? undefined });
+  }
+  if (input.output && input.output !== prior?.output) {
+    pushAgentEvent(target, { at: now, kind: "output", text: input.output });
+  }
   if (status === "运行中" || status === "待确认") {
     const task = rt.tasks.find(t => t.agentId === input.id);
     if (task) task.state = status === "运行中" ? "running" : "awaiting_user";
   }
-  return row;
+  return target;
+}
+
+/** CR-062：同一状态/文本不重复追加，避免流式完整消息重复刷屏。 */
+function pushAgentEvent(row: SubagentRow, ev: SubagentEvent) {
+  if (!row.events) row.events = [];
+  if (ev.kind !== "status" && ev.text) {
+    const tail = row.events.slice(-20);
+    if (tail.some(x => x.kind === ev.kind && x.text === ev.text && x.toolName === ev.toolName)) return;
+  }
+  row.events.push(ev);
+  if (row.events.length > 200) row.events.splice(0, row.events.length - 200);
+}
+
+/** CR-062：流结束仍未收到子代理终态时只标“待确认”，不替它宣布成功。 */
+export function settleSubagents(sid: string, stopped = false): number {
+  const rt = getRuntime(sid);
+  const next = stopped ? "已停止" : "待确认";
+  let count = 0;
+  for (const a of rt.subagents) {
+    if (a.status !== "运行中" && a.status !== "待确认") continue;
+    a.status = next;
+    a.endedAt = a.endedAt ?? Date.now();
+    pushAgentEvent(a, { at: Date.now(), kind: "status", status: next });
+    count++;
+  }
+  return count;
+}
+
+/** CR-062：只读详情按 id 取当前行（含本次运行的事件）。 */
+export function findSubagent(sid: string, agentId: string): SubagentRow | null {
+  return getRuntime(sid).subagents.find(a => a.id === agentId) ?? null;
 }
 
 
@@ -269,13 +329,52 @@ export function markStreamEnd(sid: string, outTokens: number) {
 
 /* ---------- 步骤：真实工具执行记录（不伪造） ---------- */
 
+/**
+ * CR-059 / UI-CR059：内置工作台工具名 → 侧栏中文显示名（仅显示文案；映射未命中原样显示）。
+ * 与后端 ai_tools.rs TOOL_LABELS 对齐。
+ */
+const WORKBENCH_TOOL_LABELS: Record<string, string> = {
+  get_context: "工作台·当前上下文",
+  list_projects: "工作台·项目清单",
+  create_project: "工作台·创建项目",
+  update_project: "工作台·更新项目",
+  get_requirements: "工作台·需求树",
+  read_requirement_doc: "工作台·读需求文档",
+  write_requirement_doc: "工作台·写需求文档",
+  list_kbs: "工作台·知识库清单",
+  create_kb: "工作台·创建知识库",
+  set_kb_grant: "工作台·设置知识授权",
+  list_servers: "工作台·服务器清单",
+  save_server: "工作台·保存服务器",
+  // CR-059 G4：生图工具
+  generate_image: "工作台·生成图片",
+  // CR-059 / BUG-CR059-01：原有 6 项内置工具真实注入后的中文名（与后端 TOOL_LABELS 一致）
+  fs_read: "工作台·读文件",
+  knowledge_list: "工作台·知识清单",
+  knowledge_search: "工作台·知识检索",
+  knowledge_read: "工作台·读知识",
+  knowledge_read_many: "工作台·批量读知识",
+  ssh_exec: "工作台·服务器命令",
+  // CR-059 二期：审批结论查询
+  ssh_exec_status: "工作台·审批结论",
+  // CR-054 / STORY-073：右栏请求
+  open_panel: "工作台·打开预览面板",
+};
+
+export function toolDisplayName(name: string | null | undefined): string | null {
+  if (!name) return name ?? null;
+  const m = /^mcp__workbench__(.+)$/.exec(name);
+  if (m && WORKBENCH_TOOL_LABELS[m[1]]) return WORKBENCH_TOOL_LABELS[m[1]];
+  return name;
+}
+
 export function recordToolUse(sid: string, toolId: string, name: string) {
   const rt = getRuntime(sid);
   if (rt.stepsDemo) rt.steps = [];
   rt.stepsDemo = false;
   if (rt.toolStart.has(toolId)) return;
   rt.toolStart.set(toolId, Date.now());
-  rt.steps.push({ id: `ST-${rt.generation}-${toolId}`, title: name, state: "running" });
+  rt.steps.push({ id: `ST-${rt.generation}-${toolId}`, title: toolDisplayName(name) ?? "工具", state: "running" });
 }
 
 export function recordToolResult(sid: string, toolId: string, isError: boolean, meta?: string) {
@@ -299,7 +398,7 @@ export function rebuildStepsFromPairs(sid: string, pairs: { toolId: string; name
   if (rt.active || rt.stepsDemo) return; // 切回运行中会话不能用落库半成品覆盖实时记录
   rt.steps = pairs.map((p, i) => ({
     id: `ST-history-${i}-${p.toolId}`,
-    title: p.name || "来源调用未记录",
+    title: toolDisplayName(p.name) || "来源调用未记录",
     state: p.completed ? (p.isError ? "failed" : "done") : "todo",
     meta: p.completed ? (p.isError ? "失败" : undefined) : "结果未返回",
   }));
@@ -308,10 +407,32 @@ export function rebuildStepsFromPairs(sid: string, pairs: { toolId: string; name
 /* ---------- 合成演示（仅演示会话；显式 seed，不自动出现） ---------- */
 
 const DEMO_SUBAGENTS: SubagentRow[] = [
-  { id: "SA-1", cli: "claude", title: "检索登录模块鉴权实现", model: "deepseek-v4.1", duration: "1m12s", tokens: "8.6k", status: "成功" },
-  { id: "SA-2", cli: "codex", title: "复现并缩小失败用例", model: "gpt-5.2", duration: "2m31s", tokens: "12.4k", status: "待确认" },
-  { id: "SA-3", cli: "claude", title: "汇总测试覆盖缺口", model: "deepseek-v4.1", duration: "48s", tokens: "5.1k", status: "成功" },
-  { id: "SA-4", cli: "grok", title: "起草修复方案对比", model: "grok-4", duration: "1m47s", tokens: "9.9k", status: "失败" },
+  { id: "SA-1", taskId: "RUN-3182-A", cli: "claude", title: "检索登录模块鉴权实现", model: "deepseek-v4.1", duration: "1m12s", tokens: "8.6k", status: "成功", output: "鉴权入口位于 src/auth/session.ts；校验分支 3 处，均已覆盖失败路径。", events: [
+    { at: 0, kind: "status", status: "运行中" },
+    { at: 0, kind: "text", text: "先按调用链定位登录入口与 token 校验点。" },
+    { at: 0, kind: "tool", toolName: "code-search", text: "search: login|authenticate|verifyToken" },
+    { at: 0, kind: "result", text: "命中 src/auth/session.ts、src/api/login.ts 共 11 处。" },
+    { at: 0, kind: "output", text: "鉴权入口位于 src/auth/session.ts；校验分支 3 处，均已覆盖失败路径。" },
+    { at: 0, kind: "status", status: "成功" },
+  ] },
+  { id: "SA-2", taskId: "RUN-3182-B", cli: "codex", title: "复现并缩小失败用例", model: "gpt-5.2", duration: "2m31s", tokens: "12.4k", status: "待确认", output: "已稳定复现，最小用例待确认是否保留并发回补断言。", events: [
+    { at: 0, kind: "status", status: "运行中" },
+    { at: 0, kind: "tool", toolName: "shell", text: "pnpm vitest run tests/capacity.spec.ts -t 回补" },
+    { at: 0, kind: "result", text: "1 failed · 期望 2 实际 1（演示输出）", isError: true },
+    { at: 0, kind: "text", text: "失败点在并发回补断言，需要人工确认保留范围。" },
+    { at: 0, kind: "status", status: "待确认" },
+  ] },
+  { id: "SA-3", taskId: "RUN-3182-C", cli: "claude", title: "汇总测试覆盖缺口", model: "deepseek-v4.1", duration: "48s", tokens: "5.1k", status: "成功", output: "覆盖率缺口集中在取消回补与超时分支。", events: [
+    { at: 0, kind: "status", status: "运行中" },
+    { at: 0, kind: "text", text: "对照特性验收标准检查现有用例覆盖。" },
+    { at: 0, kind: "output", text: "覆盖率缺口集中在取消回补与超时分支。" },
+    { at: 0, kind: "status", status: "成功" },
+  ] },
+  { id: "SA-4", taskId: "RUN-3182-D", cli: "grok", title: "起草修复方案对比", model: "grok-4", duration: "1m47s", tokens: "9.9k", status: "失败", output: "CLI 退出码 1：模型端拒绝请求（演示失败，不代表真实结论）。", events: [
+    { at: 0, kind: "status", status: "运行中" },
+    { at: 0, kind: "text", text: "准备比较三种回补策略的副作用。" },
+    { at: 0, kind: "status", status: "失败" },
+  ] },
 ];
 
 const DEMO_BACKGROUND: BackgroundRow[] = [

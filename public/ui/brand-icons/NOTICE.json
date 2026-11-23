@@ -16,9 +16,9 @@
   "grok": {
     "source": "https://grok.com",
     "classification": "Grok official product mark, not CLI-exclusive",
-    "derivation": "官网mark原path，保留原0 0 88 33视口",
+    "derivation": "官网 mark 原 path 完整保留；2026-11-23 按 CR-059 D1 r6 将 viewBox 收敛到图形真实边界（0.36 0.5 33.34 32），不改路径、不裁切、不变形",
     "file": "grok.svg",
-    "sha256": "76c077dd8ca83ed696cf9c75bb66b80faf74323e11b6308579902b2e0f415fc3"
+    "sha256": "0815d4094d4abd31d97a2b6decc0f640cd9387913d5cb2a85ce9dfc54dfbe758"
   },
   "terms": "仅准确标识各已支持CLI产品或厂商，不表示第三方认可；官方品牌资产不是项目线图标，也不按MIT授权推定。"
 }

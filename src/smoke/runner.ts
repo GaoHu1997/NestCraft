@@ -464,6 +464,31 @@ async function suite(): Promise<void> {
     expect(/ERR|HTTP/.test(r.results[0].status), `状态应非空：${r.results[0].status}`);
     return r.results[0].status.slice(0, 80);
   });
+  await t("模型", "CR-058 model_probe_run：不可达端点 → P1 fail、其余跳过、判无法判定", async () => {
+    const pid = await api.providerSave({
+      name: "探针供应商", protocol: "openai", disabled: false, headersJson: null,
+      keys: [{ alias: "k", secret: "sk-probe-8888", enabled: true }],
+      endpoints: [{ protocol: "openai", baseUrl: "http://127.0.0.1:9", enabled: true }],
+      models: [{ modelId: "probe-model", displayName: "探针模型", text: true, vision: false, imageGen: false, efforts: {}, defaultEffort: null, contextWindow: null, maxTokens: null }],
+    });
+    const events: api.ProbeProgressEvent[] = [];
+    const report = await api.modelProbeRun(pid, "probe-model", (ev) => events.push(ev));
+    expect(report.items.length === 19, `应 19 针，实际 ${report.items.length}`);
+    expect(report.items[0].status === "fail", `P1 应 fail：${report.items[0].note}`);
+    expect(report.items.slice(1).every((i) => i.status === "skip"), "P2～P9 应全部 skip");
+    expect(report.verdict === "无法判定", `总评应无法判定：${report.verdict}`);
+    expect(events.filter((e) => e.phase === "settled").length === 19, `应 19 个逐针回执，实际 ${events.filter((e) => e.phase === "settled").length}`);
+    await api.providerDelete(pid);
+    return `${report.score} 分 · ${events.length} 事件`;
+  });
+  await t("模型", "CR-058 历史保留 10 条与密钥脱敏", async () => {
+    const list = await api.modelProbeHistoryList();
+    expect(list.length >= 1 && list.length <= 10, `历史应 1～10 条，实际 ${list.length}`);
+    const raw = JSON.stringify(list);
+    expect(!raw.includes("sk-probe-8888"), "历史不得包含密钥明文");
+    expect(list[0].items.length === 19, "最新记录应有 19 针");
+    return `${list.length} 条 · 最新 ${list[0].verdict}`;
+  });
   await t("模型", "provider_delete 清理", async () => {
     const pid = await api.providerSave({
       name: "待删除供应商", protocol: "openai", disabled: false, headersJson: null,
@@ -750,6 +775,56 @@ async function suite(): Promise<void> {
     expect(all.length >= 1 && mine.length >= 1, "应有会话");
     expect(mine.every((s) => s.projectId === projectId), "过滤应生效");
     return `${mine.length}/${all.length}`;
+  });
+  await t("会话", "chat_sessions_page 分页与标题搜索（CR-063）", async () => {
+    const first = await api.chatSessionsPage({ projectId, limit: 20 });
+    expect(first.items.length <= 20, "首批不应超过 20 条");
+    expect(first.total >= first.items.length, "总数应不小于本页");
+    expect(first.items.every((s) => s.projectId === projectId), "分页作用域应与项目一致");
+    expect(!first.hasMore || first.nextCursor !== null, "仍有更多时应给出游标");
+    expect(first.hasMore || first.nextCursor === null, "没有更多时不应给游标");
+    // 追加一页：不重不漏
+    if (first.hasMore && first.nextCursor) {
+      const second = await api.chatSessionsPage({
+        projectId,
+        limit: 20,
+        cursorPinnedAt: first.nextCursor.pinnedAt,
+        cursorUpdatedAt: first.nextCursor.updatedAt,
+        cursorId: first.nextCursor.id,
+      });
+      const ids = [...first.items, ...second.items].map((s) => s.id);
+      expect(new Set(ids).size === ids.length, "翻页不应重复");
+    }
+    // 标题搜索命中已存在的“冒烟会话”，并证明关键词不匹配时总数为 0
+    await api.chatSessionUpdate({ id: claudeSessionId, title: "冒烟会话" });
+    const hit = await api.chatSessionsPage({ projectId, keyword: "冒烟", limit: 20 });
+    expect(hit.total >= 1 && hit.items.every((s) => s.title.includes("冒烟")), "关键词应只命中标题");
+    const miss = await api.chatSessionsPage({ projectId, keyword: "不存在的会话标题xyz", limit: 20 });
+    expect(miss.total === 0 && miss.items.length === 0, "无匹配应为空");
+    // limit 钳制与游标不成对报错
+    const clamped = await api.chatSessionsPage({ projectId, limit: 0 });
+    expect(clamped.items.length <= 1, "limit 应被钳到 1");
+    let cursorError = false;
+    try { await api.chatSessionsPage({ projectId, cursorUpdatedAt: 1 }); } catch { cursorError = true; }
+    expect(cursorError, "游标不成对应报错");
+    return `${first.items.length}/${first.total}`;
+  });
+  await t("会话", "chat_session_pin 与 chat_session_fork（CR-065）", async () => {
+    const s = await api.chatSessionCreate({ projectId });
+    await api.chatSessionUpdate({ id: s.id, title: "分叉源会话" });
+    const pinned = await api.chatSessionPin(s.id, true);
+    expect((pinned.pinnedAt ?? 0) > 0, "置顶后 pinnedAt 应非 0");
+    const page = await api.chatSessionsPage({ projectId, limit: 20 });
+    expect(page.items[0]?.id === s.id, "置顶会话应排在当前作用域最前");
+    const unpinned = await api.chatSessionPin(s.id, false);
+    expect((unpinned.pinnedAt ?? 0) === 0, "取消置顶后 pinnedAt 应为 0");
+    const forked = await api.chatSessionFork(s.id);
+    expect(forked.title === "分叉 · 分叉源会话", "分叉标题应带「分叉 · 」前缀");
+    expect((forked.pinnedAt ?? 0) === 0, "分叉不应继承置顶");
+    expect(forked.id !== s.id, "分叉应生成新会话");
+    await api.chatSessionDelete(forked.id);
+    await api.chatSessionDelete(s.id);
+    return "ok";
   });
   await t("会话", "chat_session_update 草稿与标题", async () => {
     await api.chatSessionUpdate({ id: claudeSessionId, title: "冒烟会话", draft: "未发送草稿" });
@@ -1374,11 +1449,14 @@ async function suite(): Promise<void> {
   const liveKey = await api.getSetting("smoke.tierflowKey").catch(() => null);
   if (liveKey) {
     let liveProviderId = "";
-    await t("真实供应商", "预置供应商就位", async () => {
+    // CR-061：内置预置供应商已移除；冒烟链路改为自建供应商（先写入密钥与供应商，再校验）。
+    await t("真实供应商", "冒烟自建供应商就位", async () => {
+      await api.invoke("smoke_set_tierflow_key", { key: liveKey });
       const list = await api.providerList();
-      const pv = list.find((x) => x.id === "prov-tierflow-default");
-      expect(!!pv, "应有预置 TierFlow 供应商");
+      const pv = list.find((x) => x.id === "prov-smoke-tierflow");
+      expect(!!pv, "应有冒烟自建 TierFlow 供应商");
       expect(pv!.endpoints.length >= 2, "应有 anthropic 与 openai 两条端点");
+      expect(pv!.models.some((m) => m.modelId === "tierflow"), "应有 tierflow 模型");
       liveProviderId = pv!.id;
       return "端点=" + pv!.endpoints.map((e) => e.protocol).join(",") + " 模型=" + pv!.models.map((m) => m.modelId).join(",");
     });

@@ -55,6 +55,19 @@ pub fn run() {
             // CR-046：清理上次更新留下的旧版程序与未完成下载；保留已就绪的暂存包。
             updater::cleanup(app.handle());
             commands::sdk::seed_sdk_rows_pub()?;
+            // CR-057：首次启动自动安装内置示例（编码 / 办公项目 + 知识库）。
+            // 幂等且不覆盖：已安装则跳过；失败只记日志不阻塞启动，下次启动重试。
+            // 冒烟模式跳过，保持冒烟库的确定性（冒烟夹具自建）。
+            if !smoke {
+                match commands::examples_seed::ensure_seeded(app.handle()) {
+                    Ok(report) => {
+                        for warning in &report.warnings {
+                            eprintln!("examples seed warning: {warning}");
+                        }
+                    }
+                    Err(error) => eprintln!("examples seed failed: {error}"),
+                }
+            }
             if smoke {
                 use tauri::Manager;
                 // 把 mock CLI 钉进 SDK 登记路径，保证会话链路确定性（mockbin/claude.cmd 等）
@@ -80,6 +93,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // 通用
             commands::general::ping,
+            // CR-057：内置示例安装（setup 已自动执行；此命令供前端查询 / 手动补装，幂等）
+            commands::examples_seed::seed_example_workspace,
             // CR-044：所有 main 原生关闭来源统一使用一次性 token 门控
             commands::window::window_request_close,
             commands::window::window_confirm_close,
@@ -161,6 +176,16 @@ pub fn run() {
             commands::gitcmd::git_pull_ff_only,
             commands::gitcmd::git_push,
             commands::gitcmd::git_branch_state,
+            // Git 侧栏配置（CR-067）：远程、国内加速、按主机令牌
+            commands::gitconfig::git_remotes,
+            commands::gitconfig::git_remote_save,
+            commands::gitconfig::git_remote_remove,
+            commands::gitconfig::git_accel_get,
+            commands::gitconfig::git_accel_set,
+            commands::gitconfig::git_credentials_list,
+            commands::gitconfig::git_credentials_save,
+            commands::gitconfig::git_credentials_delete,
+            commands::gitconfig::git_credential_status,
             // 模型供应商
             commands::providers::provider_list,
             commands::providers::provider_save,
@@ -169,8 +194,18 @@ pub fn run() {
             commands::providers::model_candidates,
             commands::providers::fingerprint_check,
             commands::providers::provider_discover_models,
+            commands::providers::provider_resolve_efforts,
+            commands::providers::provider_probe_key_scopes,
+            commands::image_gen::image_gen_get,
+            commands::image_gen::image_gen_save,
+            // CR-058：模型检测九针探针
+            commands::model_probe::model_probe_run,
+            commands::model_probe::model_probe_history_list,
             // SDK
             commands::sdk::sdk_list,
+            // CR-059 D5/E4：缓存先行 + 逐项并发检测
+            commands::sdk::sdk_snapshot,
+            commands::sdk::sdk_detect_one,
             commands::sdk::sdk_run_job,
             commands::sdk::sdk_job,
             commands::sdk::sdk_cancel,
@@ -187,6 +222,10 @@ pub fn run() {
             commands::capabilities::skill_delete,
             commands::capabilities::skill_set_enabled,
             commands::capabilities::skill_read,
+            // CR-059 F1/F2：Skill 文件夹识别/导入与跨 agent 扫描
+            commands::capabilities::skill_folder_preview,
+            commands::capabilities::skill_import_folder,
+            commands::capabilities::skill_scan_sources,
             commands::capabilities::tool_list,
             commands::capabilities::tool_set_enabled,
             commands::capabilities::mcp_list,
@@ -197,12 +236,18 @@ pub fn run() {
             commands::capabilities::mcp_auth_start,
             commands::capabilities::mcp_auth_status,
             commands::capabilities::mcp_auth_logout,
+            // CR-059 F4：MCP 跨 agent 扫描导入
+            commands::capabilities::mcp_scan_sources,
+            commands::capabilities::mcp_import_source,
             // 会话
             commands::chat::chat_sessions,
+            commands::chat::chat_sessions_page,
             commands::chat::chat_session_create,
             commands::chat::chat_session_get,
             commands::chat::chat_session_update,
             commands::chat::chat_session_delete,
+            commands::chat::chat_session_pin,
+            commands::chat::chat_session_fork,
             commands::chat::chat_messages,
             commands::chat::chat_send,
             commands::chat::chat_abort,
@@ -225,6 +270,9 @@ pub fn run() {
             commands::servers::server_exec,
             commands::servers::server_exec_approved,
             commands::servers::server_exec_reject,
+            // CR-059 二期：内置 AI 工具高风险命令的跨进程审批
+            commands::servers::server_pending_approvals,
+            commands::servers::server_decide_approval,
             commands::servers::server_metrics,
             commands::servers::server_ai_exec,
             // 知识库
@@ -259,6 +307,7 @@ pub fn run() {
             commands::knowledge::performance::windows::kb_search_document_cancel,
             // CR-055 FEAT-008: immutable index generations remain human-searchable while rebuilding.
             commands::knowledge::snapshot::kb_index_start,
+            commands::knowledge::snapshot::kb_index_rebuild_sqlite,
             commands::knowledge::snapshot::kb_index_status,
             commands::knowledge::snapshot::kb_index_cancel,
             // CR-055 FEAT-008: bounded GB-scale original transfer tasks (progress/cancel; index stays pending).

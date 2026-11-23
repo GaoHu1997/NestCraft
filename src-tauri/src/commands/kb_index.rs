@@ -644,7 +644,7 @@ pub struct ParsedQuery {
 
 impl ParsedQuery {
     pub fn is_empty(&self) -> bool {
-        self.terms.is_empty() && self.single_char.is_none()
+        self.terms.is_empty() && self.single_char.is_none() && self.needles.is_empty()
     }
 }
 
@@ -672,7 +672,7 @@ pub fn parse_query(query: &str) -> Result<ParsedQuery, String> {
     let mut needles = Vec::new();
     for run in runs(&norm) {
         match run.class {
-            CharClass::Han if run.text.chars().count() >= 2 => needles.push(run.text),
+            CharClass::Han => needles.push(run.text),
             CharClass::Word => needles.push(run.text),
             _ => {}
         }
@@ -980,8 +980,8 @@ pub fn search_library(conn: &Connection, library_id: &str, q: &ParsedQuery) -> R
     if stored.as_deref().is_some_and(|v| v != TOKENIZER_VERSION) {
         return Err(format!("INDEX_REBUILD_REQUIRED: 索引使用旧版分词器（{}），需重建索引后才能检索", stored.unwrap_or_default()));
     }
-    if let Some(ch) = q.single_char {
-        return scan_single_char(conn, library_id, ch);
+    if q.terms.is_empty() {
+        return scan_literal(conn, library_id, q);
     }
     let fts = fts_table_name(partition)?;
     let expr = join_terms(&q.terms);
@@ -989,7 +989,7 @@ pub fn search_library(conn: &Connection, library_id: &str, q: &ParsedQuery) -> R
         "SELECT c.noteId, c.relativeUri, c.title, c.heading, c.chunkKey, c.ordinal, bm25({fts},8.0,4.0,1.0,0.2) AS score, c.text, c.kind
          FROM {fts} JOIN kb_chunk c ON c.chunkKey = {fts}.rowid
          WHERE {fts} MATCH ?1 AND c.libraryId = ?2 AND {CURRENT_GEN_FILTER}
-         ORDER BY score ASC, c.noteId ASC, c.ordinal ASC LIMIT {SEARCH_CANDIDATE_LIMIT}"
+         ORDER BY score ASC, c.noteId ASC, c.ordinal ASC LIMIT {}",SEARCH_CANDIDATE_LIMIT+1
     );
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
     let rows: Vec<RawHit> = stmt
@@ -997,20 +997,24 @@ pub fn search_library(conn: &Connection, library_id: &str, q: &ParsedQuery) -> R
         .map_err(|e| e.to_string())?
         .collect::<Result<_, _>>()
         .map_err(|e| e.to_string())?;
+    let incomplete=rows.len()>SEARCH_CANDIDATE_LIMIT;
     // 原文核验：hex 词项可能被正文中同形字符串误配（hex 碰撞），统一按归一化子串复核。
     let hits: Vec<RawHit> = rows
-        .into_iter()
+        .into_iter().take(SEARCH_CANDIDATE_LIMIT)
         .filter(|h| {
-            let hay = normalize(&format!("{}\n{}\n{}", h.chunk_text, h.title, h.heading));
-            q.needles.iter().all(|n| hay.contains(n.as_str()))
+            let hay = literal_normalize(&format!("{}\n{}\n{}\n{}", h.chunk_text, h.title, h.heading,h.relative_uri));
+            q.needles.iter().all(|n| hay.contains(&literal_normalize(n)))
         })
         .collect();
-    Ok((hits, false))
+    Ok((hits, incomplete))
 }
 
 /// 单字受限扫描：只扫当前授权库的 DB 派生 chunk（text+title），不读原件；
 /// 超护栏标 incomplete，不是「全库无结果」。
-fn scan_single_char(conn: &Connection, library_id: &str, ch: char) -> Result<(Vec<RawHit>, bool), String> {
+fn literal_normalize(text:&str)->String{normalize(text).chars().map(|c|{let mut lower=c.to_lowercase();let a=lower.next().unwrap_or(c);if lower.next().is_none(){a}else{c}}).collect()}
+#[cfg(test)]
+fn scan_single_char(conn:&Connection,library_id:&str,ch:char)->Result<(Vec<RawHit>,bool),String>{scan_literal(conn,library_id,&ParsedQuery{terms:vec![],needles:vec![ch.to_string()],single_char:Some(ch)})}
+fn scan_literal(conn: &Connection, library_id: &str, q: &ParsedQuery) -> Result<(Vec<RawHit>, bool), String> {
     let sql = format!(
         "SELECT c.noteId, c.relativeUri, c.title, c.heading, c.chunkKey, c.ordinal, 0.0 AS score, c.text, c.kind
          FROM kb_chunk c WHERE c.libraryId = ?1 AND {CURRENT_GEN_FILTER}
@@ -1030,8 +1034,9 @@ fn scan_single_char(conn: &Connection, library_id: &str, ch: char) -> Result<(Ve
             incomplete = true;
             break;
         }
-        let hay = normalize(&format!("{}\n{}", hit.chunk_text, hit.title));
-        if hay.contains(ch) {
+        let hay = literal_normalize(&format!("{}\n{}\n{}\n{}", hit.chunk_text, hit.title,hit.heading,hit.relative_uri));
+        let matches=if let Some(ch)=q.single_char{hay.contains(&literal_normalize(&ch.to_string()))}else{q.needles.iter().all(|n|hay.contains(&literal_normalize(n)))};
+        if matches {
             hits.push(hit);
         }
     }
@@ -1232,8 +1237,14 @@ pub fn gateway_read_chunk_conn(
     note_id: &str,
     max_bytes: Option<usize>,
 ) -> Result<ChunkView, String> {
+    // Bind issuance and grant revision in the same bounded SQLite read snapshot.
+    if conn.is_autocommit(){let tx=conn.unchecked_transaction().map_err(|e|e.to_string())?;let view=gateway_read_chunk_conn(&tx,project_id,library_id,note_id,max_bytes)?;tx.commit().map_err(|e|e.to_string())?;return Ok(view);}
     if !crate::commands::knowledge::authorized(conn, project_id)?.iter().any(|l| l == library_id) {
         return Err("知识库未授权或已禁用，读取被拒绝".into());
+    }
+    if let Some(view)=crate::commands::knowledge::snapshot::read_chunk_conn(conn,library_id,note_id,None,0,max_bytes)?{
+        if let Some(c)=view.next_cursor.as_deref(){crate::commands::knowledge::snapshot::bind_cursor(conn,c,project_id)?;}
+        return Ok(view);
     }
     read_note_chunk_conn(conn, library_id, note_id, 0, None, max_bytes)
 }
@@ -1247,8 +1258,16 @@ pub fn gateway_read_cursor_conn(
     cursor: &str,
     max_bytes: Option<usize>,
 ) -> Result<ChunkView, String> {
+    // Never renew an old capability with a revision observed after continuation.
+    if conn.is_autocommit(){let tx=conn.unchecked_transaction().map_err(|e|e.to_string())?;let view=gateway_read_cursor_conn(&tx,project_id,library_id,cursor,max_bytes)?;tx.commit().map_err(|e|e.to_string())?;return Ok(view);}
     if !crate::commands::knowledge::authorized(conn, project_id)?.iter().any(|l| l == library_id) {
         return Err("知识库未授权或已禁用，读取被拒绝".into());
+    }
+    if cursor.starts_with("kbsnapcursor"){
+        crate::commands::knowledge::snapshot::check_cursor_scope(conn,cursor,project_id)?;
+        let view=crate::commands::knowledge::snapshot::read_cursor_conn(conn,library_id,cursor,max_bytes)?;
+        if let Some(c)=view.next_cursor.as_deref(){crate::commands::knowledge::snapshot::bind_cursor(conn,c,project_id)?;}
+        return Ok(view);
     }
     let parts: Vec<&str> = cursor.splitn(3, ':').collect();
     if parts.len() != 3 || parts[0].is_empty() || parts[2].is_empty() {

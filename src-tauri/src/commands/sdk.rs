@@ -151,6 +151,98 @@ pub async fn sdk_list() -> Result<Vec<SdkState>, String> {
     Ok(out)
 }
 
+/// 缓存快照（CR-059 D5/E4）：只读 DB 已持久化的检测结果，不 spawn 任何 npm 进程。
+/// 首帧用它渲染上次缓存；随后由前端并发调用 `sdk_detect_one` 逐项刷新。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SdkSnapshot {
+    pub states: Vec<SdkState>,
+    /// 上次检测时间（毫秒时间戳）；unknown 表示从未成功检测。
+    pub checked_at: i64,
+}
+
+pub(crate) const DETECT_TTL_MS: i64 = 10 * 60 * 1000;
+
+#[tauri::command]
+pub fn sdk_snapshot() -> Result<SdkSnapshot, String> {
+    seed_sdk_rows()?;
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    let mut stmt = conn
+        .prepare("SELECT id, package, enabled, installState, version, path, updatedAt FROM cli_sdk")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((SdkState {
+                enabled: r.get::<_, i64>(2)? != 0,
+                id: r.get(0)?,
+                install_state: r.get(3)?,
+                package: r.get(1)?,
+                path: r.get(5)?,
+                version: r.get(4)?,
+            }, r.get::<_, i64>(6)?))
+        })
+        .map_err(|e| e.to_string())?;
+    let mut states = Vec::new();
+    let mut newest = 0i64;
+    for row in rows {
+        let (state, updated) = row.map_err(|e| e.to_string())?;
+        newest = newest.max(updated);
+        states.push(state);
+    }
+    Ok(SdkSnapshot { states, checked_at: newest })
+}
+
+/// 单项检测（CR-059 D5/E4）：并发调用、逐项上屏；`force=false` 且缓存新鲜时直接短路。
+#[tauri::command]
+pub async fn sdk_detect_one(sdk_id: String, force: bool) -> Result<SdkState, String> {
+    seed_sdk_rows()?;
+    if !SDK_PACKAGES.iter().any(|(id, _)| *id == sdk_id.as_str()) {
+        return Err(format!("未知 SDK：{sdk_id}"));
+    }
+    if !force {
+        let fresh = {
+            let guard = db::conn()?;
+            let conn = guard.as_ref().ok_or("db not initialized")?;
+            conn.query_row(
+                "SELECT updatedAt FROM cli_sdk WHERE id=?1 AND installState != 'unknown'",
+                [&sdk_id],
+                |r| r.get::<_, i64>(0),
+            )
+            .ok()
+            .filter(|at| now_ms() - at < DETECT_TTL_MS)
+        };
+        if let Some(at) = fresh {
+            // 新鲜缓存：直接用持久化结果，不再 spawn npm/--version。
+            let guard = db::conn()?;
+            let conn = guard.as_ref().ok_or("db not initialized")?;
+            let state = conn
+                .query_row(
+                    "SELECT id, package, enabled, installState, version, path FROM cli_sdk WHERE id=?1",
+                    [&sdk_id],
+                    |r| {
+                        Ok(SdkState {
+                            enabled: r.get::<_, i64>(2)? != 0,
+                            id: r.get(0)?,
+                            install_state: r.get(3)?,
+                            package: r.get(1)?,
+                            path: r.get(5)?,
+                            version: r.get(4)?,
+                        })
+                    },
+                )
+                .map_err(|e| e.to_string())?;
+            let _ = at;
+            return Ok(state);
+        }
+    }
+    let mut st = detect_one(&sdk_id).await;
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    persist_detection(conn, &mut st)?;
+    Ok(st)
+}
+
 fn persist_detection(conn: &rusqlite::Connection, state: &mut SdkState) -> Result<(), String> {
     conn.execute(
         "UPDATE cli_sdk SET installState=?2, version=?3, path=?4, updatedAt=?5 WHERE id=?1",
@@ -364,7 +456,11 @@ pub async fn sdk_cancel(job_id: String) -> Result<(), String> {
     Ok(())
 }
 
-/// 可用版本列表（npm view，只留正式版，最多 30 条）。
+/// 可用版本列表（CR-059 E3/E4）：HTTP 直连 registry 读 dist-tags/versions，不 spawn npm。
+///
+/// - 列表＝最新 10 个稳定版（倒序，不含预发布）；
+/// - 注册表地址来自 `npmRegistry` 设置，缺省 npmjs 官方；
+/// - 网络失败返回明确错误，由前端显示「版本列表获取失败，点击刷新重试」。
 #[tauri::command]
 pub async fn sdk_versions(sdk_id: String) -> Result<Vec<String>, String> {
     let pkg = SDK_PACKAGES
@@ -372,28 +468,60 @@ pub async fn sdk_versions(sdk_id: String) -> Result<Vec<String>, String> {
         .find(|(i, _)| *i == sdk_id.as_str())
         .map(|(_, p)| p.to_string())
         .ok_or_else(|| format!("未知 SDK：{}", sdk_id))?;
-    let mut cmd = Command::new(crate::util::resolve_command("npm"));
-    cmd.arg("view").arg(&pkg).args(["versions", "--json"]);
-    apply_registry(&mut cmd, npm_registry()?.as_deref());
-    spawn_cmd(&mut cmd);
-    let out = cmd.output().await.map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
-    }
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
-    let versions: Vec<String> = v
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|x| x.as_str())
-                .filter(|s| !s.contains('-'))
-                .rev()
-                .take(30)
-                .map(|s| s.to_string())
-                .collect()
-        })
+    let registry = npm_registry()?
+        .unwrap_or_else(|| "https://registry.npmjs.org".to_string());
+    let base = registry.trim_end_matches('/');
+    let encoded = pkg.replace('/', "%2F");
+    let url = format!("{base}/{encoded}");
+    let body = tokio::task::spawn_blocking(move || fetch_registry_json(&url))
+        .await
+        .map_err(|e| e.to_string())??;
+    Ok(pick_stable_versions(&body, 10))
+}
+
+/// 同步拉取 registry 元数据（ureq 为阻塞实现，放到 blocking 线程执行）。
+fn fetch_registry_json(url: &str) -> Result<serde_json::Value, String> {
+    let response = ureq::get(url)
+        .set("Accept", "application/vnd.npm.install-v1+json, application/json")
+        .timeout(std::time::Duration::from_secs(15))
+        .call()
+        .map_err(|e| format!("版本列表获取失败：{e}"))?;
+    let text = response
+        .into_string()
+        .map_err(|e| format!("版本列表读取失败：{e}"))?;
+    serde_json::from_str(&text).map_err(|_| "版本列表响应不是合法 JSON".to_string())
+}
+
+/// 从 registry 元数据里取最新 N 个稳定版本（按 semver 倒序）。
+fn pick_stable_versions(meta: &serde_json::Value, limit: usize) -> Vec<String> {
+    let mut out: Vec<String> = meta
+        .get("versions")
+        .and_then(|v| v.as_object())
+        .map(|versions| versions.keys().cloned().collect())
         .unwrap_or_default();
-    Ok(versions)
+    out.retain(|v| !v.contains('-'));
+    out.sort_by(|a, b| semver_cmp(a, b));
+    out.reverse();
+    out.truncate(limit);
+    out
+}
+
+/// 极简 semver 比较（主.次.修订 + 可选 build 数字后缀），仅用于稳定版排序。
+fn semver_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    let parts = |v: &str| -> Vec<i64> {
+        v.split(['.', '+'])
+            .map(|p| p.chars().take_while(|c| c.is_ascii_digit()).collect::<String>())
+            .map(|p| p.parse::<i64>().unwrap_or(0))
+            .collect()
+    };
+    let (pa, pb) = (parts(a), parts(b));
+    for i in 0..pa.len().max(pb.len()) {
+        let (x, y) = (pa.get(i).copied().unwrap_or(0), pb.get(i).copied().unwrap_or(0));
+        if x != y {
+            return x.cmp(&y);
+        }
+    }
+    std::cmp::Ordering::Equal
 }
 
 #[tauri::command]
@@ -456,5 +584,24 @@ mod tests {
         apply_registry(&mut command, Some("https://registry.example.test"));
         let args: Vec<_> = command.as_std().get_args().map(|s| s.to_string_lossy().to_string()).collect();
         assert_eq!(args, vec!["--registry", "https://registry.example.test"]);
+    }
+
+    #[test]
+    fn stable_versions_pick_latest_ten_desc() {
+        // CR-059 E3：只列稳定版、倒序、最多 10 条（跳过 alpha/beta/rc）。
+        let meta = serde_json::json!({
+            "versions": {
+                "1.0.0": {}, "1.2.0": {}, "1.10.0": {}, "2.0.0": {},
+                "2.1.0": {}, "2.2.0": {}, "2.3.0": {}, "2.4.0": {},
+                "2.5.0": {}, "2.6.0": {}, "2.7.0": {}, "3.0.0-beta.1": {}
+            }
+        });
+        let picked = pick_stable_versions(&meta, 10);
+        assert_eq!(picked.len(), 10);
+        assert_eq!(picked[0], "2.7.0", "最新稳定版应排首位");
+        assert!(!picked.iter().any(|v| v.contains('-')), "预发布不应出现在列表");
+        // semver 比较不按字典序：1.10.0 必须大于 1.2.0
+        assert_eq!(semver_cmp("1.10.0", "1.2.0"), std::cmp::Ordering::Greater);
+        assert_eq!(semver_cmp("2.0.0", "2.0.0"), std::cmp::Ordering::Equal);
     }
 }

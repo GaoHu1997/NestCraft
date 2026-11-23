@@ -20,10 +20,57 @@ pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// 默认更新清单：发布仓库最新正式版的固定资产名。可用环境变量或本机 feed.json 覆盖。
 const DEFAULT_FEED: &str =
     "https://github.com/GaoHu1997/NestCraft/releases/latest/download/nestcraft-win64.json";
+
+/// GitHub 加速镜像（前缀拼接式：`{加速器}{原始 GitHub 地址}`）。
+///
+/// 直连 GitHub Release 在部分网络下会卡在 `release-assets.githubusercontent.com` 的
+/// 连接重置上（表现为「拉取更新清单失败」），因此清单与安装包的 GitHub 直链都按
+/// 「直连 → 本列表顺序」逐级尝试，任一成功即用。
+///
+/// 顺序只影响首选速度、不影响正确性：靠前的源失败会自动切下一个。靠前的为实测
+/// 可用的通用代理，靠后的保留作兜底（各代理可用性会随网络与时间波动，出现限流
+/// 429/403 时仍是下一轮的有效候选）。安装包始终以清单中的 SHA-256 完整校验，
+/// 镜像只承担传输。
+const GITHUB_ACCELERATORS: &[&str] = &[
+    "https://hub.ddayh.com/",
+    "https://kenyu.ggff.net/",
+    "https://github-proxy.lixxing.top/",
+    "https://github.dpik.top/",
+    "https://ghpxy.hwinzniej.top/",
+    "https://gh.ddlc.top/",
+    "https://gh.aaa.team/",
+    "https://y.whereisdoge.work/",
+    "https://gh-proxy.com/",
+    "https://git.tangbao.cc/",
+];
+
+/// 需要按加速器展开的 GitHub 域名片段（Release 资产、raw 与对象存储重定向域）。
+const GITHUB_HOSTS: &[&str] = &[
+    "://github.com/",
+    "://raw.githubusercontent.com/",
+    "://objects.githubusercontent.com/",
+    "://release-assets.githubusercontent.com/",
+    "://codeload.github.com/",
+];
+
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 const CHUNK_SIZE: usize = 64 * 1024;
 const CONNECT_TIMEOUT_SECS: u64 = 10;
 const READ_TIMEOUT_SECS: u64 = 30;
+/// 清单候选的连接超时：连不上要尽快切下一个源，不能干等。
+const MANIFEST_CONNECT_TIMEOUT_SECS: u64 = 6;
+/// 清单候选的单次读取超时（清单本身只有几百字节）。
+const MANIFEST_READ_TIMEOUT_SECS: u64 = 12;
+/// 清单拉取的总等待上限：超过后放弃剩余候选并报错，避免用户长时间空等。
+const MANIFEST_TOTAL_BUDGET_SECS: u64 = 45;
+/// 单个下载源的总时限：再慢的可用源也不能无限占住更新流程，超时即丢弃半包切下一源。
+const DOWNLOAD_SOURCE_TIMEOUT_SECS: u64 = 600;
+/// 启动阶段的慢源判定窗口与最低字节数：窗口内连 512 KiB 都收不到（约 <17KB/s），
+/// 视为该源不可用，立即切源；避免镜像里的极慢源让用户长时间停在 0% 附近。
+const DOWNLOAD_STARTUP_WINDOW_SECS: u64 = 30;
+const DOWNLOAD_STARTUP_MIN_BYTES: u64 = 512 * 1024;
+/// 错误消息里保留的源错误条数上限，避免把 10 多个源的失败串塞满界面提示。
+const MANIFEST_ERROR_KEEP: usize = 3;
 
 /// 更新清单中的单个资产。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -226,6 +273,50 @@ pub fn is_http_url(value: &str) -> bool {
     (url.starts_with("https://") || url.starts_with("http://")) && url.len() > 8
 }
 
+/// 追加一个 HTTP(S) 候选，去重并过滤空白/非法项。
+fn push_unique(urls: &mut Vec<String>, candidate: &str) {
+    let url = candidate.trim();
+    if is_http_url(url) && !urls.iter().any(|existing| existing == url) {
+        urls.push(url.to_string());
+    }
+}
+
+/// 把一个原始 GitHub / raw 地址展开为「直连 + 各加速器」候选列表。
+pub fn accelerated_urls(original: &str) -> Vec<String> {
+    let original = original.trim();
+    let mut urls = Vec::with_capacity(GITHUB_ACCELERATORS.len() + 1);
+    if !is_http_url(original) {
+        return urls;
+    }
+    urls.push(original.to_string());
+    for accelerator in GITHUB_ACCELERATORS {
+        urls.push(format!("{accelerator}{original}"));
+    }
+    urls
+}
+
+fn is_github_url(url: &str) -> bool {
+    let url = url.trim();
+    GITHUB_HOSTS.iter().any(|host| url.contains(host))
+}
+
+/// GitHub 直链展开为「直连 + 各加速器」；其他地址原样返回。
+/// 加速器只负责传输，安装包仍以清单里的 SHA-256 完整校验兜底。
+fn expand_github_download(url: &str) -> Vec<String> {
+    if is_github_url(url) {
+        accelerated_urls(url)
+    } else if is_http_url(url) {
+        vec![url.trim().to_string()]
+    } else {
+        Vec::new()
+    }
+}
+
+/// 默认清单候选：直连优先（可信），失败后逐个用加速器代理同一份清单。
+fn default_feed_urls() -> Vec<String> {
+    accelerated_urls(DEFAULT_FEED)
+}
+
 pub fn is_sha256(value: &str) -> bool {
     let value = value.trim();
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -255,24 +346,73 @@ pub fn validate_asset(asset: &UpdateAsset) -> Result<(), String> {
     Ok(())
 }
 
+/// 下载候选：主地址优先（GitHub 直链自动展开为「直连 + 各加速器」），
+/// 其次清单显式声明的镜像；去重、过滤非 http(s) 与空白项。
 fn asset_urls(asset: &UpdateAsset) -> Vec<String> {
     let mut urls = Vec::new();
-    for candidate in std::iter::once(&asset.url).chain(asset.mirrors.iter()) {
-        let url = candidate.trim();
-        if is_http_url(url) && !urls.iter().any(|existing| existing == url) {
-            urls.push(url.to_string());
-        }
+    for candidate in expand_github_download(&asset.url) {
+        push_unique(&mut urls, &candidate);
+    }
+    for mirror in &asset.mirrors {
+        push_unique(&mut urls, mirror);
     }
     urls
 }
 
+/// 代理：优先专用变量 `NESTCRAFT_UPDATE_PROXY`，其次通用代理环境变量，
+/// 取不到时交给 ureq 读取环境变量（`try_proxy_from_env`）。都取不到即直连。
+fn proxy_from_env() -> Option<ureq::Proxy> {
+    const KEYS: &[&str] = &[
+        "NESTCRAFT_UPDATE_PROXY",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+    ];
+    for key in KEYS {
+        if let Ok(value) = std::env::var(key) {
+            let value = value.trim();
+            if !value.is_empty() {
+                if let Ok(proxy) = ureq::Proxy::new(value) {
+                    return Some(proxy);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn user_agent() -> String {
+    format!("NestCraft/{}", CURRENT_VERSION)
+}
+
+fn agent_builder() -> ureq::AgentBuilder {
+    let builder = ureq::AgentBuilder::new().user_agent(&user_agent());
+    match proxy_from_env() {
+        Some(proxy) => builder.proxy(proxy),
+        None => builder.try_proxy_from_env(true),
+    }
+}
+
 fn http_agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
+    agent_builder()
         .timeout_connect(Duration::from_secs(CONNECT_TIMEOUT_SECS))
         .timeout_read(Duration::from_secs(READ_TIMEOUT_SECS))
         .build()
 }
 
+/// 清单探测专用：连接超时更短，失败要尽快切到下一个候选源。
+fn manifest_agent() -> ureq::Agent {
+    agent_builder()
+        .timeout_connect(Duration::from_secs(MANIFEST_CONNECT_TIMEOUT_SECS))
+        .timeout_read(Duration::from_secs(MANIFEST_READ_TIMEOUT_SECS))
+        .build()
+}
+
+/// 清单候选：环境变量与本地 `feed.json` 视为强制指定（只用它们），
+/// 未覆盖时用「直连 + 各 GitHub 加速器」的内置候选。
 fn feed_urls(app: &tauri::AppHandle) -> Vec<String> {
     if let Ok(configured) = std::env::var("NESTCRAFT_UPDATE_FEED") {
         let url = configured.trim();
@@ -293,7 +433,7 @@ fn feed_urls(app: &tauri::AppHandle) -> Vec<String> {
             }
         }
     }
-    vec![DEFAULT_FEED.to_string()]
+    default_feed_urls()
 }
 
 fn fetch_manifest_once(agent: &ureq::Agent, url: &str) -> Result<UpdateManifest, String> {
@@ -315,16 +455,55 @@ fn fetch_manifest_once(agent: &ureq::Agent, url: &str) -> Result<UpdateManifest,
     Ok(manifest)
 }
 
+/// 逐个候选源拉取清单：直连优先，失败按加速器顺序切换；超过总预算即停止。
 pub fn fetch_manifest(app: &tauri::AppHandle) -> Result<UpdateManifest, String> {
-    let agent = http_agent();
-    let mut errors = Vec::new();
-    for url in feed_urls(app) {
-        match fetch_manifest_once(&agent, &url) {
+    fetch_manifest_from(&manifest_agent(), feed_urls(app))
+}
+
+fn fetch_manifest_from(
+    agent: &ureq::Agent,
+    candidates: Vec<String>,
+) -> Result<UpdateManifest, String> {
+    let started = Instant::now();
+    let total = candidates.len();
+    let mut errors: Vec<String> = Vec::new();
+    let mut tried = 0usize;
+    for (index, url) in candidates.iter().enumerate() {
+        if index > 0 && started.elapsed() >= Duration::from_secs(MANIFEST_TOTAL_BUDGET_SECS) {
+            errors.push(format!(
+                "已放弃剩余 {} 个候选源（总等待超过 {} 秒）",
+                total - index,
+                MANIFEST_TOTAL_BUDGET_SECS
+            ));
+            break;
+        }
+        tried += 1;
+        match fetch_manifest_once(agent, url) {
             Ok(manifest) => return Ok(manifest),
             Err(error) => errors.push(format!("{url}: {error}")),
         }
     }
-    Err(format!("拉取更新清单失败：{}", errors.join("；")))
+    Err(format!(
+        "拉取更新清单失败（已尝试 {tried} 个源，含直连与加速镜像）：{}",
+        summarize_errors(&errors)
+    ))
+}
+
+/// 错误摘要：只保留前若干条并标注省略条数，避免界面提示被十几个源的失败串撑满。
+fn summarize_errors(errors: &[String]) -> String {
+    if errors.is_empty() {
+        return "没有可用的清单地址".into();
+    }
+    if errors.len() <= MANIFEST_ERROR_KEEP {
+        return errors.join("；");
+    }
+    let head = errors
+        .iter()
+        .take(MANIFEST_ERROR_KEEP)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("；");
+    format!("{head}；…另有 {} 个源失败", errors.len() - MANIFEST_ERROR_KEEP)
 }
 
 fn no_update(message: impl Into<String>) -> UpdateCheckResult {
@@ -434,6 +613,25 @@ impl SpeedMeter {
     }
 }
 
+/// 单源是否应放弃：返回放弃原因。纯函数，便于单测。
+fn source_give_up(done: u64, elapsed: Duration) -> Option<String> {
+    if elapsed >= Duration::from_secs(DOWNLOAD_SOURCE_TIMEOUT_SECS) {
+        return Some(format!(
+            "该下载源超过 {} 秒仍未完成（已接收 {} 字节），改用下一个源",
+            DOWNLOAD_SOURCE_TIMEOUT_SECS, done
+        ));
+    }
+    if done < DOWNLOAD_STARTUP_MIN_BYTES
+        && elapsed >= Duration::from_secs(DOWNLOAD_STARTUP_WINDOW_SECS)
+    {
+        return Some(format!(
+            "该下载源过慢（{} 秒仅收到 {} 字节），改用下一个源",
+            DOWNLOAD_STARTUP_WINDOW_SECS, done
+        ));
+    }
+    None
+}
+
 fn download_once(
     app: &tauri::AppHandle,
     agent: &ureq::Agent,
@@ -451,9 +649,13 @@ fn download_once(
     let mut file = std::fs::File::create(part).map_err(|e| format!("创建下载文件失败: {e}"))?;
     let mut done: u64 = 0;
     let mut meter = SpeedMeter::new();
+    let started = Instant::now();
     let mut last_emit = Instant::now() - Duration::from_secs(1);
     let mut buffer = [0u8; CHUNK_SIZE];
     loop {
+        if let Some(reason) = source_give_up(done, started.elapsed()) {
+            return Err(reason);
+        }
         let count = reader
             .read(&mut buffer)
             .map_err(|e| format!("读取更新包失败: {e}"))?;
@@ -924,5 +1126,175 @@ mod tests {
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn default_feed_candidates_start_with_direct_then_every_accelerator() {
+        let urls = default_feed_urls();
+        assert_eq!(urls[0], DEFAULT_FEED, "直连必须排在首位");
+        assert_eq!(urls.len(), GITHUB_ACCELERATORS.len() + 1);
+        for accelerator in GITHUB_ACCELERATORS {
+            assert!(
+                urls.contains(&format!("{accelerator}{DEFAULT_FEED}")),
+                "缺少加速候选 {accelerator}"
+            );
+        }
+    }
+
+    #[test]
+    fn accelerator_expansion_only_applies_to_github_urls() {
+        let github = "https://github.com/GaoHu1997/NestCraft/releases/download/v0.0.2/NestCraft_0.0.2_x64_portable.exe";
+        let expanded = expand_github_download(github);
+        assert_eq!(expanded[0], github);
+        assert_eq!(expanded.len(), GITHUB_ACCELERATORS.len() + 1);
+
+        let cdn = "https://cdn.example.com/NestCraft_0.0.2_x64_portable.exe";
+        assert_eq!(expand_github_download(cdn), vec![cdn.to_string()]);
+        assert!(expand_github_download("file:///tmp/a.exe").is_empty());
+        assert!(accelerated_urls("not a url").is_empty());
+    }
+
+    #[test]
+    fn asset_candidates_expand_primary_and_keep_mirrors_once() {
+        let asset = UpdateAsset {
+            url: "https://github.com/GaoHu1997/NestCraft/releases/download/v0.0.2/app.exe".into(),
+            mirrors: vec![
+                "https://github.com/GaoHu1997/NestCraft/releases/download/v0.0.2/app.exe".into(),
+                "https://mirror.example.com/app.exe".into(),
+                "  ".into(),
+            ],
+            sha256: "a".repeat(64),
+            size: 10,
+        };
+        let urls = asset_urls(&asset);
+        // 直连 + 各加速器，镜像只留一条且排在最后，空白项被过滤。
+        assert_eq!(urls.len(), GITHUB_ACCELERATORS.len() + 2);
+        assert_eq!(urls.last().map(String::as_str), Some("https://mirror.example.com/app.exe"));
+        assert!(!urls.iter().any(|value| value.trim().is_empty()));
+        // 主地址与镜像重复时不会出现第二次直连。
+        assert_eq!(
+            urls.iter().filter(|value| *value == &asset.url).count(),
+            1
+        );
+    }
+
+    #[test]
+    fn slow_download_source_is_dropped_but_progressing_source_is_kept() {
+        // 正常下载：30 秒内已有 600 KiB，继续。
+        assert!(source_give_up(600 * 1024, Duration::from_secs(31)).is_none());
+        // 极慢源：30 秒内只有 300 KiB，立即放弃。
+        let stalled = source_give_up(300 * 1024, Duration::from_secs(31));
+        assert!(stalled.is_some_and(|reason| reason.contains("过慢")));
+        // 刚开始：不判定。
+        assert!(source_give_up(0, Duration::from_secs(5)).is_none());
+        // 大文件已经下了很久：总时限兜底，即使速度不慢也放弃。
+        let overtime = source_give_up(8 * 1024 * 1024, Duration::from_secs(700));
+        assert!(overtime.is_some_and(|reason| reason.contains("超过")));
+    }
+
+    #[test]
+    fn manifest_error_summary_is_capped() {
+        let errors: Vec<String> = (0..6).map(|index| format!("源 {index} 失败")).collect();
+        let summary = summarize_errors(&errors);
+        assert!(summary.contains("源 0 失败"));
+        assert!(summary.contains("另有 3 个源失败"));
+        assert!(!summary.contains("源 5 失败"));
+        assert_eq!(summarize_errors(&[]), "没有可用的清单地址");
+    }
+
+    /// 需要外网的实网验证：默认候选（直连 + 各加速器）必须能拉到一份可解析的清单。
+    /// 设置 `NESTCRAFT_UPDATE_FEED` 可只验证指定源（如某个加速器地址）。
+    /// 手动执行：`cargo test --lib manifest_fetch -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn manifest_fetch_reaches_published_release() {
+        let candidates = match std::env::var("NESTCRAFT_UPDATE_FEED") {
+            Ok(value) if is_http_url(value.trim()) => vec![value.trim().to_string()],
+            _ => default_feed_urls(),
+        };
+        let manifest = fetch_manifest_from(&manifest_agent(), candidates)
+            .unwrap_or_else(|error| panic!("所有清单候选均失败：{error}"));
+        println!("清单版本：v{}", manifest.version);
+        assert!(!manifest.version.trim().is_empty());
+    }
+
+    /// 实网验证回退路径：首位源不可达时，必须自动切到加速器并成功返回清单。
+    #[test]
+    #[ignore]
+    fn manifest_fetch_skips_unreachable_source_and_falls_back_to_accelerator() {
+        let candidates = vec![
+            "https://127.0.0.1:9/nestcraft-win64.json".to_string(),
+            format!("{}https://github.com/GaoHu1997/NestCraft/releases/latest/download/nestcraft-win64.json", GITHUB_ACCELERATORS[0]),
+        ];
+        let manifest = fetch_manifest_from(&manifest_agent(), candidates)
+            .unwrap_or_else(|error| panic!("回退失败：{error}"));
+        println!(
+            "回退命中：{} → v{}",
+            GITHUB_ACCELERATORS[0], manifest.version
+        );
+        assert!(!manifest.version.trim().is_empty());
+    }
+
+    /// 实网验证完整下载路径：按 `asset_urls` 候选（直连 + 加速器）取回安装包，
+    /// 整包 SHA-256 必须与清单一致——镜像只承担传输，不能影响内容校验。
+    #[test]
+    #[ignore]
+    fn accelerated_download_matches_manifest_sha256() {
+        let manifest = fetch_manifest_from(&manifest_agent(), default_feed_urls())
+            .unwrap_or_else(|error| panic!("清单失败：{error}"));
+        let asset = manifest.portable.as_ref().expect("清单应包含免安装资产");
+        let expected = asset.sha256.trim().to_ascii_lowercase();
+        assert!(is_sha256(&expected), "清单缺少有效 SHA-256");
+        let agent = http_agent();
+        let mut last = String::new();
+        for url in asset_urls(asset) {
+            let started = Instant::now();
+            let response = match agent.get(&url).call() {
+                Ok(response) => response,
+                Err(error) => {
+                    last = format!("{url}: {error}");
+                    continue;
+                }
+            };
+            let mut reader = response.into_reader();
+            let mut hasher = Sha256::new();
+            let mut buffer = [0u8; CHUNK_SIZE];
+            let mut total: u64 = 0;
+            let mut read_error = None;
+            loop {
+                if started.elapsed() >= Duration::from_secs(240) {
+                    read_error = Some("超过 240 秒仍没下完".to_string());
+                    break;
+                }
+                match reader.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(count) => {
+                        hasher.update(&buffer[..count]);
+                        total += count as u64;
+                    }
+                    Err(error) => {
+                        read_error = Some(error.to_string());
+                        break;
+                    }
+                }
+            }
+            if let Some(error) = read_error {
+                last = format!("{url}: 读取失败 {error}");
+                continue;
+            }
+            let digest = format!("{:x}", hasher.finalize());
+            if digest == expected {
+                println!(
+                    "下载校验通过：{url}（{total} 字节，{:.0}s）",
+                    started.elapsed().as_secs_f64()
+                );
+                if asset.size > 0 {
+                    assert_eq!(asset.size, total, "下载字节数与清单不一致");
+                }
+                return;
+            }
+            last = format!("{url}: SHA-256 不匹配（{digest}）");
+        }
+        panic!("所有下载候选均失败：{last}");
     }
 }

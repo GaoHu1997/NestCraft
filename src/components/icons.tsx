@@ -17,6 +17,14 @@ export const ICON_NAMES = [
   "collapse", "layout", "alignLeft", "alignCenter", "alignRight", "palette", "checkCircle", "loader",
   "shieldCheck", "unlock", "gitMerge", "gitCommit", "command", "workflow", "bot", "wrench",
   "fileMarkdown", "fileHtml", "fileAudio", "fileVideo", "fileUnknown", "briefcase", "library",
+  // CR-065：底部统计专用图标（会话统计 / Token 用量 / 上下文已用）
+  "sessionStats", "tokenUsage", "contextUsage",
+  // CR-065：AI 字标（用户指定以 A/I 字母设计的侧栏开关图标）
+  "aiMark",
+  // CR-065：AI 图像图标（机器人头，最终用于侧栏开关）
+  "aiBot",
+  // CR-054：工作台页签图标（坐在电脑前的小人）
+  "atDesk",
   // CR-051 r2/r6：通用图标库（办公／商业／内容／产品／生活）+ 裁剪拖动提示
   "building", "calendar", "clipboard", "presentation", "mail", "idBadge",
   "chartBar", "chartLine", "chartPie", "wallet", "receipt", "cart", "tag", "scale",

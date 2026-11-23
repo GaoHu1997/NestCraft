@@ -7,6 +7,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import type { AttachmentMeta, ChatMessage, ContextRef } from "@/api";
 import { requestLocate } from "@/modules/locate";
 import { ThinkingIndicator, formatElapsed } from "./ThinkingIndicator";
+import { toolDisplayName } from "./sessionRuntime";
 
 /**
  * 消息流渲染（CR-034 / STORY-062）：
@@ -387,7 +388,7 @@ function ToolBlock({ pair }: { pair: ToolPair }) {
     <div className="chat-msg">
       <div className={`chat-toolblock ${status}`}>
         <div className="chat-toolblock-head">
-          <span className={`tag ${status === "fail" ? "bad" : status === "ok" ? "good" : "blue"}`}>{pair.name ?? "工具调用"}</span>
+          <span className={`tag ${status === "fail" ? "bad" : status === "ok" ? "good" : "blue"}`}>{toolDisplayName(pair.name) ?? "工具调用"}</span>
           {briefOf(pair.inputJson) && <span className="small muted ellipsis chat-toolblock-brief">{briefOf(pair.inputJson)}</span>}
           <span className="spacer" />
           <span className={`chat-tool-state st-${status}`}>{statusText}</span>
@@ -419,6 +420,8 @@ export function MessageList(props: {
   officeFiles?: OfficeFileRef[];
   visible?: boolean;
   stepsSlot?: React.ReactNode;
+  /** CR-062：点开子智能体只读详情。 */
+  onOpenAgent?: (agentId: string) => void;
 }) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const stickRef = useRef(true);
@@ -473,7 +476,7 @@ export function MessageList(props: {
           "pair" in b ? (
             <ToolBlock key={`tb-${b.pair.toolId}-${i}`} pair={b.pair} />
           ) : (
-            <MessageRow key={b.id} m={b} projectId={props.projectId} rootUri={props.rootUri} officeFiles={props.officeFiles} canLocate={canLocate} onImageOpen={(src, alt, el) => setZoom({ src, alt, back: el })} />
+            <MessageRow key={b.id} m={b} projectId={props.projectId} rootUri={props.rootUri} officeFiles={props.officeFiles} canLocate={canLocate} onOpenAgent={props.onOpenAgent} onImageOpen={(src, alt, el) => setZoom({ src, alt, back: el })} />
           )
         )}
         {props.stepsSlot}
@@ -498,6 +501,7 @@ function MessageRow(props: {
   rootUri?: string;
   officeFiles?: OfficeFileRef[];
   canLocate: boolean;
+  onOpenAgent?: (agentId: string) => void;
   onImageOpen: (src: string, alt: string, el: HTMLElement) => void;
 }) {
   const { m } = props;
@@ -577,7 +581,13 @@ function MessageRow(props: {
     return (
       <div className="chat-msg subagent">
         <div className="chat-agent-event">
-          <div className="chat-agent-event-head"><Icon name="bot" size={15} /><span className="chat-agent-kind">General Purpose</span><span className="chat-agent-state">{m.sourceLabel || "状态未知"}</span><span className="chat-agent-time">{messageTime(m.createdAt)}</span></div>
+          <div className="chat-agent-event-head"><Icon name="bot" size={15} /><span className="chat-agent-kind">General Purpose</span><span className="chat-agent-state">{m.sourceLabel || "状态未知"}</span><span className="chat-agent-time">{messageTime(m.createdAt)}</span>
+            {m.producerId && props.onOpenAgent && (
+              <button type="button" className="chat-agent-open" title="查看子智能体只读详情" aria-label={`查看子智能体 ${m.producerTask || m.producerId} 的只读详情`} onClick={() => props.onOpenAgent?.(m.producerId!)}>
+                查看 <Icon name="chevronRight" size={12} />
+              </button>
+            )}
+          </div>
           <div className="chat-agent-task">{m.producerTask || "子智能体任务"}</div>
           <div className="chat-agent-meta">{m.producerId || "agent-id 未知"}{m.cli ? ` · ${m.cli}` : ""}</div>
           {hasOutput && <div className="chat-agent-output">{m.content}</div>}

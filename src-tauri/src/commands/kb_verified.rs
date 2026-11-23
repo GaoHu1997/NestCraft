@@ -71,6 +71,9 @@ impl Proof {
     }
 }
 
+#[cfg(test)]
+thread_local! {pub(super) static DURING_HASH:std::cell::RefCell<Option<Box<dyn FnOnce(&Reference)>>> = std::cell::RefCell::new(None);}
+
 pub(super) fn verify(reference:Reference)->Result<Proof,String>{
     #[cfg(not(windows))]
     {let _=reference;return Err("SNAPSHOT_UNAVAILABLE: 本平台尚未验证原件读保护".into());}
@@ -83,7 +86,9 @@ pub(super) fn verify(reference:Reference)->Result<Proof,String>{
         if reference.byte_size.map(|n|n!=size).unwrap_or(false){return Err("SOURCE_CHANGED: 原件大小与索引不同".into());}
         if reference.expected_sha256.len()!=64||!reference.expected_sha256.bytes().all(|b|b.is_ascii_hexdigit()){return Err("INDEX_HASH_INVALID".into());}
         let mut sha=Sha256::new();let mut fnv=0xcbf29ce484222325u64;let mut count=0u64;let mut buffer=[0u8;65536];
-        loop{let n=file.read(&mut buffer).map_err(|_|"SOURCE_UNAVAILABLE: 原件无法核验")?;if n==0{break;}count+=n as u64;sha.update(&buffer[..n]);for b in &buffer[..n]{fnv=(fnv^u64::from(*b)).wrapping_mul(0x100000001b3);}}
+        loop{let n=file.read(&mut buffer).map_err(|_|"SOURCE_UNAVAILABLE: 原件无法核验")?;if n==0{break;}
+            #[cfg(test)] {let hook=DURING_HASH.with(|h|h.borrow_mut().take());if let Some(hook)=hook{hook(&reference);}}
+            count+=n as u64;sha.update(&buffer[..n]);for b in &buffer[..n]{fnv=(fnv^u64::from(*b)).wrapping_mul(0x100000001b3);}}
         if count!=size||hex(&sha.finalize())!=reference.expected_sha256.to_lowercase(){return Err("SOURCE_CHANGED: 原件完整SHA-256不匹配，拒绝将旧正文发送AI".into());}
         if let Some(hash)=reference.source_hash.strip_prefix("fnv1a64:"){if hash!=format!("{fnv:016x}"){return Err("SOURCE_CHANGED: 旧索引指纹不一致".into());}}
         else if reference.source_hash!=format!("sha256:{}",reference.expected_sha256.to_lowercase()){return Err("INDEX_HASH_INVALID".into());}
@@ -100,6 +105,7 @@ pub(super) struct Prepared {
     pub grant_revision:i64,
     pub index_epoch:i64,
     pub snapshot_generation:Option<i64>,
+    previous_cr:bool,
 }
 #[derive(Clone)]
 struct Cached {project:String,library:String,prepared:Prepared,created:Instant}
@@ -129,18 +135,25 @@ fn cached(project:Option<&str>,library:&str,id:&str)->Result<Prepared,String>{
 }
 fn from_view(conn:&Connection,project:Option<&str>,view:ChunkView)->Result<Prepared,String>{
     let grant_revision=grant_revision(conn,project,&view.library_id)?;
+    if let Some(active)=super::snapshot::active_snapshot(conn,&view.library_id)? {
+        let matches:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM kb_snap_member m JOIN kb_snap_chunk c ON c.libraryId=m.libraryId AND c.noteId=m.noteId AND c.parseGeneration=m.parseGeneration WHERE m.libraryId=?1 AND m.generation=?2 AND m.noteId=?3 AND m.parseGeneration=?4 AND m.sourceHash=?5 AND c.chunkKey=?6)",params![view.library_id,active.generation,view.note_id,view.parse_generation,view.source_hash,view.chunk_key],|r|r.get(0)).map_err(|e|e.to_string())?;
+        if matches{return from_snapshot(conn,project,view,active.generation);}
+        return Err("INDEX_CHANGED: 游标不是当前快照成员，禁止猜最新代".into());
+    }
     let index_epoch=index_epoch(conn,&view.library_id)?;
     let reference=legacy_reference(conn,&view)?;
-    Ok(Prepared{view,reference,grant_revision,index_epoch,snapshot_generation:None})
+    Ok(Prepared{view,reference,grant_revision,index_epoch,snapshot_generation:None,previous_cr:false})
 }
 fn from_snapshot(conn:&Connection,project:Option<&str>,view:ChunkView,generation:i64)->Result<Prepared,String>{
     let grant_revision=grant_revision(conn,project,&view.library_id)?;
     let epoch=super::snapshot::active_snapshot(conn,&view.library_id)?.filter(|s|s.generation==generation).ok_or("INDEX_CHANGED: 所选快照已不再活动")?.epoch;
     let reference=snapshot_reference(conn,&view,generation)?;
-    Ok(Prepared{view,reference,grant_revision,index_epoch:epoch,snapshot_generation:Some(generation)})
+    let previous_cr=super::snapshot::preceding_cr(conn,&view,generation)?;
+    Ok(Prepared{view,reference,grant_revision,index_epoch:epoch,snapshot_generation:Some(generation),previous_cr})
 }
 fn prepare(conn:&Connection,project:Option<&str>,library:&str,note:Option<&str>,cursor:Option<&str>)->Result<Prepared,String>{
     if let Some(cursor)=cursor{if cursor.starts_with("kbref:"){let p=cached(project,library,cursor)?;recheck(conn,project,&p)?;return Ok(p);}}
+    if let Some(cursor)=cursor{if cursor.starts_with("kbsnapcursor"){super::snapshot::check_cursor_scope(conn,cursor,project)?;}}
     let view=if let Some(cursor)=cursor{crate::commands::kb_index::gateway_read_cursor_conn(conn,project,library,cursor,None)?}
         else{crate::commands::kb_index::gateway_read_chunk_conn(conn,project,library,note.ok_or("缺少noteId或cursor")?,None)?};
     from_view(conn,project,view)
@@ -158,7 +171,7 @@ fn recheck(conn:&Connection,project:Option<&str>,prepared:&Prepared)->Result<(),
     let matches:i64=conn.query_row("SELECT COUNT(*) FROM kb_chunk WHERE libraryId=?1 AND noteId=?2 AND parseGeneration=?3 AND chunkKey=?4 AND sourceHash=?5",params![prepared.view.library_id,prepared.view.note_id,prepared.view.parse_generation,prepared.view.chunk_key,prepared.view.source_hash],|r|r.get(0)).map_err(|e|e.to_string())?;
     if matches!=1{return Err("SOURCE_CHANGED: 所选片段已失效".into());}Ok(())
 }
-fn bounded_view(project:Option<&str>,prepared:&Prepared,max_bytes:Option<usize>)->Result<ChunkView,String>{
+fn bounded_view(conn:&Connection,project:Option<&str>,prepared:&Prepared,max_bytes:Option<usize>)->Result<ChunkView,String>{
     let mut view=prepared.view.clone();
     if let Some(max)=max_bytes {let mut end=max.min(view.content.len());while !view.content.is_char_boundary(end){end-=1;}view.content.truncate(end);}
     view=crate::commands::kb_index::fit_response(view)?;
@@ -166,11 +179,13 @@ fn bounded_view(project:Option<&str>,prepared:&Prepared,max_bytes:Option<usize>)
     if consumed==0&&!prepared.view.content.is_empty(){return Err("BUDGET_EXCEEDED: 预算不足以推进正文游标".into());}
     if consumed<prepared.view.content.len(){
         let mut remainder=prepared.clone();remainder.view.content=prepared.view.content[consumed..].to_string();remainder.view.start_byte+=consumed;
-        remainder.view.start_line+=view.content.bytes().filter(|c|*c==b'\n').count();
+        remainder.view.start_line=super::snapshot::advance_lines(&view.content,prepared.view.start_line,prepared.previous_cr).0;
+        remainder.previous_cr=view.content.ends_with('\r');
         view.next_cursor=Some(stash(project,remainder)?);view.truncated=true;view.eof=false;
     }
     view.end_byte=view.start_byte+consumed;
-    if !view.content.is_empty(){view.end_line=view.start_line+view.content.bytes().filter(|c|*c==b'\n').count()-usize::from(view.content.ends_with('\n'));}
+    if !view.content.is_empty(){view.end_line=super::snapshot::advance_lines(&view.content,view.start_line,prepared.previous_cr).0;}
+    if let Some(c)=view.next_cursor.as_deref(){if c.starts_with("kbsnapcursor"){super::snapshot::bind_cursor(conn,c,project)?;}}
     if serde_json::to_vec(&view).map_err(|e|e.to_string())?.len()>crate::commands::kb_index::RESPONSE_BUDGET_BYTES{return Err("BUDGET_EXCEEDED: 完整引用超出响应预算".into());}
     Ok(view)
 }
@@ -180,9 +195,33 @@ pub(super) fn read(conn:&Connection,project:Option<&str>,library:&str,note:Optio
     let prepared=prepare(&tx,project,library,note,cursor)?;
     tx.commit().map_err(|e|e.to_string())?;
     let proof=verify(prepared.reference.clone())?;
-    let view=bounded_view(project,&prepared,max_bytes)?;
+    let view=bounded_view(conn,project,&prepared,max_bytes)?;
     proof.recheck(conn,project)?;recheck(conn,project,&prepared)?;
     Ok((view,proof,prepared))
+}
+type MetadataIdentity=(String,String,String,String,String);
+struct MetadataGuard {library:String,key:i64,generation:Option<i64>,epoch:i64,grant:i64,identity:MetadataIdentity,source:String,root:files::SafeRoot}
+fn metadata_identity(conn:&Connection,library:&str,key:i64,generation:Option<i64>)->Result<MetadataIdentity,String>{
+    let sql=if generation.is_some(){"SELECT m.noteId,m.relativeUri,m.title,m.parseGeneration,m.sourceHash FROM kb_snap_member m JOIN kb_snap_chunk c ON c.libraryId=m.libraryId AND c.noteId=m.noteId AND c.parseGeneration=m.parseGeneration WHERE m.libraryId=?1 AND c.chunkKey=?2 AND m.generation=?3 AND c.kind='metadata'"}else{"SELECT noteId,relativeUri,title,parseGeneration,sourceHash FROM kb_chunk WHERE libraryId=?1 AND chunkKey=?2 AND ?3 IS NULL AND kind='metadata'"};
+    conn.query_row(sql,params![library,key,generation],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(|_|"INDEX_CHANGED: 元数据成员已失效".into())
+}
+impl MetadataGuard {
+    fn prepare(conn:&Connection,project:Option<&str>,library:&str,raw:&crate::commands::kb_index::RawHit,grant:i64)->Result<Self,String>{
+        let epoch=if let Some(g)=raw.snapshot_generation{super::snapshot::active_snapshot(conn,library)?.filter(|s|s.generation==g).ok_or("INDEX_CHANGED")?.epoch}else{if super::snapshot::active_snapshot(conn,library)?.is_some(){return Err("INDEX_CHANGED".into());}index_epoch(conn,library)?};
+        let source=super::performance::source_ref(conn,library)?;let root=files::SafeRoot::new(Path::new(&source))?;
+        let identity=metadata_identity(conn,library,raw.chunk_key,raw.snapshot_generation)?;
+        if identity.0!=raw.note_id||identity.1!=raw.relative_uri||identity.2!=raw.title{return Err("INDEX_CHANGED".into());}
+        let _=project;
+        Ok(Self{library:library.into(),key:raw.chunk_key,generation:raw.snapshot_generation,epoch,grant,identity,source,root})
+    }
+    fn recheck(&self,conn:&Connection,project:Option<&str>)->Result<(),String>{
+        self.root.verify()?;
+        if grant_revision(conn,project,&self.library)?!=self.grant{return Err("KNOWLEDGE_DENIED: 元数据授权版本已变化".into());}
+        if super::performance::source_ref(conn,&self.library)?!=self.source{return Err("SOURCE_CHANGED: 元数据库根已改变".into());}
+        let active=super::snapshot::active_snapshot(conn,&self.library)?;
+        if let Some(g)=self.generation{if !active.is_some_and(|s|s.generation==g&&s.epoch==self.epoch){return Err("INDEX_CHANGED: 元数据快照已变化".into());}super::snapshot::hit_reference(conn,&self.library,g,self.key)?;}else{if active.is_some()||index_epoch(conn,&self.library)?!=self.epoch{return Err("INDEX_CHANGED: 元数据索引已变化".into());}}
+        if metadata_identity(conn,&self.library,self.key,self.generation)?!=self.identity{return Err("INDEX_CHANGED: 元数据成员已变化".into());}Ok(())
+    }
 }
 pub(super) fn search(conn:&Connection,project:Option<&str>,query:&str)->Result<serde_json::Value,String>{
     let tx=conn.unchecked_transaction().map_err(|e|e.to_string())?;
@@ -194,7 +233,7 @@ pub(super) fn search(conn:&Connection,project:Option<&str>,query:&str)->Result<s
     let mut prepared_hits=Vec::new();
     for (hit,metadata,raw) in hits {
         let grant=grant_revision(&tx,project,&hit.library_id)?;
-        if metadata {prepared_hits.push((hit,None,grant));continue;}
+        if metadata {let guard=MetadataGuard::prepare(&tx,project,&hit.library_id,&raw,grant)?;prepared_hits.push((hit,None,grant,Some(guard)));continue;}
         let prepared=if let Some(generation)=raw.snapshot_generation {
             let view=super::snapshot::read_hit_conn(&tx,&hit.library_id,generation,raw.chunk_key,None)?;
             if view.chunk_key!=raw.chunk_key{return Err("INDEX_CHANGED".into());}
@@ -206,12 +245,13 @@ pub(super) fn search(conn:&Connection,project:Option<&str>,query:&str)->Result<s
             if view.chunk_key!=raw.chunk_key||view.parse_generation!=generation{return Err("INDEX_CHANGED".into());}
             Some(from_view(&tx,project,view)?)
         };
-        prepared_hits.push((hit,prepared,grant));
+        prepared_hits.push((hit,prepared,grant,None));
     }
     tx.commit().map_err(|e|e.to_string())?;
-    let mut values=Vec::new();let mut protections=Vec::new();
+    let mut values=Vec::new();let mut protections=Vec::new();let mut metadata_protections=Vec::new();
     incomplete|=!excluded.is_empty();
-    for (hit,prepared,grant) in prepared_hits {
+    for (hit,prepared,grant,metadata_guard) in prepared_hits {
+        let mut protection=None;
         if grant_revision(conn,project,&hit.library_id)?!=grant{return Err("KNOWLEDGE_DENIED".into());}
         let mut value=serde_json::to_value(&hit).map_err(|e|e.to_string())?;
         if let Some(prepared)=prepared {
@@ -223,16 +263,20 @@ pub(super) fn search(conn:&Connection,project:Option<&str>,query:&str)->Result<s
             value["endByte"]=serde_json::json!(prepared.view.end_byte);
             value["hitRef"]=serde_json::json!(stash(project,prepared.clone())?);
             value["sourceVerified"]=serde_json::json!(true);
-            protections.push((proof,prepared));
+            protection=Some((proof,prepared));
         }else {value["contentUnavailable"]=serde_json::json!(true);}
         values.push(value);
         let proposed=serde_json::json!({"hits":values,"denied":false,"incomplete":incomplete,"excludedLibraries":excluded});
         if serde_json::to_vec(&proposed).map_err(|e|e.to_string())?.len()>crate::commands::kb_index::RESPONSE_BUDGET_BYTES {values.pop();incomplete=true;break;}
+        // Only retained outputs participate in the final handoff fence.
+        if let Some(p)=protection{protections.push(p);}if let Some(g)=metadata_guard{metadata_protections.push(g);}
     }
-    for (proof,prepared) in &protections {proof.recheck(conn,project)?;recheck(conn,project,prepared)?;}
+    let final_tx=conn.unchecked_transaction().map_err(|e|e.to_string())?;
+    for guard in &metadata_protections{guard.recheck(&final_tx,project)?;}
+    for (proof,prepared) in &protections {proof.recheck(&final_tx,project)?;recheck(&final_tx,project,prepared)?;}
     let out=serde_json::json!({"hits":values,"denied":false,"incomplete":incomplete,"excludedLibraries":excluded});
     if serde_json::to_vec(&out).map_err(|e|e.to_string())?.len()>crate::commands::kb_index::RESPONSE_BUDGET_BYTES{return Err("BUDGET_EXCEEDED".into());}
-    Ok(out)
+    final_tx.commit().map_err(|e|e.to_string())?;Ok(out)
 }
 pub(super) fn read_many(conn:&Connection,project:Option<&str>,items:&[serde_json::Value])->Result<serde_json::Value,String>{
     if items.len()>100{return Err("单次最多选择100篇笔记".into());}

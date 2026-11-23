@@ -270,8 +270,18 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     migrate_mcp_oauth(conn)?;
     migrate_cr051_display_icons(conn)?;
     migrate_cr037_native_binding(conn)?;
+    // CR-063：会话历史分页索引（DB-CR063）。
+    migrate_cr063_session_page_index(conn)?;
+    // CR-065：会话置顶字段与索引重建（DB-CR064）。
+    migrate_cr065_session_pin(conn)?;
     // CR-030-D1：知识切片与全文索引最小表集（FTS 虚表在库首次发布时创建，不在此建）。
     crate::commands::kb_index::migrate_cr030_knowledge_index(conn)?;
+    // CR-058：模型检测历史（DB-CR058）。
+    migrate_cr058_model_probe(conn)?;
+    // CR-059：密钥协议与模型范围、模型排序、生图配置（DB-CR059）。
+    migrate_cr059_model_config(conn)?;
+    // CR-059 / BUG-CR059-01 二期：跨进程待审批命令（DB-CR059 §5.1）。
+    migrate_cr059_pending_approval(conn)?;
 
     let now = chrono::Utc::now().timestamp_millis();
     conn.execute(
@@ -279,7 +289,145 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         [now],
     )
     .map_err(|e| e.to_string())?;
-    seed_default_provider(conn, now)?;
+    // CR-061：不再写入任何内置预置模型供应商。
+    // 老装用户库里遗留的预置供应商由用户自行在设置中删除（界面已有删除入口，
+    // 删除时会连带清理其独占密钥），不做自动清理——避免替用户做不可逆决定。
+    Ok(())
+}
+
+/// CR-059 / BUG-CR059-01 二期：内置 AI 工具进程与主应用跨进程共享的待审批命令表。
+///
+/// `ssh_exec` 运行在独立的 stdio 工具进程里，无法直接调用主应用的进程内审批表，
+/// 因此高风险命令的待批请求落到这张表；主应用轮询后弹出审批卡片，用户在 GUI 里
+/// 批准/拒绝，工具进程按 requestId 读取结论。过期清理由主应用在轮询时顺带完成。
+fn migrate_cr059_pending_approval(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS tool_approval (
+            id TEXT PRIMARY KEY,
+            hostId TEXT NOT NULL,
+            command TEXT NOT NULL,
+            risk TEXT NOT NULL DEFAULT 'high',
+            -- pending | approved | rejected | expired
+            status TEXT NOT NULL DEFAULT 'pending',
+            origin TEXT NOT NULL DEFAULT 'builtin-tool',
+            createdAt INTEGER NOT NULL,
+            decidedAt INTEGER,
+            note TEXT
+         );
+         CREATE INDEX IF NOT EXISTS idx_tool_approval_status ON tool_approval(status, createdAt DESC);",
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// CR-063：会话历史分页索引（DB-CR063）。只建索引、不改表；重复执行幂等。
+/// 三个索引分别覆盖 project-only / server-only / project+server 同时等值的排序前缀。
+fn migrate_cr063_session_page_index(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_session_project_updated ON session(projectId, updatedAt DESC, id DESC);
+         CREATE INDEX IF NOT EXISTS idx_session_server_updated ON session(serverId, updatedAt DESC, id DESC);
+         CREATE INDEX IF NOT EXISTS idx_session_scope_updated ON session(projectId, serverId, updatedAt DESC, id DESC);",
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// CR-065：会话置顶字段与索引重建（DB-CR064）。幂等：列已存在则跳过 ALTER，索引已含 pinnedAt 则跳过重建。
+fn migrate_cr065_session_pin(conn: &Connection) -> Result<(), String> {
+    let has_column: bool = {
+        let mut stmt = conn.prepare("PRAGMA table_info(session)").map_err(|e| e.to_string())?;
+        let names: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        names.iter().any(|name| name == "pinnedAt")
+    };
+    if !has_column {
+        conn.execute("ALTER TABLE session ADD COLUMN pinnedAt INTEGER NOT NULL DEFAULT 0", [])
+            .map_err(|e| e.to_string())?;
+    }
+
+    let index_fresh: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_session_project_updated' AND sql LIKE '%pinnedAt%'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if index_fresh == 0 {
+        conn.execute_batch(
+            "DROP INDEX IF EXISTS idx_session_project_updated;
+             DROP INDEX IF EXISTS idx_session_server_updated;
+             DROP INDEX IF EXISTS idx_session_scope_updated;
+             CREATE INDEX IF NOT EXISTS idx_session_project_updated ON session(projectId, pinnedAt DESC, updatedAt DESC, id DESC);
+             CREATE INDEX IF NOT EXISTS idx_session_server_updated ON session(serverId, pinnedAt DESC, updatedAt DESC, id DESC);
+             CREATE INDEX IF NOT EXISTS idx_session_scope_updated ON session(projectId, serverId, pinnedAt DESC, updatedAt DESC, id DESC);",
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn migrate_cr058_model_probe(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS model_probe_history (
+            id                TEXT PRIMARY KEY,
+            providerId        TEXT NOT NULL,
+            providerName      TEXT NOT NULL,
+            modelId           TEXT NOT NULL,
+            modelDisplayName  TEXT NOT NULL,
+            protocol          TEXT NOT NULL,
+            score             INTEGER NOT NULL,
+            grade             TEXT NOT NULL,
+            verdict           TEXT NOT NULL,
+            channel           TEXT NOT NULL,
+            summary           TEXT NOT NULL,
+            durationMs        INTEGER NOT NULL,
+            resultJson        TEXT NOT NULL,
+            createdAt         INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_model_probe_history_created ON model_probe_history(createdAt DESC);
+        "#,
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// CR-059：模型配置与生图（DB-CR059）。全部为幂等 ALTER / CREATE，可重复执行。
+/// - provider_key：协议（决定请求端点）、模型范围、范围来源、探测时间
+/// - model：排序序号
+/// - image_gen_config：单行生图配置（有序模型列表 + 默认参数）
+fn migrate_cr059_model_config(conn: &Connection) -> Result<(), String> {
+    let key_cols: Vec<String> = conn.prepare("PRAGMA table_info(provider_key)").map_err(|e| e.to_string())?
+        .query_map([], |row| row.get::<_, String>(1)).map_err(|e| e.to_string())?.filter_map(Result::ok).collect();
+    let mut batch = String::new();
+    if !key_cols.iter().any(|n| n == "protocol") {
+        batch.push_str("ALTER TABLE provider_key ADD COLUMN protocol TEXT NOT NULL DEFAULT '';");
+    }
+    if !key_cols.iter().any(|n| n == "modelsJson") {
+        batch.push_str("ALTER TABLE provider_key ADD COLUMN modelsJson TEXT;");
+    }
+    if !key_cols.iter().any(|n| n == "scopeSource") {
+        batch.push_str("ALTER TABLE provider_key ADD COLUMN scopeSource TEXT;");
+    }
+    if !key_cols.iter().any(|n| n == "probedAt") {
+        batch.push_str("ALTER TABLE provider_key ADD COLUMN probedAt INTEGER;");
+    }
+    let model_cols: Vec<String> = conn.prepare("PRAGMA table_info(model)").map_err(|e| e.to_string())?
+        .query_map([], |row| row.get::<_, String>(1)).map_err(|e| e.to_string())?.filter_map(Result::ok).collect();
+    if !model_cols.iter().any(|n| n == "sortOrder") {
+        batch.push_str("ALTER TABLE model ADD COLUMN sortOrder INTEGER NOT NULL DEFAULT 0;");
+    }
+    batch.push_str(
+        "CREATE TABLE IF NOT EXISTS image_gen_config (id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 1, orderJson TEXT NOT NULL DEFAULT '[]', defaultsJson TEXT NOT NULL DEFAULT '{}', outputDir TEXT NOT NULL DEFAULT 'generated-images', updatedAt INTEGER NOT NULL);",
+    );
+    if !batch.is_empty() { conn.execute_batch(&batch).map_err(|e| e.to_string())?; }
+    // 历史模型按创建顺序补齐排序序号（仅在全部为 0 时执行一次）。
+    conn.execute(
+        "UPDATE model SET sortOrder = (SELECT COUNT(*) FROM model m2 WHERE m2.providerId = model.providerId AND m2.createdAt <= model.createdAt)
+         WHERE NOT EXISTS (SELECT 1 FROM model WHERE sortOrder <> 0)",
+        [],
+    ).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -441,49 +589,94 @@ fn migrate_cr037_native_binding(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
-/// 预置一份可用的供应商模板（仅当库中没有任何供应商时创建）。
-/// 目的：新装用户不必手填协议、端点与模型即可发起会话；密钥仍需用户自行填写。
-fn seed_default_provider(conn: &Connection, now: i64) -> Result<(), String> {
-    let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM provider", [], |r| r.get(0))
-        .map_err(|e| e.to_string())?;
-    if count > 0 {
-        return Ok(());
-    }
-    let pid = "prov-tierflow-default";
-    conn.execute(
-        "INSERT INTO provider (id, name, protocol, disabled, headersJson, createdAt, updatedAt)
-         VALUES (?1, 'TierFlow（预置，需填密钥）', 'anthropic', 0, NULL, ?2, ?2)",
-        rusqlite::params![pid, now],
-    )
-    .map_err(|e| e.to_string())?;
-    // 两种协议各一条端点：claude 走 anthropic，codex/grok 走 openai
-    for (eid, proto) in [("ep-tf-anthropic", "anthropic"), ("ep-tf-openai", "openai")] {
-        conn.execute(
-            "INSERT INTO provider_endpoint (id, providerId, protocol, baseUrl, enabled, createdAt)
-             VALUES (?1, ?2, ?3, 'https://tierflow.cn', 1, ?4)",
-            rusqlite::params![eid, pid, proto, now],
-        )
-        .map_err(|e| e.to_string())?;
-    }
-    // 实测可用的模型（tierflow/tierflow_pro）；生图与视觉未验证，不声明
-    for (mid, model_id, label, ctx, max) in [
-        ("mdl-tf-1", "tierflow", "TierFlow 标准", 128000i64, 8192i64),
-        ("mdl-tf-2", "tierflow_pro", "TierFlow Pro", 128000i64, 8192i64),
-    ] {
-        conn.execute(
-            "INSERT INTO model (id, providerId, modelId, displayName, text, vision, imageGen, effortsJson, defaultEffort, contextWindow, maxTokens, createdAt)
-             VALUES (?1, ?2, ?3, ?4, 1, 0, 0, ?5, NULL, ?6, ?7, ?8)",
-            rusqlite::params![mid, pid, model_id, label, r#"{"low":"low","medium":"medium","high":"high"}"#, ctx, max, now],
-        )
-        .map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// CR-063：三个分页索引幂等创建，且 project-only / project+server / server-only 查询计划免排序。
+    /// CR-065：pinnedAt 字段迁移、索引重建与 project-only 查询计划。
+    #[test]
+    fn cr065_session_pin_migration_adds_column_and_rebuilds_indexes() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE session (
+                id TEXT PRIMARY KEY, projectId TEXT, serverId TEXT,
+                title TEXT NOT NULL DEFAULT '', updatedAt INTEGER NOT NULL
+             );",
+        )
+        .unwrap();
+        migrate_cr063_session_page_index(&conn).unwrap();
+        migrate_cr065_session_pin(&conn).unwrap();
+        migrate_cr065_session_pin(&conn).unwrap();
+
+        let has: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pragma_table_info('session') WHERE name='pinnedAt'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(has, 1, "pinnedAt 字段应存在且只添加一次");
+
+        conn.execute("INSERT INTO session (id, title, updatedAt) VALUES ('a','a',1)", []).unwrap();
+        let pinned: i64 = conn.query_row("SELECT pinnedAt FROM session WHERE id='a'", [], |r| r.get(0)).unwrap();
+        assert_eq!(pinned, 0, "旧行默认未置顶");
+
+        let fresh: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND sql LIKE '%pinnedAt%' AND name IN ('idx_session_project_updated','idx_session_server_updated','idx_session_scope_updated')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(fresh, 3, "三个分页索引都应包含 pinnedAt");
+
+        let mut stmt = conn
+            .prepare("EXPLAIN QUERY PLAN SELECT id FROM session WHERE projectId = 'p' ORDER BY pinnedAt DESC, updatedAt DESC, id DESC LIMIT 5")
+            .unwrap();
+        let detail: Vec<String> = stmt
+            .query_map([], |r| r.get::<_, String>(3))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        assert!(!detail.iter().any(|d| d.contains("TEMP B-TREE")), "plan: {detail:?}");
+    }
+
+    #[test]
+    fn cr063_session_page_indexes_are_idempotent_and_used() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE session (
+                id TEXT PRIMARY KEY, projectId TEXT, serverId TEXT,
+                title TEXT NOT NULL DEFAULT '', updatedAt INTEGER NOT NULL
+             );",
+        )
+        .unwrap();
+        migrate_cr063_session_page_index(&conn).unwrap();
+        migrate_cr063_session_page_index(&conn).unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name IN ('idx_session_project_updated','idx_session_server_updated','idx_session_scope_updated')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 3, "三个索引应各存在一条");
+
+        let plans = [
+            ("SELECT id FROM session WHERE projectId = 'p' ORDER BY updatedAt DESC, id DESC LIMIT 5", "project"),
+            ("SELECT id FROM session WHERE projectId = 'p' AND serverId = 's' ORDER BY updatedAt DESC, id DESC LIMIT 5", "project+server"),
+            ("SELECT id FROM session WHERE serverId = 's' ORDER BY updatedAt DESC, id DESC LIMIT 5", "server"),
+        ];
+        for (sql, label) in plans {
+            let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+            let detail: Vec<String> = stmt
+                .query_map([], |row| row.get::<_, String>(3))
+                .unwrap()
+                .filter_map(|r| r.ok())
+                .collect();
+            assert!(
+                !detail.iter().any(|d| d.contains("TEMP B-TREE")),
+                "{label} 查询计划出现排序临时表：{detail:?}"
+            );
+        }
+    }
 
     #[test]
     fn session_feature_migration_is_additive_and_preserves_old_rows() {
@@ -645,4 +838,5 @@ mod tests {
         let empty = Connection::open_in_memory().unwrap();
         assert!(migrate_cr051_display_icons(&empty).is_err());
     }
+
 }

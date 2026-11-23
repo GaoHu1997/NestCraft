@@ -7,12 +7,16 @@ import { MessageList, fromChatMessage, mkMsg } from "./MessageList";
 import type { OfficeFileRef, UiMessage } from "./MessageList";
 import { Composer, migrateComposerDraft, clearComposerDraft } from "./Composer";
 import { SessionHistory, HistoryIcon } from "./SessionHistory";
+import type { HistoryLoading } from "./SessionHistory";
+import { SubagentPanel } from "./SubagentPanel";
 import { ModelPicker, effectiveEfforts, permissionSupported } from "./ModelPicker";
 import { StatsBar } from "./StatsBar";
 import { StepsBox } from "./StepsBox";
 import { ChatOverlayProvider, useChatOverlay } from "./overlay";
-import { addUsage, finishOnce, getRuntime, hydrateUsage, isCurrentTurn, markFirstDelta, markStreamStart, recordToolResult, recordToolUse, rebuildStepsFromPairs, clearEndedBackground, dropRuntime, setStatus, setGoal, updateGoalState, addSessionTask, upsertSubagent, hasBlockingChildren } from "./sessionRuntime";
+import { addUsage, finishOnce, getRuntime, hydrateUsage, isCurrentTurn, markFirstDelta, markStreamStart, recordToolResult, recordToolUse, rebuildStepsFromPairs, clearEndedBackground, dropRuntime, setStatus, setGoal, updateGoalState, addSessionTask, upsertSubagent, hasBlockingChildren, settleSubagents } from "./sessionRuntime";
 import { officeFileContentText } from "@/modules/office/office-model";
+import { requestPanel } from "./panelRequest";
+import type { PanelKind, PanelRequest } from "./panelRequest";
 import "./chat.css";
 
 interface ChatPanelProps {
@@ -27,6 +31,34 @@ interface ChatPanelProps {
   className?: string;
   /** CR-047：本工作区当前选定的特性；新建会话绑定它，已有会话保留原绑定。 */
   featureTarget?: { featureId: string; featureTitle: string } | null;
+  /** CR-054：把本实例的会话数据与操作暴露给工作台左栏。
+   *  工作台与 AI 侧栏共用同一 ChatPanel 实例，禁止另建第二个实例（会产生双订阅）。 */
+  onController?: (controller: ChatController | null) => void;
+  /** CR-054：工作台形态下隐藏侧栏自己的历史入口（左栏已常驻），其余行为不变。 */
+  variant?: "sidebar" | "workbench";
+}
+
+/** CR-054：工作台左栏需要的只读视图与操作；全部指向同一 ChatPanel 实例。 */
+export interface ChatController {
+  sessions: SessionMeta[];
+  currentId: string | null;
+  runningIds: string[];
+  total: number;
+  hasMore: boolean;
+  loading: HistoryLoading;
+  error: string | null;
+  keyword: string;
+  openSession: (meta: SessionMeta) => void;
+  newSession: () => void;
+  loadMore: () => void;
+  search: (q: string) => void;
+  showAll: () => void;
+  retry: () => void;
+  remove: (id: string) => void;
+  copyId: (meta: SessionMeta) => void;
+  fork: (meta: SessionMeta) => void;
+  pin: (meta: SessionMeta) => void;
+  rename: (meta: SessionMeta, title: string) => void;
 }
 interface PendingSend {
   sid: string;
@@ -79,14 +111,93 @@ const sessionScope = (props: ChatPanelProps) => `${props.office ? "office" : "ch
 
 /** BUG-013：同一渲染器、同 scope 单一 overlay；宽度/拖动开关由 App 负责。 */
 export function ChatPanel(props: ChatPanelProps) {
-  return <ChatOverlayProvider visible={props.visible !== false}><Panel {...props} /></ChatOverlayProvider>;
+  // CR-062：主会话与子智能体只读详情共用一个侧栏位置；主会话保持挂载以保留草稿/运行轮次。
+  const [agentView, setAgentView] = useState<{ parentId: string; agentId: string } | null>(null);
+  const panelVisible = props.visible !== false && !agentView;
+  const width = props.width ? Math.min(620, Math.max(320, props.width)) : undefined;
+  return (
+    <ChatOverlayProvider visible={panelVisible}>
+      <Panel
+        {...props}
+        visible={panelVisible}
+        onOpenAgent={(parentId, agentId) => setAgentView({ parentId, agentId })}
+      />
+      {agentView && (
+        <SubagentPanel
+          parentId={agentView.parentId}
+          agentId={agentView.agentId}
+          onBack={() => setAgentView(null)}
+          visible={props.visible !== false}
+          width={width}
+          height={props.height}
+        />
+      )}
+    </ChatOverlayProvider>
+  );
 }
 
-function Panel(props: ChatPanelProps) {
+interface PanelProps extends ChatPanelProps {
+  /** CR-062：打开子智能体只读详情（主会话保持在后台运行）。 */
+  onOpenAgent?: (parentId: string, agentId: string) => void;
+}
+
+/** CR-063：会话历史每批条数与分页状态。 */
+const SESSION_PAGE_SIZE = 20;
+
+interface SessionsPageState {
+  scopeKey: string;
+  total: number;
+  hasMore: boolean;
+  cursor: { pinnedAt: number; updatedAt: number; id: string } | null;
+  keyword: string;
+  loading: HistoryLoading;
+  error: string | null;
+}
+
+const blankSessionsPage = (scopeKey: string): SessionsPageState => ({
+  scopeKey, total: 0, hasMore: false, cursor: null, keyword: "", loading: "idle", error: null,
+});
+
+/** CR-065：复制文本（剪贴板 API + 隐藏 textarea 回退）。 */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; }
+  } catch { /* 回退 */ }
+  try {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    const ok = document.execCommand("copy");
+    area.remove();
+    return ok;
+  } catch { return false; }
+}
+
+/** CR-063：与后端 chat_sessions_page 的作用域分支一一对应（含 server-only 不限制 projectId 的既有语义）。 */
+export function inSessionScope(
+  s: { projectId: string | null; serverId: string | null },
+  projectId?: string,
+  serverId?: string,
+): boolean {
+  if (projectId && serverId) return s.projectId === projectId && s.serverId === serverId;
+  if (projectId) return s.projectId === projectId;
+  if (serverId) return s.serverId === serverId;
+  return !s.projectId && !s.serverId;
+}
+
+function Panel(props: PanelProps) {
   const toast = useToast();
   const overlay = useChatOverlay();
   const scope = sessionScope(props);
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
+  // CR-063：会话历史分页状态（分批、搜索、加载/失败）。
+  const [sessionsPage, setSessionsPage] = useState<SessionsPageState>(() => blankSessionsPage(`${props.projectId ?? ""}|${props.serverId ?? ""}`));
+  const sessionsReq = useRef(0);
+  const sessionsPageRef = useRef(sessionsPage);
+  sessionsPageRef.current = sessionsPage;
   const [cur, setCur] = useState<SessionMeta | null>(null);
   const [msgs, setMsgs] = useState<UiMessage[]>([]);
   const [draft, setDraft] = useState("");
@@ -141,14 +252,13 @@ function Panel(props: ChatPanelProps) {
       await api.chatSessionConfirmFresh(sid, info.expectedRevision, info.reasonCode);
       setFreshConfirm(null);
       const meta = await api.chatSessionGet(sid);
-      setSessions(prev => prev.map(s => s.id === meta.id ? { ...s, binding: meta.binding ?? null, messageCount: meta.messageCount } : s));
+      updateSessionRow(meta);
       if (viewing(sid)) {
-        curRef.current = { ...curRef.current!, binding: meta.binding ?? null, messageCount: meta.messageCount };
+        curRef.current = { ...curRef.current!, ...meta };
         setCur(curRef.current);
         const ui = (await api.chatMessages(sid)).map(fromChatMessage);
         syncMessages(sid, ui); setMsgs(ui);
       }
-      void refreshSessions();
     } catch (e) { toast(String(e), "err"); }
   };
 
@@ -168,7 +278,7 @@ function Panel(props: ChatPanelProps) {
         ...(meta.featureId ? { featureId: meta.featureId } : {}),
       });
       ++loadSerial.current;
-      setSessions(prev => [created, ...prev.filter(s => s.id !== created.id)]);
+      insertSessionRow(created);
       setCurrent(created, drafts.get(`${scope}:${created.id}`) ?? "");
       setMsgs([]);
     } catch (e) { toast(String(e), "err"); }
@@ -265,7 +375,7 @@ function Panel(props: ChatPanelProps) {
       const meta = await api.chatSessionCreate(args);
       if (mounted.current && scopeRef.current === targetScope) {
         ++loadSerial.current;
-        setSessions(prev => [meta, ...prev.filter(s => s.id !== meta.id)]);
+        insertSessionRow(meta);
         if (!previous && preserveNewDraft) {
           migrateComposerDraft(`${targetScope}:new`, `${targetScope}:${meta.id}`);
           drafts.set(`${targetScope}:${meta.id}`, pendingDraft);
@@ -285,23 +395,171 @@ function Panel(props: ChatPanelProps) {
     catch (e) { toast(String(e), "err"); return; }
     turns.current.delete(id); queues.current.delete(id); messageCache.current.delete(id); dropRuntime(id);
     drafts.delete(`${scope}:${id}`);
+    const wasListed = sessions.some(s => s.id === id);
     const rest = sessions.filter(s => s.id !== id);
     setSessions(rest); setRunningIds(prev => prev.filter(x => x !== id));
+    // 搜索态只对命中项扣减；非搜索态删除钉住行（不在 items）也要扣减总数。
+    setSessionsPage(prev => (wasListed || !prev.keyword ? { ...prev, total: Math.max(0, prev.total - 1) } : prev));
     if (currentIdRef.current === id) {
       setCurrent(null, ""); setMsgs([]);
       if (rest[0]) void openSession(rest[0]);
     }
   };
-  const refreshSessions = async (targetScope = scope) => {
-    try {
-      const list = filterSessions(await api.chatSessions(props.projectId));
-      if (!mounted.current || scopeRef.current !== targetScope) return;
-      setSessions(list);
-      setCur(prev => prev ? list.find(s => s.id === prev.id) ?? prev : prev);
-      const current = list.find(s => s.id === currentIdRef.current);
-      if (current) void markRead(current, targetScope);
-    } catch { /* 不以失败的刷新覆盖现有会话 */ }
+  /** CR-063：应用一页结果，替换已加载主体。 */
+  const applySessionPage = (page: api.SessionPage, keyword: string, targetScope: string) => {
+    if (!mounted.current || scopeRef.current !== targetScope) return;
+    setSessions(page.items);
+    setSessionsPage({
+      scopeKey: `${props.projectId ?? ""}|${props.serverId ?? ""}`,
+      total: page.total, hasMore: page.hasMore, cursor: page.nextCursor, keyword, loading: "idle", error: null,
+    });
+    setCur(prev => (prev ? page.items.find(s => s.id === prev.id) ?? prev : prev));
+    const current = page.items.find(s => s.id === currentIdRef.current);
+    if (current) void markRead(current, targetScope);
   };
+
+  /** CR-063：取值一页（首批或搜索首查）；keyword 为空即全部分批浏览。 */
+  const loadSessionPage = async (keyword: string, mode: "first" | "search", targetScope = scope) => {
+    const req = ++sessionsReq.current;
+    const trimmed = keyword.trim();
+    setSessionsPage(prev => ({ ...prev, keyword: trimmed, loading: mode === "search" ? "search" : "first", error: null }));
+    try {
+      const page = await api.chatSessionsPage({
+        ...(props.projectId ? { projectId: props.projectId } : {}),
+        ...(props.serverId ? { serverId: props.serverId } : {}),
+        ...(trimmed ? { keyword: trimmed } : {}),
+        limit: SESSION_PAGE_SIZE,
+      });
+      if (req !== sessionsReq.current) return;
+      applySessionPage(page, trimmed, targetScope);
+    } catch (e) {
+      if (req !== sessionsReq.current) return;
+      setSessionsPage(prev => ({ ...prev, loading: "idle", error: String(e) }));
+    }
+  };
+
+  /** CR-063：追加下一页；按 id 去重，避免键集边界重复。 */
+  const loadMoreSessions = async () => {
+    const page = sessionsPageRef.current;
+    if (page.loading !== "idle" || !page.hasMore || !page.cursor) return;
+    const req = ++sessionsReq.current;
+    setSessionsPage(prev => ({ ...prev, loading: "more", error: null }));
+    try {
+      const next = await api.chatSessionsPage({
+        ...(props.projectId ? { projectId: props.projectId } : {}),
+        ...(props.serverId ? { serverId: props.serverId } : {}),
+        ...(page.keyword ? { keyword: page.keyword } : {}),
+        cursorPinnedAt: page.cursor.pinnedAt,
+        cursorUpdatedAt: page.cursor.updatedAt,
+        cursorId: page.cursor.id,
+        limit: SESSION_PAGE_SIZE,
+      });
+      if (req !== sessionsReq.current) return;
+      setSessions(prev => {
+        const seen = new Set(prev.map(s => s.id));
+        return [...prev, ...next.items.filter(s => !seen.has(s.id))];
+      });
+      setSessionsPage(prev => ({ ...prev, total: next.total, hasMore: next.hasMore, cursor: next.nextCursor, loading: "idle" }));
+    } catch (e) {
+      if (req !== sessionsReq.current) return;
+      setSessionsPage(prev => ({ ...prev, loading: "idle", error: String(e) }));
+    }
+  };
+
+  /** CR-063：搜索当前作用域全部会话标题。 */
+  const searchSessions = (keyword: string) => {
+    if (!keyword.trim()) { void loadSessionPage("", "first"); return; }
+    void loadSessionPage(keyword, "search");
+  };
+  /** CR-063：「全部」/清除搜索：回到第 1 页按 20 条浏览。 */
+  const showAllSessions = () => { void loadSessionPage("", "first"); };
+  /** CR-063：失败重试；已有分页进度时继续追加，否则重取首页。 */
+  const retrySessions = () => {
+    const page = sessionsPageRef.current;
+    if (page.hasMore && page.cursor) void loadMoreSessions();
+    else void loadSessionPage(page.keyword, page.keyword ? "search" : "first");
+  };
+
+  /** CR-063：只更新单行，不重置分页（发送/标题/未读变化）。 */
+  const updateSessionRow = (meta: SessionMeta, targetScope = scope) => {
+    if (!mounted.current || scopeRef.current !== targetScope) return;
+    setSessions(prev => prev.map(s => (s.id === meta.id ? { ...s, ...meta } : s)));
+    setCur(prev => (prev?.id === meta.id ? { ...prev, ...meta } : prev));
+  };
+
+  /** CR-063：新建会话插入列表；搜索态仅当命中关键词时插入并计数。 */
+  const insertSessionRow = (meta: SessionMeta) => {
+    const page = sessionsPageRef.current;
+    const hit = !page.keyword || meta.title.toLowerCase().includes(page.keyword.toLowerCase());
+    if (!hit) return;
+    setSessions(prev => [meta, ...prev.filter(s => s.id !== meta.id)]);
+    setSessionsPage(prev => ({ ...prev, total: prev.total + 1 }));
+  };
+
+  /** CR-065：复制会话 ID。 */
+  const copySessionId = async (s: SessionMeta) => {
+    const ok = await copyText(s.id);
+    toast(ok ? "已复制会话 ID" : "复制失败，请手动复制", ok ? undefined : "err");
+  };
+
+  /** CR-065：分叉会话；新会话插入列表并切换过去。 */
+  const forkSession = async (s: SessionMeta) => {
+    try {
+      const meta = await api.chatSessionFork(s.id);
+      insertSessionRow(meta);
+      await openSession(meta);
+      toast("已分叉会话，上下文已保留");
+    } catch (e) { toast(String(e), "err"); }
+  };
+
+  /** CR-065：置顶/取消置顶；重取首页保证排序与游标一致。 */
+  const pinSession = async (s: SessionMeta) => {
+    const next = !((s.pinnedAt ?? 0) > 0);
+    try {
+      await api.chatSessionPin(s.id, next);
+      toast(next ? "已置顶会话" : "已取消置顶");
+      const page = sessionsPageRef.current;
+      await loadSessionPage(page.keyword, page.keyword ? "search" : "first");
+    } catch (e) { toast(String(e), "err"); }
+  };
+
+  /** CR-065：重命名（原位编辑提交）；空标题拒绝。 */
+  const renameSession = async (s: SessionMeta, title: string) => {
+    const next = title.trim();
+    if (!next) { toast("标题不能为空", "warn"); return; }
+    if (next === s.title) return;
+    try {
+      await api.chatSessionUpdate({ id: s.id, title: next });
+      updateSessionRow({ ...s, title: next });
+    } catch (e) { toast(String(e), "err"); }
+  };
+
+  /* CR-054：把会话数据与操作发布给工作台左栏。工作台与 AI 侧栏共用本实例，
+     两处看到的是同一份 sessions / currentId / runningIds，不另建数据源。 */
+  const onControllerRef = useRef(props.onController);
+  onControllerRef.current = props.onController;
+  useEffect(() => {
+    const publish = onControllerRef.current;
+    if (!publish) return;
+    const controller: ChatController = {
+      sessions, currentId: cur?.id ?? null, runningIds,
+      total: sessionsPage.total, hasMore: sessionsPage.hasMore,
+      loading: sessionsPage.loading, error: sessionsPage.error, keyword: sessionsPage.keyword,
+      openSession: meta => { void openSession(meta); },
+      newSession,
+      loadMore: () => { void loadMoreSessions(); },
+      search: keyword => searchSessions(keyword),
+      showAll: showAllSessions,
+      retry: retrySessions,
+      remove: id => { void deleteSession(id); },
+      copyId: meta => { void copySessionId(meta); },
+      fork: meta => { void forkSession(meta); },
+      pin: meta => { void pinSession(meta); },
+      rename: (meta, title) => { void renameSession(meta, title); },
+    };
+    publish(controller);
+  });
+  useEffect(() => () => onControllerRef.current?.(null), []);
 
   useEffect(() => {
     mounted.current = true;
@@ -310,15 +568,28 @@ function Panel(props: ChatPanelProps) {
   useEffect(() => {
     const requestEpoch = ++epoch.current;
     ++loadSerial.current;
+    const req = ++sessionsReq.current;
+    const scopeKey = `${props.projectId ?? ""}|${props.serverId ?? ""}`;
     setCurrent(null, drafts.get(`${scope}:new`) ?? ""); setMsgs([]); setSessions([]);
+    setSessionsPage({ ...blankSessionsPage(scopeKey), loading: "first" });
     let alive = true;
     void (async () => {
       try {
-        const ss = filterSessions(await api.chatSessions(props.projectId));
-        if (!alive || epoch.current !== requestEpoch) return;
-        setSessions(ss);
-        if (ss[0]) await openSession(ss[0]);
-      } catch (e) { if (alive) toast(String(e), "err"); }
+        const page = await api.chatSessionsPage({
+          ...(props.projectId ? { projectId: props.projectId } : {}),
+          ...(props.serverId ? { serverId: props.serverId } : {}),
+          limit: SESSION_PAGE_SIZE,
+        });
+        if (!alive || epoch.current !== requestEpoch || req !== sessionsReq.current) return;
+        setSessions(page.items);
+        setSessionsPage({ scopeKey, total: page.total, hasMore: page.hasMore, cursor: page.nextCursor, keyword: "", loading: "idle", error: null });
+        if (page.items[0]) await openSession(page.items[0]);
+      } catch (e) {
+        if (alive) {
+          toast(String(e), "err");
+          setSessionsPage(prev => ({ ...prev, loading: "idle", error: String(e) }));
+        }
+      }
     })();
     return () => { alive = false; void saveDraftNow(scope); };
   }, [scope]);
@@ -394,6 +665,8 @@ function Panel(props: ChatPanelProps) {
     turn.finished = true;
     if (turn.thinkMs === null && turn.thinkStarted !== null) turn.thinkMs = Date.now() - turn.thinkStarted;
     turn.msgs = turn.msgs.map(m => (m.role === "assistant" && m.thinkingMs == null && turn.thinkMs !== null ? { ...m, streaming: false, thinkingMs: turn.thinkMs } : { ...m, streaming: false }));
+    // CR-062：本轮结束仍未收到子智能体终态时标“待确认/已停止”，不替它宣布成功。
+    if (settleSubagents(turn.sid, stopped)) bumpRt();
     if (error || stopped) turn.msgs.push(mkMsg({ id: `error-${turn.sid}-${turn.generation}`, role: "error", content: error ?? "已停止本次生成", isError: true, createdAt: Date.now() }));
     publish(turn); bumpRt();
     try {
@@ -406,8 +679,13 @@ function Panel(props: ChatPanelProps) {
         if (viewing(turn.sid, turn.request.scope)) setMsgs(ui);
       }
       const meta = await api.chatSessionGet(turn.sid);
-      if (meta.title === "新会话" && turn.request.text.trim()) await api.chatSessionUpdate({ id: turn.sid, title: turn.request.text.trim().slice(0, 32) });
-      if (scopeRef.current === turn.request.scope) await refreshSessions(turn.request.scope);
+      let row = meta;
+      if (meta.title === "新会话" && turn.request.text.trim()) {
+        const title = turn.request.text.trim().slice(0, 32);
+        await api.chatSessionUpdate({ id: turn.sid, title });
+        row = { ...meta, title }; // 合并新标题，避免用更新前的旧标题覆盖列表
+      }
+      if (scopeRef.current === turn.request.scope) updateSessionRow(row, turn.request.scope);
     } catch (e) {
       // 静止状态未知时阻止自动排队，不假设后端已经停下。
       if (viewing(turn.sid, turn.request.scope)) toast(String(e), "warn");
@@ -438,6 +716,19 @@ function Panel(props: ChatPanelProps) {
           break;
         case "toolUse":
           flush(turn); recordToolUse(request.sid, ev.toolId, ev.name);
+          // CR-054 / STORY-073：AI 通过 workbench.open_panel 真实请求打开右栏。
+          // 是否真正打开、用户关闭后是否重开、跨项目拒绝都交给 panelRequest 规则；
+          // 不在这里写文件或扩授权。
+          if (props.projectId && ev.name === "mcp__workbench__open_panel") {
+            const request = panelRequestFromToolInput(ev.inputJson);
+            if (request) {
+              const result = requestPanel(props.projectId, request, { currentProjectId: props.projectId, turn: String(generation) });
+              if (!result.ok && result.code !== "declined_by_user") {
+                // 非法/不支持/跨项目：如实提示，不静默吞掉。
+                toast(`右栏请求未生效：${result.message}`, "warn");
+              }
+            }
+          }
           if (!turn.msgs.some(m => m.id === `tu-${generation}-${ev.toolId}`)) turn.msgs.push(mkMsg({ id: `tu-${generation}-${ev.toolId}`, role: "tool_use", toolId: ev.toolId, toolName: ev.name, inputJson: ev.inputJson, streaming: true, createdAt: Date.now() }));
           publish(turn); bumpRt(); break;
         case "toolResult":
@@ -541,7 +832,9 @@ function Panel(props: ChatPanelProps) {
           if (!content) { toast(`引用不可读取：${ref.display}，草稿已保留`, "err"); return false; }
           enriched.push({ ...ref, content: content.slice(0, 12000) });
         } else if (ref.kind === "session") {
-          if (!sessions.some(s => s.id === ref.objectId)) { toast("引用会话不属于当前项目，未发送", "err"); return false; }
+          // CR-063：按会话真实归属校验，不依赖已加载列表（未加载的老会话也可引用）。
+          const sourceMeta = await api.chatSessionGet(ref.objectId).catch(() => null);
+          if (!sourceMeta || !inSessionScope(sourceMeta, props.projectId, props.serverId)) { toast("引用会话不属于当前项目，未发送", "err"); return false; }
           // 现有后端不处理 session 引用；真实读取当前项目会话并明确注入消息，不伪调用。
           const source = await api.chatMessages(ref.objectId);
           text += `\n\n[引用当前项目会话：${ref.display}]\n${source.filter(m => m.role === "user" || m.role === "assistant").map(m => `${m.role}: ${m.content}`).join("\n").slice(0, 12000)}`;
@@ -605,7 +898,7 @@ function Panel(props: ChatPanelProps) {
           setRunningIds(prev => prev.filter(x => x !== sid));
           if (viewing(sid)) {
             const ms = (await api.chatMessages(sid)).map(fromChatMessage);
-            if (!getRuntime(sid).active && viewing(sid)) { syncMessages(sid, ms); setMsgs(ms); await refreshSessions(); }
+            if (!getRuntime(sid).active && viewing(sid)) { syncMessages(sid, ms); setMsgs(ms); updateSessionRow(await api.chatSessionGet(sid)); }
           }
         }).catch(() => {});
       }
@@ -649,9 +942,9 @@ function Panel(props: ChatPanelProps) {
   const newButton = <button className="chat-iconbtn" title="新会话" aria-label="新会话" onClick={newSession}><Icon name="plus" /></button>;
   return <div ref={overlay.scopeRef} className={`chat-panel ${props.className ?? ""}`} hidden={props.visible === false} aria-label="AI 会话" data-ai-scope={scope} style={{ height: props.height ?? "100%", ...(props.width ? { width: Math.min(620, Math.max(320, props.width)) } : {}) }}>
     <div className="chat-head">
-      <button className={`chat-iconbtn ${overlay.activeOverlay === "history" ? "active" : ""}`} data-chat-overlay-trigger="history" title="会话历史" aria-label="会话历史" aria-expanded={overlay.activeOverlay === "history"} onClick={e => overlay.toggle("history", e.currentTarget)}><HistoryIcon /></button>
+      {props.variant !== "workbench" && <button className={`chat-iconbtn ${overlay.activeOverlay === "history" ? "active" : ""}`} data-chat-overlay-trigger="history" title="会话历史" aria-label="会话历史" aria-expanded={overlay.activeOverlay === "history"} onClick={e => { if (overlay.activeOverlay !== "history") void loadSessionPage("", "first"); overlay.toggle("history", e.currentTarget); }}><HistoryIcon /></button>}
       {agentCount > 0 && <div className="chat-drop-wrap"><button className="chat-count-btn" data-chat-overlay-trigger="agents" aria-expanded={overlay.activeOverlay === "agents"} onClick={e => overlay.toggle("agents", e.currentTarget)}><Icon name="users" size={14} />{agentCount} 子智能体 <Icon name="chevronDown" size={12} /></button>
-        {overlay.activeOverlay === "agents" && <div className="chat-drop" data-chat-overlay="agents" role="dialog" aria-label="子智能体"><div className="chat-drop-h"><b>子智能体</b><span className="chat-drop-cap">{agentCount} 个 · 仅本会话</span></div><div className="chat-drop-list">{curRt!.subagents.map(a => <div key={a.id} className="chat-agent-row"><CliLogo id={a.cli ?? "unknown"} size={20} /><span className="chat-agent-main"><b>{a.title}</b><span>{a.cli ?? "CLI 未知"} · {a.model ?? "模型未知"} · {a.duration ?? "耗时未知"} · {a.tokens ?? "tokens 未知"}</span></span><span className={`tag ${a.status === "失败" ? "bad" : a.status === "待确认" ? "warn" : "good"}`}>{a.status}</span></div>)}</div><div className="chat-drop-f">{curRt!.recordsDemo ? "合成演示 · 不调用真实 CLI" : "事件未提供用量或引擎信息时保持未知，不把未知填成 0"}</div></div>}
+        {overlay.activeOverlay === "agents" && <div className="chat-drop" data-chat-overlay="agents" role="dialog" aria-label="子智能体"><div className="chat-drop-h"><b>子智能体</b><span className="chat-drop-cap">{agentCount} 个 · 仅本会话</span></div><div className="chat-drop-list">{curRt!.subagents.map(a => <button type="button" key={a.id} className="chat-agent-row" title={`查看子智能体：${a.title}`} aria-label={`查看子智能体 ${a.title}，只读`} onClick={() => { overlay.close(false); if (cur) props.onOpenAgent?.(cur.id, a.id); }}><CliLogo id={a.cli ?? "unknown"} size={20} /><span className="chat-agent-main"><b>{a.title}</b><span>{a.cli ?? "CLI 未知"} · {a.model ?? "模型未知"} · {a.duration ?? "耗时未知"} · {a.tokens ?? "tokens 未知"}</span></span><span className={`tag ${a.status === "失败" ? "bad" : a.status === "待确认" ? "warn" : "good"}`}>{a.status}</span><Icon name="chevronRight" size={12} /></button>)}</div><div className="chat-drop-f">{curRt!.recordsDemo ? "合成演示 · " : ""}点击行查看只读详情；记录仅本次运行可见</div></div>}
       </div>}
       {bgCount > 0 && <div className="chat-drop-wrap"><button className="chat-count-btn" data-chat-overlay-trigger="bg" aria-expanded={overlay.activeOverlay === "bg"} onClick={e => overlay.toggle("bg", e.currentTarget)}><Icon name="terminal" size={14} />{bgCount} 后台任务 <Icon name="chevronDown" size={12} /></button>
         {overlay.activeOverlay === "bg" && <div className="chat-drop chat-drop-bg" data-chat-overlay="bg" role="dialog" aria-label="后台任务"><div className="chat-drop-h"><b>后台任务</b><span className="chat-drop-cap">仅本会话</span></div><div className="chat-drop-list">{[true, false].map(active => { const rows = curRt!.background.filter(b => (b.state === "运行中") === active); return <div className="chat-bg-group" key={String(active)}><div className="chat-bg-group-h"><span>{active ? "进行中" : "已结束"} {rows.length}</span>{!active && <button className="chat-bg-clear" disabled={!rows.length} onClick={() => { clearEndedBackground(cur!.id); setBgOpenId(null); if (!getRuntime(cur!.id).background.length) overlay.close(false); bumpRt(); }}>清空已结束</button>}</div>{!rows.length && <div className="chat-bg-empty">暂无记录</div>}{rows.map(b => <div className="chat-bg-row" key={b.id}><button className="chat-bg-head" aria-expanded={bgOpenId === b.id} onClick={() => setBgOpenId(prev => prev === b.id ? null : b.id)}><span className={`chat-bg-dot ${b.state === "运行中" ? "run" : b.state === "完成" ? "ok" : "fail"}`} /><span className="chat-bg-main"><b>{b.cmd}</b><span>{b.state} · 退出码 {b.exit} · {b.duration}</span></span><Icon name="chevronDown" size={12} /></button>{bgOpenId === b.id && <div className="chat-bg-detail"><span className="chat-bg-jobid">jobId {b.id}</span><pre>{b.output || "暂无输出"}</pre></div>}</div>)}</div>; })}</div><div className="chat-drop-f">{curRt!.recordsDemo ? "合成演示 · " : ""}只清展示，不终止任务</div></div>}
@@ -659,8 +952,30 @@ function Panel(props: ChatPanelProps) {
       <span className="spacer" />{cur?.sessionRole === "executor" && cur.featureId && <span className="chat-scope-tag" title={`执行特性：${cur.featureTitle ?? cur.featureId}；本会话仅实现该Feature`} aria-label={`执行特性：${cur.featureTitle ?? cur.featureId}，单特性执行会话`}>FEAT · <b>{cur.featureId}</b></span>}{binding && <span className={`chat-binding-pill ${binding.state}`} title={binding.state === "blocked" ? `原线程不可续接：${reasonLabel(binding.reasonCode)}` : binding.state === "freshPending" ? "上下文需要确认重建后才能发送" : binding.state === "fresh" ? "已确认重建上下文" : "已绑定原线程，续轮自动续接"}>{BINDING_PILL[binding.state] ?? binding.state}</span>}{newButton}
     </div>
     <div className="chat-fade" />
-    {overlay.activeOverlay === "history" && <SessionHistory scopeId={scope} sessions={sessions} currentId={cur?.id ?? null} runningIds={runningIds} onSwitch={openSession} onNew={newSession} onDelete={deleteSession} onClose={() => overlay.close(true)} />}
-    <MessageList msgs={msgs} projectId={props.projectId} rootUri={props.rootUri} officeFiles={props.officeFiles} visible={props.visible} stepsSlot={<>{queued > 0 && <div className="chat-queued">已排队 {queued} 条，当前静止后发送</div>}{curRt && curRt.steps.length > 0 && <StepsBox steps={curRt.steps} demo={curRt.stepsDemo} preview={Boolean((window as unknown as { __DESIGN_PREVIEW__?: boolean }).__DESIGN_PREVIEW__)} open={curRt.stepsOpen} sid={cur!.id} onToggle={() => { curRt.stepsOpen = !curRt.stepsOpen; bumpRt(); }} bump={bumpRt} />}</>} />
+    {overlay.activeOverlay === "history" && <SessionHistory
+      scopeId={scope}
+      items={sessions}
+      current={cur}
+      currentId={cur?.id ?? null}
+      total={sessionsPage.total}
+      hasMore={sessionsPage.hasMore}
+      loading={sessionsPage.loading}
+      error={sessionsPage.error}
+      keyword={sessionsPage.keyword}
+      runningIds={runningIds}
+      onLoadMore={() => void loadMoreSessions()}
+      onSearch={searchSessions}
+      onShowAll={showAllSessions}
+      onRetry={retrySessions}
+      onSwitch={openSession}
+      onDelete={id => void deleteSession(id)}
+      onCopyId={s => void copySessionId(s)}
+      onFork={s => void forkSession(s)}
+      onPin={s => void pinSession(s)}
+      onRename={(s, title) => void renameSession(s, title)}
+      onClose={() => overlay.close(true)}
+    />}
+    <MessageList msgs={msgs} projectId={props.projectId} rootUri={props.rootUri} officeFiles={props.officeFiles} visible={props.visible} onOpenAgent={id => { if (cur) props.onOpenAgent?.(cur.id, id); }} stepsSlot={<>{queued > 0 && <div className="chat-queued">已排队 {queued} 条，当前静止后发送</div>}{curRt && curRt.steps.length > 0 && <StepsBox steps={curRt.steps} demo={curRt.stepsDemo} preview={Boolean((window as unknown as { __DESIGN_PREVIEW__?: boolean }).__DESIGN_PREVIEW__)} open={curRt.stepsOpen} sid={cur!.id} onToggle={() => { curRt.stepsOpen = !curRt.stepsOpen; bumpRt(); }} bump={bumpRt} />}</>} />
     {(binding?.state === "blocked" || binding?.state === "freshPending") && <div className="chat-block-banner" role="alert" aria-label="绑定阻塞横幅">
       <span className="chat-block-ico" aria-hidden>!</span>
       <div className="chat-block-main">
@@ -675,7 +990,7 @@ function Panel(props: ChatPanelProps) {
       </div>
     </div>}
     <div className="chat-composer-wrap">
-      <Composer scopeKey={`${scope}:${cur?.id ?? "new"}`} rootUri={props.rootUri} projectId={props.projectId} office={props.office} officeFiles={props.officeFiles} sessions={sessions} value={draft} streaming={running} disabled={composerLocked} goal={curRt?.goal ?? null} tasks={curRt?.tasks ?? []} onCreateGoal={text => { if (cur) { setGoal(cur.id, text); bumpRt(); } }} onGoalStateChange={state => { if (cur) { updateGoalState(cur.id, state); bumpRt(); } }} onCreateTask={taskName => { if (cur) { addSessionTask(cur.id, taskName); bumpRt(); } }} onChange={onDraftChange} onSend={startSend} onStop={stopSend} controls={<ModelPicker cliId={cur?.cliId ?? null} providerId={cur?.providerId ?? null} modelId={cur?.modelId ?? null} effort={cur?.effort ?? null} cliCandidates={cliCands} models={models} permissionId={(cur?.id && permissionBySession[cur.id] as any) || "default"} locked={executionLocked || cfgBusy} onChange={applyCfg} />} />
+      <Composer scopeKey={`${scope}:${cur?.id ?? "new"}`} rootUri={props.rootUri} projectId={props.projectId} office={props.office} officeFiles={props.officeFiles} sessions={sessions} serverId={props.serverId} value={draft} streaming={running} disabled={composerLocked} goal={curRt?.goal ?? null} tasks={curRt?.tasks ?? []} onCreateGoal={text => { if (cur) { setGoal(cur.id, text); bumpRt(); } }} onGoalStateChange={state => { if (cur) { updateGoalState(cur.id, state); bumpRt(); } }} onCreateTask={taskName => { if (cur) { addSessionTask(cur.id, taskName); bumpRt(); } }} onChange={onDraftChange} onSend={startSend} onStop={stopSend} controls={<ModelPicker cliId={cur?.cliId ?? null} providerId={cur?.providerId ?? null} modelId={cur?.modelId ?? null} effort={cur?.effort ?? null} cliCandidates={cliCands} models={models} permissionId={(cur?.id && permissionBySession[cur.id] as any) || "default"} locked={executionLocked || cfgBusy} onChange={applyCfg} />} onSessionSearch={async (q: string) => (await api.chatSessionsPage({ ...(props.projectId ? { projectId: props.projectId } : {}), ...(props.serverId ? { serverId: props.serverId } : {}), ...(q.trim() ? { keyword: q.trim() } : {}), limit: 20 })).items} />
       {freshConfirm && cur && <Confirm
         title="无法续接原线程，是否重建上下文？"
         message={`本轮开始前检测到原生引用不可用。重建后将开启全新上下文；历史消息保留可见，不再自动送给模型。\n\n原因：${reasonLabel(freshConfirm.reasonCode)}\n引用指纹：${freshConfirm.refFingerprint ?? "—"} · 绑定版本：#${freshConfirm.expectedRevision}`}
@@ -690,7 +1005,22 @@ function Panel(props: ChatPanelProps) {
         onCancel={() => setCliSwitchTarget(null)}
       />}
       <StatsBar data={statsData} />
-      <div className="chat-foot"><span>Enter 发送 · Shift+Enter 换行</span><span>{cur?.cliId ?? "CLI 未配置"} · {permissionBySession[cur?.id ?? ""] ?? "default"}</span></div>
     </div>
   </div>;
+}
+
+/**
+ * CR-054 / STORY-073：把 workbench.open_panel 的 tool_use 输入解析成右栏请求。
+ * 输入可能是完整 JSON 或 CLI 给的截断/字符串化版本；解析失败返回 null（不抛错、不影响本轮）。
+ */
+function panelRequestFromToolInput(inputJson: string | null | undefined): PanelRequest | null {
+  if (!inputJson) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(inputJson); } catch { return null; }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const value = parsed as Record<string, unknown>;
+  const kind = typeof value.kind === "string" ? value.kind.trim() : "";
+  const key = typeof value.key === "string" ? value.key.trim() : "";
+  if (!kind || !key) return null;
+  return { kind: kind as PanelKind, key };
 }

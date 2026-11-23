@@ -355,7 +355,14 @@ pub fn seed_live_key_from_env() -> Result<(), String> {
     Ok(())
 }
 
-/// 冒烟用：给预置供应商写入测试密钥（值来自环境变量，不写死在代码里）。
+/// CR-061：冒烟专用供应商的固定 id（与用户数据、已移除的内置预置 id 均不同）。
+pub(crate) const SMOKE_PROVIDER_ID: &str = "prov-smoke-tierflow";
+/// CR-061：冒烟专用供应商的模型 id（真实网关验证用）。
+pub(crate) const SMOKE_MODEL_ID: &str = "tierflow";
+
+/// 冒烟用：自建冒烟供应商并写入测试密钥（值来自环境变量，不写死在代码里）。
+/// CR-061：内置预置供应商已移除，冒烟链路改为在冒烟库中自建供应商，
+/// 不再依赖任何预置行，也不触碰用户自己的供应商数据。
 #[tauri::command]
 pub fn smoke_set_tierflow_key(app: tauri::AppHandle, key: String) -> Result<String, String> {
     use tauri::Manager;
@@ -371,10 +378,39 @@ pub fn smoke_set_tierflow_key(app: tauri::AppHandle, key: String) -> Result<Stri
         .map_err(|e| e.to_string())?;
     let guard = crate::db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
+    let now = crate::models::now_ms();
+    // 供应商本体（自建，不复用任何预置 id）
+    conn.execute(
+        "INSERT OR REPLACE INTO provider (id, name, protocol, disabled, headersJson, createdAt, updatedAt)
+         VALUES (?1, '冒烟 · TierFlow', 'anthropic', 0, NULL, ?2, ?2)",
+        rusqlite::params![SMOKE_PROVIDER_ID, now],
+    )
+    .map_err(|e| e.to_string())?;
+    // 端点：claude 走 anthropic；codex/grok 用例走 openai（与旧预置同口径）
+    for (eid, proto) in [("ep-smoke-tf-anthropic", "anthropic"), ("ep-smoke-tf-openai", "openai")] {
+        conn.execute(
+            "INSERT OR REPLACE INTO provider_endpoint (id, providerId, protocol, baseUrl, enabled, createdAt)
+             VALUES (?1, ?2, ?3, 'https://tierflow.cn', 1, ?4)",
+            rusqlite::params![eid, SMOKE_PROVIDER_ID, proto, now],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    // 模型：与旧预置同口径（tierflow / tierflow_pro）
+    for (mid, model_id, label, ctx, max) in [
+        ("mdl-smoke-tf-1", SMOKE_MODEL_ID, "TierFlow 标准", 128000i64, 8192i64),
+        ("mdl-smoke-tf-2", "tierflow_pro", "TierFlow Pro", 128000i64, 8192i64),
+    ] {
+        conn.execute(
+            "INSERT OR REPLACE INTO model (id, providerId, modelId, displayName, text, vision, imageGen, effortsJson, defaultEffort, contextWindow, maxTokens, createdAt)
+             VALUES (?1, ?2, ?3, ?4, 1, 0, 0, ?5, NULL, ?6, ?7, ?8)",
+            rusqlite::params![mid, SMOKE_PROVIDER_ID, model_id, label, r#"{"low":"low","medium":"medium","high":"high"}"#, ctx, max, now],
+        )
+        .map_err(|e| e.to_string())?;
+    }
     conn.execute(
         "INSERT OR REPLACE INTO provider_key (id, providerId, alias, secretRef, masked, enabled, createdAt)
-         VALUES (?1, 'prov-tierflow-default', 'live', ?1, ?2, 1, ?3)",
-        rusqlite::params![key_id, "sk-8****BV8M", crate::models::now_ms()],
+         VALUES (?1, ?2, 'live', ?1, ?3, 1, ?4)",
+        rusqlite::params![key_id, SMOKE_PROVIDER_ID, "sk-8****BV8M", now],
     )
     .map_err(|e| e.to_string())?;
     Ok(key_id.to_string())

@@ -177,6 +177,9 @@ html[data-theme="dark"] .set-modal::backdrop, html[data-theme="dark"] .set-sub-d
 .set-cap-main span { font-size: 11px; color: var(--set-muted); }
 .set-cap-delete { opacity: 0; }
 .set-cap-row:hover .set-cap-delete, .set-cap-row:focus-within .set-cap-delete { opacity: 1; }
+/* CR-059：内置工作台工具全局总闸（UI-CR059 S6）；沿用既有设置页间距与字号，不新增卡片。 */
+.set-builtin-switch { display: flex; align-items: center; gap: 12px; justify-content: space-between; margin-bottom: 12px; }
+.set-builtin-title { font-size: 12.5px; font-weight: 550; margin-bottom: 2px; }
 .set-tool-table-wrap { border: 1px solid var(--set-line); border-radius: 8px; overflow: auto; }
 .set-tool-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .set-tool-table th { text-align: left; font-size: 11px; font-weight: 550; color: var(--set-muted); background: var(--set-surface-2); }
@@ -248,3 +251,202 @@ html[data-theme="dark"] .set-modal, html[data-theme="dark"] .set-sub-dialog { --
 .set-shell-spinner { flex: 0 0 auto; width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--set-line); border-top-color: var(--set-primary); animation: set-shell-spin .8s linear infinite; }
 @keyframes set-shell-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .set-shell-spinner { animation: none; } }
+
+/* CR-058：模型检测十九针探针区块（设置左栏「模型检测」页签）。 */
+.probe-section { --set-warning: #b76a00; --set-warning-soft: #fff6e6; padding: 2px 0 0; }
+html[data-theme="dark"] .probe-section { --set-warning: #e0a23c; --set-warning-soft: #332a17; }
+.probe-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.probe-head h3 { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+.probe-head .set-caption { margin-top: 0; }
+.probe-pick { display: flex; align-items: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.probe-pick .select { width: 220px; }
+.probe-pick .select:disabled { opacity: .5; cursor: not-allowed; }
+.probe-hint { margin: 8px 0 0; }
+.probe-rows { margin-top: 12px; border: 1px solid var(--set-line-soft); border-radius: 6px; overflow-y: auto; max-height: 320px; }
+.probe-row { display: grid; grid-template-columns: 34px 18px minmax(0, 1fr) 64px; align-items: center; gap: 10px; padding: 8px 12px; font-size: 12.5px; border-bottom: 1px solid var(--set-line-soft); }
+.probe-row:last-child { border-bottom: none; }
+.probe-row .p-code { font-size: 11.5px; color: var(--set-muted); }
+.probe-row .p-name { color: var(--set-ink); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.probe-row .p-name .p-note { display: block; font-weight: 400; color: var(--set-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.probe-row .p-ms { text-align: right; font-size: 11.5px; color: var(--set-muted); }
+.probe-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: 0 0 auto; }
+.probe-dot.pass { background: var(--set-success); }
+.probe-dot.warn { background: var(--set-warning); }
+.probe-dot.fail { background: var(--set-danger); }
+.probe-dot.skip { background: var(--set-line-strong); }
+.probe-dot.na { background: var(--set-line-strong); opacity: .55; }
+.probe-dot.pending { background: var(--set-line-strong); opacity: .6; }
+.probe-dot.running { background: var(--set-primary); animation: probe-pulse 1.1s ease-in-out infinite; }
+@keyframes probe-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.8); } }
+@media (prefers-reduced-motion: reduce) { .probe-dot.running { animation: none; } }
+.probe-score { display: flex; align-items: baseline; gap: 4px; }
+.probe-score b { font-size: 24px; line-height: 1; }
+.grade-badge { width: 30px; height: 30px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; flex: 0 0 auto; }
+.grade-badge.s, .grade-badge.a { background: rgba(26, 157, 90, .12); color: var(--set-success); }
+.grade-badge.b { background: var(--set-primary-soft); color: var(--set-primary); }
+.grade-badge.c { background: var(--set-warning-soft); color: var(--set-warning); }
+.grade-badge.d { background: rgba(217, 59, 59, .1); color: var(--set-danger); }
+.probe-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+/* 历史记录：右上角悬浮下拉（非弹窗），只列供应商与时间 */
+.probe-hist-wrap { position: relative; flex: 0 0 auto; }
+.probe-hist-pop { position: absolute; top: calc(100% + 6px); right: 0; z-index: 40; width: 320px; max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding: 6px; background: var(--set-surface); border: 1px solid var(--set-line-strong); border-radius: 8px; box-shadow: 0 12px 28px rgba(17,24,39,.16); }
+.probe-hist-item { display: grid; grid-template-columns: 74px minmax(0, 1fr) 34px 26px; align-items: center; gap: 8px; width: 100%; padding: 7px 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; cursor: pointer; font: inherit; text-align: left; color: inherit; }
+.probe-hist-item:hover { background: var(--set-surface-3); }
+.probe-hist-item.on { background: var(--set-primary-soft); border-color: var(--set-primary-line); }
+.probe-hist-item .h-when { font-size: 11.5px; color: var(--set-muted); }
+.probe-hist-item .h-target { min-width: 0; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.probe-hist-item .h-target .mono { color: var(--set-muted); font-size: 11px; }
+.probe-hist-item .h-score { text-align: right; font-weight: 600; }
+.probe-hist-empty { padding: 14px 8px; text-align: center; }
+
+/* 结果区（空闲 / 进行中 / 完成） */
+/* 固定高度：待检测 / 检测中 / 已检测三态共用同一尺寸，状态切换不引起下方 19 针列表跳动 */
+.probe-result { margin-top: 12px; height: 108px; box-sizing: border-box; padding: 12px 14px; border: 1px solid var(--set-line-soft); border-radius: 8px; background: var(--set-surface-2); display: flex; flex-direction: column; justify-content: center; gap: 8px; overflow: hidden; }
+.probe-result.idle { background: transparent; border-style: dashed; }
+.probe-result.running { border-color: var(--set-primary-line); background: var(--set-primary-soft); }
+.probe-result-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.probe-result-title { font-size: 13px; font-weight: 600; }
+.probe-result-note { flex: 1 1 180px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.probe-result-summary { margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.probe-count { margin-left: auto; font-size: 12px; color: var(--set-muted); }
+.probe-progress { height: 6px; border-radius: 3px; background: var(--set-surface-3); overflow: hidden; }
+.probe-progress-fill { display: block; height: 100%; background: var(--set-primary); transition: width .25s ease; }
+
+
+/* ================= CR-059：模型配置评审调整 ================= */
+
+/* 供应商/模型三处拖动排序手柄。 */
+.set-drag { display: grid; place-items: center; width: 22px; height: 26px; flex: 0 0 auto; color: var(--set-muted); cursor: grab; border-radius: 5px; }
+.set-drag:hover { background: var(--set-surface-3); color: var(--set-ink-2); }
+.set-provider-card[draggable="true"] .set-drag:active,
+.set-model-item[draggable="true"] .set-drag:active { cursor: grabbing; }
+
+/* 供应商默认协议：一行均分卡片（选中高亮，无对勾）。 */
+.set-seg-cards { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 8px; }
+.set-seg-card { height: 34px; padding: 0 10px; border: 1px solid var(--set-line); border-radius: var(--set-r-sm); background: var(--set-surface); font: inherit; font-size: 12.5px; color: var(--set-ink-2); cursor: pointer; }
+.set-seg-card:hover { border-color: var(--set-line-strong); background: var(--set-surface-2); }
+.set-seg-card.on { border-color: var(--set-primary); background: var(--set-primary-soft); color: var(--set-primary-strong); font-weight: 600; box-shadow: inset 0 0 0 1px var(--set-primary); }
+.set-seg-card:focus-visible { outline: 2px solid var(--set-primary); outline-offset: 1px; }
+
+/* 端点：协议标签定宽，地址占满。 */
+.set-endpoint-proto { min-width: 72px; flex: 0 0 auto; }
+
+/* 密钥行内表单与模型表单底部：按钮右置、取消在前。 */
+.set-form-actions { justify-content: flex-end; }
+.set-form-actions .spacer { flex: 1; }
+.set-thinking-row { align-items: center; gap: 8px; }
+.set-thinking-row .small { flex: 0 0 auto; }
+
+/* 获取模型弹层：卡片点选（选中仅高亮，无对勾）。 */
+.set-model-pick-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; max-height: 320px; overflow-y: auto; padding: 2px; }
+.set-pick-card { display: grid; gap: 3px; text-align: left; padding: 10px 12px; border: 1px solid var(--set-line); border-radius: var(--set-r-md); background: var(--set-surface); font: inherit; color: var(--set-ink); cursor: pointer; }
+.set-pick-card b { font-size: 12.5px; font-weight: 600; }
+.set-pick-card:hover { border-color: var(--set-line-strong); background: var(--set-surface-2); }
+.set-pick-card.on { border-color: var(--set-primary); background: var(--set-primary-soft); box-shadow: inset 0 0 0 1px var(--set-primary); }
+.set-pick-card.on b { color: var(--set-primary-strong); }
+
+/* 三列/四列表单网格。 */
+.set-form-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.set-form-grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+/* 生图配置弹层。 */
+.set-imagegen-section { display: grid; gap: 8px; margin: 14px 0; }
+.set-imagegen-section > b { font-size: 12.5px; font-weight: 600; }
+.set-imagegen-list { display: grid; gap: 6px; }
+.set-imagegen-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--set-line); border-radius: var(--set-r-sm); background: var(--set-surface); }
+.set-imagegen-rank { display: grid; place-items: center; width: 20px; height: 20px; flex: 0 0 auto; border-radius: 50%; background: var(--set-surface-3); font-size: 11px; font-weight: 600; color: var(--set-ink-2); }
+.set-imagegen-main { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.set-imagegen-main b { font-size: 12.5px; font-weight: 600; }
+.set-imagegen-candidates { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.warn-text { color: var(--set-warning, #b45309); }
+
+/* 标签补充：warn/good。 */
+.set-model-tags .tag.warn, .set-imagegen-row .tag.warn { background: var(--set-warning-soft, #fef3c7); color: var(--set-warning, #b45309); }
+.set-imagegen-row .tag.good { background: var(--set-success-soft, #dcfce7); color: var(--set-success, #15803d); }
+
+@media (max-width: 720px) {
+  .set-seg-cards { grid-auto-flow: row; grid-auto-columns: auto; }
+  .set-model-pick-list { grid-template-columns: minmax(0, 1fr); }
+  .set-form-grid.three, .set-form-grid.four { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ============ CR-059 D3：CLI 任务模型路由（单行折叠，UI-CR059-v6 SC-059-07） ============ */
+.set-field-label { display: block; font-size: 12.5px; font-weight: 550; margin-bottom: 6px; color: var(--set-ink); }
+.route-card { border: 1px solid var(--set-line); border-radius: var(--set-r-sm, 8px); background: var(--set-surface); }
+.route-bar { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 10px; }
+.route-tabs { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; min-width: 0; }
+/* 标签与兜底同一结构、字号、高度与内边距（AC-STORY-077-03d）。 */
+.route-tab-wrap { position: relative; display: inline-flex; align-items: center; }
+.route-tab { font: inherit; font-size: 12px; height: 26px; padding: 0 10px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--set-ink-2); cursor: pointer; white-space: nowrap; }
+.route-tab:hover { background: var(--set-surface-3); }
+.route-tab.on { background: var(--set-primary-soft); border-color: var(--set-primary-line); color: var(--set-primary); font-weight: 550; }
+.route-tab:disabled { cursor: not-allowed; opacity: .6; }
+/* × 只在悬浮或键盘聚焦该标签时出现；兜底标签永远不渲染 ×。
+   位置照 UI-CR059 §1.3：标签内右侧居中，可删标签预留右内距避免文字被挤压跳动。 */
+.route-tab-wrap:has(.route-x) .route-tab { padding-right: 22px; }
+.route-tab-wrap .route-x { display: none; position: absolute; right: 3px; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--set-muted); cursor: pointer; place-items: center; }
+.route-tab-wrap:hover .route-x, .route-tab-wrap:focus-within .route-x { display: grid; }
+.route-x:hover:not(:disabled) { background: var(--set-danger-soft); color: var(--set-danger); }
+.route-x .ui-icon { pointer-events: none; }
+.route-x:disabled { opacity: .5; cursor: not-allowed; }
+/* 触摸设备无悬浮能力：× 常显，保证可操作。 */
+@media (hover: none) { .route-tab-wrap .route-x { display: grid; } }
+.route-add { display: inline-flex; align-items: center; gap: 3px; font: inherit; font-size: 12px; height: 26px; padding: 0 8px; border: 1px dashed var(--set-line-strong); border-radius: 5px; background: transparent; color: var(--set-ink-2); cursor: pointer; }
+.route-add:hover:not(:disabled) { border-color: var(--set-primary-line); color: var(--set-primary); }
+.route-add:disabled { opacity: .5; cursor: not-allowed; }
+.route-sum { font-size: 11.5px; color: var(--set-muted); white-space: nowrap; }
+.route-toggle { display: grid; place-items: center; width: 24px; height: 24px; border: 0; border-radius: 5px; background: transparent; color: var(--set-muted); cursor: pointer; }
+.route-toggle:hover:not(:disabled) { background: var(--set-surface-3); color: var(--set-ink); }
+.route-toggle:disabled { opacity: .5; cursor: not-allowed; }
+.route-detail { border-top: 1px solid var(--set-line-soft); padding: 12px; display: grid; gap: 10px; background: var(--set-surface-2); }
+.route-detail label { display: block; font-size: 11.5px; color: var(--set-muted); margin-bottom: 4px; }
+.route-detail .two-col { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 12px; }
+.route-detail .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.route-detail .chip { height: 26px; padding: 0 10px; border: 1px solid var(--set-line); border-radius: 5px; background: var(--set-surface); font: inherit; font-size: 11.5px; color: var(--set-ink-2); cursor: pointer; }
+.route-detail .chip.on { background: var(--set-primary-soft); border-color: var(--set-primary-line); color: var(--set-primary); font-weight: 550; }
+.route-detail .chip:disabled { opacity: .6; cursor: not-allowed; }
+.route-detail-f { display: flex; justify-content: flex-end; }
+.route-note { margin: 0; font-size: 11.5px; color: var(--set-muted); line-height: 1.6; }
+.link-btn { border: 0; background: transparent; font: inherit; font-size: 11.5px; color: var(--set-primary); cursor: pointer; padding: 2px 0; }
+.link-btn.danger { color: var(--set-danger); }
+.link-btn:disabled { opacity: .5; cursor: not-allowed; }
+.set-sdk-path { font-size: 11.5px; color: var(--set-muted); word-break: break-all; }
+.cli-load-note { display: flex; align-items: center; gap: 6px; margin: 10px 0 0; }
+.set-sdk-card .cli-version { font-size: 11.5px; }
+
+@media (max-width: 720px) {
+  .route-detail .two-col { grid-template-columns: minmax(0, 1fr); }
+  .route-bar { flex-wrap: wrap; padding: 8px 10px; row-gap: 6px; }
+}
+
+/* ============ CR-059 F2/F4：跨 agent 扫描导入弹层 ============ */
+.scan-group { border: 1px solid var(--set-line); border-radius: var(--set-r-sm, 8px); margin-bottom: 10px; overflow: hidden; }
+.scan-group-h { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--set-surface-2); border-bottom: 1px solid var(--set-line-soft); font-size: 12px; }
+.scan-group-h b { font-weight: 600; }
+.scan-group-h .set-caption { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scan-row { display: flex; align-items: flex-start; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--set-line-soft); cursor: pointer; }
+.scan-row:last-child { border-bottom: 0; }
+.scan-row:hover { background: var(--set-surface-2); }
+.scan-row.imported { opacity: .65; cursor: default; }
+.scan-row input[type="checkbox"] { margin-top: 2px; }
+.scan-main { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.scan-main b { font-size: 12.5px; font-weight: 550; }
+.scan-main > span { font-size: 11.5px; color: var(--set-muted); overflow-wrap: anywhere; }
+
+/* ============ CR-059 F7：Tools 树形列表 ============ */
+.tool-tree { border: 1px solid var(--set-line); border-radius: var(--set-r-sm, 8px); background: var(--set-surface); overflow: hidden; }
+.tree-group { border-bottom: 1px solid var(--set-line-soft); }
+.tree-group:last-child { border-bottom: 0; }
+.tree-root { display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 12px; border: 0; background: transparent; font: inherit; font-size: 12.5px; color: var(--set-ink); cursor: pointer; text-align: left; }
+.tree-root:hover { background: var(--set-surface-2); }
+.tree-root b { font-weight: 600; }
+.tree-note { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-children { border-top: 1px solid var(--set-line-soft); background: var(--set-surface-2); }
+.tree-tool { display: flex; align-items: center; gap: 10px; padding: 8px 12px 8px 34px; border-bottom: 1px solid var(--set-line-soft); font-size: 12px; }
+.tree-tool:last-child { border-bottom: 0; }
+.tree-name { flex: 0 0 auto; font-size: 11.5px; color: var(--set-ink); }
+.tree-desc { flex: 1; min-width: 0; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-tool .risk { flex: 0 0 auto; font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--set-surface-3); color: var(--set-ink-2); }
+.tree-tool .risk.warn { background: #fef3c7; color: #b45309; }
+.tree-tool .risk.high { background: #fee2e2; color: #b91c1c; }
+.tree-empty { padding: 10px 12px 10px 34px; font-size: 11.5px; color: var(--set-muted); }

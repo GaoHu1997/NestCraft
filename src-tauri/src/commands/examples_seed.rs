@@ -13,7 +13,11 @@ use crate::db;
 use serde::Serialize;
 use std::path::{Component, Path, PathBuf};
 
-pub const SEED_VERSION: &str = "1";
+/// v1：初版三套示例（办公项目仅 README）。
+/// v2：办公项目补齐实体资料与 PPT 产物（CR-057 Q-057-01 拍板落盘）。
+/// 升级路径：版本变化触发重播种；write_tree 对已存在文件跳过、只补新文件，
+/// 项目 / 知识库记录按目录复用，不覆盖用户改动。
+pub const SEED_VERSION: &str = "2";
 const VERSION_KEY: &str = "examples.seed.version";
 const PROJECTS_KEY: &str = "examples.seed.projects";
 const LIBRARIES_KEY: &str = "examples.seed.libraries";
@@ -60,8 +64,19 @@ const CODE_FILES: &[SeedFile] = seed_files![
     "code/calculator/tests/calculator.test.mjs",
 ];
 
-/// 办公示例的目录说明（办公文件内容在工作台内生成，目录本身用于项目绑定）。
-const WORK_FILES: &[SeedFile] = seed_files!["work/nestcraft-intro/README.md"];
+/// 办公示例：源资料 → 数据分析 → 交付 PPT 的完整资料链（评审纪要 Q-057-01 已由用户拍板：
+/// 办公示例必须在磁盘上生成真实的 pptx 产物）。
+const WORK_FILES: &[SeedFile] = seed_files![
+    "work/nestcraft-intro/README.md",
+    "work/nestcraft-intro/01 源资料/NestCraft-平台定位速览.md",
+    "work/nestcraft-intro/01 源资料/NestCraft-产品白皮书.docx",
+    "work/nestcraft-intro/01 源资料/常见问答摘编.md",
+    "work/nestcraft-intro/会议与访谈/2026-11-18-产品评审纪要.md",
+    "work/nestcraft-intro/02 数据分析/NestCraft-能力地图.xlsx",
+    "work/nestcraft-intro/02 数据分析/演示素材清单.csv",
+    "work/nestcraft-intro/03 交付成果/NestCraft 产品介绍.pptx",
+    "work/nestcraft-intro/历史资料/讲稿草稿v1-已被v2替代.md",
+];
 
 /// 知识库示例：NestCraft 产品资料库（多目录、多格式真实资料）。
 const KB_FILES: &[SeedFile] = seed_files![
@@ -326,16 +341,29 @@ pub fn ensure_seeded(app: &tauri::AppHandle) -> Result<SeedReport, String> {
 
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
+    seed_into(&base, conn)
+}
 
+/// 安装主体：base 为示例根目录，conn 为已迁移的业务库连接。
+/// 拆出来是为了在测试中用临时目录 + 内存库覆盖完整安装路径。
+fn seed_into(base: &Path, conn: &rusqlite::Connection) -> Result<SeedReport, String> {
     let installed_version = read_setting(conn, VERSION_KEY);
-    if installed_version.as_deref() == Some(SEED_VERSION)
-        && project_ids_present(conn, PROJECTS_KEY)
-        && library_ids_present(conn, LIBRARIES_KEY)
-    {
+    if installed_version.as_deref() == Some(SEED_VERSION) {
+        if project_ids_present(conn, PROJECTS_KEY) && library_ids_present(conn, LIBRARIES_KEY) {
+            return Ok(SeedReport {
+                installed: false,
+                version: SEED_VERSION.to_string(),
+                base_dir: base.to_string_lossy().to_string(),
+                ..Default::default()
+            });
+        }
+        // 版本相同但记录缺失 = 用户已删除示例；按评审纪要「只安装一次」约定不复活。
+        // 保留已写版本标记，下次启动同样跳过。
         return Ok(SeedReport {
             installed: false,
             version: SEED_VERSION.to_string(),
             base_dir: base.to_string_lossy().to_string(),
+            warnings: vec!["示例安装记录缺失（可能已被删除）；按「只安装一次」约定不再重建".into()],
             ..Default::default()
         });
     }
@@ -357,9 +385,11 @@ pub fn ensure_seeded(app: &tauri::AppHandle) -> Result<SeedReport, String> {
         }
     }
 
-    let (code_written, code_skipped) = write_tree(&code_dir, CODE_FILES, &mut warnings);
-    let (work_written, work_skipped) = write_tree(&work_dir, WORK_FILES, &mut warnings);
-    let (kb_written, kb_skipped) = write_tree(&kb_dir, KB_FILES, &mut warnings);
+    // 清单路径已含「code/calculator/...」等前缀，必须统一以 base 为根写入；
+    // 若以子目录为根会出现 base/code/calculator/code/calculator 双层嵌套。
+    let (code_written, code_skipped) = write_tree(&base, CODE_FILES, &mut warnings);
+    let (work_written, work_skipped) = write_tree(&base, WORK_FILES, &mut warnings);
+    let (kb_written, kb_skipped) = write_tree(&base, KB_FILES, &mut warnings);
     report.files_written = code_written + work_written + kb_written;
     report.files_skipped = code_skipped + work_skipped + kb_skipped;
 
@@ -457,5 +487,119 @@ mod tests {
         assert_eq!(std::fs::read_to_string(dir.join("a").join("b.txt")).unwrap(), "first");
         assert!(warnings.is_empty());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// 与真实迁移一致的种子相关最小 schema（列顺序无关，覆盖全部被写的列）。
+    fn test_conn() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE setting_default (scope TEXT NOT NULL, key TEXT NOT NULL, value TEXT, updatedAt INTEGER NOT NULL, PRIMARY KEY(scope, key));
+             CREATE TABLE project (
+                 id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL CHECK (type IN ('code','work')),
+                 rootUri TEXT NOT NULL, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL,
+                 icon TEXT, iconColor TEXT);
+             CREATE TABLE knowledge_library (
+                 id TEXT PRIMARY KEY, name TEXT NOT NULL, sourceKind TEXT NOT NULL DEFAULT 'managed-directory',
+                 sourceRef TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1,
+                 createdAt INTEGER NOT NULL, icon TEXT, iconColor TEXT);",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn seed_into_installs_full_example_set_once() {
+        let conn = test_conn();
+        let base = std::env::temp_dir().join(format!("seed-e2e-{}", uuid::Uuid::new_v4()));
+        let report = seed_into(&base, &conn).unwrap();
+        assert!(report.installed);
+        assert_eq!(report.projects.len(), 2, "编码 + 办公两个项目");
+        assert_eq!(report.libraries.len(), 1, "一个示例知识库");
+        assert!(report.warnings.is_empty(), "不应有警告：{:?}", report.warnings);
+        // 文件真实落盘且非空（清单路径以 base 为根）
+        for file in WORK_FILES {
+            let path = base.join(file.rel);
+            assert!(path.is_file(), "{} 未落盘", file.rel);
+        }
+        let pptx = base.join("work/nestcraft-intro/03 交付成果/NestCraft 产品介绍.pptx");
+        assert_eq!(std::fs::metadata(&pptx).unwrap().len(), WORK_FILES.iter().find(|f| f.rel.ends_with(".pptx")).unwrap().bytes.len() as u64);
+        // 记录版本与身份
+        assert_eq!(read_setting(&conn, VERSION_KEY).as_deref(), Some(SEED_VERSION));
+        // 第二次：不再重复安装
+        let again = seed_into(&base, &conn).unwrap();
+        assert!(!again.installed);
+        assert_eq!(again.projects.len(), 0);
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn seed_upgrade_writes_only_new_files_and_reuses_records() {
+        let conn = test_conn();
+        let base = std::env::temp_dir().join(format!("seed-upg-{}", uuid::Uuid::new_v4()));
+        let first = seed_into(&base, &conn).unwrap();
+        // 模拟 v1 老用户：删除 v2 新增的办公文件，版本仍记 v1；项目记录保留
+        let pptx = base.join("work/nestcraft-intro/03 交付成果/NestCraft 产品介绍.pptx");
+        std::fs::remove_file(&pptx).unwrap();
+        let readme = base.join("work/nestcraft-intro/README.md");
+        let readme_before = std::fs::read_to_string(&readme).unwrap();
+        conn.execute(
+            "UPDATE setting_default SET value='1' WHERE scope='global' AND key='examples.seed.version'",
+            [],
+        )
+        .unwrap();
+        // 用户改了项目目录里的文件：播种不得覆盖
+        std::fs::write(&readme, "用户改动").unwrap();
+
+        let upgraded = seed_into(&base, &conn).unwrap();
+        assert!(upgraded.installed, "版本变化应触发重播种");
+        assert!(upgraded.projects.iter().all(|r| r.reused), "已有记录应复用");
+        assert!(std::fs::metadata(&pptx).is_ok(), "缺失的新文件应补齐");
+        assert_eq!(std::fs::read_to_string(&readme).unwrap(), "用户改动", "已有文件不得覆盖");
+        assert_ne!(std::fs::read_to_string(&readme).unwrap(), readme_before);
+        assert_eq!(read_setting(&conn, VERSION_KEY).as_deref(), Some(SEED_VERSION));
+        let _ = first;
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn seed_does_not_reuse_same_name_from_other_directory() {
+        let conn = test_conn();
+        let base = std::env::temp_dir().join(format!("seed-name-{}", uuid::Uuid::new_v4()));
+        let mut warnings = Vec::new();
+        let foreign = base.join("somewhere-else");
+        std::fs::create_dir_all(&foreign).unwrap();
+        let id = crate::models::new_id("proj");
+        conn.execute(
+            "INSERT INTO project (id, name, type, rootUri, createdAt, updatedAt) VALUES (?1, ?2, 'code', ?3, 1, 1)",
+            rusqlite::params![id, CODE_PROJECT_NAME, foreign.to_string_lossy()],
+        )
+        .unwrap();
+        let code_dir = base.join("code").join("calculator");
+        std::fs::create_dir_all(&code_dir).unwrap();
+        let record = ensure_project(&conn, CODE_PROJECT_NAME, "code", &code_dir, "code", "blue", &mut warnings);
+        assert!(record.is_none(), "同名不同目录不得冒用");
+        assert!(warnings.iter().any(|w| w.contains("目录不同")), "应有警告：{:?}", warnings);
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM project", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1, "不应新建第二个同名项目");
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn seed_does_not_revive_deleted_examples() {
+        let conn = test_conn();
+        let base = std::env::temp_dir().join(format!("seed-revive-{}", uuid::Uuid::new_v4()));
+        let first = seed_into(&base, &conn).unwrap();
+        let installed_ids: Vec<String> = first.projects.iter().map(|r| r.id.clone()).collect();
+        // 用户删除其中一个示例项目记录
+        conn.execute("DELETE FROM project WHERE id=?1", rusqlite::params![installed_ids[0]])
+            .unwrap();
+        // 版本标记仍在：下次启动不得重建（「只安装一次」约定）
+        let again = seed_into(&base, &conn).unwrap();
+        assert!(!again.installed, "记录缺失但版本仍在，不得重新安装");
+        assert!(again.warnings.iter().any(|w| w.contains("不再重建")), "应提示不复活：{:?}", again.warnings);
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM project", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1, "被删除的示例项目不得复活");
+        assert_eq!(read_setting(&conn, VERSION_KEY).as_deref(), Some(SEED_VERSION));
+        std::fs::remove_dir_all(base).unwrap();
     }
 }

@@ -134,15 +134,285 @@ pub fn skill_read(app: tauri::AppHandle, name: String) -> Result<String, String>
     std::fs::read_to_string(&p).map_err(|e| e.to_string())
 }
 
+// ---------- CR-059 F1/F2：Skill 文件夹导入与跨 agent 扫描 ----------
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillFolderPreview {
+    /// 用户所选目录的绝对路径（只读展示）。
+    pub path: String,
+    /// 是否找到 SKILL.md。
+    pub valid: bool,
+    pub name: String,
+    pub slug: String,
+    pub description: String,
+    pub body: String,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillScanItem {
+    pub agent: String,
+    pub source: String,
+    pub name: String,
+    pub slug: String,
+    pub description: String,
+    pub imported: bool,
+    /// 无效（缺 SKILL.md 或不可读）时给出原因。
+    pub error: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillScanGroup {
+    pub agent: String,
+    pub root: String,
+    pub exists: bool,
+    pub items: Vec<SkillScanItem>,
+}
+
+fn slugify_skill(raw: &str) -> String {
+    let mut out = String::new();
+    let mut prev_dash = false;
+    for ch in raw.trim().chars() {
+        if ch.is_ascii_alphanumeric() {
+            for lower in ch.to_lowercase() {
+                out.push(lower);
+            }
+            prev_dash = false;
+        } else if !prev_dash && !out.is_empty() {
+            out.push('-');
+            prev_dash = true;
+        }
+    }
+    let trimmed = out.trim_matches('-').to_string();
+    if trimmed.is_empty() { "skill".to_string() } else { trimmed }
+}
+
+fn front_value(text: &str, key: &str) -> Option<String> {
+    text.lines()
+        .find(|line| line.starts_with(&format!("{key}:")))
+        .map(|line| line.trim_start_matches(&format!("{key}:")).trim().trim_matches('"').trim_matches('\'').to_string())
+        .filter(|v| !v.is_empty())
+}
+
+fn read_skill_folder(path: &std::path::Path) -> Result<SkillFolderPreview, String> {
+    let skill_md = path.join("SKILL.md");
+    let base = SkillFolderPreview {
+        path: path.to_string_lossy().to_string(),
+        valid: false,
+        name: path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+        slug: slugify_skill(&path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()),
+        description: String::new(),
+        body: String::new(),
+    };
+    if !path.is_dir() {
+        return Ok(base);
+    }
+    if !skill_md.is_file() {
+        return Ok(base);
+    }
+    let text = std::fs::read_to_string(&skill_md).map_err(|e| format!("SKILL.md 读取失败：{e}"))?;
+    if text.len() > 512 * 1024 {
+        return Err("SKILL.md 超过 512 KiB，拒绝导入".into());
+    }
+    let name = front_value(&text, "name")
+        .or_else(|| text.lines().find(|l| l.starts_with("# ")).map(|l| l.trim_start_matches("# ").trim().to_string()))
+        .unwrap_or_else(|| base.name.clone());
+    let slug = slugify_skill(&front_value(&text, "slug").unwrap_or_else(|| base.slug.clone()));
+    Ok(SkillFolderPreview {
+        valid: true,
+        name,
+        slug,
+        description: front_value(&text, "description").unwrap_or_default(),
+        body: text,
+        ..base
+    })
+}
+
+/// 只读识别用户选中的技能文件夹（不复制、不登记）。
+#[tauri::command]
+pub fn skill_folder_preview(path: String) -> Result<SkillFolderPreview, String> {
+    let canonical = std::fs::canonicalize(path.trim())
+        .map_err(|_| "所选目录不可访问".to_string())?;
+    if !canonical.is_dir() {
+        return Err("所选路径不是目录".into());
+    }
+    read_skill_folder(&canonical)
+}
+
+/// 把整个技能目录递归复制到受管技能目录（app_data_dir/skills/<slug>/）。
+/// 跳过符号链接与超限单文件，返回复制结果供界面如实提示。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillImportResult {
+    pub slug: String,
+    pub copied: usize,
+    pub skipped: Vec<String>,
+}
+
+#[tauri::command]
+pub fn skill_import_folder(
+    app: tauri::AppHandle,
+    path: String,
+    slug: Option<String>,
+) -> Result<SkillImportResult, String> {
+    let source = std::fs::canonicalize(path.trim()).map_err(|_| "所选目录不可访问".to_string())?;
+    let preview = read_skill_folder(&source)?;
+    if !preview.valid {
+        return Err("所选文件夹没有 SKILL.md，无法识别为技能".into());
+    }
+    let requested = slug.as_deref().map(str::trim).filter(|v| !v.is_empty());
+    let final_slug = slugify_skill(requested.unwrap_or(&preview.slug));
+    if final_slug.is_empty() {
+        return Err("技能标识无效".into());
+    }
+    let skills_root = app.path().app_data_dir().map_err(|e| e.to_string())?.join("skills");
+    std::fs::create_dir_all(&skills_root).map_err(|e| e.to_string())?;
+    let target = skills_root.join(&final_slug);
+    if target.exists() {
+        return Err(format!("同名技能已存在：{final_slug}"));
+    }
+    // 先复制到临时目录再改名，失败时不留半成品。
+    let temp = skills_root.join(format!(".import-{}-{}", final_slug, new_id("tmp")));
+    std::fs::create_dir_all(&temp).map_err(|e| e.to_string())?;
+    let mut copied = 0usize;
+    let mut skipped: Vec<String> = Vec::new();
+    let mut stack = vec![source.clone()];
+    let copy_result = (|| -> Result<(), String> {
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten() {
+                let meta = match entry.metadata() {
+                    Ok(m) => m,
+                    Err(_) => { skipped.push(entry.path().to_string_lossy().to_string()); continue; }
+                };
+                let rel = entry.path().strip_prefix(&source).map_err(|e| e.to_string())?.to_path_buf();
+                if meta.file_type().is_symlink() {
+                    skipped.push(format!("{}（符号链接）", rel.to_string_lossy()));
+                    continue;
+                }
+                if meta.is_dir() {
+                    std::fs::create_dir_all(temp.join(&rel)).map_err(|e| e.to_string())?;
+                    stack.push(entry.path());
+                } else if meta.is_file() {
+                    if meta.len() > 512 * 1024 {
+                        skipped.push(format!("{}（超过 512 KiB）", rel.to_string_lossy()));
+                        continue;
+                    }
+                    std::fs::copy(entry.path(), temp.join(&rel)).map_err(|e| format!("复制 {} 失败：{e}", rel.to_string_lossy()))?;
+                    copied += 1;
+                }
+            }
+        }
+        std::fs::rename(&temp, &target).map_err(|e| format!("落盘失败：{e}"))
+    })();
+    if let Err(error) = copy_result {
+        let _ = std::fs::remove_dir_all(&temp);
+        return Err(error);
+    }
+    // 登记 capability（sourceRef 指向受管副本，不再依赖外部源）。
+    let skill_md = target.join("SKILL.md");
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    conn.execute(
+        "INSERT OR IGNORE INTO capability (id, kind, name, description, sourceRef, risk, enabled, builtin, createdAt)
+         VALUES (?1,'skill',?2,?3,?4,'low',1,0,?5)",
+        rusqlite::params![new_id("cap"), final_slug, preview.description, skill_md.to_string_lossy(), now_ms()],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(SkillImportResult { slug: final_slug, copied, skipped })
+}
+
+/// 跨 agent 技能扫描：只读固定候选目录，不执行任何指令、不读凭据。
+#[tauri::command]
+pub fn skill_scan_sources(app: tauri::AppHandle) -> Result<Vec<SkillScanGroup>, String> {
+    let home = dirs::home_dir().ok_or("无法定位用户主目录")?;
+    let skills_root = app.path().app_data_dir().map_err(|e| e.to_string())?.join("skills");
+    let imported: Vec<String> = std::fs::read_dir(&skills_root)
+        .map(|rd| rd.flatten().filter(|e| e.path().is_dir()).map(|e| e.file_name().to_string_lossy().to_string()).collect())
+        .unwrap_or_default();
+    let candidates: [(&str, std::path::PathBuf); 4] = [
+        ("Claude Code", home.join(".claude").join("skills")),
+        ("Codex", home.join(".codex").join("skills")),
+        ("ZCode", home.join(".zcode").join("skills")),
+        ("通用", home.join(".agents").join("skills")),
+    ];
+    let mut out = Vec::new();
+    for (agent, root) in candidates {
+        let exists = root.is_dir();
+        let mut items = Vec::new();
+        if exists {
+            for entry in std::fs::read_dir(&root).map_err(|e| e.to_string())?.flatten() {
+                let path = entry.path();
+                if !path.is_dir() { continue; }
+                match read_skill_folder(&path) {
+                    Ok(preview) if preview.valid => {
+                        items.push(SkillScanItem {
+                            agent: agent.to_string(),
+                            source: path.to_string_lossy().to_string(),
+                            name: preview.name,
+                            slug: preview.slug.clone(),
+                            description: preview.description,
+                            imported: imported.iter().any(|s| s == &preview.slug),
+                            error: None,
+                        });
+                    }
+                    Ok(_) => items.push(SkillScanItem {
+                        agent: agent.to_string(),
+                        source: path.to_string_lossy().to_string(),
+                        name: path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+                        slug: slugify_skill(&path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()),
+                        description: String::new(),
+                        imported: false,
+                        error: Some("缺少 SKILL.md".into()),
+                    }),
+                    Err(error) => items.push(SkillScanItem {
+                        agent: agent.to_string(),
+                        source: path.to_string_lossy().to_string(),
+                        name: path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+                        slug: String::new(),
+                        description: String::new(),
+                        imported: false,
+                        error: Some(error),
+                    }),
+                }
+            }
+        }
+        items.sort_by(|a, b| a.name.cmp(&b.name));
+        out.push(SkillScanGroup { agent: agent.to_string(), root: root.to_string_lossy().to_string(), exists, items });
+    }
+    Ok(out)
+}
+
 // ---------- Tool（内置只读注册表） ----------
 
-const BUILTIN_TOOLS: [(&str, &str, &str, &str); 6] = [
+/// CR-059：pub(crate) 供 ai_tools 单测校验「注册表 ↔ 工具目录」两侧不漂移。
+pub(crate) const BUILTIN_TOOLS: [(&str, &str, &str, &str); 21] = [
     ("fs.read", "读取项目内文件", "low", "read"),
     ("knowledge.list", "列出项目已授权知识库", "low", "read"),
     ("knowledge.search", "在已授权知识库内检索", "low", "read"),
     ("knowledge.read", "读取知识库笔记正文", "low", "read"),
     ("knowledge.read_many", "批量读取知识库笔记", "low", "read"),
     ("ssh-exec", "在服务器上执行命令（需连接、授权与逐次审批）", "high", "exec"),
+    // CR-059：内置工作台工具集（MCP 服务器 workbench；与 ai_tools.rs 工具目录一致）
+    ("workbench.get_context", "AI 获取当前会话绑定的项目上下文", "low", "config"),
+    ("workbench.list_projects", "AI 列出项目清单", "low", "config"),
+    ("workbench.create_project", "AI 创建项目（重名与目录校验与界面一致）", "medium", "config"),
+    ("workbench.update_project", "AI 更新项目名称/根目录/图标", "medium", "config"),
+    ("workbench.get_requirements", "AI 读取项目需求树", "low", "config"),
+    ("workbench.read_requirement_doc", "AI 读取需求文档正文", "low", "config"),
+    ("workbench.write_requirement_doc", "AI 创建/更新需求文档（自动编号与 front matter）", "medium", "config"),
+    ("workbench.list_kbs", "AI 列出知识库与授权状态", "low", "config"),
+    ("workbench.create_kb", "AI 创建受管知识库（仅建库，不写知识内容）", "medium", "config"),
+    ("workbench.set_kb_grant", "AI 设置项目-知识库读取授权", "medium", "config"),
+    ("workbench.list_servers", "AI 列出服务器主机（不含密钥）", "low", "config"),
+    ("workbench.save_server", "AI 新建/更新服务器主机配置（密钥只入受管密钥文件）", "medium", "config"),
+    // CR-059 G4：生图（多模型有序、失败顺延；随 workbench MCP 注入）
+    ("workbench.generate_image", "AI 生成图片（按配置顺序尝试生图模型，失败自动顺延）", "medium", "config"),
+    // CR-054 / STORY-073：AI 请求打开工作台右栏（只读预览，不获得额外权限）
+    ("workbench.open_panel", "AI 请求打开右侧预览面板（文件/需求/知识/办公文件）", "low", "config"),
+    // CR-059 二期：查询 ssh_exec 高风险命令的跨进程审批结论
+    ("workbench.ssh_exec_status", "AI 查询服务器命令审批结论与执行结果", "low", "config"),
 ];
 
 #[tauri::command]
@@ -369,9 +639,282 @@ pub fn mcp_save(app: tauri::AppHandle, draft: McpDraft) -> Result<String, String
     Ok(id)
 }
 
+// ---------- CR-059 F4：MCP 跨 agent 扫描导入 ----------
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpScanItem {
+    pub agent: String,
+    pub source: String,
+    pub name: String,
+    pub transport: String,
+    pub command: Option<String>,
+    pub args: Vec<String>,
+    /// 敏感值只标记数量，绝不回显正文。
+    pub env_keys: Vec<String>,
+    pub url: Option<String>,
+    pub imported: bool,
+    pub error: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpScanGroup {
+    pub agent: String,
+    pub root: String,
+    pub exists: bool,
+    pub items: Vec<McpScanItem>,
+}
+
+fn collect_scan_item(
+    agent: &str,
+    source: &str,
+    name: &str,
+    cfg: &serde_json::Value,
+    existing: &[String],
+) -> McpScanItem {
+    let imported = existing.iter().any(|n| n == name);
+    let transport_raw = cfg.get("transport").and_then(Value::as_str)
+        .or_else(|| cfg.get("type").and_then(Value::as_str))
+        .unwrap_or("");
+    let url = cfg.get("url").and_then(Value::as_str).map(str::to_string);
+    let transport = match transport_raw {
+        "stdio" => "stdio",
+        "http" | "streamable-http" | "streamable_http" => "http",
+        "sse" | "websocket" | "ws" => "unsupported",
+        _ => if url.is_some() { "http" } else { "stdio" },
+    };
+    let command = cfg.get("command").and_then(Value::as_str).map(str::to_string);
+    let args: Vec<String> = cfg.get("args")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        .unwrap_or_default();
+    let env_keys: Vec<String> = cfg.get("env")
+        .and_then(Value::as_object)
+        .map(|map| map.keys().cloned().collect())
+        .unwrap_or_default();
+    let error = if transport == "unsupported" {
+        Some("SSE / WebSocket 传输本版不支持".into())
+    } else if transport == "stdio" && command.is_none() {
+        Some("缺少 command".into())
+    } else if transport == "http" && url.is_none() {
+        Some("缺少 url".into())
+    } else {
+        None
+    };
+    McpScanItem {
+        agent: agent.to_string(),
+        source: source.to_string(),
+        name: name.to_string(),
+        transport: transport.to_string(),
+        command,
+        args,
+        env_keys,
+        url,
+        imported,
+        error,
+    }
+}
+
+/// 极简 TOML 解析：[mcp_servers.<name>] 段内的 command/args/url 键。
+/// 只覆盖 Codex 配置的实际结构，不做通用 TOML 支持；无法解析的段落跳过并给出原因。
+fn parse_codex_mcp_servers(text: &str) -> Vec<(String, serde_json::Value)> {
+    let mut out: Vec<(String, serde_json::Value)> = Vec::new();
+    let mut current: Option<(String, serde_json::Value)> = None;
+    let flush = |current: &mut Option<(String, serde_json::Value)>, out: &mut Vec<(String, serde_json::Value)>| {
+        if let Some(entry) = current.take() { out.push(entry); }
+    };
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') { continue; }
+        if line.starts_with('[') {
+            flush(&mut current, &mut out);
+            let header = line.trim_start_matches('[').trim_end_matches(']');
+            if let Some(rest) = header.strip_prefix("mcp_servers.") {
+                let name = rest.trim().trim_matches('"').to_string();
+                if !name.is_empty() && !name.contains('.') {
+                    current = Some((name, serde_json::json!({ "transport": "stdio" })));
+                }
+            }
+            continue;
+        }
+        let Some((name, cfg)) = current.as_mut() else { continue };
+        let _ = name;
+        let Some((key, value)) = line.split_once('=') else { continue };
+        let key = key.trim();
+        let value = value.trim();
+        let unquote = |v: &str| v.trim().trim_matches('"').trim_matches('\'').to_string();
+        match key {
+            "command" => { cfg["command"] = serde_json::json!(unquote(value)); }
+            "url" => { cfg["url"] = serde_json::json!(unquote(value)); cfg["transport"] = serde_json::json!("http"); }
+            "args" => {
+                let inner = value.trim_start_matches('[').trim_end_matches(']');
+                let args: Vec<serde_json::Value> = inner.split(',')
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .map(|v| serde_json::json!(unquote(v)))
+                    .collect();
+                cfg["args"] = serde_json::Value::Array(args);
+            }
+            _ => {}
+        }
+    }
+    flush(&mut current, &mut out);
+    out
+}
+
+/// 只读扫描其他 agent 的 MCP 配置（不含登录态与令牌正文）。
 #[tauri::command]
-pub fn mcp_delete(app: tauri::AppHandle, id: String) -> Result<(), String> {
-    // 删除前清理本人凭据与未完成授权，避免残留可复用凭据或悬挂监听。
+pub fn mcp_scan_sources() -> Result<Vec<McpScanGroup>, String> {
+    let home = dirs::home_dir().ok_or("无法定位用户主目录")?;
+    let existing: Vec<String> = {
+        let guard = db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        let mut stmt = conn.prepare("SELECT name FROM mcp_server").map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+    let mut groups = Vec::new();
+
+    // Claude Code：~/.claude.json 的 mcpServers
+    let claude_path = home.join(".claude.json");
+    let mut claude_items = Vec::new();
+    if claude_path.is_file() {
+        match std::fs::read_to_string(&claude_path) {
+            Ok(text) => match serde_json::from_str::<Value>(&text) {
+                Ok(parsed) => {
+                    if let Some(map) = parsed.get("mcpServers").and_then(Value::as_object) {
+                        for (name, cfg) in map {
+                            claude_items.push(collect_scan_item("Claude Code", &claude_path.to_string_lossy(), name, cfg, &existing));
+                        }
+                    }
+                }
+                Err(_) => claude_items.push(McpScanItem {
+                    agent: "Claude Code".into(), source: claude_path.to_string_lossy().to_string(),
+                    name: "（配置文件解析失败）".into(), transport: "-".into(), command: None, args: vec![],
+                    env_keys: vec![], url: None, imported: false, error: Some("配置不是合法 JSON".into()),
+                }),
+            },
+            Err(_) => claude_items.push(McpScanItem {
+                agent: "Claude Code".into(), source: claude_path.to_string_lossy().to_string(),
+                name: "（配置文件不可读）".into(), transport: "-".into(), command: None, args: vec![],
+                env_keys: vec![], url: None, imported: false, error: Some("文件不可读".into()),
+            }),
+        }
+    }
+    groups.push(McpScanGroup {
+        agent: "Claude Code".into(), root: claude_path.to_string_lossy().to_string(),
+        exists: claude_path.is_file(), items: claude_items,
+    });
+
+    // Codex：~/.codex/config.toml 的 [mcp_servers.*]
+    let codex_path = home.join(".codex").join("config.toml");
+    let mut codex_items = Vec::new();
+    if codex_path.is_file() {
+        if let Ok(text) = std::fs::read_to_string(&codex_path) {
+            for (name, cfg) in parse_codex_mcp_servers(&text) {
+                codex_items.push(collect_scan_item("Codex", &codex_path.to_string_lossy(), &name, &cfg, &existing));
+            }
+        }
+    }
+    groups.push(McpScanGroup {
+        agent: "Codex".into(), root: codex_path.to_string_lossy().to_string(),
+        exists: codex_path.is_file(), items: codex_items,
+    });
+
+    // ZCode：~/.zcode/mcp.json（mcpServers 或 servers）
+    let zcode_path = home.join(".zcode").join("mcp.json");
+    let mut zcode_items = Vec::new();
+    if zcode_path.is_file() {
+        if let Ok(text) = std::fs::read_to_string(&zcode_path) {
+            if let Ok(parsed) = serde_json::from_str::<Value>(&text) {
+                let map = parsed.get("mcpServers").or_else(|| parsed.get("servers")).and_then(Value::as_object);
+                if let Some(map) = map {
+                    for (name, cfg) in map {
+                        zcode_items.push(collect_scan_item("ZCode", &zcode_path.to_string_lossy(), name, cfg, &existing));
+                    }
+                }
+            }
+        }
+    }
+    groups.push(McpScanGroup {
+        agent: "ZCode".into(), root: zcode_path.to_string_lossy().to_string(),
+        exists: zcode_path.is_file(), items: zcode_items,
+    });
+
+    Ok(groups)
+}
+
+/// 导入一个扫描到的 MCP 配置（按 agent + name 重新只读解析源文件，env 值只在进程内传递）。
+/// 返回值不回显任何 env 值。
+#[tauri::command]
+pub fn mcp_import_source(app: tauri::AppHandle, agent: String, name: String) -> Result<String, String> {
+    let home = dirs::home_dir().ok_or("无法定位用户主目录")?;
+    let lookup = |cfg: &serde_json::Value| -> Result<McpDraft, String> {
+        let name = name.trim();
+        if name.is_empty() { return Err("服务器名称不能为空".into()); }
+        let transport_raw = cfg.get("transport").and_then(Value::as_str)
+            .or_else(|| cfg.get("type").and_then(Value::as_str)).unwrap_or("");
+        let url = cfg.get("url").and_then(Value::as_str).map(str::to_string);
+        let transport = match transport_raw {
+            "http" | "streamable-http" | "streamable_http" => "http",
+            "sse" | "websocket" | "ws" => return Err("SSE / WebSocket 传输本版不支持".into()),
+            _ => if url.is_some() { "http" } else { "stdio" },
+        };
+        let args: Vec<String> = cfg.get("args").and_then(Value::as_array)
+            .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .unwrap_or_default();
+        let env: std::collections::BTreeMap<String, String> = cfg.get("env").and_then(Value::as_object)
+            .map(|map| map.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect())
+            .unwrap_or_default();
+        Ok(McpDraft {
+            id: None,
+            name: name.to_string(),
+            transport: transport.to_string(),
+            command: cfg.get("command").and_then(Value::as_str).map(str::to_string),
+            args,
+            env,
+            url,
+            enabled: true,
+            auth_mode: Some("oauth".into()),
+            auth_token: None,
+            allow_insecure_local_tls: false,
+        })
+    };
+    let draft = match agent.as_str() {
+        "Claude Code" => {
+            let path = home.join(".claude.json");
+            let text = std::fs::read_to_string(&path).map_err(|_| "Claude Code 配置不可读".to_string())?;
+            let parsed: Value = serde_json::from_str(&text).map_err(|_| "Claude Code 配置不是合法 JSON".to_string())?;
+            let cfg = parsed.get("mcpServers").and_then(Value::as_object)
+                .and_then(|map| map.get(name.trim())).ok_or("源配置中已找不到该 MCP 服务器")?;
+            lookup(cfg)?
+        }
+        "Codex" => {
+            let path = home.join(".codex").join("config.toml");
+            let text = std::fs::read_to_string(&path).map_err(|_| "Codex 配置不可读".to_string())?;
+            let mut found = None;
+            for (server, cfg) in parse_codex_mcp_servers(&text) {
+                if server == name.trim() { found = Some(cfg); break; }
+            }
+            lookup(&found.ok_or("源配置中已找不到该 MCP 服务器")?)?
+        }
+        "ZCode" => {
+            let path = home.join(".zcode").join("mcp.json");
+            let text = std::fs::read_to_string(&path).map_err(|_| "ZCode 配置不可读".to_string())?;
+            let parsed: Value = serde_json::from_str(&text).map_err(|_| "ZCode 配置不是合法 JSON".to_string())?;
+            let cfg = parsed.get("mcpServers").or_else(|| parsed.get("servers"))
+                .and_then(Value::as_object)
+                .and_then(|map| map.get(name.trim())).ok_or("源配置中已找不到该 MCP 服务器")?;
+            lookup(cfg)?
+        }
+        other => return Err(format!("未知来源：{other}")),
+    };
+    mcp_save(app, draft)
+}
+
+#[tauri::command]
+pub fn mcp_delete(app: tauri::AppHandle, id: String) -> Result<(), String> {    // 删除前清理本人凭据与未完成授权，避免残留可复用凭据或悬挂监听。
     let reference: Option<String> = {
         let guard = db::conn()?; let conn = guard.as_ref().ok_or("db not initialized")?;
         conn.query_row("SELECT authCredentialRef FROM mcp_server WHERE id=?1", [&id], |r| r.get(0)).ok().flatten()

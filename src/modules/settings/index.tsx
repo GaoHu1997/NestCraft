@@ -5,6 +5,7 @@ import { useAvatarPhoto } from "@/components/avatar";
 import { usePaneWidth, ResizeHandle, PaneToggle } from "@/components/pane-resize";
 import { SettingsGeneral } from "./SettingsGeneral";
 import { SettingsModels } from "./SettingsModels";
+import { SettingsModelProbe } from "./SettingsModelProbe";
 import { SettingsSdk } from "./SettingsSdk";
 import { SettingsSkill } from "./SettingsSkill";
 import { SettingsMcp } from "./SettingsMcp";
@@ -15,6 +16,7 @@ import "./settings.css";
 const TABS = [
   { id: "general", label: "通用", icon: "settings", sub: "用户信息、代码样式与服务器默认值。" },
   { id: "models", label: "模型管理", icon: "cpu", sub: "供应商、密钥、端点与模型配置。" },
+  { id: "probe", label: "模型检测", icon: "shield", sub: "固定 19 针黑盒探针，检测模型是否被中转掺水。" },
   { id: "sdk", label: "SDK 与 CLI", icon: "terminal", sub: "CLI 管理与 SDK 管理。" },
   { id: "skill", label: "能力 · Skill", icon: "layers", sub: "技能是过程性指令；启用不等于授权执行。" },
   { id: "mcp", label: "能力 · MCP", icon: "box", sub: "MCP 服务器发现工具与资源。" },
@@ -68,6 +70,8 @@ export function SettingsCenter(props: { initialTab: string; onOpenTab: (tab: str
         <div className="set-scroll">
           <div hidden={tab !== "general"}><SettingsGeneral /></div>
           <div hidden={tab !== "models"}><SettingsModels /></div>
+          {/* CR-058：模型检测十九针探针（左栏「模型管理」下方独立页签）。 */}
+          <div hidden={tab !== "probe"}><SettingsModelProbe /></div>
           <div hidden={tab !== "sdk"}><SettingsSdk /></div>
           <div hidden={tab !== "skill"}><SettingsSkill /></div>
           <div hidden={tab !== "mcp"}><SettingsMcp /></div>

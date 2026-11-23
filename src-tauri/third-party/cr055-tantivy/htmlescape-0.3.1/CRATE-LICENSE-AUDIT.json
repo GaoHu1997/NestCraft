@@ -1,0 +1,182 @@
+{
+  "package": "htmlescape",
+  "version": "0.3.1",
+  "exactCrateSHA256": "e9025058dae765dee5070ec375f591e2ba14638c63feff74f13805a72e523163",
+  "crateFiles": [
+    "htmlescape-0.3.1/.gitignore",
+    "htmlescape-0.3.1/.travis.yml",
+    "htmlescape-0.3.1/Cargo.toml",
+    "htmlescape-0.3.1/README.md",
+    "htmlescape-0.3.1/benches/bench.rs",
+    "htmlescape-0.3.1/moonstone-short.txt",
+    "htmlescape-0.3.1/src/decode.rs",
+    "htmlescape-0.3.1/src/encode.rs",
+    "htmlescape-0.3.1/src/entities.rs",
+    "htmlescape-0.3.1/src/io_support.rs",
+    "htmlescape-0.3.1/src/lib.rs",
+    "htmlescape-0.3.1/tests/test.rs"
+  ],
+  "licenseNoticePathsInExactArchive": [],
+  "originalManifest": {
+    "path": "htmlescape-0.3.1/Cargo.toml",
+    "sha256": "daad7e32ff2b04d0a74c3c9364a7c209f9b5a71f60193ca3c393f8fa6cc0dd7f",
+    "text": "[package]\nname = \"htmlescape\"\nversion = \"0.3.1\"\nauthors = [ \"Viktor Dahl <pazaconyoman@gmail.com>\" ]\nlicense = \"Apache-2.0 / MIT / MPL-2.0\"\nrepository = \"https://github.com/veddan/rust-htmlescape\"\ndescription = \"A library for HTML entity encoding and decoding\"\n\n[lib]\nname = \"htmlescape\"\npath = \"src/lib.rs\"\n\n[dev-dependencies]\nnum = \"0.1.26\"\nrand = \"0.3.14\"\n"
+  },
+  "originalReadme": {
+    "path": "htmlescape-0.3.1/README.md",
+    "sha256": "223fe826ae939cff60991596cce898bf4a88bc1ea8a92160ba68b5bfc27830b1",
+    "text": "# A HTML entity encoding library for Rust\n[![Build Status](https://travis-ci.org/veddan/rust-htmlescape.png?branch=master)](https://travis-ci.org/veddan/rust-htmlescape)\n\n## Example usage\nAll example assume a `extern crate htmlescape;` and `use htmlescape::{relevant functions here};` is present.\n\n###Encoding\n`htmlescape::encode_minimal()` encodes an input string using a minimal set of HTML entities.\n\n```rust\nlet title = \"Cats & dogs\";\nlet tag = format!(\"<title>{}</title>\", encode_minimal(title));\nassert_eq!(tag.as_slice(), \"<title>Cats &amp; dogs</title>\");\n```\n\nThere is also a `htmlescape::encode_attribute()` function for encoding strings that are to be used\nas html attribute values.\n\n###Decoding\n`htmlescape::decode_html()` decodes an encoded string, replacing HTML entities with the\ncorresponding characters. Named, hex, and decimal entities are supported. A `Result` value is\nreturned, with either the decoded string in `Ok`, or an error in `Err`.\n\n```rust\nlet encoded = \"Cats&#x20;&amp;&#32;dogs\";\nlet decoded = match decode_html(encoded) {\n  Err(reason) => panic!(\"Error {:?} at character {}\", reason.kind, reason.position),\n  Ok(s) => s\n};\nassert_eq!(decoded.as_slice(), \"Cats & dogs\");\n```\n\n###Avoiding allocations\nBoth the encoding and decoding functions are available in forms that take a `Writer` for output rather\nthan returning an `String`. These version can be used to avoid allocation and copying if the returned\n`String` was just going to be written to a `Writer` anyway.\n"
+  },
+  "rustSourceHeaders": [
+    {
+      "path": "htmlescape-0.3.1/benches/bench.rs",
+      "firstLines": [
+        "#![feature(test)]",
+        "",
+        "extern crate htmlescape;",
+        "",
+        "extern crate test;",
+        "extern crate num;",
+        "extern crate rand;",
+        "",
+        "use htmlescape::*;",
+        "",
+        "static BIG_STR: &'static str = include_str!(\"../moonstone-short.txt\");",
+        ""
+      ],
+      "sha256": "8dadd36b564e024889958fe5fa180bb70a7980a2476541d7c40ef48c8649d7f4"
+    },
+    {
+      "path": "htmlescape-0.3.1/src/decode.rs",
+      "firstLines": [
+        "use std::io::{self, Write, BufRead, Cursor};",
+        "use std::char;",
+        "use self::DecodeState::*;",
+        "use self::DecodeErrKind::*;",
+        "use io_support::{self, write_char, CharsError};",
+        "use entities::*;",
+        "",
+        "#[derive(Debug)]",
+        "pub enum DecodeErrKind {",
+        "    /// A non-existent named entity was referenced.",
+        "    /// Example: &thisentitydoesnotexist",
+        "    UnknownEntity,"
+      ],
+      "sha256": "cc1c9e723ee9ebebd595210e1e030b17ae10f3369af08b879f528cbb495f8180"
+    },
+    {
+      "path": "htmlescape-0.3.1/src/encode.rs",
+      "firstLines": [
+        "use std::io::{self, Write};",
+        "use std::char;",
+        "use io_support::{write_char};",
+        "use entities::*;",
+        "",
+        "///",
+        "/// HTML entity-encode a string.",
+        "///",
+        "/// Entity-encodes a string with a minimal set of entities:",
+        "///",
+        "/// - `\" -- &quot;`",
+        "/// - `& -- &amp;`"
+      ],
+      "sha256": "5ad38ad88de116797d850a1ddcb4dbf5a34f0848a449a6b44f8e7798ceada071"
+    },
+    {
+      "path": "htmlescape-0.3.1/src/entities.rs",
+      "firstLines": [
+        "pub static MINIMAL_ENTITIES: [(char, &'static str); 5] = [",
+        "    ('\"', \"&quot;\"),",
+        "    ('&', \"&amp;\"),",
+        "    ('\\'', \"&#x27;\"),",
+        "    ('<', \"&lt;\"),",
+        "    ('>', \"&gt;\")",
+        "];",
+        "",
+        "pub static NAMED_ENTITIES: &'static[(&'static str, char)] = &[",
+        "    (\"AElig\", '\\u{00C6}'),",
+        "    (\"Aacute\", '\\u{00C1}'),",
+        "    (\"Acirc\", '\\u{00C2}'),"
+      ],
+      "sha256": "a332c354a31bc57150f24987eb23324d3b87e8a33dda0ca553474d5c955b20d7"
+    },
+    {
+      "path": "htmlescape-0.3.1/src/io_support.rs",
+      "firstLines": [
+        "use std::io::{Write, Read, Error, ErrorKind};",
+        "use std::io;",
+        "use std::fmt;",
+        "",
+        "pub fn write_char<W: Write>(writer: &mut W, c: char) -> io::Result<()> {",
+        "    let mut buf = [0u8;4];",
+        "    let utf8 = encode_char_utf8(c, &mut buf);",
+        "    writer.write_all(utf8)",
+        "}",
+        "",
+        "fn encode_char_utf8<'a>(c: char, buf: &'a mut [u8]) -> &'a [u8] {",
+        "    let c = c as u32;"
+      ],
+      "sha256": "78422dd5765c07a5e87e368923daf6e1d11655edff1efbe5e849c85f1fd690ad"
+    },
+    {
+      "path": "htmlescape-0.3.1/src/lib.rs",
+      "firstLines": [
+        "pub use encode::*;",
+        "pub use decode::*;",
+        "",
+        "mod encode;",
+        "mod decode;",
+        "mod entities;",
+        "mod io_support;",
+        ""
+      ],
+      "sha256": "47f8760c9b1387325759a72db273bcd201ac54a482507d3e4a40bea8b2f03f58"
+    },
+    {
+      "path": "htmlescape-0.3.1/tests/test.rs",
+      "firstLines": [
+        "",
+        "extern crate htmlescape;",
+        "",
+        "extern crate num;",
+        "extern crate rand;",
+        "",
+        "use std::char;",
+        "",
+        "use htmlescape::*;",
+        "use htmlescape::DecodeErrKind::*;",
+        "",
+        "macro_rules! assert_typed_eq (($T: ty, $given: expr, $expected: expr) => ({"
+      ],
+      "sha256": "46689cc997954f5317a17bde320d00cb375705de28cebafc70c6ba6e9ba81e1c"
+    }
+  ],
+  "upstreamFixedCommitVerified": false,
+  "upstreamNoticeStatus": "unknown; fixed source unavailable",
+  "distributionReviewPassed": false,
+  "fetchAttempts": [
+    {
+      "time": "2026-11-22T20:07:44.364521",
+      "fetches": [
+        {
+          "url": "https://api.github.com/repos/veddan/rust-htmlescape/tags",
+          "error": "HTTP Error 403: rate limit exceeded"
+        }
+      ]
+    },
+    {
+      "time": "2026-11-22T20:14:56.252514",
+      "entries": [
+        {
+          "url": "https://raw.githubusercontent.com/veddan/rust-htmlescape/0.3.1/Cargo.toml",
+          "error": "HTTP Error 404: Not Found"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/veddan/rust-htmlescape/v0.3.1/Cargo.toml",
+          "error": "HTTP Error 404: Not Found"
+        }
+      ],
+      "fixedCommitVerified": false
+    }
+  ]
+}

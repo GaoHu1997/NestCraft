@@ -15,6 +15,8 @@ import { OfficeViewer } from "@/modules/office/OfficeViewer";
 import { locateFile as officeLocateFile } from "@/modules/office/office-model";
 import { ensureOfficeProjectSample, OfficeArtifacts } from "@/modules/office";
 import { ProjectHome } from "./ProjectHome";
+import { Workbench, emptyAuxState } from "@/modules/workbench/Workbench";
+import type { AuxTarget, WorkbenchAuxState } from "@/modules/workbench/Workbench";
 import { RequirementsReading } from "./RequirementsReading";
 import { flattenRequirements, mergeRequirementSources, normalizedSource } from "./requirementSources";
 import { PaneToggle, ResizeHandle, usePaneWidth } from "@/components/pane-resize";
@@ -22,7 +24,7 @@ import { TabMoreDropdown, TabMoreIcon, useTabOverflow } from "@/components/tab-o
 import "./projects.css";
 import "@/modules/office/office.css";
 
-type Tab = "requirements" | "design" | "tasks" | "code";
+type Tab = "workbench" | "requirements" | "design" | "tasks" | "code";
 
 export function ProjectWorkspace(props: { projectId: string; tab: Tab; visible?: boolean }) {
   const { go, route, aiVisible, setAiVisible } = useApp();
@@ -31,6 +33,19 @@ export function ProjectWorkspace(props: { projectId: string; tab: Tab; visible?:
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>(props.tab);
   const [reqFocus, setReqFocus] = useState<string | null>(null);
+  /* UI-CR066 r2：从需求导图打开模型文档时，定位「设计 → 数据库」的对应文件。 */
+  const [designFocus, setDesignFocus] = useState<{ section: DesignSection; path: string } | null>(null);
+  /* CR-054：辅助栏状态按项目记忆（切页签后仍保留）。 */
+  const [auxByProject, setAuxByProject] = useState<Record<string, WorkbenchAuxState>>({});
+  const auxState = auxByProject[props.projectId] ?? emptyAuxState();
+  const setAuxState = useCallback((next: WorkbenchAuxState) => {
+    setAuxByProject(prev => ({ ...prev, [props.projectId]: next }));
+  }, [props.projectId]);
+  const openInTab = useCallback((target: AuxTarget) => {
+    if (target.kind === "requirement") { setReqFocus(target.key.replace(/^req:/, "")); changeTab("requirements"); return; }
+    if (target.kind === "office-file") { changeTab("code"); return; }
+    changeTab("code");
+  }, []);
   const active = props.visible !== false && route.page === "project" && route.projectId === props.projectId;
   useEffect(() => setTab(props.tab), [props.tab]);
 
@@ -44,9 +59,10 @@ export function ProjectWorkspace(props: { projectId: string; tab: Tab; visible?:
   useEffect(() => { void reload(); }, [reload]);
   const changeTab = (next: Tab) => { setTab(next); go({ page: "project", projectId: props.projectId, tab: next }); };
   // CR-052 / UI-TAB-001：项目页签溢出统一走共享「更多」下拉；右侧 AI 入口固定不受收缩影响。
+  /* CR-054：代码与办公两类项目都在最前加入「工作台」，纯图标、不显示文字。 */
   const pwTabList: [Tab, string][] = project?.kind === "code"
-    ? [["requirements", "需求"], ["design", "设计"], ["tasks", "任务"], ["code", "编码"]]
-    : [["code", "文档"], ["design", "成果"]];
+    ? [["workbench", "工作台"], ["requirements", "需求"], ["design", "设计"], ["tasks", "任务"], ["code", "编码"]]
+    : [["workbench", "工作台"], ["code", "文档"], ["design", "成果"]];
   const pwTabItems = pwTabList.map(([key, label]) => ({ key, label, active: tab === key }));
   const pwTabSig = pwTabItems.map(item => `${item.key}:${item.label}:${item.active ? 1 : 0}`).join("|");
   const pwTabsOverflow = useTabOverflow({ tabSelector: ".pw-tab", items: pwTabItems, deps: [pwTabSig] });
@@ -75,20 +91,32 @@ export function ProjectWorkspace(props: { projectId: string; tab: Tab; visible?:
     <div ref={pwTabsOverflow.barRef} className="pw-top" role="tablist" aria-label="项目页签">
       <div ref={pwTabsOverflow.hostRef} className="tab-overflow-host">
         {pwTabList.map(([key, label]) => (
-          <button key={key} className="pw-tab" role="tab" aria-selected={tab === key} onClick={() => changeTab(key as Tab)}>{label}</button>
+          key === "workbench"
+            ? <button key={key} className="pw-tab wb-tab-icon" role="tab" aria-selected={tab === key} aria-label={label} title={label} onClick={() => changeTab(key as Tab)}><Icon name="atDesk" size={18} /></button>
+            : <button key={key} className="pw-tab" role="tab" aria-selected={tab === key} onClick={() => changeTab(key as Tab)}>{label}</button>
         ))}
         <button {...pwTabsOverflow.moreProps}><TabMoreIcon /></button>
       </div>
       <span className="spacer" />
       <button className={`pw-ai-toggle ${aiVisible ? "on" : ""}`} aria-label="AI 侧栏" aria-pressed={aiVisible} title={aiVisible ? "收起 AI 侧栏" : "展开 AI 侧栏"} onClick={() => setAiVisible(!aiVisible)}>
-        <Icon name="panelRight" size={18} />
+        <Icon name="aiBot" size={18} />
       </button>
       {pwTabsOverflow.dropdownOpen && <TabMoreDropdown anchorRef={pwTabsOverflow.moreRef} items={pwTabItems} onPick={key => changeTab(key as Tab)} onClose={pwTabsOverflow.closeDropdown} />}
     </div>
     <div className="pw-body">
+      {/* CR-054：工作台。两类项目共用；hidden 保留挂载，切页签不卸载会话（不新建、不中断）。 */}
+      <section className="pw-pane" role="tabpanel" hidden={tab !== "workbench"}>
+        <Workbench
+          project={project}
+          active={active && tab === "workbench"}
+          aux={auxState}
+          onAuxChange={setAuxState}
+          onOpenInTab={openInTab}
+        />
+      </section>
       {project.kind === "code" ? <>
-        <section className="pw-pane" role="tabpanel" hidden={tab !== "requirements"}><RequirementsPane project={project} focusEntityId={reqFocus} onFocusDone={() => setReqFocus(null)} /></section>
-        <section className="pw-pane" role="tabpanel" hidden={tab !== "design"}><DesignPane project={project} /></section>
+        <section className="pw-pane" role="tabpanel" hidden={tab !== "requirements"}><RequirementsPane project={project} focusEntityId={reqFocus} onFocusDone={() => setReqFocus(null)} onOpenModel={model => { setDesignFocus({ section: "DB", path: model.absPath }); changeTab("design"); }} /></section>
+        <section className="pw-pane" role="tabpanel" hidden={tab !== "design"}><DesignPane project={project} focus={designFocus} /></section>
         <section className="pw-pane" role="tabpanel" hidden={tab !== "tasks"}><TasksPane project={project} onRequirements={() => changeTab("requirements")} /></section>
         <section className="pw-pane" role="tabpanel" hidden={tab !== "code"}><CodePane project={project} visible={active && tab === "code"} /></section>
       </> : <OfficeWorkspace project={project} tab={tab} active={active} onOpenFile={() => changeTab("code")} />}
@@ -116,7 +144,7 @@ function normalizePath(path: string) { return path.replace(/\\/g, "/").replace(/
 
 /* ============ 需求 ============ */
 
-function RequirementsPane(props: { project: api.Project; focusEntityId?: string | null; onFocusDone?: () => void }) {
+function RequirementsPane(props: { project: api.Project; focusEntityId?: string | null; onFocusDone?: () => void; onOpenModel?: (model: import("./requirementModels").DesignModel) => void }) {
   const { project } = props;
   const [tree, setTree] = useState<RequirementNode[]>([]);
   const [manifest, setManifest] = useState<api.RequirementSources | null>(null);
@@ -129,6 +157,8 @@ function RequirementsPane(props: { project: api.Project; focusEntityId?: string 
   const [createOpen, setCreateOpen] = useState(false);
   const [delTarget, setDelTarget] = useState<RequirementNode | null>(null);
   const [dispatchTarget, setDispatchTarget] = useState<RequirementNode | null>(null);
+  /* UI-CR066 r2：模型文档跳转到「设计 → 数据库」页签，定位到对应文件。 */
+  const [designTarget, setDesignTarget] = useState<{ section: "PRD" | "UI" | "LLD" | "DB"; path: string } | null>(null);
   const addChild = (parent: RequirementNode | null) => { setCreateParent(parent); setCreateOpen(true); };
   const reload = useCallback(async () => {
     const seq = ++request.current;
@@ -146,7 +176,7 @@ function RequirementsPane(props: { project: api.Project; focusEntityId?: string 
   const sources = useMemo(() => mergeRequirementSources(project.id, project.rootUri, tree, manifest), [project.id, project.rootUri, tree, manifest]);
   return <>
     <RequirementsReading key={JSON.stringify([project.id, project.rootUri])} project={project} sources={sources} loading={loading} errors={errors} warnings={manifest?.warnings ?? []} complete={manifest !== null} revision={revision}
-      focusEntityId={props.focusEntityId} onFocusDone={props.onFocusDone} onReload={() => void reload()} onNew={() => addChild(null)} onAddChild={addChild} onEdit={setEditTarget} onDelete={setDelTarget} onDispatch={setDispatchTarget} />
+      focusEntityId={props.focusEntityId} onFocusDone={props.onFocusDone} onReload={() => void reload()} onNew={() => addChild(null)} onAddChild={addChild} onEdit={setEditTarget} onDelete={setDelTarget} onDispatch={setDispatchTarget} onOpenModel={props.onOpenModel} />
     {editTarget && <DocEditModal project={project} node={editTarget} onClose={() => setEditTarget(null)} onSaved={() => { setEditTarget(null); void reload(); }} />}
     {createOpen && <CreateNodeModal project={project} parent={createParent} tree={tree} onClose={() => setCreateOpen(false)} onCreated={() => { setCreateOpen(false); void reload(); }} />}
     {delTarget && <DeleteNodeModal project={project} node={delTarget} onClose={() => setDelTarget(null)} onDeleted={() => { setDelTarget(null); void reload(); }} />}
@@ -389,7 +419,7 @@ const DESIGN_SECTIONS = [
 type DesignSection = typeof DESIGN_SECTIONS[number]["key"];
 interface DesignDraft { saved: string; text: string; editing: boolean }
 
-function DesignPane({ project }: { project: api.Project }) {
+function DesignPane({ project, focus }: { project: api.Project; focus?: { section: DesignSection; path: string } | null }) {
   const toast = useToast();
   const [section, setSection] = useState<DesignSection>("PRD");
   const [files, setFiles] = useState<api.FileNode[]>([]);
@@ -407,11 +437,17 @@ function DesignPane({ project }: { project: api.Project }) {
   const reload = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const tree = await api.fsListTree(project.rootUri, 32);
+      const tree = await api.fsListTree(project.rootUri, 20);
       setFiles(tree.filter(f => !f.isDir && projectRelativePath(project.rootUri, f.path).startsWith("docs/")).sort((a, b) => a.path.localeCompare(b.path)));
     } catch (e) { setError(String(e)); } finally { setLoading(false); }
   }, [project.rootUri]);
   useEffect(() => { void reload(); }, [reload]);
+  /* UI-CR066 r2：从导图打开模型文档时切到对应分区并定位文件。 */
+  useEffect(() => {
+    if (!focus) return;
+    setSection(focus.section);
+    setCurrentBySection(previous => ({ ...previous, [focus.section]: focus.path }));
+  }, [focus]);
   const shown = useMemo(() => files.filter(f => projectRelativePath(project.rootUri, f.path).toLowerCase().startsWith(`docs/${section.toLowerCase()}/`)), [files, project.rootUri, section]);
   const current = currentBySection[section] && shown.some(f => f.path === currentBySection[section]) ? currentBySection[section]! : shown[0]?.path ?? null;
   const draft = current ? drafts[current] : null;

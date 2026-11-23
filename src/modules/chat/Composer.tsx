@@ -21,6 +21,9 @@ export function Composer(props: {
   office?: boolean;
   officeFiles?: OfficeFileRef[];
   sessions: SessionMeta[];
+  /** CR-063：会话候选按作用域查询；不传时退回已加载列表过滤。 */
+  serverId?: string;
+  onSessionSearch?: (q: string) => Promise<SessionMeta[]>;
   value: string;
   streaming: boolean;
   disabled?: boolean;
@@ -110,7 +113,7 @@ export function Composer(props: {
         <Unavailable name="下载日志" reason="ZIP 导出引擎尚未提供" />
       </>}
     </div></div>}
-    {(overlay.activeOverlay === "@" || overlay.activeOverlay === "/") && <ReferencePopover trigger={overlay.activeOverlay} query={query} rootUri={props.rootUri} projectId={props.projectId} office={props.office} officeFiles={props.officeFiles} sessions={props.sessions} onPick={pick} />}
+    {(overlay.activeOverlay === "@" || overlay.activeOverlay === "/") && <ReferencePopover trigger={overlay.activeOverlay} query={query} rootUri={props.rootUri} projectId={props.projectId} serverId={props.serverId} office={props.office} officeFiles={props.officeFiles} sessions={props.sessions} onSessionSearch={props.onSessionSearch} onPick={pick} />}
     <div className="chat-composer">
       {(state.refs.length > 0 || state.atts.length > 0) && <div className="chat-chips">
         {state.refs.map(r => <span className="chat-chip" key={`${r.kind}-${r.objectId}-${r.libraryId ?? ""}`}><span className="ellipsis">{r.display}</span><button className="chat-chip-x" aria-label={`移除引用 ${r.display}`} onClick={() => updateExtras({ ...state, refs: state.refs.filter(x => x !== r) })}><Icon name="x" size={12} /></button></span>)}
@@ -139,6 +142,8 @@ function ReferencePopover(props: {
   office?: boolean;
   officeFiles?: OfficeFileRef[];
   sessions: SessionMeta[];
+  serverId?: string;
+  onSessionSearch?: (q: string) => Promise<SessionMeta[]>;
   onPick: (ref: ContextRef, token?: string) => void;
 }) {
   const [q, setQ] = useState(props.query);
@@ -176,9 +181,28 @@ function ReferencePopover(props: {
     void load(); return () => { alive = false; };
   }, [props.trigger, props.projectId, props.rootUri, props.office]);
   const match = (text: string) => text.toLowerCase().includes(q.toLowerCase());
+  // CR-063：会话候选按关键词向后端查询，未加载的老会话也能被引用；查询失败退回本地列表。
+  const [sessionHits, setSessionHits] = useState<SessionMeta[] | null>(null);
+  const [sessionBusy, setSessionBusy] = useState(false);
+  const searchRef = useRef(props.onSessionSearch);
+  searchRef.current = props.onSessionSearch;
+  useEffect(() => {
+    const search = searchRef.current;
+    if (props.trigger !== "@" || !search) return;
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      setSessionBusy(true);
+      search(q.trim())
+        .then(rows => { if (alive) setSessionHits(rows); })
+        .catch(() => { if (alive) setSessionHits(null); })
+        .finally(() => { if (alive) setSessionBusy(false); });
+    }, 250);
+    return () => { alive = false; window.clearTimeout(timer); };
+  }, [q, props.trigger]);
   const officeRows = (props.officeFiles ?? []).filter(f => match(`${f.path} ${f.name}`));
   const fileRows = files.filter(f => match(f.path));
-  const sessionRows = props.sessions.filter(s => props.projectId ? s.projectId === props.projectId : !s.projectId && !s.serverId).filter(s => match(s.title));
+  const localSessionRows = props.sessions.filter(s => props.projectId ? s.projectId === props.projectId : !s.projectId && !s.serverId).filter(s => match(s.title));
+  const sessionRows = props.onSessionSearch && sessionHits !== null ? sessionHits : localSessionRows;
   return <div className="chat-refpop" data-chat-overlay={props.trigger} role="dialog" aria-label={props.trigger === "@" ? "引用浮层" : "能力与指令"}>
     <div className="chat-refpop-head"><span>{props.trigger}</span><input autoFocus aria-label="筛选引用或能力" value={q} placeholder={props.trigger === "@" ? "筛选项目文件、对话、已授权知识" : "筛选 Skill / MCP / Tool"} onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === "ArrowDown") { const first = e.currentTarget.closest(".chat-refpop")?.querySelector<HTMLButtonElement>("button.chat-ref-row"); if (first) { e.preventDefault(); first.focus(); } } }} /></div>
     <div className="chat-refpop-body" onKeyDown={e => { if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return; const target = e.target as HTMLElement; const current = target.closest<HTMLButtonElement>("button.chat-ref-row"); if (!current) return; const buttons = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>("button.chat-ref-row")); const index = buttons.indexOf(current); if (index < 0) return; const next = buttons[(index + (e.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length]; if (next) { e.preventDefault(); next.focus(); } }}>{loading && <div className="chat-menu-hint">加载中…</div>}{error && <div className="chat-menu-hint">加载失败：{error}</div>}
@@ -187,7 +211,8 @@ function ReferencePopover(props: {
         {props.office ? officeRows.map(f => <button className="chat-ref-row" key={f.id} onClick={() => props.onPick({ kind: "file", objectId: `office:${f.id}`, display: f.path })}><span className="name">{f.name}</span><span className="sub">{f.path}</span></button>) : fileRows.map(f => <button className="chat-ref-row" key={f.path} onClick={() => props.onPick({ kind: "file", objectId: f.path, display: f.path })}><span className="name">{f.name}</span><span className="sub">{f.path}</span></button>)}
         {!loading && !(props.office ? officeRows : fileRows).length && <div className="chat-menu-hint">暂无匹配项目文件</div>}
         <div className="chat-ref-group-title">当前项目会话</div>{sessionRows.map(s => <button className="chat-ref-row" key={s.id} onClick={() => props.onPick({ kind: "session", objectId: s.id, display: s.title })}><span className="name">{s.title}</span><span className="sub">引用仅本项目会话正文</span></button>)}
-        {!sessionRows.length && <div className="chat-menu-hint">暂无匹配会话</div>}
+        {props.trigger === "@" && sessionBusy && <div className="chat-menu-hint">搜索会话中…</div>}
+        {!sessionRows.length && !sessionBusy && <div className="chat-menu-hint">暂无匹配会话</div>}
         <div className="chat-ref-group-title">已授权知识</div>{notes.filter(n => match(`${n.note.title} ${n.lib.name} ${n.note.relativeUri}`)).map(({ lib, note }) => <button className="chat-ref-row" key={`${lib.id}:${note.noteId}`} onClick={() => props.onPick({ kind: "knowledge", objectId: note.noteId, display: note.title, libraryId: lib.id })}><span className="name">{note.title}</span><span className="sub">{lib.name} · {note.relativeUri}</span></button>)}
         {!loading && !libs.length && <div className="chat-menu-hint">{props.projectId ? "当前项目无已授权知识库" : "未绑定项目身份，知识访问不可用"}</div>}
       </> : <>

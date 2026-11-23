@@ -113,6 +113,41 @@ pub struct CommitFileEntry {
     pub deletions: Option<i64>,
 }
 
+// ---------- Git 侧栏配置（CR-067） ----------
+
+/// 一个远程（名称 + fetch 地址）。
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteEntry {
+    pub name: String,
+    pub url: String,
+}
+
+/// 国内加速配置：开关 + 镜像前缀（前缀以 `/` 结尾，与 github.com 地址拼接）。
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AccelConfig {
+    pub enabled: bool,
+    pub url: String,
+}
+
+/// 密钥列表项：只含元信息，**不含令牌**。前端据此渲染主机与掩码。
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialHostEntry {
+    pub host: String,
+    pub username: String,
+    pub saved_at: String,
+}
+
+/// 受管密钥文件中的 Git 令牌记录（仅后端使用，不序列化给前端）。
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct StoredGitCredential {
+    pub username: String,
+    pub token: String,
+    pub saved_at: String,
+}
+
 // ---------- 模型供应商（CR-012 语义） ----------
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -136,6 +171,18 @@ pub struct ProviderKey {
     pub alias: Option<String>,
     pub masked: String,
     pub enabled: bool,
+    /// CR-059：该密钥请求使用的协议（'' 沿用供应商默认；Chat/Responses → OpenAI 端点，Anthropic → Anthropic 端点）。
+    #[serde(default)]
+    pub protocol: String,
+    /// CR-059：该密钥可用的模型（空 = 全部，后续新增自动覆盖）。
+    #[serde(default)]
+    pub models: Vec<String>,
+    /// CR-059：范围来源（auto / manual / None）。
+    #[serde(default)]
+    pub scope_source: Option<String>,
+    /// CR-059：最近一次探测完成的毫秒时间戳。
+    #[serde(default)]
+    pub probed_at: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -164,6 +211,9 @@ pub struct ModelConfig {
     pub default_effort: Option<String>,
     pub context_window: Option<i64>,
     pub max_tokens: Option<i64>,
+    /// CR-059：模型在该供应商内的展示与候选顺序。
+    #[serde(default)]
+    pub sort_order: i64,
 }
 
 /// 会话可选择的模型候选（过滤规则见 LLD-FEAT-002 §模型候选）
@@ -296,9 +346,31 @@ pub struct SessionMeta {
     /// CR-037：原生绑定派生视图；执行会话与无绑定普通会话为 None。不含原引用。
     #[serde(default)]
     pub binding: Option<SessionBindingView>,
+    /// CR-065：置顶时刻（毫秒）；0 表示未置顶。
+    #[serde(default)]
+    pub pinned_at: i64,
 }
 
 fn ordinary_session_role() -> String { "ordinary".into() }
+
+/// CR-063/CR-065：会话历史分页游标，与 ORDER BY pinnedAt DESC, updatedAt DESC, id DESC 对应。
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionCursor {
+    pub pinned_at: i64,
+    pub updated_at: i64,
+    pub id: String,
+}
+
+/// CR-063：会话历史分页结果；total 为同作用域 + 同关键词的匹配总数。
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionPage {
+    pub items: Vec<SessionMeta>,
+    pub total: i64,
+    pub has_more: bool,
+    pub next_cursor: Option<SessionCursor>,
+}
 
 /// CR-037：侧栏原生绑定派生视图（不含原引用，只有脱敏指纹与状态）。
 /// state: native（已绑定原线程）| fresh（已确认重建）| freshPending（待确认）| blocked（不可续接）。

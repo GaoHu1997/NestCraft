@@ -1,91 +1,350 @@
-/* Git 管理面板（CR-006 / CR-014 AC-06）：三段纵向布局 2:1:2，段间细分隔线。 */
+/* Git 管理面板（CR-067 / UI-CR067-v1）：
+   顶栏（仓库药丸 + 国内加速 / 密钥配置 / 刷新）+ 三张卡片（2:1:2）。
+   参考图为宽面板；本侧栏默认 260px，窄宽下按注释处规则换行，不压缩正文。
+   滚动条遵守 UI-SCROLL-001：只在滚动时显示，由共享滚动处理驱动，此处不禁用。 */
 
-.gitp { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--paper); overflow: auto; }
+.gita {
+  display: flex; flex-direction: column; height: 100%; min-height: 0; flex: 1 1 auto;
+  background: var(--bg);
+}
 
-.gitp-sec { display: flex; flex-direction: column; min-height: 0; flex: 0 0 auto; }
-.gitp-sec.g1, .gitp-sec.g2 { min-height: 0; }
-.gitp-sec .gitp-body { flex: 0 0 auto; overflow: visible; }
-.gitp-sync-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 8px; }
-.gitp-stage-check { width: 14px; height: 14px; flex: 0 0 14px; accent-color: var(--accent); cursor: pointer; }
-.gitp-sec + .gitp-sec { border-top: 1px solid var(--line-soft); }
+/* ---------- 顶栏 ---------- */
 
-/* ---------- 段头 / 滚动体 ---------- */
+.gita-top {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px 6px;
+  flex: 0 0 auto; position: relative; flex-wrap: wrap; row-gap: 6px;
+}
+.gita-repo {
+  display: inline-flex; align-items: center; min-width: 0; flex: 1 1 auto; max-width: 100%;
+  font-size: 12px; line-height: 1.4; color: var(--ink-2);
+  border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; background: var(--paper);
+}
+.gita-repo span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gita-top-acts {
+  margin-left: auto; display: flex; align-items: center; gap: 4px;
+  flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end;
+}
+.gita-top-btn {
+  display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; cursor: pointer;
+  font: inherit; font-size: 12px; line-height: 1.4; color: var(--ink-2); padding: 4px 7px; border-radius: 7px;
+}
+.gita-top-btn:hover { background: var(--surface-3); color: var(--ink); }
+.gita-top-btn[aria-expanded="true"] { background: var(--surface-3); color: var(--ink); }
+.gita-accel-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); flex: 0 0 auto; }
+.gita-refresh {
+  display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+  border: 0; border-radius: 7px; background: none; color: var(--ink-2); cursor: pointer;
+}
+.gita-refresh:hover:not([disabled]) { background: var(--surface-3); color: var(--ink); }
+.gita-refresh[disabled] { opacity: .45; cursor: default; }
 
-.gitp-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; flex: 0 0 auto; min-height: 38px; }
-.gitp-head h3 { font-size: 12px; }
-.gitp-repo { display: none; }
-.gitp-head-sync { display: inline-flex; gap: 6px; flex: 0 0 auto; }
-.gitp-head .btn.icon { width: 26px; min-height: 26px; }
+/* ---------- 卡片列 ---------- */
 
-.gitp-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
-.gitp-note { padding: 8px 12px; }
+.gita-scroll {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  padding: 0 10px 10px; display: flex; flex-direction: column; gap: 8px;
+}
+.gita-card {
+  display: flex; flex-direction: column; flex: 1 1 0; min-height: 0;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--paper);
+}
+/* 2:1:2；侧栏太矮时按最小高度保底并由 .gita-scroll 整体滚动。 */
+.gita-card.changes { flex-grow: 2; min-height: 320px; }
+.gita-card.branches { flex-grow: 1; min-height: 168px; }
+.gita-card.history { flex-grow: 2; min-height: 296px; }
 
-/* ---------- 未提交段：分组与行 ---------- */
+.gita-head {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px; flex: 0 0 auto;
+  border-bottom: 1px solid var(--line-soft); flex-wrap: wrap; row-gap: 6px;
+}
+.gita-title { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink); white-space: nowrap; flex: 0 0 auto; }
+.gita-count {
+  font-size: 10px; line-height: 1; border-radius: 999px; padding: 3px 7px;
+  background: var(--surface-3); color: var(--muted); font-variant-numeric: tabular-nums;
+  white-space: nowrap; flex: 0 0 auto;
+}
+.gita-tools {
+  margin-left: auto; display: flex; align-items: center; gap: 4px;
+  flex-wrap: wrap; justify-content: flex-end;
+}
 
-.gitp-group-head { display: flex; align-items: center; gap: 6px; padding: 6px 12px 2px; color: var(--muted); font-size: 12px; font-weight: 600; user-select: none; }
-.gitp-group-head .n { color: var(--neutral-dot); font-weight: 400; }
-.gitp-change-row { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 0 10px 0 12px; font-size: 13px; }
-.gitp-change-row:hover { background: var(--hover-bg); }
+.gita-body { padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; flex: 1 1 auto; min-height: 0; }
+.gita-body.scroll { overflow-y: auto; overscroll-behavior: contain; }
 
-.gitp-st { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 4px; border-radius: 4px; font: 600 11px/1 Consolas, "Cascadia Mono", monospace; background: var(--tag-bg); color: var(--tag-ink); flex: 0 0 auto; }
-.gitp-st[data-st="A"] { background: var(--diff-add-bg); color: var(--diff-add-ink); }
-.gitp-st[data-st="M"] { background: var(--blue-bg); color: var(--blue-ink); }
-.gitp-st[data-st="D"] { background: var(--diff-del-bg); color: var(--diff-del-ink); }
-.gitp-st[data-st="R"], .gitp-st[data-st="C"] { background: var(--purple-bg); color: var(--purple); }
-.gitp-st[data-st="U"], .gitp-st[data-st="T"] { background: var(--warn-bg); color: var(--warn-deep); }
+/* ---------- 按钮 ---------- */
 
-.gitp-path { flex: 1 1 auto; min-width: 0; font-size: 12px; }
-.gitp-acts { display: inline-flex; gap: 6px; flex: 0 0 auto; }
-.gitp-acts .btn { min-height: 22px; padding: 0 8px; font-size: 12px; }
-.gitp-acts .gitp-discard { display: none; color: var(--danger); }
-.gitp-change-row:hover .gitp-discard { display: inline-flex; }
+.gita-act {
+  display: inline-flex; align-items: center; gap: 5px; font: inherit; font-size: 12px; line-height: 1.4;
+  cursor: pointer; background: var(--paper); color: var(--ink); border: 1px solid var(--line-strong);
+  border-radius: 7px; padding: 4px 9px; white-space: nowrap;
+}
+.gita-act:hover:not([disabled]) { border-color: var(--primary); color: var(--primary-strong); }
+.gita-act[disabled] { opacity: .45; cursor: default; }
+.gita-act.primary { background: var(--primary); border-color: transparent; color: #fff; }
+.gita-act.primary:hover:not([disabled]) { background: var(--primary-strong); border-color: transparent; color: #fff; }
 
-/* ---------- diff 预览 ---------- */
+.gita-link {
+  background: none; border: 0; padding: 2px 5px; font: inherit; font-size: 11.5px; line-height: 1.4;
+  color: var(--ink-2); cursor: pointer; border-radius: 5px; white-space: nowrap;
+}
+.gita-link:hover:not([disabled]) { background: var(--surface-3); color: var(--primary-strong); }
+.gita-link[disabled] { opacity: .5; cursor: default; }
+.gita-link.accent { color: var(--primary-strong); }
 
-.gitp-diff { margin: 2px 10px 8px 40px; }
-.gitp-diff-note { padding: 6px 10px; background: var(--pre-bg); border: 1px dashed var(--line); border-radius: 6px; }
-.gitp-pre { margin: 0; padding: 6px 8px; background: var(--pre-bg); border: 1px solid var(--line-soft); border-radius: 6px; font: 12px/1.55 Consolas, "Cascadia Mono", "JetBrains Mono", monospace; overflow: auto; max-height: 240px; user-select: text; }
-.gitp-dl { display: block; white-space: pre; }
-.gitp-dl.add { background: var(--diff-add-bg); color: var(--diff-add-ink); }
-.gitp-dl.del { background: var(--diff-del-bg); color: var(--diff-del-ink); }
-.gitp-dl.hunk { color: var(--blue-ink); }
-.gitp-dl.meta { color: var(--muted); }
+/* ---------- 未提交变更 ---------- */
 
-/* ---------- 段底固定提交区 ---------- */
+.gita-changes {
+  display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; overscroll-behavior: contain;
+}
+.gita-group-h { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); font-weight: 600; }
+.gita-group-h .n { color: var(--muted); font-weight: 400; }
+.gita-group-h .gita-link { margin-left: auto; }
 
-.gitp-commit { flex: 0 0 auto; border-top: 1px solid var(--line-soft); background: var(--panel-2); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
-.gitp-commit .textarea { min-height: 52px; resize: none; font-size: 13px; }
+.gita-change { display: flex; flex-direction: column; }
+.gita-row {
+  display: grid; grid-template-columns: 14px 16px minmax(0, 1fr) auto; gap: 7px; align-items: center;
+  padding: 3px 5px; border-radius: 6px; font-size: 12px; color: var(--ink);
+}
+.gita-row:hover { background: var(--surface-2); }
+.gita-row-check { width: 14px; height: 14px; margin: 0; accent-color: var(--primary); cursor: pointer; }
+.gita-st {
+  width: 16px; height: 16px; border-radius: 4px; font-size: 10px; line-height: 1; font-weight: 700;
+  color: #fff; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box;
+  flex: 0 0 auto;
+}
+.gita-st.M { background: var(--warning); }
+.gita-st.A { background: var(--success); }
+.gita-st.D { background: var(--danger); }
+.gita-st.R, .gita-st.C { background: var(--violet); }
+.gita-st.T { background: #5b7a9d; }
+.gita-st.Q { background: var(--muted-2); }
+.gita-st.U { background: #d5502e; }
+.gita-path {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono);
+  font-size: 11.5px; color: var(--ink-2); background: none; border: 0; padding: 0; text-align: left;
+  cursor: pointer; min-width: 0;
+}
+.gita-path:hover { color: var(--primary-strong); text-decoration: underline; }
+.gita-hint { color: var(--muted-2); font-size: 11px; flex: none; font-family: var(--mono); }
 
-/* ---------- 分支段 ---------- */
+.gita-diff { margin: 2px 4px 6px 26px; }
+.gita-pre {
+  margin: 0; padding: 6px 8px; background: var(--pre-bg); border: 1px solid var(--line-soft);
+  border-radius: 6px; font: 12px/1.55 var(--mono); overflow: auto; max-height: 220px; user-select: text;
+}
+.gita-dl { display: block; white-space: pre; }
+.gita-dl.add { background: var(--diff-add-bg); color: var(--diff-add-ink); }
+.gita-dl.del { background: var(--diff-del-bg); color: var(--diff-del-ink); }
+.gita-dl.hunk { color: var(--blue-ink); }
+.gita-dl.meta { color: var(--muted); }
 
-.gitp-searchrow { padding: 0 10px 6px; flex: 0 0 auto; }
-.gitp-searchrow .input { min-height: 28px; font-size: 12px; }
-.gitp-banner { margin: 0 10px 6px; padding: 5px 10px; border-radius: 6px; font-size: 12px; background: var(--warn-bg); color: var(--warn-deep); border: 1px solid var(--warn-line); }
-.gitp-branch-row { display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 0 10px 0 12px; font-size: 13px; }
-.gitp-branch-row:hover { background: var(--hover-bg); }
-.gitp-branch-row.current { background: var(--soft); color: var(--blue-ink); font-weight: 600; box-shadow: inset 2px 0 0 var(--accent); }
-.gitp-branch-row .name { flex: 0 1 auto; min-width: 0; }
-.gitp-branch-row .up { color: var(--muted); font-size: 12px; font-weight: 400; }
-.gitp-chevron { width: 14px; color: var(--muted); font-size: 10px; text-align: center; flex: 0 0 auto; user-select: none; }
-.gitp-newbranch { display: flex; align-items: center; gap: 6px; padding: 4px 10px 8px; flex-wrap: wrap; }
-.gitp-newbranch .input { min-height: 28px; flex: 1 1 120px; font-size: 12px; }
-.gitp-fielderr { color: var(--danger); font-size: 12px; width: 100%; padding-left: 2px; }
+/* ---------- 提交区 ---------- */
 
-/* ---------- 历史段 ---------- */
+.gita-commit { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; flex: none; }
+.gita-commit-input {
+  width: 100%; box-sizing: border-box; resize: vertical; min-height: 46px;
+  font: inherit; font-size: 12.5px; line-height: 1.5; border: 1px solid var(--line-strong);
+  border-radius: 8px; padding: 6px 9px; background: var(--paper); color: var(--ink); outline: none;
+}
+.gita-commit-input:focus { border-color: var(--primary); box-shadow: var(--ring); }
+.gita-commit-acts { display: flex; align-items: center; gap: 7px; }
+.gita-commit-hint { color: var(--muted); font-size: 11px; min-height: 15px; }
 
-.gitp-log { padding: 5px 10px; }
-.gitp-log:hover { background: var(--hover-bg); }
-.gitp-subject { flex: 0 1 auto; min-width: 0; font-size: 13px; font-weight: 500; }
-.gitp-refs { display: inline-flex; gap: 4px; flex: 0 0 auto; overflow: hidden; }
-.gitp-ref { padding: 0 6px; border-radius: 4px; font-size: 11px; line-height: 18px; white-space: nowrap; }
-.gitp-ref.blue { background: var(--blue-bg); color: var(--blue-ink); }
-.gitp-ref.violet { background: var(--purple-bg); color: var(--purple); }
-.gitp-log-meta { gap: 10px; font-size: 12px; margin-top: 1px; }
-.gitp-log-meta .hash { font-family: Consolas, "Cascadia Mono", monospace; }
-.gitp-files { margin: 2px 10px 8px 20px; padding: 4px 8px; background: var(--pre-bg); border: 1px solid var(--line-soft); border-radius: 6px; font-size: 12px; }
-.gitp-file-row { display: flex; align-items: center; gap: 8px; min-height: 24px; }
-.gitp-file-path { flex: 1 1 auto; min-width: 0; }
-.gitp-num { flex: 0 0 auto; white-space: nowrap; }
-.gitp-num .add { color: var(--diff-add-ink); }
-.gitp-num .del { color: var(--diff-del-ink); }
-.gitp-more { padding: 6px 12px; text-align: center; }
+.gita-split { margin-left: auto; display: flex; position: relative; }
+.gita-split .gita-act.primary:first-child { border-radius: 7px 0 0 7px; padding: 5px 14px; font-size: 12.5px; }
+.gita-split .gita-act.primary.caret { border-radius: 0 7px 7px 0; margin-left: 1px; padding: 5px 7px; }
+.gita-menu {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 40; min-width: 128px;
+  background: var(--paper); border: 1px solid var(--line-strong); border-radius: 8px;
+  box-shadow: var(--shadow-pop); padding: 3px; display: flex; flex-direction: column;
+}
+.gita-menu-item {
+  display: block; width: 100%; text-align: left; background: none; border: 0; color: var(--ink);
+  font: inherit; font-size: 12px; line-height: 1.4; padding: 5px 9px; border-radius: 5px;
+  cursor: pointer; white-space: nowrap;
+}
+.gita-menu-item:hover:not([disabled]) { background: var(--surface-3); }
+
+/* ---------- 分支 ---------- */
+
+.gita-search {
+  display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 8px;
+  flex: 1 1 96px; min-width: 96px; max-width: 300px;
+  border: 1px solid var(--line-strong); border-radius: 7px; background: var(--paper); color: var(--muted);
+}
+.gita-search input {
+  flex: 1; min-width: 0; border: 0; background: none; outline: none; font: inherit;
+  font-size: 12px; color: var(--ink);
+}
+.gita-search input::placeholder { color: var(--muted-2); }
+
+.gita-tree-h {
+  display: flex; align-items: center; gap: 6px; padding: 4px 5px; border-radius: 6px; cursor: pointer;
+  font-size: 12px; font-weight: 600; color: var(--ink-2); user-select: none;
+}
+.gita-tree-h:hover { background: var(--surface-2); color: var(--ink); }
+.gita-tree-h.nest { font-weight: 400; }
+.gita-tree-h .n { color: var(--muted); font-weight: 400; }
+.gita-tree-caret { display: inline-flex; color: var(--muted-2); }
+.gita-tree-kids { display: flex; flex-direction: column; margin-left: 12px; }
+
+.gita-branch {
+  display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 7px; align-items: center;
+  padding: 4px 7px; border-radius: 7px; font-size: 12.5px; color: var(--ink); cursor: pointer;
+}
+.gita-branch:hover { background: var(--surface-2); }
+.gita-branch-mark { display: inline-flex; align-items: center; justify-content: center; color: var(--muted-2); }
+.gita-branch.current { background: var(--primary-soft); box-shadow: inset 2px 0 0 var(--primary); }
+.gita-branch.current:hover { background: var(--primary-soft); }
+.gita-branch.current .gita-branch-name { color: var(--primary-strong); font-weight: 600; }
+.gita-branch.current .gita-branch-mark { color: var(--primary); }
+.gita-branch-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.gita-branch-track { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+.gita-newbranch { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 2px 0 6px; }
+.gita-input {
+  font: inherit; font-size: 12px; border: 1px solid var(--line-strong); border-radius: 7px;
+  padding: 5px 8px; background: var(--paper); color: var(--ink); outline: none; flex: 1 1 120px; min-width: 0;
+}
+.gita-input:focus { border-color: var(--primary); }
+.gita-banner {
+  margin: 0 0 4px; padding: 5px 9px; border-radius: 6px; font-size: 11.5px;
+  background: var(--warn-bg); color: var(--warn-deep); border: 1px solid var(--warn-line);
+}
+
+/* ---------- 提交历史 ---------- */
+
+.gita-history-head {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px; flex: 0 0 auto;
+  border-bottom: 1px solid var(--line-soft); flex-wrap: wrap; row-gap: 6px;
+}
+.gita-filters {
+  margin-left: auto; display: flex; align-items: center; gap: 5px;
+  flex-wrap: wrap; justify-content: flex-end; min-width: 0; flex: 1 1 auto;
+}
+.gita-filter-input, .gita-filter-select {
+  height: 25px; border: 1px solid var(--line-strong); border-radius: 7px;
+  background: var(--paper); color: var(--ink); font: inherit; font-size: 12px;
+  padding: 0 5px; outline: none; min-width: 0;
+}
+.gita-filter-input { flex: 1 1 88px; max-width: 140px; }
+.gita-filter-input::placeholder { color: var(--muted-2); }
+.gita-filter-select { flex: 1 1 88px; max-width: 124px; }
+.gita-filter-input:focus, .gita-filter-select:focus { border-color: var(--primary); }
+
+/* 窄侧栏下时间列落到主题下方（参考图为宽面板，时间在同一行右侧）。 */
+.gita-card.history { container-type: inline-size; }
+.gita-commit-row {
+  position: relative; display: grid; grid-template-columns: var(--graph-w, 22px) minmax(0, 1fr);
+  column-gap: 7px; align-items: start; padding: 0 6px 0 2px; border-radius: 7px; cursor: pointer;
+}
+.gita-commit-row:hover { background: var(--surface-2); }
+.gita-commit-row .gita-graph { grid-row: 1 / span 2; }
+.gita-commit-row .gita-commit-side { grid-column: 2; padding: 0 0 5px; }
+@container (min-width: 400px) {
+  .gita-commit-row { grid-template-columns: var(--graph-w, 22px) minmax(0, 1fr) auto; align-items: center; }
+  .gita-commit-row .gita-graph { grid-row: 1; }
+  .gita-commit-row .gita-commit-side { grid-column: 3; padding: 5px 0; }
+}
+.gita-graph { position: relative; align-self: stretch; min-height: 42px; }
+.gita-graph svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; overflow: visible; }
+.gita-dot {
+  position: absolute; top: 50%; width: 8px; height: 8px; box-sizing: border-box;
+  border: 2px solid currentColor; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none;
+}
+.gita-commit-main { padding: 5px 0; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.gita-commit-subject {
+  display: flex; align-items: center; gap: 5px; min-width: 0; font-size: 12.5px; color: var(--ink);
+  flex-wrap: wrap; row-gap: 3px;
+}
+.gita-commit-subject .txt {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 110px; min-width: 0;
+}
+.gita-refs { display: inline-flex; gap: 4px; flex-wrap: wrap; row-gap: 3px; min-width: 0; }
+.gita-ref {
+  font-size: 10px; line-height: 1; border-radius: 4px; padding: 3px 5px; font-weight: 500;
+  white-space: nowrap; max-width: 130px; overflow: hidden; text-overflow: ellipsis;
+  border: 1px solid var(--line-strong); background: var(--surface-3);
+}
+.gita-ref.head { color: var(--ink); }
+.gita-ref.tag { color: var(--warning); }
+.gita-ref.remote { color: var(--violet); }
+.gita-ref.local { color: var(--success); }
+.gita-commit-meta {
+  display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11.5px; min-width: 0;
+}
+.gita-commit-meta .author { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gita-commit-side {
+  padding: 5px 0; display: flex; align-items: center; gap: 7px; color: var(--muted);
+  font-size: 11.5px; flex: none;
+}
+.gita-commit-date { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.gita-files {
+  grid-column: 1 / -1; padding: 2px 4px 6px calc(var(--graph-w, 22px) + 7px);
+  display: flex; flex-direction: column; gap: 1px;
+}
+.gita-file-row {
+  display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 7px; align-items: center;
+  padding: 2px 5px; border-radius: 6px; font-size: 12px; color: var(--ink);
+}
+.gita-file-row:hover { background: var(--surface-2); }
+.gita-file-path {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono);
+  font-size: 11.5px; color: var(--ink-2);
+}
+.gita-file-nums { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; font-size: 11px; }
+.gita-more { padding: 5px 10px; text-align: center; color: var(--muted); font-size: 11.5px; margin: 0; }
+
+/* ---------- 弹层 ---------- */
+
+.gita-pop {
+  position: absolute; left: 8px; right: 8px; top: calc(100% - 2px); z-index: 60;
+  background: var(--paper); border: 1px solid var(--line-strong); border-radius: 10px;
+  box-shadow: var(--shadow-pop); padding: 10px;
+}
+.gita-pop-h { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; color: var(--ink); }
+.gita-pop-h b { font-size: 12.5px; }
+.gita-pop-note { font-size: 11.5px; line-height: 1.5; color: var(--muted); margin: 0 0 8px; }
+.gita-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
+.gita-field label { font-size: 12px; color: var(--ink-2); }
+.gita-field input {
+  font: inherit; font-size: 12.5px; border: 1px solid var(--line-strong); border-radius: 8px;
+  padding: 5px 8px; background: var(--paper); color: var(--ink); outline: none; min-width: 0;
+}
+.gita-field input:focus { border-color: var(--primary); }
+.gita-err { color: var(--danger); font-size: 11.5px; min-height: 14px; }
+.gita-pop-f { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+.gita-switch-row { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink-2); margin-bottom: 6px; }
+.gita-switch {
+  position: relative; width: 32px; height: 18px; border-radius: 999px; border: 0; padding: 0;
+  background: var(--line-strong); cursor: pointer; flex: 0 0 auto; transition: background .16s var(--ease);
+}
+.gita-switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.2); transition: transform .16s var(--ease);
+}
+.gita-switch.on { background: var(--primary); }
+.gita-switch.on::after { transform: translateX(14px); }
+
+.gita-cred-row {
+  display: grid; grid-template-columns: 14px minmax(0, 1fr) auto auto; gap: 7px; align-items: center;
+  padding: 4px 5px; border-radius: 6px; font-size: 12px; color: var(--ink);
+}
+.gita-cred-row:hover { background: var(--surface-2); }
+.gita-cred-host { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11.5px; }
+.gita-cred-mask { color: var(--muted-2); font-family: var(--mono); font-size: 11px; }
+.gita-remote-list { margin-top: 6px; border-top: 1px solid var(--line-soft); padding-top: 6px; }
+
+/* ---------- 空态 ---------- */
+
+.gita-note { margin: 0; padding: 6px 2px; color: var(--muted); font-size: 12px; }
+.gita-empty { margin: 0; padding: 8px 2px; color: var(--muted); font-size: 12px; }
+
+@media (max-width: 720px) {
+  .gita-scroll { padding: 0 6px 8px; }
+  .gita-top { padding: 6px 6px 4px; }
+  .gita-head, .gita-history-head { padding: 6px 7px; }
+  .gita-body { padding: 6px 7px; }
+}

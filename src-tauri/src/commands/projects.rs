@@ -145,7 +145,8 @@ fn accessible_project_directory(root_uri: &str) -> Result<PathBuf, String> {
     Ok(canonical)
 }
 
-fn update_project_inner(
+/// CR-059：pub(crate) 供内置 AI 工具复用同一套更新校验（与 UI 命令语义一致）。
+pub(crate) fn update_project_inner(
     conn: &rusqlite::Connection,
     id: &str,
     name: &str,
@@ -215,7 +216,8 @@ fn project_root(root_uri: &str) -> Result<PathBuf, String> {
 }
 
 /// 解析一个 Markdown 文件的 front matter（简化 YAML：key: value 逐行）。
-fn parse_front_matter(text: &str) -> std::collections::BTreeMap<String, String> {
+/// CR-059：内置 AI 工具的需求文档写入器复用同一解析口径。
+pub(crate) fn parse_front_matter(text: &str) -> std::collections::BTreeMap<String, String> {
     let mut map = std::collections::BTreeMap::new();
     if let Some(rest) = text.strip_prefix("---\n").or_else(|| text.strip_prefix("---\r\n")) {
         for line in rest.lines() {

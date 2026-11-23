@@ -32,6 +32,11 @@ ureq = { version = "2", features = ["json"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 sha2 = "0.10"
 async-trait = "0.1"
+tantivy = "=0.26.0"
+
+[dev-dependencies]
+# Existing transitive log package; only explicit measurement diagnostics use this API.
+log = "0.4"
 
 [profile.dev]
 incremental = true

@@ -50,10 +50,15 @@ export function StatsBar(props: { data: StatsData }) {
   const ctxPct =
     props.data.contextUsed != null && props.data.contextLimit ? Math.min(100, Math.round((props.data.contextUsed / props.data.contextLimit) * 100)) : null;
   const tps = props.data.tps;
+  // CR-065：无数据的统计项不显示；三项都无数据时隐藏内容但**保留占位高度**，避免输入区位移。
+  const showSession = props.data.rounds > 0 || props.data.msgs > 0;
+  const showTokens = total != null && total > 0;
+  const showContext = ctxPct != null;
+  const empty = !showSession && !showTokens && !showContext;
 
   return (
-    <div className="chat-stats">
-      <span className="chat-stat-wrap">
+    <div className={`chat-stats${empty ? " is-empty" : ""}`} aria-hidden={empty || undefined}>
+      <span className="chat-stat-wrap" style={showSession ? undefined : { display: "none" }}>
         <button
           className={`chat-stat-btn ${open === "session" ? "on" : ""}`}
           aria-label="会话统计"
@@ -61,7 +66,7 @@ export function StatsBar(props: { data: StatsData }) {
           title="会话统计"
           data-chat-overlay-trigger="session" onClick={e => toggle("session", e.currentTarget)}
         >
-          <Icon name="refresh" size={13} aria-hidden />
+          <Icon name="sessionStats" size={14} aria-hidden />
           {props.data.rounds} 轮{tps != null ? ` · ${tps} tok/s` : ""}
         </button>
         {open === "session" && (
@@ -82,7 +87,7 @@ export function StatsBar(props: { data: StatsData }) {
         )}
       </span>
 
-      <span className="chat-stat-wrap">
+      <span className="chat-stat-wrap" style={showTokens ? undefined : { display: "none" }}>
         <button
           className={`chat-stat-btn ${open === "tokens" ? "on" : ""}`}
           aria-label="Token 用量"
@@ -90,7 +95,7 @@ export function StatsBar(props: { data: StatsData }) {
           title="Token 用量"
           data-chat-overlay-trigger="tokens" onClick={e => toggle("tokens", e.currentTarget)}
         >
-          <Icon name="database" size={13} aria-hidden />
+          <Icon name="tokenUsage" size={14} aria-hidden />
           {total != null ? fmtTok(total) : "—"} tok
         </button>
         {open === "tokens" && (
@@ -110,7 +115,7 @@ export function StatsBar(props: { data: StatsData }) {
         )}
       </span>
 
-      <span className="chat-stat-wrap">
+      <span className="chat-stat-wrap" style={showContext ? undefined : { display: "none" }}>
         <button
           className={`chat-stat-btn ${open === "context" ? "on" : ""}`}
           aria-label="上下文用量"
@@ -118,7 +123,7 @@ export function StatsBar(props: { data: StatsData }) {
           title="上下文用量"
           data-chat-overlay-trigger="context" onClick={e => toggle("context", e.currentTarget)}
         >
-          <Icon name="cpu" size={13} aria-hidden />
+          <Icon name="contextUsage" size={14} aria-hidden />
           上下文 {ctxPct != null ? `${ctxPct}%` : props.data.contextUsed != null ? fmtTok(props.data.contextUsed) : "未知"}
         </button>
         {open === "context" && (

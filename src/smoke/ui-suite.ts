@@ -136,6 +136,47 @@ export async function runUiSuite(): Promise<void> {
     return `表单渲染 ${inputs.length} 个输入框，已填入名称`;
   });
 
+  await ui("设置中心", "模型检测页签渲染 9 针区块与历史入口（CR-058）", async () => {
+    const nav = q('[aria-label="设置分类"]') as HTMLElement;
+    const probeTab = byText("模型检测", nav);
+    if (!probeTab) throw new Error("设置左栏缺「模型检测」页签");
+    click(probeTab, "模型检测页签");
+    await sleep(400);
+    const pane = q('[aria-label="设置中心"]') as HTMLElement;
+    const section = q('[aria-label="模型检测"]', pane) as HTMLElement | null;
+    if (!section) throw new Error("模型检测区块未渲染");
+    // 外层不得有卡片框（CR-058 r3）
+    const style = window.getComputedStyle(section);
+    if (style.borderTopWidth !== "0px" || style.backgroundColor !== "rgba(0, 0, 0, 0)") {
+      throw new Error(`检测区不应带外框：border=${style.borderTopWidth} bg=${style.backgroundColor}`);
+    }
+    const sel = qa<HTMLSelectElement>('select.select', section);
+    if (sel.length < 2) throw new Error(`应有供应商与模型两个选择器，实际 ${sel.length}`);
+    const runBtn = byText("开始检测", section) as HTMLButtonElement | null;
+    if (!runBtn) throw new Error("缺「开始检测」按钮");
+    if (!runBtn.disabled) throw new Error("未选供应商时开始检测应为禁用");
+    const historyBtn = byText("历史记录", section);
+    if (!historyBtn) throw new Error("缺「历史记录」入口");
+    // 19 针清单（r4）
+    const codes = ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9", "P10", "P11", "P12", "P13", "P14", "P15", "P16", "P17", "P18", "P19"];
+    const names = ["连通与鉴权握手", "模型回显与跨档偷换", "响应 Schema 与 ID 规范", "SSE 真流式与假首字", "网关响应头指纹", "System 金丝雀服从", "隐藏注入与套壳嗅探", "多轮记忆保持", "Stop 序列截断", "Max Tokens 硬截断", "原生工具调用验真", "Strict JSON Schema", "动态逻辑与防背题", "并发混池快照", "识图多模态验真", "Responses 协议探测", "输入 Token 对账", "流式输出对账", "长前缀缓存命中"];
+    for (const name of names) {
+      if (!section.textContent?.includes(name)) throw new Error(`检测区缺探针「${name}」`);
+    }
+    return `检测页渲染：2 个选择器 + 开始检测(禁用) + 历史记录 + 19 针清单，无外框`;
+  });
+
+  await ui("设置中心", "模型检测历史弹层可打开（CR-058）", async () => {
+    const pane = q('[aria-label="设置中心"]') as HTMLElement;
+    const section = q('[aria-label="模型检测"]', pane) as HTMLElement;
+    click(byText("历史记录", section), "历史记录按钮");
+    await sleep(500);
+    const dialog = await waitFor(() => q('[aria-label*="历史记录"]') as HTMLElement, 3000, "历史记录弹层");
+    const body = dialog.textContent ?? "";
+    if (!body.includes("最近 10 次")) throw new Error("历史弹层副标题缺失");
+    return "历史弹层已打开";
+  });
+
   await ui("设置中心", "切到 SDK 页并显示 CLI 卡", async () => {
     const pane = q('[aria-label="设置中心"]') as HTMLElement;
     click(byText("SDK", pane), "SDK 页签");
@@ -477,11 +518,23 @@ export async function runUiSuite(): Promise<void> {
       click(newBtn, "新会话");
       await sleep(500);
     }
-    const histBtn = await waitFor(() => q("[data-act='chat-history-toggle']"), 4000, "历史按钮");
+    const histBtn = await waitFor(() => q("[data-chat-overlay-trigger='history']"), 4000, "历史按钮");
     click(histBtn, "历史按钮");
     const overlay = await waitFor(() => q('.chat-history'), 3000, "历史浮层");
     if (!(overlay.textContent ?? "").includes("会话历史")) throw new Error("浮层缺标题");
     if (!(overlay.textContent ?? "").includes("新会话")) throw new Error("浮层缺新会话入口");
+    // CR-063：搜索行、已加载/全部计数、加载状态与行内删除入口
+    if (!q('#chat-history-q')) throw new Error("浮层缺会话搜索框");
+    const count = q('.chat-history-count')?.textContent ?? "";
+    if (!count.includes("/")) throw new Error(`浮层计数应为「已加载 / 全部」，实际 ${count}`);
+    if (!(overlay.textContent ?? "").includes("已到全部") && !(overlay.textContent ?? "").includes("继续加载")) throw new Error("浮层缺加载状态");
+    // CR-065：无状态文字、无底部栏、有「…」入口与「重置」
+    if (qa('.chat-hist-state', overlay).length) throw new Error("浮层不应再显示状态文字");
+    if (q('.chat-history-foot')) throw new Error("浮层不应再有底部栏");
+    if (!q('.chat-hist-more-btn')) throw new Error("浮层缺行操作入口");
+    const resetBtn = [...overlay.querySelectorAll<HTMLButtonElement>(".chat-hist-all")].find(b => (b.textContent ?? "").includes("重置"));
+    if (!resetBtn) throw new Error("浮层缺「重置」按钮");
+    if (!resetBtn.disabled) throw new Error("无搜索词时「重置」应禁用");
     const closeBtn = q('[aria-label="关闭会话历史"]');
     click(closeBtn, "关闭按钮");
     await sleep(200);
@@ -577,6 +630,106 @@ export async function runUiSuite(): Promise<void> {
     click(previewBtn, "全文预览");
     await waitFor(() => qa<HTMLElement>(".req-reader").find(el => (el.textContent ?? "").includes("全项目需求")), 6000, "全文预览正文");
     return `项目 ${target.id} 已打开并进入全文预览`;
+  });
+
+  /* ---------- CR-066：需求思维导图与阅读视图（真实 Tauri DOM） ---------- */
+  await ui("CR-066 思维导图", "进入导图：整块画布、父子连线、同源导图目录", async () => {
+    const mapBtn = byText("思维导图");
+    if (!mapBtn) throw new Error("缺思维导图入口");
+    click(mapBtn, "思维导图");
+    const area = await waitFor(() => q<HTMLElement>(".req-map-area"), 6000, "导图画布");
+    if (q(".req-reader")) throw new Error("导图模式仍渲染正文容器");
+    const paths = qa<SVGPathElement>(".req-map-edges path");
+    if (paths.length < 2) throw new Error(`导图缺少父子连线（实际 ${paths.length} 条）`);
+    const outline = qa<HTMLElement>(".req-map-outline .req-tree-row");
+    if (outline.length < 3) throw new Error(`导图目录条目过少（${outline.length}）`);
+    const kinds = new Set(qa<HTMLElement>(".req-map-outline .req-kind").map((e) => (e.textContent ?? "").trim()));
+    for (const need of ["Vision", "Epic"]) {
+      if (!kinds.has(need)) throw new Error(`导图目录缺 ${need}（实际：${[...kinds].join(",")}）`);
+    }
+    const nodes = qa<HTMLElement>(".req-map-node");
+    const xs = nodes.map((n) => n.offsetLeft);
+    if (!xs.length || Math.min(...xs) === Math.max(...xs)) throw new Error("节点未按层级横向展开");
+    return `连线 ${paths.length} 条、节点 ${nodes.length} 个、目录 ${outline.length} 条`;
+  });
+
+  await ui("CR-066 思维导图", "折叠控件在连线连接处且默认隐藏", async () => {
+    const vision = q<HTMLElement>(".req-map-node.vision");
+    const point = q<HTMLElement>(`.req-map-foldpoint[data-for="${vision?.getAttribute("data-node-id") ?? ""}"]`);
+    if (!point) throw new Error("导图缺少连线连接处的折叠控件");
+    const pr = point.getBoundingClientRect(), nr = vision!.getBoundingClientRect();
+    if (Math.abs(pr.left + pr.width / 2 - nr.right) > 4) {
+      throw new Error(`折叠控件未落在父节点右边缘（控件中心 ${Math.round(pr.left + pr.width / 2)} vs 节点右缘 ${Math.round(nr.right)}）`);
+    }
+    const style = getComputedStyle(point);
+    if (style.opacity !== "0") throw new Error(`折叠控件默认应隐藏，实际 opacity=${style.opacity}`);
+    const nodeTools = q<HTMLElement>(".req-map-node.vision .req-map-node-tools");
+    const hasFoldInNode = nodeTools
+      ? [...nodeTools.querySelectorAll("button")].some((b) => /折叠|展开/.test(b.getAttribute("aria-label") ?? ""))
+      : false;
+    if (hasFoldInNode) throw new Error("节点内仍有折叠按钮，与新增下级图标冲突");
+    return `折叠控件位于父节点右边缘，默认 opacity=0；节点内无折叠按钮`;
+  });
+
+  await ui("CR-066 思维导图", "点击节点在右侧出现悬浮详情框", async () => {
+    const epic = q<HTMLElement>(".req-map-node.epic");
+    if (!epic) throw new Error("导图缺 Epic 节点");
+    click(epic.querySelector<HTMLElement>(".req-map-node-hit"), "Epic 节点");
+    const detail = await waitFor(() => q<HTMLElement>(".req-map-detail"), 4000, "右侧详情框");
+    const area = q<HTMLElement>(".req-map-area")!;
+    const dr = detail.getBoundingClientRect(), ar = area.getBoundingClientRect();
+    if (dr.left < ar.right - dr.width - 2) throw new Error("详情框未贴在画布右侧");
+    if (dr.width < 200) throw new Error(`详情框宽度异常（${Math.round(dr.width)}）`);
+    const meta = qa<HTMLElement>(".req-map-detail-meta dt").length;
+    if (meta < 3) throw new Error(`详情框元信息过少（${meta}）`);
+    const close = q<HTMLElement>(".req-map-detail .icon-btn");
+    click(close, "关闭详情");
+    await sleep(200);
+    if (q(".req-map-detail")) throw new Error("关闭后详情框仍在");
+    return `详情框宽 ${Math.round(dr.width)}、元信息 ${meta} 项、可关闭`;
+  });
+
+  await ui("CR-066 思维导图", "模型作为独立分支融入导图（虚线关联）", async () => {
+    const modelNodes = qa<HTMLElement>(".req-map-node.model");
+    if (!modelNodes.length) throw new Error("导图未纳入数据库／领域设计模型节点");
+    const dashed = qa<SVGPathElement>(".req-map-edges path.dashed");
+    if (!dashed.length) throw new Error("模型关联未使用虚线");
+    const outlineText = qa<HTMLElement>(".req-map-outline .req-tree-row").map((r) => (r.textContent ?? "").trim()).join("|");
+    if (!outlineText.includes("模型")) throw new Error("模型未列入导图目录");
+    return `模型节点 ${modelNodes.length} 个、虚线 ${dashed.length} 条、已列入目录`;
+  });
+
+  await ui("CR-066 预览", "预览为四级需求菜单且不含左侧需求树", async () => {
+    const previewBtn = byText("全文预览");
+    if (!previewBtn) throw new Error("缺全文预览入口");
+    click(previewBtn, "全文预览");
+    await waitFor(() => qa<HTMLElement>(".req-toc-item").length > 0, 6000, "全文目录");
+    if (q(".req-tree-pane")) throw new Error("预览模式仍显示左侧需求树");
+    const rows = qa<HTMLElement>(".req-toc-item");
+    const kinds = new Set(rows.map((r) => (r.querySelector(".req-kind")?.textContent ?? "").trim()));
+    for (const need of ["Vision", "Epic", "Feature", "Story"]) {
+      if (!kinds.has(need)) throw new Error(`预览目录缺 ${need} 层级（实际：${[...kinds].join(",")}）`);
+    }
+    const levels = rows.map((r) => Number(r.style.getPropertyValue("--toc-level")) || 0);
+    if (Math.max(...levels) > 4) throw new Error(`预览目录层级超过四级（最大 ${Math.max(...levels)}）`);
+    return `目录 ${rows.length} 条、类型 ${[...kinds].join("/")}、最深 ${Math.max(...levels)} 级`;
+  });
+
+  await ui("CR-066 预览", "目录折叠子章节后其下级隐藏", async () => {
+    const epicRow = qa<HTMLElement>(".req-toc-item").find((r) => (r.querySelector(".req-kind")?.textContent ?? "").trim() === "Epic");
+    const caret = epicRow?.querySelector<HTMLElement>("button.req-toc-caret");
+    if (!caret) throw new Error("预览目录的 Epic 行缺折叠按钮");
+    const before = qa<HTMLElement>(".req-toc-item").length;
+    click(caret, "Epic 折叠按钮");
+    await sleep(300);
+    const after = qa<HTMLElement>(".req-toc-item").length;
+    if (after >= before) throw new Error(`折叠后条目未减少（${before} → ${after}）`);
+    const still = qa<HTMLElement>(".req-toc-item").find((r) => (r.querySelector(".req-kind")?.textContent ?? "").trim() === "Epic");
+    click(still?.querySelector<HTMLElement>("button.req-toc-caret") ?? null, "Epic 展开按钮");
+    await sleep(300);
+    const restored = qa<HTMLElement>(".req-toc-item").length;
+    if (restored !== before) throw new Error(`展开后未恢复（${before} → ${restored}）`);
+    return `折叠 ${before} → ${after}，展开恢复 ${restored}`;
   });
 
   await ui("CR-049 滚动条", "静止无活动滑块、悬停不唤醒", async () => {
@@ -788,6 +941,48 @@ export async function runUiSuite(): Promise<void> {
     click(byText("项目管理"), "返回项目列表");
     await sleep(400);
     return "Escape 关闭；放得下时「更多」不显示不占位，页签全部恢复";
+  });
+
+  /* ---------- CR-054：会话中心工作台 ---------- */
+  await ui("工作台", "默认进入工作台且页签为纯图标", async () => {
+    click(byText("项目管理"), "返回项目列表");
+    await sleep(400);
+    const card = await waitFor(() => q<HTMLElement>(".nc-list-row, .proj-card, [data-project]"), 6000, "项目卡");
+    click(card, "打开项目");
+    await sleep(700);
+    const iconTab = await waitFor(() => q<HTMLElement>(".pw-tab.wb-tab-icon"), 6000, "工作台图标页签");
+    if (iconTab.getAttribute("aria-selected") !== "true") throw new Error("默认未选中工作台页签");
+    if ((iconTab.textContent ?? "").trim()) throw new Error("工作台页签不应显示文字");
+    if (iconTab.getAttribute("aria-label") !== "工作台") throw new Error("工作台页签缺少 aria-label");
+    return "纯图标页签、aria-label=工作台、默认选中";
+  });
+
+  await ui("工作台", "三栏结构与单实例会话", async () => {
+    const shell = await waitFor(() => q(".wb-shell"), 6000, "工作台容器");
+    if (!q(".wb-hist", shell)) throw new Error("缺左栏会话历史");
+    if (!q(".wb-conv", shell)) throw new Error("缺中栏当前会话");
+    const panels = qa(".nc-chat-host .chat-panel").length;
+    if (panels !== 0) throw new Error(`工作台页签下不应渲染侧栏 ChatPanel（实际 ${panels}）`);
+    const inner = qa(".wb-conv .chat-panel").length;
+    if (inner !== 1) throw new Error(`工作台内 ChatPanel 实例应为 1（实际 ${inner}）`);
+    const hist = q(".wb-hist .chat-history-list");
+    if (!hist) throw new Error("左栏未复用会话列表结构");
+    return `左栏复用 chat-history-list；工作台内 ChatPanel=1、侧栏=0`;
+  });
+
+  await ui("工作台", "切页签不卸载会话", async () => {
+    const before = q(".wb-conv .chat-panel");
+    if (!before) throw new Error("切换前缺会话面板");
+    const tab = qa<HTMLElement>(".pw-tab").find(t => (t.textContent ?? "").trim().length > 0);
+    click(tab ?? null, "切到文字页签");
+    await sleep(500);
+    const stillMounted = q(".wb-conv .chat-panel");
+    if (!stillMounted) throw new Error("切页签后会话面板被卸载（应 hidden 保留）");
+    const iconTab = q<HTMLElement>(".pw-tab.wb-tab-icon");
+    click(iconTab, "切回工作台");
+    await sleep(400);
+    if (q(".wb-conv .chat-panel") !== stillMounted) throw new Error("切回后会话实例被重建");
+    return "切页签 hidden 保留挂载，实例未重建";
   });
 }
 

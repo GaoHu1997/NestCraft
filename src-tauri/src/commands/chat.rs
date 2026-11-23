@@ -4,7 +4,8 @@
 //! - claude：`claude -p --output-format stream-json --verbose --include-partial-messages`
 //!   stdout JSONL：system/assistant/user/result；stream_event 携带增量
 //! - codex：`codex exec --json -m <model>`，`-c model_reasoning_effort="<effort>"`
-//! - grok：尝试通用 `--print --json`，失败如实报错（不伪造兼容）
+//! - grok（CR-064/BUG-002）：stdin prompt + `--output-format streaming-json`，
+//!   `[--reasoning-effort <effort>]`；1.0.x 无 `--print`/`--json` 参数（实测报错）
 //!
 //! 运行快照语义（CR-012）：会话开始时锁定 cli/model/effort；运行中禁止原地切换。
 
@@ -148,13 +149,15 @@ fn session_row(row: &rusqlite::Row) -> rusqlite::Result<SessionMeta> {
         feature_source_hash: row.get(15)?,
         session_role,
         binding,
+        pinned_at: row.get(22)?,
     })
 }
 
 const SESSION_COLUMNS: &str = "s.id, s.projectId, s.serverId, s.title, s.cliId, s.providerId, s.modelId, s.effort, s.draft, s.unread, s.createdAt, s.updatedAt, (SELECT COUNT(*) FROM message m WHERE m.sessionId = s.id) AS cnt, s.featureId, s.featureTitle, s.featureSourceHash, s.sessionRole, \
     s.nativeThreadRef, s.nativeBindingRevision, s.nativeConfirmedTurnId, \
     (SELECT t.outcome FROM execution_session_turn t WHERE t.sessionId = s.id ORDER BY t.createdAt DESC, t.rowid DESC LIMIT 1), \
-    (SELECT t.reasonCode FROM execution_session_turn t WHERE t.sessionId = s.id ORDER BY t.createdAt DESC, t.rowid DESC LIMIT 1)";
+    (SELECT t.reasonCode FROM execution_session_turn t WHERE t.sessionId = s.id ORDER BY t.createdAt DESC, t.rowid DESC LIMIT 1), \
+    s.pinnedAt";
 
 // ---------- 会话 CRUD ----------
 
@@ -174,6 +177,131 @@ pub fn chat_sessions(project_id: Option<String>) -> Result<Vec<SessionMeta>, Str
         stmt.query_map([], session_row).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect()
     };
     Ok(rows)
+}
+
+/// CR-063：会话历史每批默认条数与上限。
+const SESSION_PAGE_DEFAULT: i64 = 20;
+const SESSION_PAGE_MAX: i64 = 100;
+
+/// CR-063：LIKE 关键词转义，避免 % / _ / \ 被当作通配符。
+fn escape_like(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '%' => out.push_str("\\%"),
+            '_' => out.push_str("\\_"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// CR-063：会话历史游标分页 + 当前作用域标题搜索。
+/// 作用域与 `ChatPanel.filterSessions` 逐分支一致；游标为 (updatedAt, id) 键集，避免 OFFSET 漂移。
+#[tauri::command]
+pub fn chat_sessions_page(
+    project_id: Option<String>,
+    server_id: Option<String>,
+    keyword: Option<String>,
+    cursor_pinned_at: Option<i64>,
+    cursor_updated_at: Option<i64>,
+    cursor_id: Option<String>,
+    limit: Option<i64>,
+) -> Result<SessionPage, String> {
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+
+    let cursor = match (cursor_pinned_at, cursor_updated_at, cursor_id) {
+        (None, None, None) => None,
+        (Some(pinned_at), Some(updated_at), Some(id)) => Some((pinned_at, updated_at, id)),
+        _ => return Err("分页游标不完整".into()),
+    };
+    let keyword = keyword
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty());
+
+    sessions_page_query(
+        conn,
+        project_id.as_deref(),
+        server_id.as_deref(),
+        keyword.as_deref(),
+        cursor,
+        limit,
+    )
+}
+
+/// CR-063/CR-065：分页查询主体（命令与单测共用）。
+pub(crate) fn sessions_page_query(
+    conn: &rusqlite::Connection,
+    project_id: Option<&str>,
+    server_id: Option<&str>,
+    keyword: Option<&str>,
+    cursor: Option<(i64, i64, String)>,
+    limit: Option<i64>,
+) -> Result<SessionPage, String> {
+    use rusqlite::types::Value;
+
+    let limit = limit.unwrap_or(SESSION_PAGE_DEFAULT).clamp(1, SESSION_PAGE_MAX);
+    // 纯空白等价于无关键词（命令层已 trim，这里再防御一次，便于单测直接调用）。
+    let keyword = keyword.map(str::trim).filter(|k| !k.is_empty());
+
+    let (scope_sql, scope_params): (&str, Vec<Value>) = match (project_id, server_id) {
+        (Some(p), Some(s)) => ("s.projectId = ? AND s.serverId = ?", vec![Value::Text(p.into()), Value::Text(s.into())]),
+        (Some(p), None) => ("s.projectId = ?", vec![Value::Text(p.into())]),
+        (None, Some(s)) => ("s.serverId = ?", vec![Value::Text(s.into())]),
+        (None, None) => ("s.projectId IS NULL AND s.serverId IS NULL", vec![]),
+    };
+
+    let mut where_sql = scope_sql.to_string();
+    let mut where_params = scope_params;
+    if let Some(kw) = keyword {
+        where_sql.push_str(" AND s.title LIKE ? ESCAPE '\\'");
+        where_params.push(Value::Text(format!("%{}%", escape_like(kw))));
+    }
+
+    // 单连接 + Mutex 串行：两条查询之间没有并发写插入，total 与 items 同源。
+    let total: i64 = {
+        let sql = format!("SELECT COUNT(*) FROM session s WHERE {where_sql}");
+        conn.query_row(&sql, rusqlite::params_from_iter(where_params.iter()), |row| row.get(0))
+            .map_err(|e| e.to_string())?
+    };
+
+    let mut list_sql = format!("SELECT {} FROM session s WHERE {where_sql}", SESSION_COLUMNS);
+    let mut list_params = where_params;
+    if let Some((pinned_at, updated_at, id)) = &cursor {
+        list_sql.push_str(" AND (s.pinnedAt < ? OR (s.pinnedAt = ? AND s.updatedAt < ?) OR (s.pinnedAt = ? AND s.updatedAt = ? AND s.id < ?))");
+        list_params.push(Value::Integer(*pinned_at));
+        list_params.push(Value::Integer(*pinned_at));
+        list_params.push(Value::Integer(*updated_at));
+        list_params.push(Value::Integer(*pinned_at));
+        list_params.push(Value::Integer(*updated_at));
+        list_params.push(Value::Text(id.clone()));
+    }
+    list_sql.push_str(" ORDER BY s.pinnedAt DESC, s.updatedAt DESC, s.id DESC LIMIT ?");
+    list_params.push(Value::Integer(limit + 1));
+
+    let mut stmt = conn.prepare(&list_sql).map_err(|e| e.to_string())?;
+    let mut items: Vec<SessionMeta> = stmt
+        .query_map(rusqlite::params_from_iter(list_params.iter()), session_row)
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    let has_more = items.len() as i64 > limit;
+    if has_more {
+        items.truncate(limit as usize);
+    }
+    let next_cursor = if has_more {
+        items.last().map(|s| SessionCursor {
+            pinned_at: s.pinned_at,
+            updated_at: s.updated_at,
+            id: s.id.clone(),
+        })
+    } else {
+        None
+    };
+
+    Ok(SessionPage { items, total, has_more, next_cursor })
 }
 
 #[tauri::command]
@@ -289,6 +417,86 @@ pub fn chat_session_delete(id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// CR-065：置顶/取消置顶。只改 pinnedAt，不动 updatedAt（置顶不是内容更新）。
+#[tauri::command]
+pub fn chat_session_pin(id: String, pinned: bool) -> Result<SessionMeta, String> {
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    let value = if pinned { now_ms() } else { 0 };
+    let changed = conn
+        .execute("UPDATE session SET pinnedAt=?1 WHERE id=?2", rusqlite::params![value, &id])
+        .map_err(|e| e.to_string())?;
+    if changed == 0 {
+        return Err("会话不存在".into());
+    }
+    chat_session_get(id)
+}
+
+/// CR-065：分叉会话——复制元信息与消息上下文，不继承原生线程绑定。
+#[tauri::command]
+pub fn chat_session_fork(id: String) -> Result<SessionMeta, String> {
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    {
+        let running = RUNNING.lock().map_err(|_| "会话运行状态不可用".to_string())?;
+        if running.contains_key(&id) {
+            return Err("会话正在运行，结束或停止后再分叉".into());
+        }
+    }
+    let new_session_id = fork_session(conn, &id)?;
+    chat_session_get(new_session_id)
+}
+
+/// CR-065：分叉实现（命令与单测共用）。复制元信息与消息，不继承原生线程绑定。
+fn fork_session(conn: &rusqlite::Connection, id: &str) -> Result<String, String> {
+    let (role, project_id, server_id, cli_id, provider_id, model_id, effort, title, feature_id, feature_title, feature_hash): (
+        String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, String, Option<String>, Option<String>, Option<String>,
+    ) = conn
+        .query_row(
+            "SELECT sessionRole, projectId, serverId, cliId, providerId, modelId, effort, title, featureId, featureTitle, featureSourceHash FROM session WHERE id=?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?)),
+        )
+        .map_err(|_| "会话不存在".to_string())?;
+    if role != "ordinary" {
+        return Err("执行会话暂不支持分叉".into());
+    }
+
+    let new_session_id = new_id("sess");
+    let now = now_ms();
+    let forked_title = format!("分叉 · {title}");
+
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO session (id, projectId, serverId, title, cliId, providerId, modelId, effort, draft, unread, createdAt, updatedAt, featureId, featureTitle, featureSourceHash, sessionRole, nativeBindingRevision)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'',NULL,?9,?9,?10,?11,?12,'ordinary',0)",
+        rusqlite::params![&new_session_id, project_id, server_id, forked_title, cli_id, provider_id, model_id, effort, now, feature_id, feature_title, feature_hash],
+    )
+    .map_err(|e| e.to_string())?;
+
+    {
+        let mut stmt = tx
+            .prepare("SELECT role, content, metaJson, refsJson, gitContextJson, createdAt FROM message WHERE sessionId=?1 ORDER BY createdAt, rowid")
+            .map_err(|e| e.to_string())?;
+        let rows: Vec<(String, String, Option<String>, Option<String>, Option<String>, i64)> = stmt
+            .query_map([id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        drop(stmt);
+        for (role, content, meta_json, refs_json, git_json, created_at) in rows {
+            tx.execute(
+                "INSERT INTO message (id, sessionId, role, content, metaJson, refsJson, gitContextJson, createdAt) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+                rusqlite::params![new_id("msg"), &new_session_id, role, content, meta_json, refs_json, git_json, created_at],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+
+    Ok(new_session_id)
+}
+
 #[tauri::command]
 pub fn chat_messages(session_id: String) -> Result<Vec<ChatMessage>, String> {
     let guard = db::conn()?;
@@ -340,8 +548,24 @@ pub async fn chat_send(
     // 会话与执行配置
     let session = chat_session_get(session_id.clone())?;
     let cli_id = session.cli_id.clone().ok_or("会话未选择 CLI")?;
-    let model_id = session.model_id.clone().unwrap_or_default();
-    let effort = session.effort.clone().unwrap_or_default();
+    let mut model_id = session.model_id.clone().unwrap_or_default();
+    let mut effort = session.effort.clone().unwrap_or_default();
+    // CR-059 D3：任务模型路由在派发链路消费。只在会话未显式锁定模型时按任务类型改派，
+    // 且失败一律沿用会话选择——路由配置损坏不得阻断发送。
+    if model_id.trim().is_empty() {
+        if let Ok(guard) = db::conn() {
+            if let Some(conn) = guard.as_ref() {
+                let table = route_table_for_cli(conn, &cli_id);
+                let task_types = detect_task_types(&payload.content);
+                let (routed_model, routed_effort, _why) =
+                    resolve_route(&table, &task_types, &model_id, &effort);
+                if !routed_model.trim().is_empty() {
+                    model_id = routed_model;
+                    effort = routed_effort;
+                }
+            }
+        }
+    }
     let project_root: Option<String> = match &session.project_id {
         Some(pid) => {
             let guard = db::conn()?;
@@ -388,8 +612,11 @@ pub async fn chat_send(
     let prompt = build_prompt(&app, &payload, session.project_id.as_deref())?;
 
     // 所有启动校验均在持久化用户消息之前完成，失败保留前端草稿。
+    // CR-065：grok 的 MCP 配置需要落到会话工作目录（.grok/config.toml），因此传入 project_root。
     let mut dispatch = DispatchHolder(crate::commands::dispatch::resolve(
         &app, &cli_id, &session_id, session.provider_id.as_deref(), &model_id, &effort,
+        session.project_id.as_deref(),
+        project_root.as_deref().map(std::path::Path::new),
     )?);
     if dispatch.0.is_none() && session.provider_id.as_deref().map(|p| !p.is_empty()).unwrap_or(false) {
         return Err("会话绑定的供应商无法解析，请检查设置中的供应商/密钥/端点".into());
@@ -794,6 +1021,113 @@ fn validate_permission(cli_id: &str, permission_id: Option<&str>) -> Result<(), 
     }
 }
 
+// ---------- CR-059 D3：CLI 任务模型路由在派发链路的消费 ----------
+
+/// 13 类任务类型（与 UI-CR059 词表一致；派发侧只做匹配，不新增分类）。
+const TASK_TYPES: [&str; 13] = [
+    "仓库探索", "代码定位", "资料检索", "方案核验", "影响分析", "功能开发", "缺陷修复",
+    "测试验证", "代码审查", "数据处理", "模块重构", "方案设计", "文档整理",
+];
+
+/// 路由表的单个模型槽：模型＋思考档位＋适用任务类型。
+#[derive(serde::Deserialize)]
+struct RouteSlot {
+    #[serde(default)]
+    model: String,
+    #[serde(default)]
+    effort: String,
+    #[serde(default)]
+    types: Vec<String>,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct RouteFallback {
+    #[serde(default)]
+    model: String,
+    #[serde(default)]
+    effort: String,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct RouteTable {
+    #[serde(default)]
+    slots: Vec<RouteSlot>,
+    #[serde(default)]
+    fallback: RouteFallback,
+}
+
+/// 从会话绑定的 CLI 偏好里解析任务模型路由（旧结构无此字段时为空表＝不干预）。
+fn route_table_for_cli(conn: &rusqlite::Connection, cli_id: &str) -> RouteTable {
+    let raw: Option<String> = conn
+        .query_row(
+            "SELECT value FROM setting_default WHERE scope='global' AND key=?1",
+            [format!("cli.preferences.{cli_id}")],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .ok()
+        .flatten();
+    let Some(raw) = raw else { return RouteTable::default(); };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else { return RouteTable::default(); };
+    // 只取 route 子对象；解不出就当作未配置，绝不让派发因偏好损坏而失败。
+    let route = value.get("route").cloned().unwrap_or(value);
+    serde_json::from_value::<RouteTable>(route).unwrap_or_default()
+}
+
+/// 按任务类型解析要使用的模型与思考档位。
+///
+/// 规则（CR-059 §4.4）：命中任务类型的第一个模型槽优先；未命中或槽位模型为空时使用兜底；
+/// 兜底未配置则沿用会话当前选择。返回 (模型, 档位, 命中说明)，不做静默换模型。
+fn resolve_route(
+    table: &RouteTable,
+    task_types: &[String],
+    session_model: &str,
+    session_effort: &str,
+) -> (String, String, String) {
+    if !task_types.is_empty() {
+        for slot in &table.slots {
+            if slot.model.trim().is_empty() { continue; }
+            if slot.types.iter().any(|t| task_types.iter().any(|want| want == t)) {
+                let effort = if slot.effort.trim().is_empty() { session_effort.to_string() } else { slot.effort.clone() };
+                return (slot.model.clone(), effort, format!("按任务类型 {} 命中模型槽", task_types.join("/")));
+            }
+        }
+    }
+    if !table.fallback.model.trim().is_empty() {
+        let effort = if table.fallback.effort.trim().is_empty() { session_effort.to_string() } else { table.fallback.effort.clone() };
+        return (table.fallback.model.clone(), effort, "未命中模型槽，使用兜底模型".to_string());
+    }
+    (session_model.to_string(), session_effort.to_string(), "未配置路由，沿用会话选择".to_string())
+}
+
+/// 从用户消息里识别任务类型（只做关键词匹配，不做模型推断；识别不到返回空）。
+fn detect_task_types(content: &str) -> Vec<String> {
+    const KEYWORDS: [(&str, &[&str]); 13] = [
+        ("仓库探索", &["探索", "仓库结构", "目录结构", "先看一下项目"]),
+        ("代码定位", &["定位", "在哪个文件", "哪一行", "找到实现"]),
+        ("资料检索", &["检索", "查一下", "搜索资料", "文档在哪"]),
+        ("方案核验", &["核验", "方案是否", "确认方案", "是否符合"]),
+        ("影响分析", &["影响分析", "影响范围", "会影响到", "破坏性"]),
+        ("功能开发", &["实现", "开发", "新增功能", "加一个", "做一个"]),
+        ("缺陷修复", &["修复", "bug", "缺陷", "报错", "崩溃", "不工作"]),
+        ("测试验证", &["测试", "验证", "跑一下", "用例", "回归"]),
+        ("代码审查", &["审查", "review", "代码质量", "评审代码"]),
+        ("数据处理", &["数据", "清洗", "统计", "转换格式"]),
+        ("模块重构", &["重构", "拆分模块", "抽出来", "解耦"]),
+        ("方案设计", &["设计方案", "架构", "技术方案", "怎么设计"]),
+        ("文档整理", &["文档", "整理", "写个说明", "补充说明"]),
+    ];
+    let lower = content.to_lowercase();
+    let mut hits = Vec::new();
+    for (name, words) in KEYWORDS {
+        if words.iter().any(|word| lower.contains(&word.to_lowercase())) {
+            hits.push(name.to_string());
+        }
+    }
+    hits.truncate(3);
+    let _ = TASK_TYPES;
+    hits
+}
+
 const MAX_REF_TEXT: usize = 64 * 1024;
 const MAX_PROMPT_TEXT: usize = 512 * 1024;
 
@@ -1132,11 +1466,18 @@ fn spawn_cli(
             c
         }
         "grok" => {
-            // grok `--print --json` 单轮通道无线程概念（CR-037 本轮登记不支持原生续接）。
+            // CR-064 / BUG-002：grok 1.0.x 没有 `--print`/`--json`（实测 `--json` 直接报
+            // unexpected argument，会话根本起不来）。正确用法：prompt 经 stdin 写入，
+            // 输出格式用 `--output-format streaming-json`（JSONL 事件流）。
+            // 仍为单轮通道，无线程续接（CR-037 登记不变）。
             let mut c = Command::new(&cli_bin);
-            c.arg("--print").arg("--json");
+            c.arg("--output-format").arg("streaming-json");
             if !model_id.is_empty() {
                 c.arg("--model").arg(model_id);
+            }
+            // 思考档位：grok 与 claude/codex 用同一语义、不同承载（命令行参数）。
+            if !effort.is_empty() && effort != "off" {
+                c.arg("--reasoning-effort").arg(effort);
             }
             c
         }
@@ -1346,6 +1687,23 @@ async fn run_cli_stream(
     }
 }
 
+/// CR-062：子智能体任务名摘要（首行、最多 60 字），不把整段正文当标题。
+fn agent_task_summary(text: &str) -> String {
+    text.lines().find(|line| !line.trim().is_empty()).unwrap_or("").trim().chars().take(60).collect()
+}
+
+/// CR-062：子代理工具调用的可读摘要，只取常见字段，避免把完整输入（可能含凭证）送进界面。
+fn agent_tool_brief(name: &str, input: &serde_json::Value) -> String {
+    let field = ["command", "file_path", "path", "query", "pattern", "description"]
+        .iter()
+        .find_map(|key| input.get(*key).and_then(|value| value.as_str()))
+        .unwrap_or("")
+        .chars()
+        .take(160)
+        .collect::<String>();
+    if field.is_empty() { name.to_string() } else { format!("{name} · {field}") }
+}
+
 /// 解析单行 CLI 输出并推送事件（claude stream-json / codex exec --json / 通用回退）。
 fn parse_cli_line(
     v: &serde_json::Value,
@@ -1388,6 +1746,39 @@ fn parse_cli_line(
             if let Some(sid) = v.get("session_id").and_then(|s| s.as_str()) {
                 out.emitted_ref = Some(sid.to_string());
             }
+            // CR-062：带 parent_tool_use_id 的消息属于子智能体；只上报只读事件，
+            // 不并入主会话正文、工具步骤与用量，避免两套记录互相污染。
+            if let Some(pid) = v.get("parent_tool_use_id").and_then(|s| s.as_str()) {
+                if !pid.is_empty() {
+                    let mut task = String::new();
+                    if let Some(blocks) = msg.get("content").and_then(|c| c.as_array()) {
+                        for b in blocks {
+                            match b.get("type").and_then(|t| t.as_str()).unwrap_or("") {
+                                "text" => {
+                                    let text = b.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                                    if text.trim().is_empty() { continue; }
+                                    if task.is_empty() { task = agent_task_summary(text); }
+                                    send(channel, serde_json::json!({
+                                        "type": "subagent", "id": pid, "task": task, "status": "running",
+                                        "cli": cli_id, "content": text, "kind": "text"
+                                    }));
+                                }
+                                "tool_use" => {
+                                    let name = b.get("name").and_then(|t| t.as_str()).unwrap_or("");
+                                    let input = b.get("input").cloned().unwrap_or(serde_json::json!({}));
+                                    send(channel, serde_json::json!({
+                                        "type": "subagent", "id": pid, "task": task, "status": "running",
+                                        "cli": cli_id, "kind": "tool_use", "toolName": name,
+                                        "content": agent_tool_brief(name, &input)
+                                    }));
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    return;
+                }
+            }
             if let Some(blocks) = msg.get("content").and_then(|c| c.as_array()) {
                 for b in blocks {
                     let bt = b.get("type").and_then(|t| t.as_str()).unwrap_or("");
@@ -1418,6 +1809,24 @@ fn parse_cli_line(
             }
         }
         (_, "user") => {
+            // CR-062：子代理的工具结果同样只作为只读事件上报。
+            if let Some(pid) = v.get("parent_tool_use_id").and_then(|s| s.as_str()) {
+                if !pid.is_empty() {
+                    if let Some(blocks) = v.pointer("/message/content").and_then(|c| c.as_array()) {
+                        for b in blocks {
+                            if b.get("type").and_then(|t| t.as_str()) == Some("tool_result") {
+                                let is_err = b.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false);
+                                let content: String = extract_content_text(b.get("content")).chars().take(4000).collect();
+                                send(channel, serde_json::json!({
+                                    "type": "subagent", "id": pid, "task": "", "status": "running",
+                                    "cli": cli_id, "kind": "tool_result", "content": content, "isError": is_err
+                                }));
+                            }
+                        }
+                    }
+                    return;
+                }
+            }
             if let Some(blocks) = v.pointer("/message/content").and_then(|c| c.as_array()) {
                 for b in blocks {
                     if b.get("type").and_then(|t| t.as_str()) == Some("tool_result") {
@@ -1736,5 +2145,284 @@ mod tests {
     fn prompt_limits_and_attributes_are_checked() {
         assert!(check_prompt_size(&["x".repeat(MAX_PROMPT_TEXT + 1)]).is_err());
         assert_eq!(xml_attribute("\"<x>&"), "&quot;&lt;x&gt;&amp;");
+    }
+
+    // ---------- CR-063：会话历史分页 ----------
+
+    fn page_conn() -> rusqlite::Connection {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE session (
+                id TEXT PRIMARY KEY, projectId TEXT, serverId TEXT,
+                title TEXT NOT NULL DEFAULT '新会话', cliId TEXT, providerId TEXT,
+                modelId TEXT, effort TEXT, draft TEXT NOT NULL DEFAULT '', unread TEXT,
+                createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL,
+                featureId TEXT, featureTitle TEXT, featureSourceHash TEXT,
+                sessionRole TEXT NOT NULL DEFAULT 'ordinary',
+                nativeThreadRef TEXT, nativeBindingRevision INTEGER NOT NULL DEFAULT 0,
+                nativeConfirmedTurnId TEXT,
+                pinnedAt INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE TABLE message (id TEXT PRIMARY KEY, sessionId TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, metaJson TEXT, refsJson TEXT, gitContextJson TEXT, createdAt INTEGER NOT NULL);
+             CREATE TABLE execution_session_turn (id TEXT PRIMARY KEY, sessionId TEXT NOT NULL, outcome TEXT, reasonCode TEXT, createdAt INTEGER NOT NULL);",
+        )
+        .unwrap();
+        c
+    }
+
+    fn seed(c: &rusqlite::Connection, id: &str, project: Option<&str>, server: Option<&str>, title: &str, updated: i64) {
+        c.execute(
+            "INSERT INTO session (id, projectId, serverId, title, createdAt, updatedAt) VALUES (?1,?2,?3,?4,?5,?5)",
+            rusqlite::params![id, project, server, title, updated],
+        )
+        .unwrap();
+    }
+
+    fn page_ids(page: &SessionPage) -> Vec<String> {
+        page.items.iter().map(|s| s.id.clone()).collect()
+    }
+
+    fn expect_ids(values: &[&str]) -> Vec<String> {
+        values.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn cr063_first_page_has_20_and_cursor_pages_have_no_dup_or_gap() {
+        let c = page_conn();
+        for i in 0..25 {
+            seed(&c, &format!("s{i:02}"), Some("p1"), None, &format!("会话 {i:02}"), 1000 + i as i64);
+        }
+        let first = sessions_page_query(&c, Some("p1"), None, None, None, None).unwrap();
+        assert_eq!(first.items.len(), 20);
+        assert_eq!(first.total, 25);
+        assert!(first.has_more);
+        let cursor = first.next_cursor.clone().expect("cursor");
+        let second = sessions_page_query(
+            &c,
+            Some("p1"),
+            None,
+            None,
+            Some((cursor.pinned_at, cursor.updated_at, cursor.id.clone())),
+            None,
+        )
+        .unwrap();
+        assert_eq!(second.items.len(), 5);
+        assert!(!second.has_more);
+        assert!(second.next_cursor.is_none());
+        let mut all = page_ids(&first);
+        all.extend(page_ids(&second));
+        let unique: std::collections::BTreeSet<_> = all.iter().cloned().collect();
+        assert_eq!(all.len(), 25);
+        assert_eq!(unique.len(), 25);
+    }
+
+    #[test]
+    fn cr063_scopes_match_filter_sessions() {
+        let c = page_conn();
+        seed(&c, "a", Some("p1"), Some("srv1"), "a", 10);
+        seed(&c, "b", None, Some("srv1"), "b", 11);
+        seed(&c, "c", Some("p2"), Some("srv1"), "c", 12);
+        seed(&c, "d", Some("p1"), None, "d", 13);
+        seed(&c, "e", None, None, "e", 14);
+        seed(&c, "f", None, None, "f", 15);
+
+        let project = sessions_page_query(&c, Some("p1"), None, None, None, None).unwrap();
+        assert_eq!(page_ids(&project), expect_ids(&["d", "a"]));
+
+        let both = sessions_page_query(&c, Some("p1"), Some("srv1"), None, None, None).unwrap();
+        assert_eq!(page_ids(&both), expect_ids(&["a"]));
+
+        // server-only 不限制 projectId（与 filterSessions 既有语义一致）
+        let server = sessions_page_query(&c, None, Some("srv1"), None, None, None).unwrap();
+        assert_eq!(page_ids(&server), expect_ids(&["c", "b", "a"]));
+
+        let global = sessions_page_query(&c, None, None, None, None, None).unwrap();
+        assert_eq!(page_ids(&global), expect_ids(&["f", "e"]));
+    }
+
+    #[test]
+    fn cr063_keyword_matches_title_and_escapes_wildcards() {
+        let c = page_conn();
+        seed(&c, "a", Some("p1"), None, "处理 CLI 退出码 137", 10);
+        seed(&c, "b", Some("p1"), None, "100% 覆盖", 11);
+        seed(&c, "c", Some("p1"), None, "a_b 测试", 12);
+        seed(&c, "d", Some("p1"), None, "路径 a\\b", 13);
+
+        assert_eq!(sessions_page_query(&c, Some("p1"), None, Some("退出码"), None, None).unwrap().items.len(), 1);
+        assert_eq!(sessions_page_query(&c, Some("p1"), None, Some("%"), None, None).unwrap().items.len(), 1);
+        assert_eq!(sessions_page_query(&c, Some("p1"), None, Some("_"), None, None).unwrap().items.len(), 1);
+        assert_eq!(sessions_page_query(&c, Some("p1"), None, Some("\\"), None, None).unwrap().items.len(), 1);
+        assert_eq!(sessions_page_query(&c, Some("p1"), None, Some("不存在的关键词"), None, None).unwrap().total, 0);
+        // 纯空白等价于无关键词
+        assert_eq!(sessions_page_query(&c, Some("p1"), None, Some("   "), None, None).unwrap().total, 4);
+    }
+
+    #[test]
+    fn cr063_limit_is_clamped_and_search_pages_carry_keyword() {
+        let c = page_conn();
+        for i in 0..22 {
+            seed(&c, &format!("k{i:02}"), Some("p1"), None, &format!("任务 {i:02}"), 100 + i as i64);
+        }
+        seed(&c, "x", Some("p1"), None, "别的", 200);
+
+        let one = sessions_page_query(&c, Some("p1"), None, None, None, Some(0)).unwrap();
+        assert_eq!(one.items.len(), 1);
+        let capped = sessions_page_query(&c, Some("p1"), None, None, None, Some(1000)).unwrap();
+        assert_eq!(capped.items.len(), 23);
+
+        let first = sessions_page_query(&c, Some("p1"), None, Some("任务"), None, None).unwrap();
+        assert_eq!(first.items.len(), 20);
+        assert_eq!(first.total, 22);
+        assert!(first.has_more);
+        let cursor = first.next_cursor.clone().expect("cursor");
+        let second = sessions_page_query(
+            &c,
+            Some("p1"),
+            None,
+            Some("任务"),
+            Some((cursor.pinned_at, cursor.updated_at, cursor.id.clone())),
+            None,
+        )
+        .unwrap();
+        assert_eq!(second.items.len(), 2);
+        assert_eq!(second.total, 22);
+        assert!(!second.has_more);
+    }
+
+    #[test]
+    fn cr063_escape_like_escapes_control_chars() {
+        assert_eq!(escape_like("a%b_c\\d"), "a\\%b\\_c\\\\d");
+    }
+
+    #[test]
+    fn cr065_pin_orders_before_recent() {
+        let c = page_conn();
+        for i in 0..5 {
+            seed(&c, &format!("n{i}"), Some("p1"), None, &format!("普通 {i}"), 100 + i as i64);
+        }
+        seed(&c, "old", Some("p1"), None, "置顶旧会话", 1);
+        c.execute("UPDATE session SET pinnedAt=1000 WHERE id='old'", []).unwrap();
+        let page = sessions_page_query(&c, Some("p1"), None, None, None, None).unwrap();
+        assert_eq!(page.items[0].id, "old");
+        assert_eq!(page.items[0].pinned_at, 1000);
+        assert_eq!(page.total, 6);
+
+        // 置顶两条：最近置顶的在前，随后是不久前更新但未置顶的
+        c.execute("UPDATE session SET pinnedAt=2000 WHERE id='n0'", []).unwrap();
+        let page2 = sessions_page_query(&c, Some("p1"), None, None, None, None).unwrap();
+        assert_eq!(page2.items[0].id, "n0");
+        assert_eq!(page2.items[1].id, "old");
+        assert_eq!(page2.items[2].id, "n4");
+    }
+
+    #[test]
+    fn cr065_fork_copies_messages_without_native_binding() {
+        let c = page_conn();
+        c.execute(
+            "INSERT INTO session (id, projectId, title, createdAt, updatedAt, sessionRole, nativeThreadRef, nativeBindingRevision) VALUES ('src','p1','原标题',1,1,'ordinary','ref-x',3)",
+            [],
+        )
+        .unwrap();
+        c.execute("INSERT INTO message (id, sessionId, role, content, createdAt) VALUES ('m1','src','user','hi',1)", []).unwrap();
+        c.execute("INSERT INTO message (id, sessionId, role, content, createdAt) VALUES ('m2','src','assistant','hello',2)", []).unwrap();
+
+        let new_id = fork_session(&c, "src").unwrap();
+        let (title, role, native, rev): (String, String, Option<String>, i64) = c
+            .query_row(
+                "SELECT title, sessionRole, nativeThreadRef, nativeBindingRevision FROM session WHERE id=?1",
+                [&new_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(title, "分叉 · 原标题");
+        assert_eq!(role, "ordinary");
+        assert_eq!(native, None);
+        assert_eq!(rev, 0);
+
+        let copied: Vec<String> = {
+            let mut stmt = c.prepare("SELECT content FROM message WHERE sessionId=?1 ORDER BY createdAt").unwrap();
+            stmt.query_map([&new_id], |r| r.get(0)).unwrap().filter_map(|r| r.ok()).collect()
+        };
+        assert_eq!(copied, vec!["hi".to_string(), "hello".to_string()]);
+        assert_eq!(
+            c.query_row("SELECT COUNT(*) FROM message WHERE sessionId='src'", [], |r| r.get::<_, i64>(0)).unwrap(),
+            2
+        );
+    }
+
+    #[test]
+    fn cr059_route_table_matches_task_type_then_fallback_then_session() {
+        let table = RouteTable {
+            slots: vec![
+                RouteSlot { model: "p/m-code".into(), effort: "high".into(), types: vec!["功能开发".into()] },
+                RouteSlot { model: "p/m-doc".into(), effort: "".into(), types: vec!["文档整理".into()] },
+                // 空模型槽必须跳过，不能命中。
+                RouteSlot { model: "  ".into(), effort: "max".into(), types: vec!["功能开发".into()] },
+            ],
+            fallback: RouteFallback { model: "p/m-fallback".into(), effort: "medium".into() },
+        };
+        // 命中第一个含该类型的非空槽；槽位档位为空时沿用会话档位。
+        assert_eq!(resolve_route(&table, &["功能开发".into()], "s/m", "low").0, "p/m-code");
+        assert_eq!(resolve_route(&table, &["功能开发".into()], "s/m", "low").1, "high");
+        assert_eq!(resolve_route(&table, &["文档整理".into()], "s/m", "low").1, "low");
+        // 未命中任务类型 → 兜底。
+        assert_eq!(resolve_route(&table, &["测试验证".into()], "s/m", "low").0, "p/m-fallback");
+        // 无任务类型识别 → 兜底（不猜）。
+        assert_eq!(resolve_route(&table, &[], "s/m", "low").0, "p/m-fallback");
+        // 兜底也未配置 → 沿用会话选择。
+        let empty = RouteTable::default();
+        let (model, effort, why) = resolve_route(&empty, &["功能开发".into()], "s/m", "low");
+        assert_eq!((model.as_str(), effort.as_str()), ("s/m", "low"));
+        assert!(why.contains("沿用会话"));
+    }
+
+    #[test]
+    fn cr059_detect_task_types_matches_keywords_without_guessing() {
+        let hits = detect_task_types("帮我修一下这个 bug，报错崩溃了");
+        assert!(hits.contains(&"缺陷修复".to_string()), "应识别缺陷修复：{hits:?}");
+        assert!(detect_task_types("今天天气怎么样").is_empty(), "无关消息不应命中任何任务类型");
+        // 最多 3 个，避免一条消息把所有槽位都点亮。
+        assert!(detect_task_types("重构 测试 审查 文档 方案设计 定位").len() <= 3);
+    }
+
+    #[test]
+    fn cr059_front_end_route_json_deserializes_into_route_table() {
+        // 前端（src/modules/settings/CliRoute.tsx）实际写入 cli.preferences.<id> 的 JSON 形状。
+        // 这里锁定契约：后端必须能原样反序列化，且兜底含 effort、slots 为变长数组。
+        let raw = r#"{
+            "route": {
+                "slots": [
+                    { "model": "PRV-MAGPIE/gpt-6-astra-ar", "effort": "high", "types": ["仓库探索"] },
+                    { "model": "", "effort": "", "types": [] }
+                ],
+                "fallback": { "model": "", "effort": "medium" }
+            },
+            "permission": "agent"
+        }"#;
+        let value: serde_json::Value = serde_json::from_str(raw).expect("前端 JSON 应可解析");
+        let route = value.get("route").cloned().unwrap_or(value);
+        let table: RouteTable = serde_json::from_value(route).expect("前端 route 应能反序列化为 RouteTable");
+        assert_eq!(table.slots.len(), 2, "变长槽位应原样保留");
+        assert_eq!(table.slots[0].model, "PRV-MAGPIE/gpt-6-astra-ar");
+        assert_eq!(table.slots[0].effort, "high");
+        assert_eq!(table.slots[0].types, vec!["仓库探索".to_string()]);
+        // 兜底 effort 必须可读，且未配置模型时按「沿用会话」处理。
+        assert_eq!(table.fallback.effort, "medium");
+        assert!(table.fallback.model.trim().is_empty());
+        // 命中任务类型 → 第一个非空槽；空模型槽必须跳过。
+        assert_eq!(resolve_route(&table, &["仓库探索".into()], "s/m", "low").0, "PRV-MAGPIE/gpt-6-astra-ar");
+        // 未命中 → 兜底未配模型 → 沿用会话选择。
+        assert_eq!(resolve_route(&table, &["测试验证".into()], "s/m", "low").0, "s/m");
+    }
+
+    #[test]
+    fn cr065_executor_session_cannot_fork() {
+        let c = page_conn();
+        c.execute(
+            "INSERT INTO session (id, projectId, title, createdAt, updatedAt, sessionRole) VALUES ('ex','p1','执行 FEAT-1',1,1,'executor')",
+            [],
+        )
+        .unwrap();
+        assert!(fork_session(&c, "ex").is_err());
     }
 }

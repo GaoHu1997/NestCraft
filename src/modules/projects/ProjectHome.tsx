@@ -31,7 +31,8 @@ export function ProjectHome() {
   }, []);
 
   useEffect(() => { void reload(); }, [reload]);
-  const openProject = (p: api.Project) => openObject({ page: "project", projectId: p.id, tab: p.kind === "code" ? "requirements" : "code" });
+  /* CR-054 / AC-STORY-071-01：两类项目新建窗口打开时都默认进入「工作台」。 */
+  const openProject = (p: api.Project) => openObject({ page: "project", projectId: p.id, tab: "workbench" });
   const q = keyword.trim().toLowerCase();
   const shown = projects.filter(p => (filter === "all" || p.kind === filter) && (!q || `${p.name} ${p.id} ${p.rootUri}`.toLowerCase().includes(q)));
 

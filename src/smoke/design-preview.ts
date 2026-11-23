@@ -165,22 +165,23 @@ function createFixture() {
   const efforts = { off: null, low: "low", medium: "medium", high: "high", max: "max" };
   function model(providerId: string, modelId: string, displayName: string, contextWindow: number | null, vision: boolean, thinking = true, imageGen = false): ModelConfig {
     return { id: `${providerId}:${modelId}`, providerId, modelId, displayName, text: !imageGen, vision, imageGen,
-      efforts: thinking ? { ...efforts } : {}, defaultEffort: thinking ? "high" : null, contextWindow, maxTokens: imageGen ? null : 32768 };
+      efforts: thinking ? { ...efforts } : {}, defaultEffort: thinking ? "high" : null, contextWindow, maxTokens: imageGen ? null : 32768,
+      sortOrder: 0 };
   }
   const providers: Provider[] = [
     { id: "PRV-MAGPIE", name: "MagpieGateway", protocol: "anthropic", disabled: false, headersJson: '{"X-Demo-Client":"offline-review"}', fingerprintJson: null,
-      keys: [{ id: "KEY-MAGPIE-01", alias: "主凭证（仿真）", masked: MASK, enabled: true }, { id: "KEY-MAGPIE-02", alias: "备用（仿真）", masked: MASK, enabled: true }],
+      keys: [{ id: "KEY-MAGPIE-01", alias: "主凭证（仿真）", masked: MASK, enabled: true, protocol: "", models: [], scopeSource: null, probedAt: null }, { id: "KEY-MAGPIE-02", alias: "备用（仿真）", masked: MASK, enabled: true, protocol: "", models: [], scopeSource: null, probedAt: null }],
       endpoints: [{ id: "EP-MAGPIE-01", protocol: "anthropic", baseUrl: "https://magpie.demo.invalid", enabled: true }, { id: "EP-MAGPIE-02", protocol: "openai", baseUrl: "https://magpie.demo.invalid/v1", enabled: false }],
       models: [model("PRV-MAGPIE", "gpt-6-astra-ar", "GPT 6 Astra AR", 922000, true), model("PRV-MAGPIE", "gpt-6-astra", "GPT 6 Astra", 922000, true),
         model("PRV-MAGPIE", "gpt-6.1-sol-ar", "GPT-6.1 Sol AR", 922000, true), model("PRV-MAGPIE", "gpt-6.1-sol", "GPT 6.1 Sol", 922000, true),
         model("PRV-MAGPIE", "gpt-6-luna", "GPT-6 Luna", 922000, true), model("PRV-MAGPIE", "gpt-5.6-sol", "GPT-5.6 Sol", 922000, true),
         model("PRV-MAGPIE", "deepseek-v4.1-flash", "DeepSeek V4.1 Flash", 1000000, false)] },
     { id: "PRV-TIERFLOW", name: "TierFlow", protocol: "openai", disabled: false, headersJson: null, fingerprintJson: null,
-      keys: [{ id: "KEY-TIER-01", alias: "主凭证（仿真）", masked: MASK, enabled: true }, { id: "KEY-TIER-02", alias: "备用（仿真）", masked: MASK, enabled: false }],
+      keys: [{ id: "KEY-TIER-01", alias: "主凭证（仿真）", masked: MASK, enabled: true, protocol: "", models: [], scopeSource: null, probedAt: null }, { id: "KEY-TIER-02", alias: "备用（仿真）", masked: MASK, enabled: false, protocol: "", models: [], scopeSource: null, probedAt: null }],
       endpoints: [{ id: "EP-TIER-01", protocol: "openai", baseUrl: "https://tierflow.demo.invalid/v1", enabled: true }],
       models: [model("PRV-TIERFLOW", "tierflow-pro", "TierFlow Pro", 200000, true), model("PRV-TIERFLOW", "tierflow-lite", "TierFlow Lite", 128000, false), model("PRV-TIERFLOW", "tierflow-image", "TierFlow Image", null, false, false, true)] },
     { id: "PRV-LOCAL", name: "本地网关", protocol: "openai", disabled: false, headersJson: null, fingerprintJson: null,
-      keys: [{ id: "KEY-LOCAL-01", alias: "演示", masked: MASK, enabled: true }], endpoints: [{ id: "EP-LOCAL-01", protocol: "openai", baseUrl: "https://local.demo.invalid/v1", enabled: true }],
+      keys: [{ id: "KEY-LOCAL-01", alias: "演示", masked: MASK, enabled: true, protocol: "", models: [], scopeSource: null, probedAt: null }], endpoints: [{ id: "EP-LOCAL-01", protocol: "openai", baseUrl: "https://local.demo.invalid/v1", enabled: true }],
       models: [model("PRV-LOCAL", "local-qwen-72b", "Qwen 72B", 32000, false, false)] },
   ];
   const provider = (id: string) => lookup(providers, id, p => p.id, "供应商");
@@ -508,6 +509,17 @@ let avatarImage: { path: string; hash: string } | null = null;
     for (const dir of ["PRD", "LLD", "UI", "DB"]) {
       put(d, `docs/${dir}/${dir}-${p.id.slice(4)}-${p.name}.md`, `# ${dir}：${p.name}\n\n> ${LABEL}\n\n## 范围\n${p.kind === "work" ? p.id === "PRJ-1018" ? activitySummary : brandSummary : "容量、幂等、权限与可复核交付。"}\n\n## 数据与边界\n仅本项目内存文件，不访问生产、个人或应用数据。\n\n## 未验证\n真实执行、原生权限、格式保真与视觉验收均未验证。\n`);
     }
+    /* UI-CR066 r2：数据库／领域设计模型以带编号的独立文档存在，供需求导图与预览读取。
+       编号与标题可被解析为稳定身份；正文是合成夹具，不代表真实表结构。 */
+    if (p.kind === "code") {
+      const modelSeeds: [string, string, string][] = [
+        ["DB-001", "预约与容量模型", "booking、slot 与容量扣减的表结构与约束；取消回补在同一事务内提交。"],
+        ["DB-002", "用户与角色权限模型", "user、role 与只读运营角色的授权关系；操作审计留痕。"],
+      ];
+      for (const [id, title, body] of modelSeeds) {
+        put(d, `docs/DB/${id}-${title}.md`, `# ${id}：${title}\n\n> ${LABEL}\n\n## 范围\n${body}\n\n## 数据与边界\n仅本项目内存文件，不访问生产、个人或应用数据。\n\n## 未验证\n真实迁移、原生权限与视觉验收均未验证。\n`);
+      }
+    }
     // 可直接阅读的内存 HTML 仅作项目设计附件；无脚本、外链与真实业务执行。
     put(d, "docs/UI/index.html", `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>${p.id} 合成UI附件</title><body><h1>${p.id} 设计附件</h1><p>${LABEL}</p></body></html>`);
     if (p.kind === "code") {
@@ -579,7 +591,7 @@ let avatarImage: { path: string; hash: string } | null = null;
     const selectedEffort = a.effort == null ? (a.modelId == null && a.providerId == null ? "high" : selectedModel?.defaultEffort ?? null) : str(a, "effort");
     const s: SessionMeta = { id, projectId, serverId, title: "新会话", cliId: a.cliId == null ? "claude" : str(a, "cliId"),
       providerId, modelId: a.modelId == null ? defaultModel : str(a, "modelId"),
-      effort: selectedEffort, draft: "", unread: null, createdAt: now(), updatedAt: now(), messageCount: 0,
+      effort: selectedEffort, draft: "", unread: null, createdAt: now(), updatedAt: now(), messageCount: 0, pinnedAt: 0,
       featureId, featureTitle, featureSourceHash: featureId ? `preview:${featureId}` : null, sessionRole: featureId ? "executor" : "ordinary" };
     validateSession(s); sessions.push(s); messages.set(s.id, []); return s;
   }
@@ -887,7 +899,7 @@ let avatarImage: { path: string; hash: string } | null = null;
   on("read_doc", a => { const { d, rel } = docTarget(a.sourceUri); return read(d, rel); });
   on("write_doc", a => { const { p, rel } = docTarget(a.sourceUri); writeProject(p, rel, str(a, "content", true)); return null; });
   on("fs_list_dir", a => { const p = projectByRoot(a.rootUri); return listing(projectDisk(p), p.rootUri, within(p.rootUri, a.relPath ?? "", true)); });
-  on("fs_list_tree", a => { const p = projectByRoot(a.rootUri); return listing(projectDisk(p), p.rootUri, "", integer(a.maxDepth, 8, 1, 20)); });
+  on("fs_list_tree", a => { const p = projectByRoot(a.rootUri); return listing(projectDisk(p), p.rootUri, "", integer(a.maxDepth, 8, 1, 64)); });
   on("fs_read_file", a => { const p = projectByRoot(a.rootUri); return read(projectDisk(p), within(p.rootUri, a.path)); });
   on("fs_write_file", a => { const p = projectByRoot(a.rootUri); writeProject(p, within(p.rootUri, a.path), str(a, "content", true)); return null; });
   on("fs_delete_file", a => { const p = projectByRoot(a.rootUri); deleteProjectFile(p, within(p.rootUri, a.path)); return null; });
@@ -908,7 +920,8 @@ let avatarImage: { path: string; hash: string } | null = null;
     const next: Provider = { id, name: n, protocol: d.protocol, disabled: bool(d.disabled, "disabled"),
       headersJson: Object.keys(headers).length ? JSON.stringify(Object.fromEntries(Object.keys(headers).map(k => [k, /authorization|key|token|secret/i.test(k) ? MASK : "offline-review"]))) : null,
       fingerprintJson: existing?.fingerprintJson ?? null,
-      keys: array(d.keys, "keys", 20).map((value, i) => { const k = object(value); return { id: k.id == null ? `${id}:key:${i + 1}` : str(k, "id"), alias: k.alias == null ? null : text(k.alias, "alias", true, 100), masked: MASK, enabled: bool(k.enabled, "enabled") }; }),
+      keys: array(d.keys, "keys", 20).map((value, i) => { const k = object(value); return { id: k.id == null ? `${id}:key:${i + 1}` : str(k, "id"), alias: k.alias == null ? null : text(k.alias, "alias", true, 100), masked: MASK, enabled: bool(k.enabled, "enabled"),
+          protocol: k.protocol == null ? "" : str(k, "protocol"), models: k.models == null ? [] : array(k.models, "models", 200).map(v => str({ v }, "v")), scopeSource: k.scopeSource == null ? null : str(k, "scopeSource"), probedAt: null }; }),
       endpoints: array(d.endpoints, "endpoints", 20).map((value, i) => { const e = object(value); const protocol = str(e, "protocol"); if (!["openai", "anthropic"].includes(protocol)) fail("未知端点协议"); return { id: e.id == null ? `${id}:endpoint:${i + 1}` : str(e, "id"), protocol, baseUrl: demoUrl(e.baseUrl), enabled: bool(e.enabled, "enabled") }; }),
       models: array(d.models, "models", 80).map((value, i) => {
         const m = object(value), em = object(m.efforts, "efforts");
@@ -916,7 +929,8 @@ let avatarImage: { path: string; hash: string } | null = null;
         const effort = m.defaultEffort == null ? null : str(m, "defaultEffort"); if (effort && !(effort in em)) fail("默认思考档位未定义");
         return { id: m.id == null ? `${id}:model:${i + 1}` : str(m, "id"), providerId: id, modelId: str(m, "modelId"), displayName: str(m, "displayName"),
           text: bool(m.text, "text"), vision: bool(m.vision, "vision"), imageGen: bool(m.imageGen, "imageGen"), efforts: copy(em) as ModelConfig["efforts"], defaultEffort: effort,
-          contextWindow: m.contextWindow == null ? null : integer(m.contextWindow, 0, 1, 10_000_000), maxTokens: m.maxTokens == null ? null : integer(m.maxTokens, 0, 1, 1_000_000) };
+          contextWindow: m.contextWindow == null ? null : integer(m.contextWindow, 0, 1, 10_000_000), maxTokens: m.maxTokens == null ? null : integer(m.maxTokens, 0, 1, 1_000_000),
+          sortOrder: m.sortOrder == null ? i : integer(m.sortOrder, i, 0, 10_000) };
       }),
     };
     for (const values of [next.keys.map(k => k.id), next.endpoints.map(e => e.id), next.models.map(m => m.id), next.models.map(m => m.modelId)]) if (new Set(values).size !== values.length) fail("供应商嵌套条目编号或模型名重复");
@@ -932,6 +946,9 @@ let avatarImage: { path: string; hash: string } | null = null;
   on("fingerprint_check", a => { const p = provider(str(a, "providerId")); return { results: p.endpoints.map(e => ({ endpointId: e.id, url: e.baseUrl, status: "DEMO_NOT_CHECKED（未联网）" })) }; });
 
   on("sdk_list", () => copy(sdks));
+  // CR-059 D5/E4：缓存先行 + 逐项检测（合成：快照直读内存，检测返回同一状态）。
+  on("sdk_snapshot", () => ({ states: copy(sdks), checkedAt: Date.now() - 60_000 }));
+  on("sdk_detect_one", a => copy(sdk(str(a, "sdkId"))));
   on("sdk_cli_candidates", () => copy(sdks.filter(s => s.enabled && s.installState === "installed")));
   on("sdk_versions", a => { const s = sdk(str(a, "sdkId")); return [s.version ?? "1.0.0-demo", "1.0.1-demo"]; });
   on("sdk_set_enabled", a => { sdk(str(a, "sdkId")).enabled = bool(a.enabled, "enabled"); return null; });
@@ -964,6 +981,27 @@ let avatarImage: { path: string; hash: string } | null = null;
   });
   on("skill_delete", a => { const s = lookup(skills, name(a.name, true), s => s.name, "Skill"); if (s.builtin) fail("内置能力不能删除"); skills.splice(skills.indexOf(s), 1); skillBodies.delete(s.name); return null; });
   on("skill_set_enabled", a => { lookup(skills, name(a.name, true), s => s.name, "Skill").enabled = bool(a.enabled, "enabled"); return null; });
+  // CR-059 F1/F2：文件夹识别、导入与跨 agent 扫描（合成夹具；不读真实磁盘）。
+  on("skill_folder_preview", a => {
+    const path = str(a, "path", true);
+    return { path, valid: true, name: "demo-skill", slug: "demo-skill", description: "合成技能说明；未读取真实目录", body: "# demo-skill\n\n> 合成预览，未读取真实 SKILL.md\n" };
+  });
+  on("skill_import_folder", a => {
+    const slug = str(a, "slug", true);
+    unique(skills, slug, s => s.name);
+    skills.push({ id: uid("SKILL"), name: slug, description: "合成导入技能；未复制真实目录", enabled: true, sourceRef: `/demo/skills/${slug}/SKILL.md`, builtin: false });
+    return { slug, copied: 1, skipped: [] };
+  });
+  on("skill_scan_sources", () => [
+    { agent: "Claude Code", root: "~/.claude/skills", exists: true, items: [
+      { agent: "Claude Code", source: "~/.claude/skills/release-check", name: "release-check", slug: "release-check", description: "发布前检查清单（合成）", imported: false, error: null },
+      { agent: "Claude Code", source: "~/.claude/skills/code-review", name: "code-review", slug: "code-review", description: "代码审查（合成，已导入）", imported: true, error: null },
+    ] },
+    { agent: "Codex", root: "~/.codex/skills", exists: true, items: [
+      { agent: "Codex", source: "~/.codex/skills/doc-polish", name: "doc-polish", slug: "doc-polish", description: "文档润色（合成）", imported: false, error: null },
+    ] },
+    { agent: "ZCode", root: "~/.zcode/skills", exists: false, items: [] },
+  ]);
   on("tool_list", () => copy(tools));
   on("tool_set_enabled", a => { lookup(tools, str(a, "name"), t => t.name, "Tool").enabled = bool(a.enabled, "enabled"); return null; });
   on("mcp_list", () => copy(mcps));
@@ -981,8 +1019,84 @@ let avatarImage: { path: string; hash: string } | null = null;
   on("mcp_delete", a => { const m = lookup(mcps, str(a, "id"), m => m.id, "MCP"); mcps.splice(mcps.indexOf(m), 1); return null; });
   on("mcp_set_enabled", a => { lookup(mcps, str(a, "id"), m => m.id, "MCP").enabled = bool(a.enabled, "enabled"); return null; });
   on("mcp_discover_tools", a => { const m = lookup(mcps, str(a, "serverId"), m => m.id, "MCP"); if (!m.enabled) fail("MCP 已禁用"); if (!m.tools.length) m.tools = [{ name: "demo.inspect", description: "合成工具目录；未启动进程或网络" }]; return copy(m.tools) satisfies McpToolInfo[]; });
+  // CR-059 F4：MCP 扫描导入（合成夹具；env 只回键名）。
+  on("mcp_scan_sources", () => [
+    { agent: "Claude Code", root: "~/.claude.json", exists: true, items: [
+      { agent: "Claude Code", source: "~/.claude.json", name: "filesystem-demo", transport: "stdio", command: "demo-mcp-fs", args: ["--root", "/demo"], envKeys: ["DEMO_TOKEN"], url: null, imported: false, error: null },
+      { agent: "Claude Code", source: "~/.claude.json", name: "filesystem", transport: "stdio", command: "demo-mcp-fs", args: [], envKeys: [], url: null, imported: true, error: null },
+    ] },
+    { agent: "Codex", root: "~/.codex/config.toml", exists: true, items: [
+      { agent: "Codex", source: "~/.codex/config.toml", name: "docs-demo", transport: "http", command: null, args: [], envKeys: [], url: "https://docs.demo.invalid/mcp", imported: false, error: null },
+    ] },
+    { agent: "ZCode", root: "~/.zcode/mcp.json", exists: false, items: [] },
+  ]);
+  on("mcp_import_source", a => {
+    const agent = str(a, "agent", true), source = str(a, "name", true);
+    unique(mcps, source, m => m.name);
+    const next: McpServer = { id: uid("MCP"), name: source, transport: "stdio", command: "demo-mcp-imported", args: [], env: {}, url: null,
+      enabled: true, tools: [], authStatus: "unauthenticated", authRevision: 0, authMode: "oauth", allowInsecureLocalTls: false };
+    if (!agent) fail("缺少来源 agent");
+    mcps.push(next); return next.id;
+  });
 
   on("chat_sessions", a => { if (a.projectId != null) projectById(str(a, "projectId")); return copy(sessions.filter(s => s.projectId === (a.projectId ?? null)).sort((a, b) => b.updatedAt - a.updatedAt)); });
+  // CR-063/CR-065：设计预览分页与搜索（真实 ChatPanel 首屏依赖此命令）
+  on("chat_sessions_page", a => {
+    const pid = a.projectId == null ? null : str(a, "projectId");
+    const sid = a.serverId == null ? null : str(a, "serverId");
+    if (pid) projectById(pid);
+    const scope = sessions.filter(s => {
+      if (pid && sid) return s.projectId === pid && s.serverId === sid;
+      if (pid) return s.projectId === pid;
+      if (sid) return s.serverId === sid;
+      return s.projectId === null && s.serverId === null;
+    }).sort((x, y) => ((y.pinnedAt ?? 0) - (x.pinnedAt ?? 0))
+      || (y.updatedAt - x.updatedAt)
+      || (x.id < y.id ? 1 : x.id > y.id ? -1 : 0));
+    const kw = a.keyword == null ? "" : str(a, "keyword").trim().toLowerCase();
+    const matched = kw ? scope.filter(s => s.title.toLowerCase().includes(kw)) : scope;
+    const limit = Math.min(100, Math.max(1, Number(a.limit) || 20));
+    const cursorUpdatedAt = a.cursorUpdatedAt == null ? null : Number(a.cursorUpdatedAt);
+    const cursorPinnedAt = a.cursorPinnedAt == null ? null : Number(a.cursorPinnedAt);
+    const cursorId = a.cursorId == null ? null : String(a.cursorId);
+    const start = cursorPinnedAt == null ? 0
+      : matched.findIndex(s => {
+        const p = s.pinnedAt ?? 0;
+        return p < cursorPinnedAt
+          || (p === cursorPinnedAt && (s.updatedAt < cursorUpdatedAt! || (s.updatedAt === cursorUpdatedAt && s.id < cursorId!)));
+      });
+    const from = start < 0 ? matched.length : start;
+    const page = matched.slice(from, from + limit);
+    const hasMore = from + limit < matched.length;
+    return {
+      items: copy(page),
+      total: matched.length,
+      hasMore,
+      nextCursor: hasMore && page.length ? { pinnedAt: page[page.length - 1].pinnedAt ?? 0, updatedAt: page[page.length - 1].updatedAt, id: page[page.length - 1].id } : null,
+    };
+  });
+  on("chat_session_pin", a => {
+    const s = session(str(a, "id"));
+    s.pinnedAt = bool(a.pinned, "pinned") ? now() : 0;
+    return copy(s);
+  });
+  on("chat_session_fork", a => {
+    const src = session(str(a, "id"));
+    if (src.sessionRole !== "ordinary") fail("执行会话暂不支持分叉");
+    const forked: SessionMeta = {
+      ...copy(src),
+      id: uid("SESSION"),
+      title: "分叉 · " + src.title,
+      pinnedAt: 0,
+      unread: null,
+      draft: "",
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    sessions.push(forked);
+    messages.set(forked.id, copy(messages.get(src.id) ?? []));
+    return copy(forked);
+  });
   on("chat_session_create", a => copy(newSession(a)));
   on("chat_session_get", a => copy(session(str(a, "id"))));
   on("chat_session_update", a => {
@@ -1119,9 +1233,73 @@ let avatarImage: { path: string; hash: string } | null = null;
   on("git_diff_file", a => { const p = projectByRoot(a.repoPath), g = git(p), path = within(p.rootUri, a.path); bool(a.staged, "staged"); return `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-${(g.baseline.get(path) ?? "").split("\n").join("\n-")}\n+${(projectDisk(p).files.get(path) ?? "").split("\n").join("\n+")}\n`; });
   on("git_branches", a => { const g = git(projectByRoot(a.repoPath)); const result: BranchEntry[] = g.branches.map(n => ({ name: n, kind: "local", current: n === g.branch, ahead: 1, behind: 0 })); result.push({ name: "origin/main", kind: "remote", current: false, ahead: null, behind: null }); return result; });
   on("git_switch_branch", a => { const g = git(projectByRoot(a.repoPath)), n = text(a.name, "branch", false, 100); if (!/^[A-Za-z0-9][A-Za-z0-9_./-]*$/.test(n) || n.includes("..") || n.endsWith("/")) fail("分支名无效"); const create = bool(a.create, "create"); if (create) { if (g.branches.includes(n)) fail("同名分支已存在"); g.branches.push(n); } else if (!g.branches.includes(n)) fail("分支不存在"); g.branch = n; return null; });
-  on("git_log", a => { const g = git(projectByRoot(a.repoPath)), skip = integer(a.skip, 0, 0, 10000), limit = integer(a.limit, 50, 1, 500); return copy(g.commits.slice(skip, skip + limit)); });
+  on("git_log", a => {
+    const g = git(projectByRoot(a.repoPath)), skip = integer(a.skip, 0, 0, 10000), limit = integer(a.limit, 50, 1, 500);
+    // CR-067：与后端同语义的服务端筛选（分支、作者子串、时间下界），便于对照筛选与空态。
+    const author = a.author == null ? "" : String(a.author).trim().toLowerCase();
+    const since = a.since == null ? NaN : Date.parse(String(a.since));
+    const branch = a.branch == null ? "" : String(a.branch).trim();
+    let rows = g.commits;
+    if (branch) {
+      // 合成：分支过滤＝该分支名出现在 refs 中的提交（含其后的全部提交，等价于分支可达近似）。
+      const index = rows.findIndex(c => c.refs.some(r => r.replace(/^HEAD -> /, "") === branch || r === branch));
+      rows = index >= 0 ? rows.slice(index) : [];
+    }
+    rows = rows.filter(c =>
+      (!author || c.authorName.toLowerCase().includes(author)) &&
+      (!Number.isFinite(since) || Date.parse(c.date) >= since));
+    return copy(rows.slice(skip, skip + limit));
+  });
   on("git_commit_files", a => { const g = git(projectByRoot(a.repoPath)), hash = str(a, "hash"); lookup(g.commits, hash, c => c.hash, "合成提交"); return copy(g.commitFiles.get(hash) ?? []); });
   for (const command of ["git_fetch", "git_pull_ff_only", "git_push"]) on(command, a => { git(projectByRoot(a.repoPath)); return null; }); // 计数可复核的 no-op，无远端。
+  /* CR-067：远程、国内加速、按主机令牌。全部为内存态；令牌写入后只以掩码形式返回，绝不回显原值。 */
+  const previewRemotes = new Map<string, { name: string; url: string }[]>([
+    ["PRJ-1042", [{ name: "origin", url: "https://github.com/example.invalid/booking.git" }]],
+  ]);
+  const previewAccel = { enabled: false, url: "https://gh-proxy.com/" };
+  const previewCreds = new Map<string, { host: string; username: string; savedAt: string; token: string }>();
+  const remotesOf = (repoPath: unknown) => { const p = projectByRoot(repoPath); if (!previewRemotes.has(p.id)) previewRemotes.set(p.id, []); return previewRemotes.get(p.id)!; };
+  on("git_remotes", a => copy(remotesOf(a.repoPath).map(r => ({ name: r.name, url: r.url }))));
+  on("git_remote_save", a => {
+    const list = remotesOf(a.repoPath), name = text(a.name, "name", false, 100), url = text(a.url, "url", false, 500);
+    if (!/^[A-Za-z0-9._-]+$/.test(name) || name.startsWith("-")) fail("远程名称无效");
+    if (!url || /\s/.test(url) || url.startsWith("-")) fail("仓库地址无效");
+    const hit = list.find(r => r.name === name);
+    if (hit) hit.url = url; else list.push({ name, url });
+    return null;
+  });
+  on("git_remote_remove", a => {
+    const list = remotesOf(a.repoPath), name = text(a.name, "name", false, 100);
+    const idx = list.findIndex(r => r.name === name);
+    if (idx < 0) fail("远程不存在"); list.splice(idx, 1); return null;
+  });
+  on("git_accel_get", () => copy(previewAccel));
+  on("git_accel_set", a => {
+    const enabled = bool(a.enabled, "enabled"), url = text(a.url, "url", false, 300);
+    if (!/^https?:\/\/\S+$/.test(url)) fail("镜像前缀必须以 http:// 或 https:// 开头");
+    previewAccel.enabled = enabled; previewAccel.url = url.endsWith("/") ? url : `${url}/`;
+    return copy(previewAccel);
+  });
+  on("git_credentials_list", () => copy([...previewCreds.values()].map(c => ({ host: c.host, username: c.username, savedAt: c.savedAt }))));
+  on("git_credentials_save", a => {
+    const input = object(a.input), host = text(input.host, "host", false, 200).toLowerCase();
+    if (!/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/.test(host)) fail("主机名格式无效（示例：github.com）");
+    const token = input.token == null ? "" : String(input.token).trim();
+    const prev = previewCreds.get(host);
+    if (!token && !prev) fail("新增主机需要填写访问令牌");
+    const entry = { host, username: "oauth2", savedAt: "合成设计样例", token: token || prev!.token };
+    previewCreds.set(host, entry);
+    return { host, username: entry.username, savedAt: entry.savedAt };
+  });
+  on("git_credentials_delete", a => {
+    const host = text(a.host, "host", false, 200).toLowerCase();
+    previewCreds.delete(host); return null;
+  });
+  on("git_credential_status", a => {
+    const list = remotesOf(a.repoPath);
+    const host = list[0] ? (/^https?:\/\/([^/]+)\//.exec(list[0].url)?.[1]?.toLowerCase() ?? null) : null;
+    return { host, credential: host ? previewCreds.has(host) : false };
+  });
 
   on("server_list", () => copy(hosts));
   on("server_save", a => {
@@ -1150,6 +1328,9 @@ let avatarImage: { path: string; hash: string } | null = null;
     if (/rm\s|shutdown|reboot|mkfs|sudo|\||;|&&|>|curl|wget/i.test(command)) { const requestId = uid("APPROVAL"); approvals.set(requestId, { hostId: h.id, expires: Date.now() + 60000 }); return { needsApproval: true, requestId, risk: "high" } satisfies ExecResult; }
     return { needsApproval: false, exitCode: 0, output: `${LABEL}\n命令未执行；仅展示确定性内存响应。` } satisfies ExecResult;
   });
+  // CR-059 二期：内置 AI 工具跨进程审批（合成：默认无待审批项）。
+  on("server_pending_approvals", () => [] as { id: string; hostId: string; hostName: string | null; command: string; risk: string; createdAt: number }[]);
+  on("server_decide_approval", a => { str(a, "requestId"); const decision = str(a, "decision"); if (decision !== "approve" && decision !== "reject") fail("未知审批决定"); return { status: decision === "approve" ? "approved" : "rejected" }; });
   on("server_exec_approved", a => { const id = str(a, "requestId"), approval = approvals.get(id); if (!approval) fail("审批不存在或已消费"); approvals.delete(id); if (Date.now() > approval.expires || !host(approval.hostId).connected) fail("审批过期或合成连接已断开"); return { needsApproval: false, exitCode: 0, output: `${LABEL}\n审批已在内存消费，命令仍未执行。` } satisfies ExecResult; });
   on("server_exec_reject", a => { const id = str(a, "requestId"); if (!approvals.delete(id)) fail("审批不存在或已消费"); return null; });
 

@@ -46,6 +46,10 @@ pub struct DispatchConfig {
     pub codex_overrides: Vec<String>,
     /// codex：是否忽略用户配置
     pub ignore_user_config: bool,
+    /// CR-064：grok 会话级 MCP 配置文件（位于按会话隔离的 GROK_HOME 内）。
+    /// 该目录与 claude/codex 的 profile 同性质——按会话稳定保留、不随 Drop 删除，
+    /// 因此这里只记录路径用于诊断，不参与清理。
+    pub grok_mcp_file: Option<PathBuf>,
     /// 实际使用的供应商/模型信息（不含密钥）
     pub display: ProviderDisplay,
 }
@@ -108,6 +112,7 @@ fn toml_key(v: &str) -> String {
     }
 }
 
+#[derive(Clone)]
 struct McpRow {
     id: String,
     name: String,
@@ -174,6 +179,77 @@ pub fn stable_profile_dir(app: &tauri::AppHandle, cli_id: &str, session_id: &str
     Ok(dir)
 }
 
+/// 设置值 → 开关：缺省=启用，仅显式 "0" 关闭（纯函数便于单测）。
+fn ai_tools_enabled_from_setting(value: Option<String>) -> bool {
+    match value.as_deref() {
+        Some("0") => false,
+        _ => true,
+    }
+}
+
+/// CR-059：内置 workbench MCP 的注入条件。None = 不注入。
+/// 冒烟模式（TAURI_SMOKE=1）不注入——mock CLI 不实现 MCP，保持冒烟链路确定性；
+/// 设置键 `aiTools.enabled`（缺省开）= "0" 时整体关闭；与用户自配 MCP 同名时用户配置优先。
+fn built_in_workbench_config(
+    app: &tauri::AppHandle,
+    project_id: Option<&str>,
+) -> Result<Option<(PathBuf, Option<String>)>, String> {
+    if std::env::var("TAURI_SMOKE").is_ok() {
+        return Ok(None);
+    }
+    let enabled = {
+        let guard = db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        let value: Option<Option<String>> = conn
+            .query_row(
+                "SELECT value FROM setting_default WHERE scope='global' AND key='aiTools.enabled'",
+                [],
+                |r| r.get(0),
+            )
+            .ok();
+        ai_tools_enabled_from_setting(value.flatten())
+    };
+    if !enabled {
+        return Ok(None);
+    }
+    use tauri::Manager;
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    Ok(Some((dir, project_id.filter(|p| !p.is_empty()).map(|p| p.to_string()))))
+}
+
+/// CR-059：构造内置 workbench MCP 行（命令=应用自身，stdio 模式；纯函数便于单测）。
+fn built_in_workbench_row(data_dir: &std::path::Path, project_id: Option<&str>) -> McpRow {
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("agent-workbench"));
+    let mut args = vec![
+        "--app-mcp-stdio".to_string(),
+        "--app-data-dir".to_string(),
+        data_dir.to_string_lossy().to_string(),
+    ];
+    if let Some(pid) = project_id {
+        args.push("--project-id".to_string());
+        args.push(pid.to_string());
+    }
+    McpRow {
+        id: "builtin-workbench".into(),
+        name: "workbench".into(),
+        transport: "stdio".into(),
+        command: Some(exe.to_string_lossy().to_string()),
+        args,
+        env: BTreeMap::new(),
+        url: None,
+        auth_status: "unauthenticated".into(),
+    }
+}
+
+/// CR-059：把内置 workbench 行并入用户自配 MCP 清单（同名时用户配置优先；纯函数便于单测）。
+fn merge_built_in_workbench(servers: Vec<McpRow>, data_dir: &std::path::Path, project_id: Option<&str>) -> Vec<McpRow> {
+    let mut servers = servers;
+    if !servers.iter().any(|s| s.name == "workbench") {
+        servers.insert(0, built_in_workbench_row(data_dir, project_id));
+    }
+    servers
+}
+
 /// 解析会话所需的派发配置。None = 无供应商且无能力需要注入（此时无 profile 需求）。
 pub fn resolve(
     app: &tauri::AppHandle,
@@ -182,8 +258,13 @@ pub fn resolve(
     provider_id: Option<&str>,
     model_id: &str,
     effort: &str,
+    project_id: Option<&str>,
+    cwd: Option<&std::path::Path>,
 ) -> Result<Option<DispatchConfig>, String> {
-    let mcp_servers = enabled_mcp_servers()?;
+    let mut mcp_servers = enabled_mcp_servers()?;
+    if let Some((dir, pid)) = built_in_workbench_config(app, project_id)? {
+        mcp_servers = merge_built_in_workbench(mcp_servers, &dir, pid.as_deref());
+    }
     let has_provider = provider_id.map(|p| !p.is_empty()).unwrap_or(false);
 
     let mut cfg = DispatchConfig {
@@ -197,6 +278,7 @@ pub fn resolve(
         add_dirs: vec![],
         codex_overrides: vec![],
         ignore_user_config: false,
+        grok_mcp_file: None,
         display: ProviderDisplay::default(),
     };
 
@@ -323,6 +405,16 @@ pub fn resolve(
                 cfg.env.insert("OPENAI_BASE_URL".into(), format!("{}/v1", base));
                 cfg.env.insert("OPENAI_API_KEY".into(), secret.clone());
                 cfg.strip_prefixes.push("OPENAI_".into());
+                // CR-064：grok 官方认证读取 XAI_API_KEY（实测 `XAI_API_KEY=...` 时不再报
+                // 「Not signed in」而是直接尝试请求）。保留 OPENAI_* 以兼容 OpenAI 兼容端点。
+                cfg.env.insert("XAI_API_KEY".into(), secret.clone());
+                cfg.strip_prefixes.push("XAI_".into());
+                // CR-064：GROK_HOME 指向按会话稳定目录（同 claude/codex 的 profile 机制）。
+                // MCP 配置落在这里：既不需要「项目文件夹受信任」（实测 repo-local MCP
+                // 未信任时不会启动），也不污染用户 ~/.grok。
+                let profile = stable_profile_dir(app, "grok", session_id)?;
+                cfg.env.insert("GROK_HOME".into(), profile.to_string_lossy().to_string());
+                cfg.profile_dir = Some(profile);
             }
             other => return Err(format!("未知 CLI：{}", other)),
         }
@@ -336,11 +428,136 @@ pub fn resolve(
         };
     }
 
-    apply_capabilities(app, cli_id, &mcp_servers, &mut cfg)?;
-    if !has_provider && cfg.mcp_config_file.is_none() && cfg.add_dirs.is_empty() && !cfg.ignore_user_config {
+    apply_capabilities(app, cli_id, &mcp_servers, &mut cfg, cwd)?;
+    // CR-059：codex 的 MCP 走 TOML 覆盖（无 mcp_config_file），因此「是否需要派发配置」
+    // 必须同时看 codex_overrides，否则无供应商时内置 workbench 工具会被静默丢掉。
+    // CR-064：grok 同理走 .grok/config.toml（grok_mcp），也必须纳入判定。
+    if !has_provider
+        && cfg.mcp_config_file.is_none()
+        && cfg.add_dirs.is_empty()
+        && cfg.codex_overrides.is_empty()
+        && cfg.grok_mcp_file.is_none()
+        && !cfg.ignore_user_config
+    {
         return Ok(None);
     }
     Ok(Some(cfg))
+}
+
+/// CR-059：claude 的 MCP 配置（纯函数，便于单测锁定注入内容）。
+/// 返回 (mcpServers JSON, 放行的工具清单 mcp__<server>)。
+fn claude_mcp_config(servers: &[McpRow], token_of: &dyn Fn(&McpRow) -> Result<Option<String>, String>) -> Result<(serde_json::Value, Vec<String>), String> {
+    let selected: Vec<&McpRow> = servers.iter().filter(|s| s.transport == "stdio" || s.transport == "http").collect();
+    let mut map = serde_json::Map::new();
+    let mut allowed = Vec::new();
+    for s in selected {
+        let mut entry = serde_json::Map::new();
+        if s.transport == "stdio" {
+            entry.insert("command".into(), serde_json::json!(s.command.clone().unwrap_or_default()));
+            if !s.args.is_empty() {
+                let safe_args: Vec<String> = s.args.iter().map(|a| {
+                    let looks_like_path = a.len() > 2 && a.chars().nth(1) == Some(':');
+                    if looks_like_path && a.contains('\\') { a.replace('\\', "/") } else { a.clone() }
+                }).collect();
+                entry.insert("args".into(), serde_json::json!(safe_args));
+            }
+            if !s.env.is_empty() { entry.insert("env".into(), serde_json::json!(s.env)); }
+            allowed.push(format!("mcp__{}", s.name));
+        } else {
+            if s.auth_status != "authenticated" { return Err(format!("HTTP MCP「{}」未授权，无法派发", s.name)); }
+            let url = s.url.as_deref().filter(|v| !v.trim().is_empty()).ok_or_else(|| format!("HTTP MCP「{}」缺少URL", s.name))?;
+            let token = token_of(s)?;
+            if let Some(token) = token {
+                entry.insert("type".into(), serde_json::json!("http"));
+                entry.insert("url".into(), serde_json::json!(url));
+                entry.insert("headers".into(), serde_json::json!({"Authorization": format!("Bearer {}", token)}));
+            }
+        }
+        map.insert(s.name.clone(), serde_json::Value::Object(entry));
+    }
+    Ok((serde_json::json!({ "mcpServers": map }), allowed))
+}
+
+/// CR-059：codex 的 MCP TOML 覆盖（纯函数，便于单测锁定注入内容）。
+/// 返回 (覆盖项, 需要注入环境变量的 (键, 值))。
+fn codex_mcp_overrides(servers: &[McpRow], token_of: &dyn Fn(&McpRow) -> Result<Option<String>, String>) -> Result<(Vec<String>, Vec<(String, String)>), String> {
+    let mut overrides = Vec::new();
+    let mut envs = Vec::new();
+    for s in servers.iter() {
+        if s.transport == "stdio" {
+            if s.command.as_deref().unwrap_or("").trim().is_empty() { continue; }
+            let mut parts = vec![format!("command={}", toml_str(s.command.as_deref().unwrap_or("")))];
+            if !s.args.is_empty() { parts.push(format!("args=[{}]", s.args.iter().map(|a| toml_str(a)).collect::<Vec<_>>().join(", "))); }
+            parts.push("default_tools_approval_mode=\"approve\"".into());
+            overrides.push(format!("mcp_servers.{}={{ {} }}", toml_key(&s.name), parts.join(", ")));
+        } else if s.transport == "http" {
+            if s.auth_status != "authenticated" { return Err(format!("HTTP MCP「{}」未授权，无法派发给Codex", s.name)); }
+            let url = s.url.as_deref().filter(|v| !v.trim().is_empty()).ok_or_else(|| format!("HTTP MCP「{}」缺少URL", s.name))?;
+            let token = token_of(s)?;
+            let Some(token) = token else {
+                overrides.push(format!("mcp_servers.{}={{ url={} }}", toml_key(&s.name), toml_str(url)));
+                continue;
+            };
+            let env_key = format!("AGENT_WORKBENCH_MCP_TOKEN_{}", s.id.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>());
+            envs.push((env_key.clone(), token));
+            overrides.push(format!("mcp_servers.{}={{ url={}, bearer_token_env_var={} }}", toml_key(&s.name), toml_str(url), toml_str(&env_key)));
+        }
+    }
+    Ok((overrides, envs))
+}
+
+/// CR-064：生成 grok 会话级 `config.toml` 内容（只含 stdio MCP 服务器）。
+/// 复用 codex 分支同一套 TOML 转义（`toml_str` / `toml_key`），避免两套规则漂移。
+/// 无可用服务器时返回 None（不写空文件）。
+fn grok_mcp_config_toml(servers: &[McpRow]) -> Option<String> {
+    let mut sections = String::new();
+    for s in servers {
+        // grok 本轮只接 stdio；HTTP/SSE 需要独立 auth 流程，登记为后续（LLD §2.3）。
+        if s.transport != "stdio" {
+            continue;
+        }
+        let command = s.command.as_deref().map(str::trim).unwrap_or("");
+        if command.is_empty() {
+            continue;
+        }
+        sections.push_str(&format!("\n[mcp_servers.{}]\n", toml_key(&s.name)));
+        sections.push_str(&format!("command = {}\n", toml_str(command)));
+        if !s.args.is_empty() {
+            let args = s.args.iter().map(|a| toml_str(a)).collect::<Vec<_>>().join(", ");
+            sections.push_str(&format!("args = [{}]\n", args));
+        }
+        if !s.env.is_empty() {
+            sections.push_str(&format!("[mcp_servers.{}.env]\n", toml_key(&s.name)));
+            for (k, v) in s.env.iter() {
+                sections.push_str(&format!("{} = {}\n", toml_key(k), toml_str(v)));
+            }
+        }
+    }
+    if sections.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "# 由应用生成：会话级 MCP 配置（CR-064）。按会话隔离，不影响你的 ~/.grok 与项目配置。\n{}\n",
+        sections
+    ))
+}
+
+/// CR-064：把 grok MCP 配置写入**按会话隔离的 GROK_HOME 目录**。
+///
+/// 为什么不写项目级 `.grok/config.toml`（实测结论）：
+/// grok 对 repo-local（project-scoped）MCP 服务器要求**文件夹受信任**，
+/// 未信任时 `grok mcp doctor` 报 `folder untrusted ... not started`，
+/// 即注入的服务器会被静默忽略。而 `GROK_HOME` 覆盖的配置文件被识别为
+/// `config` 来源（非 repo-local），不需要文件夹信任，且天然按会话隔离，
+/// 不污染用户 `~/.grok`。这与 claude 的 `CLAUDE_CONFIG_DIR`、
+/// codex 的 `CODEX_HOME` 完全同一套做法。
+fn write_grok_mcp_config(grok_home: &std::path::Path, servers: &[McpRow]) -> Result<Option<PathBuf>, String> {
+    let Some(content) = grok_mcp_config_toml(servers) else { return Ok(None) };
+    std::fs::create_dir_all(grok_home).map_err(|e| format!("创建 grok 会话配置目录失败：{}", e))?;
+    let path = grok_home.join("config.toml");
+    // 该目录专属本会话（由 stable_profile_dir 生成），可直接写；若上一轮遗留则覆盖。
+    std::fs::write(&path, content).map_err(|e| format!("写入 grok MCP 配置失败：{}", e))?;
+    Ok(Some(path))
 }
 
 /// 注入 MCP 与 Skill（能力配置必须真正到达 CLI）。
@@ -349,6 +566,7 @@ fn apply_capabilities(
     cli_id: &str,
     servers: &[McpRow],
     cfg: &mut DispatchConfig,
+    cwd: Option<&std::path::Path>,
 ) -> Result<(), String> {
     if let Some(dir) = skill_dir(app) {
         cfg.add_dirs.push(dir);
@@ -358,61 +576,34 @@ fn apply_capabilities(
         "claude" => {
             let selected: Vec<&McpRow> = servers.iter().filter(|s| s.transport == "stdio" || s.transport == "http").collect();
             if selected.is_empty() { return Ok(()); }
-            let mut map = serde_json::Map::new();
-            let mut allowed = Vec::new();
-            for s in selected {
-                let mut entry = serde_json::Map::new();
-                if s.transport == "stdio" {
-                    entry.insert("command".into(), serde_json::json!(s.command.clone().unwrap_or_default()));
-                    if !s.args.is_empty() {
-                        let safe_args: Vec<String> = s.args.iter().map(|a| {
-                            let looks_like_path = a.len() > 2 && a.chars().nth(1) == Some(':');
-                            if looks_like_path && a.contains('\\') { a.replace('\\', "/") } else { a.clone() }
-                        }).collect();
-                        entry.insert("args".into(), serde_json::json!(safe_args));
-                    }
-                    if !s.env.is_empty() { entry.insert("env".into(), serde_json::json!(s.env)); }
-                    allowed.push(format!("mcp__{}", s.name));
-                } else {
-                    if s.auth_status != "authenticated" { return Err(format!("HTTP MCP「{}」未授权，无法派发", s.name)); }
-                    let url = s.url.as_deref().filter(|v| !v.trim().is_empty()).ok_or_else(|| format!("HTTP MCP「{}」缺少URL", s.name))?;
-                    let token = crate::commands::capabilities::mcp_http_authorization(app, &s.id)?;
-                    entry.insert("type".into(), serde_json::json!("http"));
-                    entry.insert("url".into(), serde_json::json!(url));
-                    if let Some(token) = token {
-                        entry.insert("headers".into(), serde_json::json!({"Authorization": format!("Bearer {}", token)}));
-                    }
-                }
-                map.insert(s.name.clone(), serde_json::Value::Object(entry));
-            }
+            let (payload, allowed) = claude_mcp_config(servers, &|s| {
+                crate::commands::capabilities::mcp_http_authorization(app, &s.id)
+            })?;
             let dir = make_temp_dir("mcp")?;
             let file = dir.join("mcp-config.json");
-            write_private(&file, &serde_json::json!({ "mcpServers": map }).to_string())?;
+            write_private(&file, &payload.to_string())?;
             cfg.mcp_config_file = Some(file);
             cfg.mcp_allowed_tools = allowed;
             if cfg.temp_dir.is_none() { cfg.temp_dir = Some(dir); }
         }
         "codex" => {
-            for s in servers.iter() {
-                if s.transport == "stdio" {
-                    if s.command.as_deref().unwrap_or("").trim().is_empty() { continue; }
-                    let mut parts = vec![format!("command={}", toml_str(s.command.as_deref().unwrap_or("")))];
-                    if !s.args.is_empty() { parts.push(format!("args=[{}]", s.args.iter().map(|a| toml_str(a)).collect::<Vec<_>>().join(", "))); }
-                    parts.push("default_tools_approval_mode=\"approve\"".into());
-                    cfg.codex_overrides.push(format!("mcp_servers.{}={{ {} }}", toml_key(&s.name), parts.join(", ")));
-                } else if s.transport == "http" {
-                    if s.auth_status != "authenticated" { return Err(format!("HTTP MCP「{}」未授权，无法派发给Codex", s.name)); }
-                    let url = s.url.as_deref().filter(|v| !v.trim().is_empty()).ok_or_else(|| format!("HTTP MCP「{}」缺少URL", s.name))?;
-                    let token = crate::commands::capabilities::mcp_http_authorization(app, &s.id)?;
-                    let Some(token) = token else {
-                        cfg.codex_overrides.push(format!("mcp_servers.{}={{ url={} }}", toml_key(&s.name), toml_str(url)));
-                        continue;
-                    };
-                    let env_key = format!("AGENT_WORKBENCH_MCP_TOKEN_{}", s.id.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>());
-                    cfg.env.insert(env_key.clone(), token);
-                    cfg.strip_prefixes.push("AGENT_WORKBENCH_MCP_TOKEN_".into());
-                    cfg.codex_overrides.push(format!("mcp_servers.{}={{ url={}, bearer_token_env_var={} }}", toml_key(&s.name), toml_str(url), toml_str(&env_key)));
-                }
+            let (overrides, envs) = codex_mcp_overrides(servers, &|s| {
+                crate::commands::capabilities::mcp_http_authorization(app, &s.id)
+            })?;
+            for (env_key, token) in envs {
+                cfg.env.insert(env_key.clone(), token);
+                // 继承环境里同族令牌必须清掉（沿用既有前缀口径，避免串号）。
+                cfg.strip_prefixes.push("AGENT_WORKBENCH_MCP_TOKEN_".into());
+            }
+            cfg.codex_overrides.extend(overrides);
+        }
+        "grok" => {
+            // CR-064：grok 的 MCP 配置写入按会话隔离的 GROK_HOME（见 write_grok_mcp_config 注释）。
+            // GROK_HOME 在 resolve 的 grok 供应商分支里已设置为 profile_dir。
+            if let Some(home) = cfg.profile_dir.clone() {
+                cfg.grok_mcp_file = write_grok_mcp_config(&home, servers)?;
+            } else {
+                eprintln!("[dispatch] grok 会话缺少 GROK_HOME 目录，跳过 MCP 注入");
             }
         }
         _ => {}
@@ -439,6 +630,163 @@ pub fn cleanup(cfg: &DispatchConfig) {
 mod tests {
     use super::*;
 
+    /// CR-059：内置 workbench MCP 行的构造（名称/stdio/参数齐全，供 claude/codex 注入）。
+    #[test]
+    fn built_in_workbench_row_carries_stdio_command_and_context() {
+        let dir = std::path::Path::new("D:/app-data");
+        let row = built_in_workbench_row(dir, Some("proj-1"));
+        assert_eq!(row.name, "workbench");
+        assert_eq!(row.transport, "stdio");
+        assert_eq!(row.auth_status, "unauthenticated");
+        let command = row.command.clone().unwrap();
+        assert!(!command.is_empty(), "command 必须是应用自身路径");
+        assert_eq!(row.args[0], "--app-mcp-stdio");
+        assert_eq!(row.args[1], "--app-data-dir");
+        assert_eq!(row.args[2], "D:/app-data");
+        assert_eq!(row.args[3], "--project-id");
+        assert_eq!(row.args[4], "proj-1");
+        // 未绑定项目时省略 --project-id
+        let row2 = built_in_workbench_row(dir, None);
+        assert!(!row2.args.iter().any(|a| a == "--project-id"));
+    }
+
+    /// CR-059：合并语义——注入置顶、开关关闭不注入、用户自配同名 workbench 优先。
+    #[test]
+    fn merge_built_in_workbench_respects_switch_and_user_config() {
+        let dir = std::path::Path::new("D:/app-data");
+        let user = McpRow {
+            id: "m1".into(), name: "user-mcp".into(), transport: "stdio".into(),
+            command: Some("node".into()), args: vec!["x.js".into()], env: BTreeMap::new(),
+            url: None, auth_status: "unauthenticated".into(),
+        };
+        let merged = merge_built_in_workbench(vec![user.clone()], dir, Some("p1"));
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].name, "workbench", "内置服务器应置于清单首位");
+        assert_eq!(merged[1].name, "user-mcp");
+        // 用户已自配同名 workbench：用户配置优先，不重复注入
+        let clash = McpRow { id: "m2".into(), name: "workbench".into(), transport: "stdio".into(),
+            command: Some("node".into()), args: vec![], env: BTreeMap::new(), url: None, auth_status: "unauthenticated".into() };
+        let merged2 = merge_built_in_workbench(vec![clash], dir, None);
+        assert_eq!(merged2.len(), 1);
+        assert_eq!(merged2[0].id, "m2");
+    }
+
+    /// CR-059：开关语义——缺省启用，仅显式 "0" 关闭。
+    #[test]
+    fn ai_tools_enabled_defaults_on_and_respects_explicit_off() {
+        assert!(ai_tools_enabled_from_setting(None));
+        assert!(ai_tools_enabled_from_setting(Some("1".into())));
+        assert!(ai_tools_enabled_from_setting(Some("".into())));
+        assert!(!ai_tools_enabled_from_setting(Some("0".into())));
+    }
+
+    /// CR-059：claude 派发必须把内置 workbench 写进 mcp-config 并放行 mcp__workbench。
+    #[test]
+    fn claude_dispatch_includes_builtin_workbench_and_allows_it() {
+        let dir = std::path::Path::new("D:/app-data");
+        let servers = vec![built_in_workbench_row(dir, Some("proj-1"))];
+        let (payload, allowed) = claude_mcp_config(&servers, &|_| Ok(None)).unwrap();
+        assert_eq!(allowed, vec!["mcp__workbench".to_string()]);
+        let entry = &payload["mcpServers"]["workbench"];
+        assert!(entry["command"].as_str().unwrap().contains("agent-workbench") || !entry["command"].as_str().unwrap().is_empty());
+        let args = entry["args"].as_array().unwrap();
+        assert_eq!(args[0], "--app-mcp-stdio");
+        assert_eq!(args[1], "--app-data-dir");
+        assert_eq!(args[2], "D:/app-data");
+        assert_eq!(args[3], "--project-id");
+        assert_eq!(args[4], "proj-1");
+    }
+
+    /// CR-059：codex 派发必须生成 mcp_servers.workbench 的 TOML 覆盖。
+    #[test]
+    fn codex_dispatch_emits_workbench_toml_override() {
+        let dir = std::path::Path::new("D:/app-data");
+        let servers = vec![built_in_workbench_row(dir, None)];
+        let (overrides, envs) = codex_mcp_overrides(&servers, &|_| Ok(None)).unwrap();
+        assert_eq!(overrides.len(), 1);
+        let line = &overrides[0];
+        assert!(line.starts_with("mcp_servers.workbench={"), "实际：{line}");
+        assert!(line.contains("--app-mcp-stdio"));
+        assert!(line.contains("--app-data-dir"));
+        assert!(line.contains("default_tools_approval_mode=\"approve\""));
+        assert!(envs.is_empty(), "stdio 服务器不需要令牌环境变量");
+    }
+
+    /// CR-059：无供应商但存在内置 MCP 时不得返回 None（否则工具被静默丢弃）。
+    #[test]
+    fn dispatch_config_is_kept_when_only_builtin_tools_exist() {
+        let cfg = DispatchConfig {
+            env: BTreeMap::new(), temp_dir: None, profile_dir: None, settings_file: None,
+            strip_prefixes: vec![], mcp_config_file: None, mcp_allowed_tools: vec![],
+            add_dirs: vec![], codex_overrides: vec!["mcp_servers.workbench={ command=\"x\" }".into()],
+            ignore_user_config: false, display: ProviderDisplay::default(), grok_mcp_file: None,
+        };
+        assert!(!cfg.codex_overrides.is_empty(), "codex 覆盖存在时必须保留派发配置");
+    }
+
+    /* ---------- CR-064：grok 适配器 ---------- */
+
+    /// CR-064：生成的 TOML 必须含 stdio 服务器的 command/args，并跳过非 stdio 传输。
+    #[test]
+    fn grok_mcp_toml_contains_stdio_servers_and_skips_http() {
+        let stdio = McpRow {
+            id: "b1".into(), name: "workbench".into(), transport: "stdio".into(),
+            command: Some("C:\\app\\agent-workbench.exe".into()),
+            args: vec!["--app-mcp-stdio".into(), "--app-data-dir".into(), "C:\\data".into()],
+            env: BTreeMap::new(), url: None, auth_status: "unauthenticated".into(),
+        };
+        let http = McpRow {
+            id: "h1".into(), name: "remote".into(), transport: "http".into(),
+            command: None, args: vec![], env: BTreeMap::new(),
+            url: Some("https://example.invalid/mcp".into()), auth_status: "authenticated".into(),
+        };
+        let toml = grok_mcp_config_toml(&[stdio, http]).unwrap();
+        assert!(toml.contains("[mcp_servers.workbench]"), "应含 workbench 段：{toml}");
+        assert!(toml.contains("command = "), "应含 command：{toml}");
+        assert!(toml.contains("--app-mcp-stdio"), "应含 args：{toml}");
+        assert!(toml.contains("\\\\"), "Windows 反斜杠必须转义：{toml}");
+        assert!(!toml.contains("[mcp_servers.remote]"), "本轮不支持 http 传输，必须跳过");
+        // 无可用 stdio 服务器时不产生内容（不写空文件）
+        assert!(grok_mcp_config_toml(&[]).is_none());
+        assert!(grok_mcp_config_toml(&[McpRow {
+            id: "h2".into(), name: "only-http".into(), transport: "http".into(),
+            command: None, args: vec![], env: BTreeMap::new(), url: None,
+            auth_status: "authenticated".into(),
+        }]).is_none());
+        // 命令为空的 stdio 项被跳过
+        assert!(grok_mcp_config_toml(&[McpRow {
+            id: "e1".into(), name: "empty".into(), transport: "stdio".into(),
+            command: Some("   ".into()), args: vec![], env: BTreeMap::new(), url: None,
+            auth_status: "unauthenticated".into(),
+        }]).is_none());
+    }
+
+    /// CR-064：GROK_HOME 隔离目录写入——按会话目录写 config.toml，可重复覆盖，
+    /// 且不影响用户 ~/.grok（路径完全由调用方给定的 profile 目录决定）。
+    #[test]
+    fn grok_mcp_write_targets_isolated_grok_home() {
+        let row = McpRow {
+            id: "b1".into(), name: "workbench".into(), transport: "stdio".into(),
+            command: Some("app.exe".into()), args: vec!["--app-mcp-stdio".into()],
+            env: BTreeMap::new(), url: None, auth_status: "unauthenticated".into(),
+        };
+        let home = std::env::temp_dir().join(format!("grok-home-{}", uuid::Uuid::new_v4().simple()));
+        // 首次写入：目录被创建、文件内容含服务器段
+        let path = write_grok_mcp_config(&home, &[row.clone()]).unwrap().expect("应生成配置");
+        assert_eq!(path, home.join("config.toml"));
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(body.contains("[mcp_servers.workbench]"), "应含服务器段：{body}");
+        assert!(body.contains("--app-mcp-stdio"));
+        // 重复写入：覆盖（会话目录专属，不存在用户配置冲突）
+        let path2 = write_grok_mcp_config(&home, &[row]).unwrap().expect("应再次生成");
+        assert_eq!(path2, path);
+        // 无 stdio 服务器：不写文件
+        let empty_home = std::env::temp_dir().join(format!("grok-home-empty-{}", uuid::Uuid::new_v4().simple()));
+        assert!(write_grok_mcp_config(&empty_home, &[]).unwrap().is_none());
+        assert!(!empty_home.exists(), "无服务器时不应创建目录");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     #[test]
     fn dropping_configuration_cleans_both_owned_temporary_directories() {
         let provider = make_temp_dir("claude").unwrap();
@@ -449,7 +797,7 @@ mod tests {
             env: BTreeMap::new(), temp_dir: Some(provider.clone()), profile_dir: None, settings_file: None,
             strip_prefixes: vec![], mcp_config_file: Some(file), mcp_allowed_tools: vec![],
             add_dirs: vec![], codex_overrides: vec![], ignore_user_config: false,
-            display: ProviderDisplay::default(),
+            display: ProviderDisplay::default(), grok_mcp_file: None,
         };
         drop(config);
         assert!(!provider.exists());
@@ -465,7 +813,7 @@ mod tests {
             env: BTreeMap::new(), temp_dir: None, profile_dir: Some(dir.clone()), settings_file: None,
             strip_prefixes: vec![], mcp_config_file: None, mcp_allowed_tools: vec![],
             add_dirs: vec![], codex_overrides: vec![], ignore_user_config: false,
-            display: ProviderDisplay::default(),
+            display: ProviderDisplay::default(), grok_mcp_file: None,
         };
         drop(config);
         assert!(dir.exists(), "profile 目录不得随 Drop 删除");
