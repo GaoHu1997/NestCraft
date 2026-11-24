@@ -191,6 +191,18 @@ pub fn smoke_grok_suite_flag() -> bool {
     std::env::var("SMOKE_GROK_SUITE").map(|v| v == "1").unwrap_or(false)
 }
 
+/// 双协议单供应商专项是否应启动（TAURI_SMOKE=1 且 SMOKE_DUAL_SUITE=1）。
+#[tauri::command]
+pub fn smoke_dual_suite_flag() -> bool {
+    std::env::var("SMOKE_DUAL_SUITE").map(|v| v == "1").unwrap_or(false)
+}
+
+/// 子 CLI token 消耗统计专项是否应启动（TAURI_SMOKE=1 且 SMOKE_TOKEN_SUITE=1）。
+#[tauri::command]
+pub fn smoke_token_suite_flag() -> bool {
+    std::env::var("SMOKE_TOKEN_SUITE").map(|v| v == "1").unwrap_or(false)
+}
+
 /// grok 真实链路报告落盘（独立文件）。
 #[tauri::command]
 pub fn smoke_report_write_grok(app: tauri::AppHandle, content: String) -> Result<String, String> {

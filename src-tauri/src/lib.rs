@@ -110,6 +110,8 @@ pub fn run() {
             commands::smoke::smoke_pin_suite_flag,
             commands::smoke::smoke_report_write_pin,
             commands::smoke::smoke_grok_suite_flag,
+            commands::smoke::smoke_dual_suite_flag,
+            commands::smoke::smoke_token_suite_flag,
             commands::smoke::smoke_report_write_grok,
             commands::smoke::smoke_instrument,
             commands::smoke::smoke_spawn_probe,

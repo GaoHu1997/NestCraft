@@ -61,6 +61,21 @@ async function mountApp() {
       await module.runGrokSuite();
       return;
     }
+    // 双协议单供应商专项（claude/codex/grok × 同供应商 openai+anthropic 端点）：
+    // TAURI_SMOKE=1 且 SMOKE_DUAL_SUITE=1（需 TIERFLOW_SMOKE_KEY）。
+    const dualSuite = await invoke<boolean>("smoke_dual_suite_flag").catch(() => false);
+    if (dualSuite && (await invoke<boolean>("smoke_should_run").catch(() => false))) {
+      const module = await import("./smoke/dual-protocol-suite");
+      await module.runDualProtocolSuite();
+      return;
+    }
+    // 子 CLI token 消耗统计专项：TAURI_SMOKE=1 且 SMOKE_TOKEN_SUITE=1（需 TIERFLOW_SMOKE_KEY）。
+    const tokenSuite = await invoke<boolean>("smoke_token_suite_flag").catch(() => false);
+    if (tokenSuite && (await invoke<boolean>("smoke_should_run").catch(() => false))) {
+      const module = await import("./smoke/token-suite");
+      await module.runTokenSuite();
+      return;
+    }
     const autorun = await invoke<boolean>("smoke_autorun_flag").catch(() => false);
     if (requested || autorun) {
       const run = await invoke<boolean>("smoke_should_run");

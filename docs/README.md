@@ -1,5 +1,17 @@
 # 项目文档导航
 
+## IPC 全量仿真测试（2026-11-24，真实 CLI／SSH／双协议／token 统计）
+
+用户要求「启动 IPC 进行测试，所有场景仿真，所有功能与按钮都要执行到，记录测试并附截图证据」，重点点名自由 runtime 调各 CLI、一个供应商配多端点跨协议、子 CLI token 统计。本轮**仅测试与证据记录 + 修复测试夹具缺陷**，未扩大业务范围。
+
+**结果**：`cargo test --lib` **457 通过/0 失败/8 ignored**、`tsc` exit 0、`npm run build` 通过、IPC 冒烟 **164/164 全绿**、真实 CLI 矩阵 **3/3**（claude anthropic tokens=25067／codex openai／grok openai）、**双协议单供应商 3/3**（同一供应商 openai+anthropic 双端点，claude 走 anthropic、codex/grok 走 openai）、**子 CLI token 统计 3/3**（claude in=13447／codex in=6878 cache=4352／grok in=12960，均落库 `message.metaJson.usage`）、真实 SSH instabox **10/10**（连接/exec/`/proc` 采样/终端/审批门禁/SFTP 如实报错）。
+
+**修复的测试缺陷**：mock 网关不认 `/v1/messages?beta=true` query 串（404 → CLI 报模型不可用）、grok mock 仍输出旧 `{text}` 帧（产品已改 `streaming-json`）、`tool_list` 断言 6 实为 22、`kb_tree` 断言受 CR-055 残留夹具影响、两处错误文案断言过时。
+
+**未验证**：软件与设计稿成对视觉对照；UI 交互自检 35 项失败仅确认 3 项为选择器过时，其余待逐项核实（不作为产品缺陷结论）。
+
+[完整报告](Test/REPORT-IPC-全量仿真测试-2026-11-24.md)（证据目录 `docs/Test/evidence-2026-11-24/` 含 164 项冒烟报告、专项报告、38 张真实应用截图；按 `.gitignore` 约定本地保留不入库）。
+
 ## HANDOFF：执行与同步 M0 交接（2026-11-23）
 
 本批已完成执行账本／调度／恢复、G-PLAN、适配器与 worktree、审批记录、双向同步基线与差异、任务页与同步页只读界面；**完整正式实现未达成**。交接文档列出已验证范围、未完成项与继续方式：[HANDOFF](HANDOFF-执行与同步M0交接.md)／[阶段收口](Test/REPORT-STAGE-执行与同步M0收口.md)。

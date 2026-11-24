@@ -64,7 +64,12 @@ class MockCli
                 while (stdin.Read(buf, 0, buf.Length) > 0) { }
             }
             catch { }
-            stdOut.WriteLine("{\"text\":\"grok 通用回退回复\"}");
+            // CR-064/BUG-002 后：产品 grok 分支按 streaming-json 帧解析（text/thought/usage/end），
+            // 不再走通用 {text:...} 回退；mock 必须输出同构帧，否则 delta 断言失败。
+            stdOut.WriteLine("{\"type\":\"thought\",\"data\":\"grok 思考中\"}");
+            stdOut.WriteLine("{\"type\":\"text\",\"data\":\"grok streaming 回复\"}");
+            stdOut.WriteLine("{\"type\":\"usage\",\"usage\":{\"input_tokens\":11,\"output_tokens\":7}}");
+            stdOut.WriteLine("{\"type\":\"end\",\"stopReason\":\"end_turn\"}");
             return 0;
         }
         string resumeRef = name == "claude" ? ResumeArg(args, "--resume") : CodexResumeArg(args);

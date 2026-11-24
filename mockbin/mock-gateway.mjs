@@ -42,7 +42,9 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (url.endsWith("/v1/messages")) {
+  // 真实 claude CLI 请求带 query 串（/v1/messages?beta=true），须先剥掉再匹配。
+  const route = url.split("?")[0];
+  if (route.endsWith("/v1/messages")) {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(
       JSON.stringify({
@@ -58,7 +60,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (url.endsWith("/v1/chat/completions")) {
+  if (route.endsWith("/v1/chat/completions")) {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(
       JSON.stringify({
@@ -72,13 +74,13 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (url.endsWith("/responses")) {
+  if (route.endsWith("/responses")) {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ id: "resp_mock", object: "response", model: (()=>{try{return JSON.parse(body).model}catch{return "mock"}})(), output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "MOCK-GATEWAY-OK" }] }], usage: { input_tokens: 12, output_tokens: 5 } }));
     return;
   }
 
-  if (url.endsWith("/v1/models")) {
+  if (route.endsWith("/v1/models")) {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ data: [{ id: "mock-model-anthropic" }, { id: "mock-model-openai" }] }));
     return;
