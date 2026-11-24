@@ -21,10 +21,11 @@
       <div class="stack">
         ${D.knowledge.libraries.map(lib => `<div class="card kb-card">
           <span class="kb-icon ${lib.iconColor ? "" : esc(lib.tone || "blue")}" ${lib.iconColor ? `style="background:${iconColorPair(lib.iconColor)[0]};color:${iconColorPair(lib.iconColor)[1]}"` : ""} data-kb-tile="${esc(lib.id)}">${icon(kbIconId(lib, KB_SOURCE_DEFAULT[lib.id] || "library"), "ico-20")}</span>
+          <!-- CR-070：知识库图标改由卡片图标砖悬浮层选择；此处保留原「图标」按钮入口（改开悬浮层）。 -->
           <div class="kb-main"><b>${esc(lib.name)}</b><p>${esc(lib.desc)} · ${esc(lib.owner)}</p>
             <div class="kb-tags">${lib.allProjects ? `<span class="tag green">所有项目可用</span>` : lib.grantedTo.length ? lib.grantedTo.map(p => `<span class="tag blue">${esc((D.projects.find(x => x.id === p) || {}).name || p)}</span>`).join("") : `<span class="tag gray">未授权</span>`}</div></div>
           <div class="kb-side"><span>${(D.knowledge.docs[lib.id] || []).length} 篇</span><span>${esc(lib.updated)}</span>
-            <button class="btn sm" data-act="kb-icon-open" data-id="${lib.id}" title="选择内置图标">${icon("palette", "ico-14")}图标</button>
+            <button class="btn sm" data-c070-open="${esc(lib.id)}" data-c070-kind="kb" title="选择内置图标">${icon("palette", "ico-14")}图标</button>
             <button class="btn sm" data-act="kb-grant-open" data-id="${lib.id}">${isGranted(lib) ? "管理授权" : "授权"}</button>
             <button class="btn sm primary" data-act="open-kb" data-id="${lib.id}">进入</button></div>
         </div>`).join("")}
@@ -859,70 +860,14 @@
     </div>`, `<button class="btn" data-act="mcp-scan-open">返回扫描</button><button class="btn primary" data-act="toast" data-msg="演示：JSON 导入需先选择真实文件">导入</button>`));
   }
 
-  /* ================= CR-051 r2/r6：知识库图标选择器（与项目共用 50 个、6 组，10 色卡成对保存） ================= */
-  function kbIconModal(libId) {
-    const lib = libById(libId);
-    const draft = store.kbIconDraft || { libId, value: lib.icon || "", color: lib.iconColor || "" };
-    store.kbIconDraft = draft.libId === libId ? draft : { libId, value: lib.icon || "", color: lib.iconColor || "" };
-    const value = store.kbIconDraft.value;
-    const colorValue = store.kbIconDraft.color;
-    const pair = iconColorPair(colorValue);
-    const picker = `<div class="picker kb-icon-picker" role="group" aria-label="知识库图标选择（50 选 1，分 6 组，可留空）">
-      ${ICON_GROUPS.map(g => `<div class="picker-group"><div class="picker-group-h"><b>${esc(g.name)}</b><span>${esc(g.hint)}</span></div><div class="picker-group-grid">${g.icons.map(ic => `<button type="button" class="picker-cell" aria-pressed="${value === ic}" data-act="kb-icon-pick" data-id="${ic}" title="${ic}">${icon(ic, "ico-20")}<span class="picker-name">${ic}</span></button>`).join("")}</div></div>`).join("")}
-      <button type="button" class="picker-cell picker-clear" aria-pressed="${!value}" data-act="kb-icon-clear" title="清空回来源默认">${icon("x", "ico-14")}<span class="picker-name">默认</span></button>
-    </div>
-    <div class="swatches" role="group" aria-label="知识库背景色（10 选 1，可回默认色）">
-      ${ICON_COLORS.map(sw => `<button type="button" class="swatch" style="background:var(--c51c-${esc(sw.id)}-strong)" aria-pressed="${colorValue === sw.id}" aria-label="背景色 ${esc(ICON_COLOR_LABELS[sw.id] || sw.id)}" data-act="kb-color-pick" data-id="${esc(sw.id)}" title=" "></button>`).join("")}
-      <button type="button" class="swatch swatch-clear" aria-pressed="${!colorValue}" aria-label="背景色回默认" data-act="kb-color-clear" title="背景色回默认">${icon("undo", "ico-14")}</button>
-    </div>
-    <div class="row" style="margin-top:10px;gap:10px"><span class="kb-icon" ${pair ? `style="background:${pair[0]};color:${pair[1]}"` : `style="background:var(--c51c-teal-soft);color:var(--c51c-teal-strong)"`}>${icon(value || KB_SOURCE_DEFAULT[lib.id] || "library", "ico-20")}</span><span class="caption">预览：清空图标回来源默认（本地 bookOpen、网页 globe、组合 layers、未标注 library），清空背景回默认青绿。</span></div>`;
-    openDialog(dlgShell("知识库图标", esc(lib.name), picker,
-      `<button class="btn" data-act="close-dialog">取消</button><button class="btn primary" data-act="kb-icon-save" data-id="${esc(lib.id)}">保存图标</button>`, "modal-lg"));
-  }
+  /* CR-070：知识库图标选择由卡片图标砖悬浮层（cr070.js）承接；旧 kbIconModal 弹窗与
+     kb-icon-* 交互处理移除。悬浮层提供同样的 50 图标 + 10 色卡与成对保存语义。 */
 
-  /* main.js 只分发它认识的动作；CR-051 新动作与图标落库用捕获阶段监听实现，避免改动 main.js。 */
   document.addEventListener("click", e => {
-    const open = e.target.closest("[data-act='kb-icon-open']");
-    const pick = e.target.closest("[data-act='kb-icon-pick']");
-    const clear = e.target.closest("[data-act='kb-icon-clear']");
-    const colorPick = e.target.closest("[data-act='kb-color-pick']");
-    const colorClear = e.target.closest("[data-act='kb-color-clear']");
-    const saveIcon = e.target.closest("[data-act='kb-icon-save']");
     const avatarEdit = e.target.closest("[data-act='avatar-edit']");
     const stylePick = e.target.closest("[data-act='avatar-style-pick']");
     const saveSettings = e.target.closest("[data-act='settings-save']");
     const close = e.target.closest("[data-act='close-dialog']");
-    if (open) { e.preventDefault(); e.stopPropagation(); kbIconModal(open.dataset.id); return; }
-    if (pick || clear) {
-      e.preventDefault();
-      e.stopPropagation();
-      const libId = store.kbIconDraft?.libId;
-      store.kbIconDraft = { libId, value: clear ? "" : pick.dataset.id, color: store.kbIconDraft?.color || "" };
-      kbIconModal(libId);
-      return;
-    }
-    if (colorPick || colorClear) {
-      e.preventDefault();
-      e.stopPropagation();
-      const libId = store.kbIconDraft?.libId;
-      store.kbIconDraft = { libId, value: store.kbIconDraft?.value || "", color: colorClear ? "" : colorPick.dataset.id };
-      kbIconModal(libId);
-      return;
-    }
-    if (saveIcon) {
-      e.preventDefault();
-      e.stopPropagation();
-      const lib = libById(saveIcon.dataset.id);
-      const value = store.kbIconDraft && store.kbIconDraft.libId === saveIcon.dataset.id ? store.kbIconDraft.value : "";
-      const color = store.kbIconDraft && store.kbIconDraft.libId === saveIcon.dataset.id ? store.kbIconDraft.color : "";
-      lib.icon = value || undefined;
-      lib.iconColor = color || undefined;
-      store.kbIconDraft = null;
-      closeDialog();
-      toast("知识库图标已保存" + (value ? "：" + value + (color ? " · " + (ICON_COLOR_LABELS[color] || color) : "") : "（回来源默认）"));
-      UI.render();
-      return;
-    }
     if (avatarEdit) {
       e.preventDefault();
       e.stopPropagation();
@@ -951,7 +896,6 @@
         document.body.dataset.avatarStyle = store.avatarStyle;
         store.avatarStyleDraft = null;
       }
-      store.kbIconDraft = null;
       return;
     }
   }, true);

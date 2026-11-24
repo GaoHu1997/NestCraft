@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Icon, type IconName } from "@/components/icons";
 import * as api from "@/api";
 
@@ -135,8 +137,125 @@ export function fileTypeGlyph(type: string): { icon: IconName; token: string } {
 }
 
 /* ---------------- 用户头像（品牌帆船 Logo，5 种容器风格） ---------------- */
+/* ---------------- 图标悬浮层（CR-070 / UI-CR070-v1） ---------------- */
 
-export const AVATAR_STYLE_IDS = ["a", "b", "c", "d", "e"] as const;
+/**
+ * 项目/知识库图标悬浮层：点击卡片图标砖打开。
+ * 顶部对象名 + 组合预览；「选择颜色」10 整块色卡一行（+清空回默认）；
+ * 「选择图标」50 个 6 组网格（+默认格）；选择即时预览，保存成对回调 icon+iconColor。
+ * 关闭按钮 / 遮罩按下 / Escape 均视为取消，不落库；正文超高时滚动，
+ * 滚动条显隐由 UI-SCROLL-001 共享机制（scrollbar.ts + base.css）承担。
+ */
+export function IconPopover({ open, title, kind, icon, color, onSave, onClose }: {
+  open: boolean;
+  title: string;
+  kind: "project" | "kb";
+  /** 当前已保存图标（null=类型/来源默认）。 */
+  icon: string | null;
+  /** 当前已保存色卡（null=默认色）。 */
+  color: string | null;
+  onSave: (icon: string | null, color: string | null) => void;
+  onClose: () => void;
+}) {
+  const [iconDraft, setIconDraft] = useState<string | null>(icon);
+  const [colorDraft, setColorDraft] = useState<string | null>(color);
+  const popRef = useRef<HTMLDivElement>(null);
+  const [saving, setSaving] = useState(false);
+
+  // 打开时重置草稿为已保存值（同一实例复用于不同对象）。
+  useEffect(() => {
+    if (open) { setIconDraft(icon); setColorDraft(color); setSaving(false); }
+  }, [open, icon, color]);
+
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.activeElement as HTMLElement | null;
+    popRef.current?.querySelector<HTMLElement>("button")?.focus();
+    const key = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.stopPropagation(); if (!saving) onClose(); }
+    };
+    const press = (event: MouseEvent) => {
+      if (event.target instanceof Element && event.target.closest(".icon-pop")) return;
+      if (!saving) onClose();
+    };
+    document.addEventListener("keydown", key, true);
+    document.addEventListener("mousedown", press, true);
+    return () => {
+      document.removeEventListener("keydown", key, true);
+      document.removeEventListener("mousedown", press, true);
+      previous?.focus();
+    };
+  }, [open, onClose, saving]);
+
+  if (!open) return null;
+  const fallbackIcon = kind === "kb" ? "library" : "code";
+  const fallbackColor: IconColorId = kind === "kb" ? "teal" : "blue";
+  const shownIcon = (iconDraft && PROJECT_ICON_IDS.includes(iconDraft) ? iconDraft : fallbackIcon) as IconName;
+  const shownColor = normalizeIconColor(colorDraft, fallbackColor);
+  const preview = <span className={`cr51-tile ${kind === "kb" ? "cr51-tile-kb" : ""} cr51-color-${shownColor}`}>
+    <Icon name={shownIcon} size={20} />
+  </span>;
+  const previewLabel = `${ICON_LABELS[shownIcon] ?? "默认"} · ${colorDraft ? (shownColor) : "默认色"}`;
+  return createPortal(
+    <div className="icon-pop-mask" onMouseDown={e => { if (e.target === e.currentTarget && !saving) onClose(); }}>
+      <div ref={popRef} className="icon-pop" role="dialog" aria-modal="true" aria-label={`选择图标与颜色：${title}`}>
+        <div className="icon-pop-h"><b className="ellipsis">{title}</b>
+          <button type="button" className="btn icon ghost sm" aria-label="关闭" disabled={saving} onClick={onClose}><Icon name="x" size={14} /></button>
+        </div>
+        <div className="icon-pop-b">
+          <div className="icon-pop-current">{preview}<span className="caption">{kind === "kb" ? "点击下方色卡或图标即时预览；清空回来源默认，背景回默认青绿。" : "点击下方色卡或图标即时预览；清空回类型默认，背景回默认色。"}</span></div>
+          <div className="icon-pop-sec">选择颜色</div>
+          <div className="cr51-swatches icon-pop-swatches" role="group" aria-label="背景色卡（10 色，无文字）">
+            {ICON_COLORS.map(sw => <button key={sw.id} type="button" className={`cr51-swatch cr51-color-${sw.id}`}
+              aria-pressed={colorDraft === sw.id} aria-label={`背景色 ${sw.id}`} title=""
+              disabled={saving} onClick={() => setColorDraft(sw.id)} />)}
+            <button type="button" className="cr51-swatch cr51-swatch-clear" aria-pressed={colorDraft === null}
+              aria-label="背景色回默认" title="清空回默认色" disabled={saving} onClick={() => setColorDraft(null)}>
+              <Icon name="x" size={12} />
+            </button>
+          </div>
+          <div className="icon-pop-sec">选择图标</div>
+          <div className="cr51-picker-groups icon-pop-groups" role="group" aria-label={`${kind === "kb" ? "知识库" : "项目"}图标选择`}>
+            {ICON_GROUPS.map(group => <div key={group.name} className="cr51-picker-group">
+              <div className="cr51-picker-group-h"><b>{group.name}</b><span>{group.hint} · {group.icons.length}</span></div>
+              <div className="cr51-picker">
+                {group.icons.map(id => <button key={id} type="button" className="cr51-picker-cell" aria-pressed={iconDraft === id}
+                  disabled={saving} onClick={() => setIconDraft(id)} title={ICON_LABELS[id] ?? id}>
+                  <Icon name={id} size={20} /><span className="cr51-picker-name">{ICON_LABELS[id] ?? id}</span>
+                </button>)}
+              </div>
+            </div>)}
+            <button type="button" className="cr51-picker-cell cr51-picker-clear" aria-pressed={iconDraft === null}
+              disabled={saving} onClick={() => setIconDraft(null)} title="清空回默认图标">
+              <Icon name="x" size={14} /><span className="cr51-picker-name">默认</span>
+            </button>
+          </div>
+        </div>
+        <div className="icon-pop-f">
+          <span className="caption">{previewLabel}；保存才生效，取消不改动。</span>
+          <button type="button" className="btn" disabled={saving} onClick={onClose}>取消</button>
+          <button type="button" className="btn primary" disabled={saving} onClick={() => { setSaving(true); onSave(iconDraft, colorDraft); }}>
+            {saving ? "保存中…" : "保存"}
+          </button>
+        </div>
+      </div>
+    </div>, document.body);
+}
+
+/** 卡片图标砖的悬浮层触发按钮：图标与名称保持并排，点图标开悬浮层（CR-070）。 */
+export function IconPopoverTrigger({ children, title, onOpen }: {
+  children: React.ReactNode;
+  title: string;
+  onOpen: () => void;
+}) {
+  return <button type="button" className="icon-tile-btn" title={title} aria-label={title}
+    onClick={e => { e.stopPropagation(); onOpen(); }}
+    onKeyDown={e => { if (e.key === "Enter" || e.key === " ") e.stopPropagation(); }}>
+    {children}
+  </button>;
+}
+
+/* ---------------- 用户头像（品牌帆船 Logo，5 种容器风格） ---------------- */export const AVATAR_STYLE_IDS = ["a", "b", "c", "d", "e"] as const;
 export type AvatarStyleId = (typeof AVATAR_STYLE_IDS)[number];
 export const AVATAR_STYLE_LABELS: Record<AvatarStyleId, string> = {
   a: "A 原彩透明", b: "B 薄荷承载", c: "C 圆角方砖", d: "D 墨青实底", e: "E 双色光环",

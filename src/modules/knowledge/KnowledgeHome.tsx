@@ -1,5 +1,5 @@
 import { Icon } from "@/components/icons";
-import { LibraryIconTile, ProjectIconTile, ICON_GROUPS, ICON_LABELS, ICON_COLORS } from "@/components/icon-tiles";
+import { LibraryIconTile, ProjectIconTile, IconPopover, IconPopoverTrigger } from "@/components/icon-tiles";
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "@/api";
 import type { KnowledgeLibrary, LibraryGrant, Project } from "@/api";
@@ -25,7 +25,7 @@ function HomeView() {
   const [grantError, setGrantError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [grantTarget, setGrantTarget] = useState<KnowledgeLibrary | null>(null);
-  // CR-051：库图标选择弹窗目标。
+  // CR-051：库图标选择弹窗目标。CR-070：改为卡片图标悬浮层。
   const [iconTarget, setIconTarget] = useState<KnowledgeLibrary | null>(null);
   const [delTarget, setDelTarget] = useState<KnowledgeLibrary | null>(null);
   const [scanningId, setScanningId] = useState<string | null>(null);
@@ -95,6 +95,19 @@ function HomeView() {
     }
   };
 
+  // CR-070：知识库图标悬浮层保存（成对写入；null=清空回来源默认/默认青绿）。
+  const saveIcon = async (target: KnowledgeLibrary, icon: string | null, color: string | null) => {
+    try {
+      await api.kbSetAppearance(target.id, icon, color);
+      toast("知识库图标已保存" + (icon ? `：${icon}` : "（回来源默认）"));
+    } catch (e) {
+      toast("保存失败：" + errText(e), "err");
+    } finally {
+      setIconTarget(null);
+      void reload();
+    }
+  };
+
   return (
     <div className="kb-home">
       <div className="kb-head">
@@ -124,7 +137,9 @@ function HomeView() {
             return (
               <div key={lib.id} className="card kb-card">
                 <div className="row">
-                  <LibraryIconTile library={lib} />
+                  <IconPopoverTrigger title="选择知识库图标与颜色" onOpen={() => setIconTarget(lib)}>
+                    <LibraryIconTile library={lib} />
+                  </IconPopoverTrigger>
                   <h3 className="grow ellipsis" title={lib.name}>{lib.name}</h3>
                   <span className={`tag ${lib.enabled ? "good" : "bad"}`}>{lib.enabled ? "已启用" : "已停用"}</span>
                 </div>
@@ -145,7 +160,10 @@ function HomeView() {
       )}
       <div className="kb-page-foot"><span>缺少授权记录默认拒绝；索引不改写原件，不调用模型嵌入。</span><span>{libs ? `${libs.length} 个库 · ${libs.reduce((n, l) => n + l.noteCount, 0)} 篇 Markdown` : "统计未知"}</span></div>
       {createOpen && <CreateDialog onClose={() => setCreateOpen(false)} onCreated={() => { void reload(); void reloadGrants(); }} />}
-      {iconTarget && <LibraryIconDialog library={iconTarget} onClose={() => setIconTarget(null)} onSaved={() => { setIconTarget(null); void reload(); }} />}
+      {iconTarget && <IconPopover open title={iconTarget.name} kind="kb"
+        icon={iconTarget.icon} color={iconTarget.iconColor}
+        onClose={() => setIconTarget(null)}
+        onSave={(icon, color) => void saveIcon(iconTarget, icon, color)} />}
       {grantTarget && <GrantDialog library={grantTarget} onClose={() => setGrantTarget(null)} onSaved={() => void reloadGrants()} />}
       {delTarget && <div className="kb-dialog kb-confirm kb-dialog-fit"><Confirm title="删除知识库" message={`确定删除知识库「${delTarget.name}」？\n将移除该库及其索引记录；本地目录中的文件不受影响。`} onOk={() => void doDelete()} onCancel={() => setDelTarget(null)} danger /></div>}
     </div>
@@ -236,65 +254,9 @@ export function GrantDialog({ library, onClose, onSaved, visible = true }: { lib
     </div>
   );
 }
+/* CR-070：知识库图标选择改由卡片图标悬浮层（icon-tiles.tsx IconPopover）承接；
+   旧 LibraryIconDialog 独立弹窗移除，保存语义不变（kbSetAppearance 成对写入）。 */
 
-/** CR-051 r6：知识库图标与背景色卡（与项目共用 50 个图标，可清空回来源默认）；保存才生效。 */
-function LibraryIconDialog({ library, onClose, onSaved }: { library: KnowledgeLibrary; onClose: () => void; onSaved: () => void }) {
-  const toast = useToast();
-  const [icon, setIcon] = useState<string | null>(library.icon);
-  const [color, setColor] = useState<string | null>(library.iconColor);
-  const [saving, setSaving] = useState(false);
-  const save = async () => {
-    setSaving(true);
-    try {
-      await api.kbSetAppearance(library.id, icon, color);
-      toast("知识库图标已保存" + (icon ? `：${ICON_LABELS[icon] ?? icon}` : "（回来源默认）"));
-      onSaved();
-    } catch (e) {
-      toast("保存失败：" + errText(e), "err");
-    } finally {
-      setSaving(false);
-    }
-  };
-  return (
-    <div className="kb-dialog kb-dialog-fit"><Modal title="知识库图标与背景色" width={720} onClose={() => { if (!saving) onClose(); }}
-      footer={<><button className="btn" disabled={saving} onClick={onClose}>取消</button><button className="btn primary" disabled={saving} onClick={() => void save()}>{saving ? "保存中…" : "保存"}</button></>}>
-      <div className="col">
-        <b>{library.name}</b>
-        <p className="muted small">与项目共用 50 个图标；清空回来源默认（本地目录 bookOpen、连接器或网页 globe、未标注 library），背景回默认青绿。</p>
-        <div className="cr51-picker-groups" role="group" aria-label="知识库图标选择">
-          {ICON_GROUPS.map(group => <div key={group.name} className="cr51-picker-group">
-            <div className="cr51-picker-group-h"><b>{group.name}</b><span>{group.hint} · {group.icons.length}</span></div>
-            <div className="cr51-picker">
-              {group.icons.map(id => <button key={id} type="button" className="cr51-picker-cell" aria-pressed={icon === id}
-                onClick={() => setIcon(id)} title={ICON_LABELS[id] ?? id}>
-                <Icon name={id} size={20} /><span className="cr51-picker-name">{ICON_LABELS[id] ?? id}</span>
-              </button>)}
-            </div>
-          </div>)}
-          <button type="button" className="cr51-picker-cell cr51-picker-clear" aria-pressed={icon === null}
-            onClick={() => setIcon(null)} title="清空回来源默认">
-            <Icon name="x" size={14} /><span className="cr51-picker-name">默认</span>
-          </button>
-        </div>
-        <div className="cr51-swatches" role="group" aria-label="背景色卡（10 色，无文字）">
-          {ICON_COLORS.map(sw => <button key={sw.id} type="button" className={`cr51-swatch cr51-color-${sw.id}`}
-            aria-pressed={color === sw.id} aria-label={`背景色 ${sw.id}`} title=""
-            onClick={() => setColor(sw.id)} />)}
-          <button type="button" className="cr51-swatch cr51-swatch-clear" aria-pressed={color === null}
-            onClick={() => setColor(null)} title="清空回默认色">
-            <Icon name="x" size={12} />
-          </button>
-        </div>
-        <div className="cr51-combo-preview">
-          <span className={`cr51-tile cr51-tile-kb cr51-color-${color ?? "teal"}`}>
-            <Icon name={icon ?? (library.sourceKind === "connector" ? "globe" : library.sourceKind === "managed-directory" ? "bookOpen" : "library")} size={20} />
-          </span>
-          <span className="caption">组合预览：{ICON_LABELS[icon ?? "library"] ?? "默认"} · {color ?? "默认青绿"}</span>
-        </div>
-      </div>
-    </Modal></div>
-  );
-}
 
 function CreateDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {  const toast = useToast();
   const [name, setName] = useState("");

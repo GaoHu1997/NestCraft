@@ -301,20 +301,21 @@ export async function runUiSuite(): Promise<void> {
     try {
       const kbTileIcon = card.querySelector(".cr51-tile-kb svg")?.getAttribute("data-icon");
       if (kbTileIcon !== "bookOpen") throw new Error(`managed-directory 库默认图标应为 bookOpen，实际 ${kbTileIcon}`);
-      // r6：知识库图标选择器与项目共用 50 图标（6 组）+ 10 整块色卡。
+      // CR-070：知识库图标选择改走卡片图标悬浮层（共用 50 图标 + 10 色卡）。
       const iconBtn = byText("图标", (card as HTMLElement) ?? main);
       if (!iconBtn) throw new Error("缺「图标」入口");
       click(iconBtn, "知识库图标入口");
-      const iconDlg = await waitFor(() => qa(".modal").find((m) => (m.textContent ?? "").includes("知识库图标")), 4000, "知识库图标弹窗");
-      const groups = qa(".cr51-picker-group", iconDlg);
+      const pop = await waitFor(() => q(".icon-pop"), 4000, "知识库图标悬浮层");
+      const groups = qa(".cr51-picker-group", pop);
       if (groups.length !== 6) throw new Error(`图标选择器应 6 组，实际 ${groups.length}`);
-      const cells = qa(".cr51-picker-cell", iconDlg);
+      const cells = qa(".cr51-picker-cell", pop);
       if (cells.length !== 51) throw new Error(`图标格应 50+1 清空，实际 ${cells.length}`);
-      if (qa(".cr51-swatch:not(.cr51-swatch-clear)", iconDlg).length !== 10) throw new Error("色卡应 10 个（不含回默认格）");
-      const cancelIcon = byText("取消", iconDlg);
-      if (!cancelIcon) throw new Error("图标弹窗缺取消");
-      click(cancelIcon, "关闭图标弹窗（未保存）");
+      if (qa(".cr51-swatch:not(.cr51-swatch-clear)", pop).length !== 10) throw new Error("色卡应 10 个（不含回默认格）");
+      const cancelIcon = byText("取消", pop);
+      if (!cancelIcon) throw new Error("悬浮层缺取消");
+      click(cancelIcon, "关闭悬浮层（未保存）");
       await sleep(300);
+      if (q(".icon-pop")) throw new Error("悬浮层未关闭");
       const grantBtn = byText("授权", (card as HTMLElement) ?? main);
       if (!grantBtn) throw new Error("缺授权按钮");
       click(grantBtn, "授权按钮");
@@ -357,15 +358,15 @@ export async function runUiSuite(): Promise<void> {
     }
   });
 
-  await ui("CR-051 头像", "三处头像渲染品牌帆船 Logo 且缺省风格 B（r6）", async () => {
+  await ui("CR-051 头像", "侧栏头像渲染品牌帆船 Logo 且缺省风格 B（r6；CR-070 顶栏头像已删）", async () => {
     const root = document.querySelector(".nc-app");
     if (!root || !root.getAttribute("data-avatar-style")) throw new Error("App 根节点缺 data-avatar-style");
     if (root.getAttribute("data-avatar-style") !== "b") throw new Error(`缺省风格应为 b，实际 ${root.getAttribute("data-avatar-style")}`);
-    if (!q("button.nc-avatar .cr51-avatar img[src*='logo-sail']")) throw new Error("顶栏头像未渲染品牌 Logo");
+    // CR-070：顶栏头像删除，改从侧栏底部头像进入设置。
+    if (q("button.nc-avatar") || q(".nc-avatar-frame")) throw new Error("顶栏头像应已删除（CR-070）");
     if (!q(".nc-side-user .cr51-avatar img[src*='logo-sail']")) throw new Error("侧栏头像未渲染品牌 Logo");
-    if (!q(".nc-avatar-frame .cr51-avatar-edit")) throw new Error("顶栏头像缺悬停编辑角标");
-    const topBtn = q("button.nc-avatar") as HTMLElement;
-    click(topBtn, "顶栏头像");
+    const sideBtn = q(".nc-side-user") as HTMLElement;
+    click(sideBtn, "侧栏头像");
     const dialog = await waitFor(() => q('dialog[aria-label="设置与账户"]'), 4000, "设置弹框");
     const setUser = dialog.querySelector(".set-user .cr51-avatar img[src*='logo-sail']");
     if (!setUser) throw new Error("设置左栏头像未渲染品牌 Logo");
@@ -378,13 +379,13 @@ export async function runUiSuite(): Promise<void> {
     click(close, "关闭设置（未保存，恢复已保存风格）");
     await sleep(300);
     if (q('dialog[aria-label="设置与账户"]')) throw new Error("设置弹框未关闭");
-    return "顶栏/侧栏/设置三处 Logo + 5 风格单选（缺省 B）+ 悬停编辑角标通过";
+    return "侧栏 Logo + 5 风格单选（缺省 B）+ 顶栏无头像通过";
   });
 
-  await ui("CR-051 头像", "悬停编辑打开更换头像弹窗（固定 680×660、内置 5 + 自定义）", async () => {
-    const edit = q(".nc-avatar-frame .cr51-avatar-edit") as HTMLElement;
-    if (!edit) throw new Error("缺顶栏悬停编辑角标");
-    click(edit, "顶栏头像编辑角标");
+  await ui("CR-051 头像", "悬停编辑打开更换头像弹窗（固定 680×660、内置 5 + 自定义；CR-070 走侧栏入口）", async () => {
+    const edit = q(".nc-side-avatar-frame .cr51-avatar-edit") as HTMLElement;
+    if (!edit) throw new Error("缺侧栏头像悬停编辑角标");
+    click(edit, "侧栏头像编辑角标");
     const modal = (await waitFor(() => q(".cr51-avatar-modal"), 4000, "更换头像弹窗")) as HTMLElement;
     if (modal.offsetWidth !== 680 || modal.offsetHeight !== 660) throw new Error(`弹窗应固定 680×660，实际 ${modal.offsetWidth}×${modal.offsetHeight}`);
     const presets = qa(".cr51-preset", modal);
@@ -618,12 +619,11 @@ export async function runUiSuite(): Promise<void> {
     if (!target) throw new Error("夹具项目创建失败");
     click(byText("项目管理"), "项目管理导航");
     await sleep(500);
-    // 项目列表页自身状态可能早于 IPC 建档；侧栏「当前项目」随 app:projects-changed 刷新，优先从那里进入。
-    const side = await waitFor(() => {
-      const el = q<HTMLElement>(".nc-side-project");
-      return el && (el.textContent ?? "").includes("冒烟演示项目") ? el : null;
-    }, 6000, "侧栏当前项目");
-    click(side, "侧栏当前项目");
+    // CR-070：侧栏「当前项目」已删除；从项目列表页进入「冒烟演示项目」。
+    const card = await waitFor(() => {
+      return qa<HTMLElement>(".proj-card").find((el) => (el.textContent ?? "").includes("冒烟演示项目")) ?? null;
+    }, 6000, "项目列表卡片");
+    click(card.querySelector(".btn.sm") ?? card, "项目卡片打开");
     await waitFor(() => q(".req-tabs"), 6000, "需求页签条");
     const previewBtn = byText("全文预览");
     if (!previewBtn) throw new Error("缺全文预览入口");

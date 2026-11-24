@@ -4,7 +4,7 @@ import { useApp, routeKey } from "@/store/app";
 import type { Route } from "@/store/app";
 import { Modal } from "@/components/ui";
 import { Icon } from "@/components/icons";
-import { ProjectIconTile, UserAvatar, normalizeAvatarStyle, type AvatarStyleId } from "@/components/icon-tiles";
+import { UserAvatar, normalizeAvatarStyle, type AvatarStyleId } from "@/components/icon-tiles";
 import { AvatarHoverEdit } from "@/components/avatar";
 import { usePaneWidth, ResizeHandle, PaneToggle } from "@/components/pane-resize";
 import { TabMoreDropdown, TabMoreIcon, useTabOverflow } from "@/components/tab-overflow";
@@ -30,7 +30,6 @@ const NAV_ITEMS = [
 export default function App() {
   const { route, go, openObject, windows, activateWindow, closeWindow, settingsOpen, setSettingsOpen, theme, toggleTheme } = useApp();
   const chrome = useWindowChrome();
-  const openProject = (project: api.Project, tab: "workbench" | "requirements" | "design" | "tasks" | "code") => openObject({ page: "project", projectId: project.id, tab });
   const [settingsTab, setSettingsTab] = useState("general");
   const [projects, setProjects] = useState<api.Project[]>([]);
   const [libraries, setLibraries] = useState<api.KnowledgeLibrary[]>([]);
@@ -138,7 +137,6 @@ export default function App() {
   const windowTabItems = openWindows.map(window => ({ key: window.key, label: window.key === "home" ? "首页" : windowTitle(window.route), active: routeKey(route) === window.key }));
   const windowTabSig = windowTabItems.map(item => `${item.key}:${item.label}:${item.active ? 1 : 0}`).join("|");
   const windowTabsOverflow = useTabOverflow<HTMLElement>({ tabSelector: ".nc-window-tab", items: windowTabItems, deps: [windowTabSig] });
-  const currentProject = route.page === "project" ? projects.find(project => project.id === route.projectId) : projects.find(project => project.kind === "code");
   const preview = (window as Window & { __DESIGN_PREVIEW__?: boolean }).__DESIGN_PREVIEW__ === true;
   const detail = routeKey(route) !== "home";
 
@@ -155,13 +153,7 @@ export default function App() {
         <UpdateBadge />
         <button className="chat-iconbtn" aria-label="切换主题" title="切换主题" onClick={toggleTheme}><Icon name={theme === "dark" ? "sun" : "moon"} /></button>
         <button className="chat-iconbtn" aria-label="通知" title="通知" onClick={() => setNotificationsOpen(true)}><Icon name="bell" /></button>
-        <span className="cr51-avatar-frame nc-avatar-frame">
-          <button className="nc-avatar" aria-label="设置与账户" title="设置与账户" onClick={() => setSettingsOpen(true)}>
-            <UserAvatar size={30} photo={avatarPhoto} />
-          </button>
-          <AvatarHoverEdit style={normalizeAvatarStyle(avatarStyle)} photo={avatarPhoto}
-            onApply={next => { setAvatarStyle(next.style); setAvatarPhoto(api.avatarPhotoSrc(next.photo)); }} />
-        </span>
+        {/* CR-070：顶栏右上角头像删除；设置与头像编辑统一走侧栏底部头像入口。 */}
         <span className="nc-window-sep" />
         <div className="nc-window-controls" aria-label={chrome.native ? "窗口控制" : "窗口控制（预览）"}>
           <button className="nc-window-control" aria-label="最小化" title="最小化" onClick={() => void chrome.act("minimize")}><Icon name="minimize" size={14} /></button>
@@ -186,14 +178,7 @@ export default function App() {
               {item.page !== "workbench" && <span className="nc-nav-count">{item.page === "projects" ? projects.length : item.page === "knowledge" ? libraries.length : hosts.length}</span>}
             </button>
           ))}
-          <div className="nav-label nc-nav-section">当前项目</div>
-          {currentProject ? <button className="nc-side-project" onClick={() => openProject(currentProject, "workbench")}>
-            <ProjectIconTile project={currentProject} size={26} />
-            <span className="grow"><b>{currentProject.name}</b><small title={currentProject.rootUri}>{currentProject.rootUri}</small></span>
-          </button> : <span className="nc-side-empty">尚未打开项目</span>}
-          <div className="nav-label nc-nav-section">快捷入口</div>
-          <button className="nav-item" onClick={() => currentProject ? go({ page: "project", projectId: currentProject.id, tab: "tasks" }) : go({ page: "projects" })}><Icon name="grid" /><span>运行队列</span></button>
-          <button className="nav-item" onClick={() => currentProject ? go({ page: "project", projectId: currentProject.id, tab: "design" }) : go({ page: "projects" })}><Icon name="book" /><span>设计资料</span></button>
+          {/* CR-070：侧栏「当前项目」「快捷入口」分区删除；仅保留工作空间导航与底部头像入口。 */}
           <span className="cr51-avatar-frame nc-side-avatar-frame">
             <button className="nc-side-user" onClick={() => setSettingsOpen(true)} aria-label="设置与账户">
               <UserAvatar size={30} photo={avatarPhoto} /><span className="grow"><b>{profile.name}</b><small>{profile.role}</small></span><Icon name="settings" size={15} />

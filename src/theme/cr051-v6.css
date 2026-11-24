@@ -199,3 +199,33 @@ html[data-theme='dark'] .cr51-upload-error { background: #331d1d; color: #ff7b76
 .kb-dialog.kb-dialog-fit .modal { height: fit-content !important; min-height: 0; }
 .kb-dialog.kb-dialog-fit .modal-body { flex: 0 1 auto; }
 .kb-dialog.kb-dialog-fit .cr51-picker-groups { max-height: 290px; overflow-y: auto; }
+
+/* ================= CR-070：卡片图标悬浮层（UI-CR070-v1） =================
+   卡片图标砖与名称并排；点击图标砖打开悬浮层（10 色卡一行 + 50 图标 6 组）。
+   滚动条遵守 UI-SCROLL-001：正文区 overflow-y:auto，不新增常显滚动条样式。 */
+.icon-tile-btn { border: 0; padding: 0; background: none; cursor: pointer; border-radius: 10px; line-height: 0; flex: 0 0 auto; }
+.icon-tile-btn:hover .cr51-tile { outline: 2px solid var(--primary); outline-offset: 1px; }
+.icon-tile-btn:focus-visible { outline: none; box-shadow: var(--ring); }
+
+.icon-pop-mask { position: fixed; inset: 0; z-index: 210; display: grid; place-items: center; background: rgba(17, 24, 39, .28); padding: 20px; }
+.icon-pop {
+  width: 460px; max-width: calc(100vw - 32px); max-height: calc(100dvh - 48px);
+  display: flex; flex-direction: column;
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: var(--shadow-pop, 0 12px 32px rgba(17, 24, 39, .18));
+  overflow: hidden;
+}
+.icon-pop-h { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line-soft); flex: 0 0 auto; min-width: 0; }
+.icon-pop-h b { font-size: 13px; min-width: 0; }
+.icon-pop-h .btn { margin-left: auto; }
+.icon-pop-b { padding: 12px 14px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+.icon-pop-current { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; min-width: 0; }
+.icon-pop-current .caption { min-width: 0; }
+.icon-pop-sec { font-size: 11px; font-weight: 600; color: var(--ink-2); margin: 2px 0 7px; }
+.icon-pop-swatches { margin: 0 0 12px; }
+.icon-pop-groups { display: grid; gap: 10px; }
+.icon-pop-groups .cr51-picker-group { border: 0; padding: 0; background: transparent; }
+.icon-pop-f { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line-soft); background: var(--surface-2, var(--surface)); flex: 0 0 auto; }
+.icon-pop-f .caption { margin-right: auto; min-width: 0; }
+@media (max-width: 520px) { .icon-pop { width: 100%; } }

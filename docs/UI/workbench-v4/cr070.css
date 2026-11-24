@@ -1,0 +1,61 @@
+/* UI-CR070-v1：主界面导航精简与项目/知识库图标悬浮层。
+   依据 CR-070：侧栏删「当前项目」「快捷入口」；顶栏删右上头像；
+   项目/知识库卡片图标与名称并排，点击图标砖弹出悬浮层选择（10 色卡行 + 50 图标网格）。
+   悬浮层滚动遵守 UI-SCROLL-001：本文件不新增常显滚动条样式。 */
+
+/* 卡片图标砖：可点击入口，悬停出现轻边框提示可改；名称与图标保持并排。 */
+.icon-tile-btn {
+  border: 0;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+  border-radius: 10px;
+  line-height: 0;
+}
+.icon-tile-btn:hover .proj-icon-tile,
+.icon-tile-btn:hover .kb-icon { outline: 2px solid var(--primary); outline-offset: 1px; }
+.icon-tile-btn:focus-visible { outline: none; box-shadow: var(--ring); }
+
+/* 悬浮层：固定弹层于 body，参考图形式——顶部对象名 + 组合预览，
+   「选择颜色」一行色卡，「选择图标」网格（6 组分组），底部取消/保存。 */
+.icon-pop-mask {
+  position: fixed; inset: 0; z-index: 70;
+  background: rgba(17, 24, 39, .28);
+  display: grid; place-items: center; padding: 20px;
+}
+.icon-pop {
+  width: 460px; max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 48px);
+  display: flex; flex-direction: column;
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+.icon-pop-h {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px; border-bottom: 1px solid var(--line-soft);
+  flex: 0 0 auto;
+}
+.icon-pop-h b { font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.icon-pop-h .icon-btn { margin-left: auto; }
+.icon-pop-current { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; min-width: 0; }
+.icon-pop-current .caption { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.icon-pop-b { padding: 12px 14px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+.icon-pop-sec { font-size: 11px; font-weight: 600; color: var(--ink-2); margin: 2px 0 7px; }
+.icon-pop-sec:first-child { margin-top: 0; }
+.icon-pop .swatches { margin: 0 0 12px; }
+.icon-pop .picker-group { border: 0; padding: 0; background: transparent; }
+.icon-pop .picker-group + .picker-group { margin-top: 10px; }
+.icon-pop .picker-group-grid { grid-template-columns: repeat(auto-fill, minmax(56px, 1fr)); }
+.icon-pop-f {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px; border-top: 1px solid var(--line-soft);
+  background: var(--surface-2, var(--surface));
+  flex: 0 0 auto;
+}
+.icon-pop-f .caption { margin-right: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (max-width: 520px) {
+  .icon-pop { width: 100%; }
+}

@@ -751,11 +751,8 @@ window.UI = (function () {
         ${updateBadge()}
         <button class="icon-btn" data-act="theme" title="切换主题">${icon(dark ? "sun" : "moon")}</button>
         <button class="icon-btn" data-act="notify" title="通知">${icon("bell")}</button>
-        <span class="avatar-frame top-avatar">
-          <button class="avatar" data-act="open-settings" title="${esc(D.user.name)}" aria-label="用户头像，打开设置">${avatarImg()}</button>
-          <button class="avatar-edit" type="button" data-act="avatar-edit" aria-label="更换头像" title="更换头像">${icon("camera", "ico-14")}</button>
-        </span>
       </div>
+      <!-- CR-070：顶栏右上头像删除；设置与头像编辑走侧栏底部头像入口。 -->
       <span class="top-sep window-sep"></span>
       <div class="window-controls" aria-label="窗口控制（仿真）">
         <button class="window-control" data-act="window-minimize" title="最小化（仿真）" aria-label="最小化（仿真）">${icon("minimize")}</button>
@@ -765,8 +762,6 @@ window.UI = (function () {
     </header>`;
   }
   function sidebar() {
-    const p = D.projects.find(x => x.id === store.projectId) || D.projects[0];
-    const running = D.tasks.filter(t => t.status === "running" || t.status === "verifying").length;
     return `<aside class="sidebar">
       <div class="nav-group">
         <div class="nav-label">工作空间</div>
@@ -775,18 +770,7 @@ window.UI = (function () {
         ${navItem("knowledge", "book", "知识库", D.knowledge.libraries.length)}
         ${navItem("servers", "server", "服务器管理", D.servers.length)}
       </div>
-      <div class="nav-group">
-        <div class="nav-label">当前项目</div>
-        <button class="side-project" data-act="open-project" data-id="${p.id}">
-          ${projTile(p, "sm", "ico-14")}
-          <span class="p-meta"><b>${esc(p.name)}</b><span>${esc(p.branch || "工作区")}</span></span>
-        </button>
-      </div>
-      <div class="nav-group">
-        <div class="nav-label">快捷入口</div>
-        ${navItem("tasks", "play", "运行队列", running)}
-        ${navItem("design", "layers", "设计资料")}
-      </div>
+      <!-- CR-070：侧栏「当前项目」「快捷入口」分区删除；仅保留工作空间与底部头像入口。 -->
       <div class="side-foot">
         <span class="avatar-frame side-avatar">
           <button class="side-user merged" data-act="open-settings" title="设置与账户">

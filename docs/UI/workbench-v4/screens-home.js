@@ -1,7 +1,7 @@
 /* 工作台、项目管理、需求页。 */
 (function () {
   "use strict";
-  const { D, esc, icon, store, toast, openDialog, closeDialog, dlgShell, md, projTile, ICON_GROUPS, ICON_COLORS, ICON_COLOR_LABELS } = UI;
+  const { D, esc, icon, store, toast, openDialog, closeDialog, dlgShell, md, projTile } = UI;
   const Screens = window.Screens = window.Screens || {};
 
   const statusTag = s => { const m = D.statusMeta[s] || { label: s, tone: "gray" }; return `<span class="tag ${m.tone}">${esc(m.label)}</span>`; };
@@ -88,7 +88,7 @@
       <div class="proj-grid">
         ${rows.map(p => { const s = projStats(p); const pct = s.total ? Math.round(s.done / s.total * 100) : 0; return `<article class="card proj-card" data-act="open-project" data-id="${p.id}">
           <div class="proj-card-h">
-            ${projTile(p)}
+            <button type="button" class="icon-tile-btn" data-c070-open="${p.id}" data-c070-kind="project" title="选择图标与颜色" aria-label="选择项目图标与颜色">${projTile(p)}</button>
             <div class="proj-card-t"><b>${esc(p.name)}</b><span>${esc(p.id)} · ${p.kind === "code" ? "编码" : "办公"}</span></div>
             <button class="icon-btn" data-act="project-edit" data-id="${p.id}" title="编辑项目">${icon("edit")}</button>
           </div>
@@ -110,24 +110,12 @@
     const p = mode === "edit" ? Object.assign({}, projectById(id), store.projectFormDraft || {}) : Object.assign({ id: "", key: "", name: "", kind: "code", owner: D.user.name, desc: "", path: "", members: [] }, store.projectDraft || {});
     if (store.projectPathDraft) p.path = store.projectPathDraft;
     store.projectModal = { mode, id };
-    if (store.projectIconDraft == null) store.projectIconDraft = mode === "edit" ? (p.icon || "") : "";
-    if (store.projectColorDraft == null) store.projectColorDraft = mode === "edit" ? (p.iconColor || "") : "";
-    const draft = store.projectIconDraft || "";
-    const colorDraft = store.projectColorDraft || "";
-    /* CR-051 r2/r6：图标 50 个 6 组 + 10 个整块色卡；选择即时预览，保存才成对写入。 */
-    const picker = `<div class="picker proj-icon-picker" role="group" aria-label="项目图标选择（50 选 1，分 6 组，可留空）">
-      ${ICON_GROUPS.map(g => `<div class="picker-group"><div class="picker-group-h"><b>${esc(g.name)}</b><span>${esc(g.hint)}</span></div><div class="picker-group-grid">${g.icons.map(ic => `<button type="button" class="picker-cell" aria-pressed="${draft === ic}" data-act="proj-icon-pick" data-id="${ic}" title="${ic}">${icon(ic, "ico-20")}<span class="picker-name">${ic}</span></button>`).join("")}</div></div>`).join("")}
-      <button type="button" class="picker-cell picker-clear" aria-pressed="${!draft}" data-act="proj-icon-clear" title="清空回类型默认">${icon("x", "ico-14")}<span class="picker-name">默认</span></button>
-    </div>
-    <div class="swatches" role="group" aria-label="项目背景色（10 选 1，可回默认色）">
-      ${ICON_COLORS.map(sw => `<button type="button" class="swatch" style="background:var(--c51c-${esc(sw.id)}-strong)" aria-pressed="${colorDraft === sw.id}" aria-label="背景色 ${esc(ICON_COLOR_LABELS[sw.id] || sw.id)}" data-act="proj-color-pick" data-id="${esc(sw.id)}" title=" "></button>`).join("")}
-      <button type="button" class="swatch swatch-clear" aria-pressed="${!colorDraft}" aria-label="背景色回默认" data-act="proj-color-clear" title="背景色回默认">${icon("undo", "ico-14")}</button>
-    </div>
-    <div class="row" style="margin-top:10px;gap:10px">${projTile({ icon: draft || null, iconColor: colorDraft || null, kind: p.kind }, "", "ico-20")}<span class="caption">组合预览；清空图标回类型默认（编码 code、办公 briefcase），清空背景回默认色（编码蓝、办公琥珀）。</span></div>`;
+    /* CR-070：项目图标改由卡片图标砖悬浮层选择；编辑弹窗不再含图标折叠区，
+       project-save 仍按原样成对回写 icon/iconColor（悬浮层保存后已更新对象）。 */
     const body = `<div class="form-grid">
       <div class="form-row"><label>项目名称</label><input class="input" id="pf-name" value="${esc(p.name)}" placeholder="例如：活动签到"></div>
       <div class="form-row two"><div><label>项目标识</label><input class="input" id="pf-key" value="${esc(p.key)}" placeholder="BOOKING"></div><div><label>类型</label><select class="select" id="pf-kind"><option value="code" ${p.kind === "code" ? "selected" : ""}>编码项目</option><option value="work" ${p.kind === "work" ? "selected" : ""}>办公项目</option></select></div></div>
-      <div class="form-row"><label>项目图标</label><details class="project-icon-disclosure" ${store.projectIconExpanded ? "open" : ""}><summary>${projTile({ icon: draft || null, iconColor: colorDraft || null, kind: p.kind }, "", "ico-20")}<span class="caption">点击当前图标选择样式与配色</span></summary>${picker}</details><small>50 选 1（通用／办公／商业／内容／产品／生活 6 组）+ 10 个背景色卡；图标与背景色成对保存。保存后卡片、侧栏与授权弹窗同步。</small></div>
+      <div class="form-row"><label>项目图标</label><div class="row" style="gap:10px">${projTile({ icon: p.icon || null, iconColor: p.iconColor || null, kind: p.kind }, "", "ico-20")}<span class="caption">点击列表卡片上的图标修改样式与配色</span></div></div>
       <div class="form-row"><label>负责人</label><input class="input" id="pf-owner" value="${esc(p.owner)}"></div>
       <div class="form-row"><label>项目描述</label><textarea class="textarea" id="pf-desc" rows="3">${esc(p.desc)}</textarea></div>
       <div class="form-row"><label>本地目录</label><div class="input-with-btn"><input class="input" id="pf-path" value="${esc(p.path || "")}" placeholder="尚未选择"><button class="btn" type="button" data-act="dir-pick">${icon("folder", "ico-14")}浏览…</button></div><small>从本机目录树选择，不手工输入路径。</small></div>
@@ -137,56 +125,15 @@
       `<button class="btn" data-act="close-dialog">取消</button><button class="btn primary" data-act="project-save" data-mode="${mode}" data-id="${esc(p.id)}">${mode === "edit" ? "保存" : "创建项目"}</button>`, "modal-lg"));
   }
 
-  /* CR-051：项目图标/色卡选择器交互。main.js 的 project-save 不知道图标草稿；
-     这里用捕获阶段监听：选择/清空即时预览，保存时把「图标 + 背景色」成对落到项目上（main.js 覆盖其余字段，不触碰 icon/iconColor）。 */
+  /* CR-070：项目图标/色卡选择移至卡片图标砖悬浮层（cr070.js）。
+     project-save 保留原字段保存行为；icon/iconColor 由悬浮层成对写入，此处不再读草稿。 */
   function captureProjectForm() {
     const field = id => document.getElementById(id)?.value;
     store.projectFormDraft = { name: field('pf-name'), key: field('pf-key'), kind: field('pf-kind'), owner: field('pf-owner'), desc: field('pf-desc'), path: field('pf-path'), members: (field('pf-members') || '').split('、').filter(Boolean) };
-    store.projectIconExpanded = true;
   }
-  document.addEventListener('toggle', e => { if (e.target.matches?.('.project-icon-disclosure')) store.projectIconExpanded = e.target.open; }, true);
   document.addEventListener("click", e => {
-    const pick = e.target.closest("[data-act='proj-icon-pick']");
-    const clear = e.target.closest("[data-act='proj-icon-clear']");
-    const colorPick = e.target.closest("[data-act='proj-color-pick']");
-    const colorClear = e.target.closest("[data-act='proj-color-clear']");
-    const save = e.target.closest("[data-act='project-save']");
-    if (pick || clear) {
-      captureProjectForm();
-      e.preventDefault();
-      e.stopPropagation();
-      store.projectIconDraft = clear ? "" : pick.dataset.id;
-      const m = store.projectModal;
-      if (m) Screens.projectModal(m.mode, m.id);
-      return;
-    }
-    if (colorPick || colorClear) {
-      captureProjectForm();
-      e.preventDefault();
-      e.stopPropagation();
-      store.projectColorDraft = colorClear ? "" : colorPick.dataset.id;
-      const m = store.projectModal;
-      if (m) Screens.projectModal(m.mode, m.id);
-      return;
-    }
-    if (save) {
-      const draft = store.projectIconDraft;
-      const colorDraft = store.projectColorDraft;
-      store.projectIconDraft = null;
-      store.projectColorDraft = null;
-      if (save.dataset.mode === "edit") {
-        const p = projectById(save.dataset.id);
-        if (p) { p.icon = draft || undefined; p.iconColor = colorDraft || undefined; }
-      } else {
-        setTimeout(() => {
-          const created = D.projects[D.projects.length - 1];
-          if (created) { if (draft) created.icon = draft; if (colorDraft) created.iconColor = colorDraft; }
-          UI.render();
-        }, 0);
-      }
-    }
+    if (e.target.closest("[data-act='project-save']")) captureProjectForm();
   }, true);
-
   function dirPicker() {
     const folders = ["work", "work/booking-service", "work/ops-console", "work/research-booking", "work/nestcraft-site", "work/archive", "projects", "projects/demo"];
     const body = `<div class="dir-picker">
