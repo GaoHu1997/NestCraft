@@ -223,7 +223,9 @@ html[data-theme='dark'] .cr51-upload-error { background: #331d1d; color: #ff7b76
 .icon-pop-current { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; min-width: 0; }
 .icon-pop-current .caption { min-width: 0; }
 .icon-pop-sec { font-size: 11px; font-weight: 600; color: var(--ink-2); margin: 2px 0 7px; }
-.icon-pop-swatches { margin: 0 0 12px; }
+/* 色卡行单行放下 10+1 个（参考图形式）：悬浮层内色卡缩至 30px。 */
+.icon-pop-swatches { margin: 0 0 12px; flex-wrap: nowrap; }
+.icon-pop-swatches .cr51-swatch { width: 30px; height: 30px; flex: 0 0 auto; }
 .icon-pop-groups { display: grid; gap: 10px; }
 .icon-pop-groups .cr51-picker-group { border: 0; padding: 0; background: transparent; }
 .icon-pop-f { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line-soft); background: var(--surface-2, var(--surface)); flex: 0 0 auto; }

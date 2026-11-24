@@ -23,7 +23,7 @@
   - 确认/执行授权：用户 2026-11-24 明确授权编码（"改完需求/设计/方案之后调整代码"）。
   - 先设计后软件：本批先更新原型与 UI 文档，再改 `src/`。
   - 对照计划：构建 + 冒烟后，同视口浅/深主题截取设计稿与软件成对截图对照（侧栏、顶栏、两处悬浮层）。
-- 实现位置 / 提交或 PR：`src/App.tsx`、`src/modules/projects/ProjectHome.tsx`、`src/modules/knowledge/KnowledgeHome.tsx`、`src/components/icon-tiles.tsx`（新增悬浮层组件）、`src/theme/cr051.css`（增量样式）。
-- 验证结果：见 [REPORT-CR070](../../Test/REPORT-CR070-导航精简与图标悬浮层.md)（执行后回填）。
-- 验收结论及依据：待验收。
-- 阻塞、遗留事项和下一步：无阻塞；完成后待用户验收。
+- 实现位置 / 提交或 PR：`src/App.tsx`（侧栏/顶栏精简）、`src/components/icon-tiles.tsx`（`IconPopover`/`IconPopoverTrigger` 新组件）、`src/modules/projects/ProjectHome.tsx`、`src/modules/knowledge/KnowledgeHome.tsx`、`src/theme/cr051-v6.css`（悬浮层样式）、`src/smoke/ui-suite.ts`（断言同步更新）。
+- 验证结果：见 [REPORT-CR070](../../Test/REPORT-CR070-导航精简与图标悬浮层.md)。构建（tsc/vite build）通过；设计侧原型断言 13/13、软件侧隔离预览断言 14/14 通过（含 IPC 回读 rocket+rose 成对保存、取消不落库）；成对截图 `docs/Test/screenshots/cr070/`。**未验证：AC-06 滚动条三帧、AC-07 深色/窄侧栏、真实 Tauri 端到端、键盘完整路径、UI 冒烟套件实跑。**
+- 验收结论及依据：**待验收**（技术验证通过范围如实登记，未验证项不冒充通过）。
+- 阻塞、遗留事项和下一步：无阻塞；AC-06/07 与真实环境验证待补，用户验收后更新状态。
