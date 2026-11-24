@@ -198,7 +198,7 @@ pub fn stable_profile_dir(app: &tauri::AppHandle, cli_id: &str, session_id: &str
 }
 
 /// 设置值 → 开关：缺省=启用，仅显式 "0" 关闭（纯函数便于单测）。
-fn ai_tools_enabled_from_setting(value: Option<String>) -> bool {
+pub(crate) fn ai_tools_enabled_from_setting(value: Option<String>) -> bool {
     match value.as_deref() {
         Some("0") => false,
         _ => true,

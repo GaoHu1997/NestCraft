@@ -279,6 +279,8 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     migrate_cr065_session_pin(conn)?;
     // CR-069：会话运行通道，旧记录默认 'cli'（DB-CR069）。
     migrate_session_runner(conn)?;
+    // CR-070：平台摘要与精确回放（原 message 保留）。
+    crate::commands::platform_context::migrate(conn)?;
     // CR-030-D1：知识切片与全文索引最小表集（FTS 虚表在库首次发布时创建，不在此建）。
     crate::commands::kb_index::migrate_cr030_knowledge_index(conn)?;
     // CR-058：模型检测历史（DB-CR058）。
