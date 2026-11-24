@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>平台长会话状态设计 · CR-071</title>
+<link rel="stylesheet" href="../workbench-v4/tokens.css"><link rel="stylesheet" href="../workbench-v4/base.css">
+<style>
+body{margin:0;background:var(--bg,#f7f8fa);color:var(--ink,#202633);font:14px/1.6 var(--font,system-ui)}
+header{display:flex;gap:10px;align-items:center;padding:12px 20px;border-bottom:1px solid var(--line,#e1e5ea)}
+header select,header button{font:inherit;padding:4px 8px}header span{margin-left:auto;color:var(--muted,#76808d);font-size:12px}
+main{max-width:680px;height:calc(100vh - 76px);margin:auto;display:flex;flex-direction:column}
+#messages{padding:24px;overflow:auto;flex:1;min-height:0}.msg{padding:12px 16px;margin:10px 0;background:var(--surface,#fff);border:1px solid var(--line,#e1e5ea);border-radius:12px}.msg.user{margin-left:50px}
+details{margin:12px 0;border:1px solid var(--line,#e1e5ea);border-radius:8px;padding:10px 12px}summary{cursor:pointer;font-size:13px}pre{white-space:pre-wrap;overflow:auto;max-height:150px;margin:8px 0;font-size:12px}.error{color:var(--danger,#b34d4d)}
+footer{padding:14px;border-top:1px solid var(--line,#e1e5ea);background:var(--surface,#fff)}textarea{width:100%;box-sizing:border-box;min-height:66px;font:inherit;background:transparent;color:inherit;border:1px solid var(--line,#e1e5ea);border-radius:8px;padding:10px}.controls{display:flex;align-items:center;gap:10px;font-size:12px;margin-top:8px}.controls button{margin-left:auto;font:inherit}
+</style>
+<script src="../workbench-v4/scrollbar.js" defer></script>
+</head>
+<body>
+<header><b>CR-071</b><select id="scene" aria-label="设计场景"><option value="normal">原历史</option><option value="compress">自动压缩</option><option value="read">原文恢复</option><option value="failure">预算失败</option><option value="revoked">来源失效</option><option value="stop">停止</option></select><button id="theme">切换主题</button><span>合成设计夹具 · 无真实执行</span></header>
+<main><section id="messages" aria-label="消息历史"></section><footer><textarea id="draft" aria-label="输入" placeholder="输入消息"></textarea><div class="controls"><span>平台主代理</span><span>模型</span><button id="send">发送</button></div></footer></main>
+<script>
+const source='请保留失败证据，不要把待验证结果当完成。';
+const normal='<article class="msg user">'+source+'</article><article class="msg">已记录约束。下一步核对当前源版本。</article>';
+const views={normal:normal,compress:normal,read:normal+'<details><summary>read_context</summary><pre>消息 m1 · 原文\n'+source+'</pre></details>',failure:normal+'<article class="msg error">上下文超出预算，请减少本次引用或新建会话。</article>',revoked:normal+'<details><summary>read_context · 失败</summary><pre>历史资料来源已变化，未恢复。</pre></details>',stop:normal+'<article class="msg">已停止。</article>'};
+const scene=document.getElementById('scene'),messages=document.getElementById('messages'),send=document.getElementById('send');
+function render(){messages.innerHTML=views[scene.value];send.textContent=scene.value==='compress'?'停止':'发送'}
+scene.addEventListener('change',render);document.getElementById('theme').onclick=()=>{const e=document.documentElement;e.dataset.theme=e.dataset.theme==='dark'?'light':'dark'};send.onclick=()=>{if(scene.value==='compress'){scene.value='stop';render()}};render();
+</script></body></html>

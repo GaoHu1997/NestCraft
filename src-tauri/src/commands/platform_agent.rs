@@ -12,6 +12,9 @@ use crate::models::{EffortMap, SendPayload};
 use serde_json::{json, Value};
 use std::io::{BufRead, Read};
 
+#[path = "platform_context_runtime.rs"]
+mod context_runtime;
+
 /// 平台会话的默认输出上限（两协议一致；Anthropic 的 max_tokens 必填）。
 const MAX_OUTPUT_TOKENS: u64 = 4096;
 /// 流式读取硬上限（与 model_probe.rs 的 MAX_STREAM_BYTES 一致），防超大响应。
@@ -37,7 +40,7 @@ pub(crate) struct PlatformTurn {
 }
 
 /// 模型返回的规范化结果。
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct ModelReply {
     pub text: String,
     pub thinking: String,
@@ -47,7 +50,7 @@ pub(crate) struct ModelReply {
     pub usage: Option<(i64, i64, i64)>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ToolCall {
     pub id: String,
     pub name: String,
@@ -56,7 +59,7 @@ pub(crate) struct ToolCall {
 }
 
 /// 对话消息（含工具角色）。
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) enum ChatMsg {
     System(String),
     User(String),
@@ -419,6 +422,7 @@ fn handle_anthropic_line(
     };
     match value.get("type").and_then(Value::as_str).unwrap_or("") {
         "message_start" => {
+            state.cache_read_tokens = value.pointer("/message/usage/cache_read_input_tokens").and_then(Value::as_i64).or(state.cache_read_tokens);
             state.input_tokens = value.pointer("/message/usage/input_tokens").and_then(Value::as_i64).or(state.input_tokens);
             state.output_tokens = value.pointer("/message/usage/output_tokens").and_then(Value::as_i64).or(state.output_tokens);
         }
@@ -535,11 +539,18 @@ fn is_side_effect_tool(name: &str) -> bool {
             | "save_server"
             | "generate_image"
             | "dispatch_work"
+            | "compress_context"
     )
+}
+
+fn business_tools_enabled(conn: &rusqlite::Connection)->bool {
+    let value: Option<Option<String>>=conn.query_row("SELECT value FROM setting_default WHERE scope='global' AND key='aiTools.enabled'",[],|r|r.get(0)).ok();
+    crate::commands::dispatch::ai_tools_enabled_from_setting(value.flatten())
 }
 
 /// 生成模型可见工具定义：白名单 ∩ 当前 capability 启用集（每轮重读）。
 fn platform_tool_defs(conn: &rusqlite::Connection) -> Vec<crate::commands::ai_tools::ToolDef> {
+    if !business_tools_enabled(conn) {return Vec::new();}
     crate::commands::ai_tools::workbench_tools()
         .into_iter()
         .filter(|d| PLATFORM_TOOL_ALLOWLIST.contains(&d.name))
@@ -661,350 +672,345 @@ fn resolve_platform_turn(
     })
 }
 
-/// 平台会话单轮发送（LLD §4.2；步骤顺序不可调换：所有校验完成后才持久化用户消息）。
-pub async fn send_platform(
-    app: tauri::AppHandle,
-    payload: SendPayload,
-    channel: tauri::ipc::Channel<Value>,
-) -> Result<(), String> {
-    let session_id = payload.session_id.clone();
-    // 步骤 1：与 CLI 轮次共用互斥，防止同一会话并发写。
-    let (_running_turn, abort_rx) = crate::commands::chat::reserve_turn(&session_id)?;
-    let outcome = run_platform_turn(&app, &payload, &channel, &abort_rx).await;
-    // _running_turn 在此 Drop，释放 RUNNING（成功、失败、panic 均覆盖）。
-    drop(_running_turn);
-    match outcome {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            let _ = channel.send(json!({"type": "error", "message": e}));
-            Ok(())
-        }
-    }
-}
-
-async fn run_platform_turn(
-    app: &tauri::AppHandle,
-    payload: &SendPayload,
-    channel: &tauri::ipc::Channel<Value>,
-    abort_rx: &tokio::sync::watch::Receiver<bool>,
-) -> Result<(), String> {
-    let session_id = payload.session_id.clone();
-    // 步骤 2：读取会话。
-    let session = crate::commands::chat::chat_session_get(session_id.clone())?;
-    // 执行会话发送前复检 Feature 归属与源 hash（PRD §5.4；与 chat_send CLI 路径一致）。
-    if let Some(feature_id) = session.feature_id.as_deref() {
-        let guard = crate::db::conn()?;
-        let conn = guard.as_ref().ok_or("db not initialized")?;
-        let current = crate::commands::chat::resolve_execution_feature(conn, session.project_id.as_deref(), Some(feature_id))?;
-        if current.feature_id.as_deref() != Some(feature_id) {
-            return Err("执行会话的Feature绑定不一致，拒绝发送".into());
-        }
-        if current.feature_source_hash != session.feature_source_hash {
-            return Err(format!("特性 {feature_id} 的源已变化；请重新预检后再创建或绑定执行会话，未按旧范围发送"));
-        }
-    }
-    // 步骤 3-5：供应商/端点/密钥/模型校验。
-    let turn = {
-        let guard = crate::db::conn()?;
-        let conn = guard.as_ref().ok_or("db not initialized")?;
-        resolve_platform_turn(conn, app, &session)?
+/// CR-071：所有上下文／摘要预检在user持久化之前；接纳后异步执行，与CLI通道返回语义一致。
+pub async fn send_platform(app: tauri::AppHandle,payload: SendPayload,channel: tauri::ipc::Channel<Value>) -> Result<(),String> {
+    let (running,abort)=crate::commands::chat::reserve_turn(&payload.session_id)?;
+    let session=crate::commands::chat::chat_session_get(payload.session_id.clone())?;
+    let prompt=crate::commands::chat::build_prompt(&app,&payload,session.project_id.as_deref())?;
+    let (turn,mut prepared,mut defs)={
+        let guard=crate::db::conn()?;let conn=guard.as_ref().ok_or("db not initialized")?;
+        (resolve_platform_turn(conn,&app,&session)?,context_runtime::Prepared::load(conn,session.clone(),prompt)?,platform_tool_defs(conn))
     };
-    // 步骤 6 前置：受管上下文编译（知识授权、Skill 停用校验、引用边界全在 build_prompt 内）。
-    let prompt = crate::commands::chat::build_prompt(app, payload, session.project_id.as_deref())?;
-    // 步骤 6：组装消息（system + 历史 user/assistant 文本 + 本轮）。
-    let mut messages: Vec<ChatMsg> = vec![ChatMsg::System(PLATFORM_SYSTEM_PROMPT.to_string())];
+    defs.extend(crate::commands::platform_context::tool_defs());
+    let data_dir={use tauri::Manager;app.path().app_data_dir().map_err(|e| e.to_string())?};
+    if let Err(error)=context_runtime::prepare(&turn,&mut prepared,&defs,&abort).await {
+        send_usage(&channel,prepared.usage);
+        return Err(error);
+    }
     {
-        let guard = crate::db::conn()?;
-        let conn = guard.as_ref().ok_or("db not initialized")?;
-        let mut stmt = conn
-            .prepare("SELECT role, content FROM message WHERE sessionId=?1 AND role IN ('user','assistant') ORDER BY createdAt, rowid")
-            .map_err(|e| e.to_string())?;
-        let rows = stmt.query_map([&session_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-            .map_err(|e| e.to_string())?;
-        for row in rows {
-            let (role, content) = row.map_err(|e| e.to_string())?;
-            messages.push(match role.as_str() {
-                "user" => ChatMsg::User(content),
-                _ => ChatMsg::Assistant { text: content, tool_calls: Vec::new() },
-            });
+        let guard=crate::db::conn()?;let conn=guard.as_ref().ok_or("db not initialized")?;
+        if let Err(error)=prepared.accept(conn,&payload,&abort) {send_usage(&channel,prepared.usage);return Err(error);}
+    }
+    let ctx=crate::commands::ai_tools::ToolContext {project_id:session.project_id.clone(),data_dir,execution_feature_id:session.feature_id.clone()};
+    tokio::spawn(async move {
+        let mut messages=prepared.messages();
+        prepared.base_len=messages.len();
+        let mut outcome=StreamOutcome::default();
+        outcome.usage=prepared.usage;
+        let result=run_tool_loop_context(&turn,&ctx,&mut messages,&channel,&abort,&mut outcome,Some(&mut prepared)).await;
+        if let Err(error)=&result {close_pending_pairs(&mut messages,&mut outcome,error);}
+        let persist={
+            match crate::db::conn() {
+                Ok(guard)=>match guard.as_ref() {
+                    Some(conn)=>{
+                        let transcript=messages.get(prepared.base_len.saturating_sub(1)..).unwrap_or(&[]);
+                        prepared.persist(conn,&outcome,transcript)
+                    }
+                    None=>Err("db not initialized".into()),
+                },
+                Err(error)=>Err(error),
+            }
+        };
+        drop(running);
+        send_usage(&channel,outcome.usage);
+        match (result,persist) {
+            (_,Err(error))=>{let _=channel.send(json!({"type":"error","message":format!("回复保存失败：{error}")}));}
+            (Err(error),_)=>{let _=channel.send(json!({"type":"error","message":error}));}
+            (Ok(()),Ok(()))=>{let _=channel.send(json!({"type":"done","sessionRef":Value::Null}));}
         }
-    }
-    messages.push(ChatMsg::User(prompt));
-    // 步骤 7：所有校验通过后才持久化用户消息（失败保留前端草稿）。
-    {
-        let guard = crate::db::conn()?;
-        let conn = guard.as_ref().ok_or("db not initialized")?;
-        conn.execute(
-            "INSERT INTO message (id, sessionId, role, content, refsJson, createdAt) VALUES (?1,?2,'user',?3,?4,?5)",
-            rusqlite::params![
-                crate::models::new_id("msg"),
-                session_id,
-                payload.content,
-                serde_json::to_string(&payload.refs).ok(),
-                crate::models::now_ms()
-            ],
-        )
-        .map_err(|e| e.to_string())?;
-        conn.execute("UPDATE session SET updatedAt=?2 WHERE id=?1", rusqlite::params![session_id, crate::models::now_ms()])
-            .map_err(|e| e.to_string())?;
-    }
-    // 步骤 8：工具循环。
-    let ctx = crate::commands::ai_tools::ToolContext {
-        project_id: session.project_id.clone(),
-        data_dir: {
-            use tauri::Manager;
-            app.path().app_data_dir().map_err(|e| e.to_string())?
-        },
-        execution_feature_id: session.feature_id.clone(),
-    };
-    let mut outcome = StreamOutcome::default();
-    let loop_result = run_tool_loop(&turn, &ctx, &mut messages, channel, abort_rx, &mut outcome).await;
-    // 步骤 9：落库（含中止/失败时的已产生文本归档），再上抛循环结果。
-    {
-        let guard = crate::db::conn()?;
-        let conn = guard.as_ref().ok_or("db not initialized")?;
-        if let Err(persist_err) = crate::commands::chat::insert_assistant_messages(conn, &session_id, &outcome) {
-            eprintln!("[platform] 回复保存失败：{persist_err}");
-            let _ = channel.send(json!({"type": "error", "message": format!("回复保存失败，流式内容保留但未持久化（{persist_err}）")}));
-        }
-    }
-    if let Err(e) = loop_result {
-        return Err(e);
-    }
-    if let Some((input, output, cache)) = outcome.usage {
-        let _ = channel.send(json!({
-            "type": "usage", "inputTokens": input, "outputTokens": output, "cacheReadTokens": cache
-        }));
-    }
-    let _ = channel.send(json!({"type": "done", "sessionRef": Value::Null}));
+    });
     Ok(())
 }
 
-/// 单次模型请求（流式）：文本增量即时下发，工具调用按 index 累积到流结束。
-async fn request_model(
-    turn: &PlatformTurn,
-    messages: &[ChatMsg],
-    defs: &[crate::commands::ai_tools::ToolDef],
-    channel: &tauri::ipc::Channel<Value>,
-    abort_rx: &tokio::sync::watch::Receiver<bool>,
-) -> Result<ModelReply, String> {
-    let body = build_platform_body(&turn.protocol, &turn.model_id, turn.effort.as_deref(), &turn.efforts, messages, defs, true)?;
-    let payload = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
-    let url = turn.base_url.clone();
-    let protocol = turn.protocol.clone();
-    let api_key = turn.api_key.clone();
-    let extra_headers = turn.extra_headers.clone();
-    let channel = channel.clone();
-    let abort = abort_rx.clone();
-    // 阻塞式 ureq 放入 spawn_blocking，避免占用异步运行时。
-    tokio::task::spawn_blocking(move || -> Result<ModelReply, String> {
-        let agent = ureq::AgentBuilder::new()
-            .redirects(0)
-            .timeout(std::time::Duration::from_secs(300))
-            .build();
-        let mut request = agent
-            .post(&url)
-            .set("Content-Type", "application/json")
-            .set("Accept", "text/event-stream");
-        request = if protocol == "anthropic" {
-            request.set("x-api-key", &api_key).set("anthropic-version", "2023-06-01")
-        } else {
-            request.set("Authorization", &format!("Bearer {}", api_key))
-        };
-        for (name, value) in &extra_headers {
-            request = request.set(name, value);
-        }
-        let response = match request.send_bytes(&payload) {
-            Ok(response) => response,
-            Err(ureq::Error::Status(code, mut response)) => {
-                let mut detail = Vec::new();
-                let _ = response.into_reader().take(16 * 1024).read_to_end(&mut detail);
-                let text = String::from_utf8_lossy(&detail);
-                let message = serde_json::from_str::<Value>(&text)
-                    .ok()
-                    .and_then(|v| {
-                        v.pointer("/error/message")
-                            .or_else(|| v.get("message"))
-                            .and_then(|m| m.as_str().map(str::to_string))
-                    })
-                    .unwrap_or_else(|| text.trim().to_string());
-                let clipped: String = message.chars().take(300).collect();
-                // 不对 401/403 重试；直接报错说明原因。
-                return Err(format!("模型请求失败（HTTP {code}）：{clipped}"));
-            }
-            Err(_) => return Err("模型连接失败或超时".into()),
-        };
-        let status = response.status();
-        if !(200..300).contains(&status) {
-            return Err(format!("模型请求失败（HTTP {status}）"));
-        }
-        let mut handle = std::io::BufReader::new(response.into_reader().take(MAX_STREAM_BYTES));
-        let mut state = StreamState::default();
-        let mut line = String::new();
-        let mut stream_error: Option<String> = None;
-        loop {
-            if *abort.borrow() {
-                return Err("已停止".into());
-            }
-            line.clear();
-            match handle.read_line(&mut line) {
-                Ok(0) => break,
-                Ok(_) => {}
-                Err(_) => {
-                    stream_error = Some("流读取失败".into());
-                    break;
+fn send_usage(channel: &tauri::ipc::Channel<Value>,usage: Option<(i64,i64,i64)>) {
+    if let Some((i,o,c))=usage {let _=channel.send(json!({"type":"usage","inputTokens":i,"outputTokens":o,"cacheReadTokens":c}));}
+}
+
+fn budgeted_body(turn: &PlatformTurn, messages: &[ChatMsg], defs: &[crate::commands::ai_tools::ToolDef],
+    budget: &crate::commands::platform_context::ContextBudget) -> Result<Value,String> {
+    // Anthropic必须回放合法input对象；非法原参数仍保存在tool_use与错误结果中。
+    let mut wire=messages.to_vec();
+    if turn.protocol=="anthropic" {
+        for msg in &mut wire {
+            if let ChatMsg::Assistant {tool_calls,..}=msg {
+                for call in tool_calls {
+                    if serde_json::from_str::<Value>(&call.arguments).is_err() { call.arguments="{}".into(); }
                 }
             }
-            let trimmed = line.trim_end_matches(['\r', '\n']);
-            if trimmed.is_empty() || trimmed.starts_with(':') {
-                continue;
-            }
-            if protocol == "anthropic" {
-                handle_anthropic_line(trimmed, &mut state, &mut |d| {
-                    let _ = channel.send(json!({"type": "delta", "delta": d}));
-                }, &mut |t| {
-                    let _ = channel.send(json!({"type": "thinking", "delta": t}));
-                });
-            } else {
-                handle_openai_line(trimmed, &mut state, &mut |d| {
-                    let _ = channel.send(json!({"type": "delta", "delta": d}));
-                }, &mut |t| {
-                    let _ = channel.send(json!({"type": "thinking", "delta": t}));
-                });
-            }
-            if state.bad_lines > MAX_BAD_SSE_LINES {
-                return Err("响应流包含过多无法解析的帧，模型协议可能与所选供应商不兼容".into());
-            }
-        }
-        if let Some(e) = stream_error {
-            return Err(e);
-        }
-        Ok(state.into_reply())
-    })
-    .await
-    .map_err(|_| "模型请求任务异常".to_string())?
-}
-
-/// 工具循环主体（LLD §5.3）：白名单 + 启停双重复核、三重上限、副作用幂等。
-#[allow(clippy::too_many_arguments)]
-async fn run_tool_loop(
-    turn: &PlatformTurn,
-    ctx: &crate::commands::ai_tools::ToolContext,
-    messages: &mut Vec<ChatMsg>,
-    channel: &tauri::ipc::Channel<Value>,
-    abort_rx: &tokio::sync::watch::Receiver<bool>,
-    outcome: &mut StreamOutcome,
-) -> Result<(), String> {
-    let mut rounds = 0usize;
-    let mut total_calls = 0usize;
-    let mut executed: std::collections::HashSet<String> = Default::default();
-
-    loop {
-        if *abort_rx.borrow() {
-            if !outcome.assistant_text.is_empty() {
-                outcome.aborted = true;
-            }
-            return Err("发送已停止".into());
-        }
-        rounds += 1;
-        // 每轮重新读 capability：设置页停用立即生效（AC-STORY-090-03）。
-        let defs = {
-            let guard = crate::db::conn()?;
-            let conn = guard.as_ref().ok_or("db not initialized")?;
-            platform_tool_defs(conn)
-        };
-        let reply = request_model(turn, messages, &defs, channel, abort_rx).await?;
-        // 归档本轮文本（多轮文本以空行连接，落为一条 assistant 消息）。
-        if !reply.text.is_empty() {
-            if !outcome.assistant_text.is_empty() {
-                outcome.assistant_text.push_str("\n\n");
-            }
-            outcome.assistant_text.push_str(&reply.text);
-        }
-        if !reply.thinking.is_empty() {
-            if !outcome.thinking_text.is_empty() {
-                outcome.thinking_text.push('\n');
-            }
-            outcome.thinking_text.push_str(&reply.thinking);
-        }
-        if reply.usage.is_some() {
-            outcome.usage = reply.usage;
-        }
-
-        if reply.tool_calls.is_empty() {
-            return Ok(());
-        }
-        if rounds >= MAX_TOOL_ROUNDS {
-            return Err(format!("工具轮次已达上限 {MAX_TOOL_ROUNDS}；本轮未完成"));
-        }
-        if reply.tool_calls.len() > MAX_TOOL_CALLS_PER_ROUND {
-            return Err(format!("单轮工具调用超过 {MAX_TOOL_CALLS_PER_ROUND} 个"));
-        }
-        total_calls += reply.tool_calls.len();
-        if total_calls > MAX_TOOL_CALLS_TOTAL {
-            return Err(format!("累计工具调用超过 {MAX_TOOL_CALLS_TOTAL} 次"));
-        }
-
-        messages.push(ChatMsg::Assistant {
-            text: reply.text.clone(),
-            tool_calls: reply.tool_calls.clone(),
-        });
-
-        for call in &reply.tool_calls {
-            // 双重校验：白名单（常量）+ 当前 capability 启停。
-            let allowed = PLATFORM_TOOL_ALLOWLIST.contains(&call.name.as_str());
-            let enabled = allowed && {
-                let guard = crate::db::conn()?;
-                let conn = guard.as_ref().ok_or("db not initialized")?;
-                crate::commands::ai_tools::workbench_tools()
-                    .into_iter()
-                    .find(|d| d.name == call.name)
-                    .map(|d| crate::commands::ai_tools::tool_enabled(conn, d.registry_id))
-                    .unwrap_or(false)
-            };
-            if !allowed || !enabled {
-                let content = format!("工具 {} 不可用（未在允许清单或已停用）", call.name);
-                outcome.tool_results.push((call.id.clone(), content.clone(), true));
-                let _ = channel.send(json!({
-                    "type": "toolResult", "toolId": call.id, "content": content, "isError": true
-                }));
-                messages.push(ChatMsg::Tool {
-                    call_id: call.id.clone(),
-                    content,
-                    is_error: true,
-                });
-                continue;
-            }
-
-            // 副作用幂等：同一轮同一工具同一参数只执行一次。
-            let key = format!("{}:{}:{}", rounds, call.name, call.arguments);
-            if is_side_effect_tool(&call.name) && !executed.insert(key) {
-                let content = "相同调用已执行过，未重复执行；如需继续请改变参数或确认结果".to_string();
-                outcome.tool_results.push((call.id.clone(), content.clone(), true));
-                let _ = channel.send(json!({
-                    "type": "toolResult", "toolId": call.id, "content": content, "isError": true
-                }));
-                messages.push(ChatMsg::Tool { call_id: call.id.clone(), content, is_error: true });
-                continue;
-            }
-
-            let _ = channel.send(json!({
-                "type": "toolUse", "toolId": call.id, "name": call.name, "inputJson": call.arguments
-            }));
-            let result = execute_tool_safely(ctx, call);
-            outcome.tool_uses.push((call.id.clone(), call.name.clone(), call.arguments.clone()));
-            outcome.tool_results.push((call.id.clone(), result.content.clone(), result.is_error));
-            let _ = channel.send(json!({
-                "type": "toolResult", "toolId": call.id, "content": result.content, "isError": result.is_error
-            }));
-            messages.push(ChatMsg::Tool {
-                call_id: call.id.clone(),
-                content: result.content,
-                is_error: result.is_error,
-            });
         }
     }
+    let mut body=build_platform_body(&turn.protocol,&turn.model_id,turn.effort.as_deref(),&turn.efforts,&wire,defs,true)?;
+    if let Some(max)=budget.max_output {
+        let current=crate::commands::platform_context::ContextBudget::output(&body);
+        if current>max {
+            if body.get("thinking").is_some() { return Err("CONTEXT_OUTPUT_LIMIT：所选思考档位超过模型最大输出".into()); }
+            let field=if body.get("max_completion_tokens").is_some(){"max_completion_tokens"}else{"max_tokens"};
+            body[field]=json!(max);
+        }
+    }
+    Ok(body)
 }
+
+struct ModelFailure { message: String, partial: ModelReply }
+#[derive(Default)]
+struct Capture { reply: ModelReply, closed: bool }
+
+async fn wait_for_abort(rx: &mut tokio::sync::watch::Receiver<bool>) {
+    loop {
+        if *rx.borrow() { return; }
+        if rx.changed().await.is_err() { std::future::pending::<()>().await; }
+    }
+}
+
+/// 阻塞读取只更新内存；取消时封闭Channel，后台读超时后退出，不再写DB或发事件。
+async fn request_model_captured(turn: &PlatformTurn, messages: &[ChatMsg], defs: &[crate::commands::ai_tools::ToolDef],
+    channel: Option<&tauri::ipc::Channel<Value>>, abort: &tokio::sync::watch::Receiver<bool>,
+    budget: &crate::commands::platform_context::ContextBudget) -> Result<ModelReply,ModelFailure> {
+    let body=budgeted_body(turn,messages,defs,budget).and_then(|b|{budget.check(&b)?;Ok(b)});
+    let body=match body {Ok(b)=>b,Err(message)=>return Err(ModelFailure {message,partial:ModelReply::default()})};
+    if *abort.borrow() { return Err(ModelFailure {message:"发送已停止".into(),partial:ModelReply::default()}); }
+    let payload=serde_json::to_vec(&body).map_err(|e|ModelFailure{message:e.to_string(),partial:ModelReply::default()})?;
+    let shared: std::sync::Arc<std::sync::Mutex<Capture>>=Default::default();
+    let capture=shared.clone();
+    let turn=turn.clone();
+    let sink=channel.cloned();
+    let watch=abort.clone();
+    let task=tokio::task::spawn_blocking(move || -> Result<ModelReply,String> {
+        let stopped=|| *watch.borrow() || capture.lock().map(|s|s.closed).unwrap_or(true);
+        if stopped() { return Err("发送已停止".into()); }
+        let agent=ureq::AgentBuilder::new().redirects(0).timeout(std::time::Duration::from_secs(60)).build();
+        let mut request=agent.post(&turn.base_url).set("Content-Type","application/json").set("Accept","text/event-stream");
+        request=if turn.protocol=="anthropic" {request.set("x-api-key",&turn.api_key).set("anthropic-version","2023-06-01")}
+            else {request.set("Authorization",&format!("Bearer {}",turn.api_key))};
+        for (name,value) in &turn.extra_headers { request=request.set(name,value); }
+        let redact=|text: String| if turn.api_key.is_empty(){text}else{text.replace(&turn.api_key,"[redacted]")};
+        let response=match request.send_bytes(&payload) {
+            Ok(response)=>response,
+            Err(ureq::Error::Status(code,response))=>{
+                let mut bytes=Vec::new();
+                let _=response.into_reader().take(16384).read_to_end(&mut bytes);
+                let raw=String::from_utf8_lossy(&bytes);
+                let message=serde_json::from_str::<Value>(&raw).ok().and_then(|v|v.pointer("/error/message").or_else(||v.get("message")).and_then(Value::as_str).map(str::to_string))
+                    .unwrap_or_else(||raw.chars().take(300).collect());
+                return Err(format!("模型请求失败（HTTP {code}）：{}",redact(message).chars().take(300).collect::<String>()));
+            }
+            Err(_)=>return Err("模型连接失败或超时".into()),
+        };
+        let mut reader=std::io::BufReader::new(response.into_reader().take(MAX_STREAM_BYTES+1));
+        let mut state=StreamState::default();
+        let mut line=String::new();
+        let mut bytes=0u64;
+        let mut terminal=false;
+        loop {
+            if stopped() { return Err("发送已停止".into()); }
+            line.clear();
+            let n=reader.read_line(&mut line).map_err(|_|"模型响应流中断".to_string())?;
+            if n==0 { break; }
+            bytes=bytes.saturating_add(n as u64);
+            if bytes>MAX_STREAM_BYTES { return Err("模型响应超过流式字节上限".into()); }
+            let frame=line.trim_end_matches(['\r','\n']);
+            if frame.trim()=="data: [DONE]" {terminal=true;break;}
+            let mut frame_error=None;
+            if let Some(data)=frame.strip_prefix("data:") {
+                if let Ok(v)=serde_json::from_str::<Value>(data.trim()) {
+                    if v.get("type").and_then(Value::as_str)==Some("error") || v.get("error").is_some() {
+                        let message=v.pointer("/error/message").and_then(Value::as_str).unwrap_or("模型返回错误帧");
+                        frame_error=Some(redact(message.into()));
+                    }
+                    if v.get("type").and_then(Value::as_str)==Some("message_stop") { terminal=true; }
+                }
+            }
+            let events=std::cell::RefCell::new(Vec::new());
+            let mut delta=|text: &str| events.borrow_mut().push(json!({"type":"delta","delta":text}));
+            let mut thinking=|text: &str| events.borrow_mut().push(json!({"type":"thinking","delta":text}));
+            if turn.protocol=="anthropic" {handle_anthropic_line(frame,&mut state,&mut delta,&mut thinking);}
+            else {handle_openai_line(frame,&mut state,&mut delta,&mut thinking);}
+            if let Ok(mut c)=capture.lock() {
+                if !c.closed {
+                    c.reply.finish_reason=state.finish_reason.clone();
+                    if state.input_tokens.is_some() || state.output_tokens.is_some() {
+                        c.reply.usage=Some((state.input_tokens.unwrap_or(0),state.output_tokens.unwrap_or(0),state.cache_read_tokens.unwrap_or(0)));
+                    }
+                    // 同帧usage先记录，再立即发送该帧增量；取消回调不会丢掉已提供的用量。
+                    for event in events.into_inner() {
+                        let text=event["delta"].as_str().unwrap_or("");
+                        if event["type"]==json!("delta") {c.reply.text.push_str(text);}else{c.reply.thinking.push_str(text);}
+                        if let Some(ch)=&sink {let _=ch.send(event);}
+                    }
+                }
+            }
+            if let Some(error)=frame_error {return Err(error);}
+            if state.bad_lines>MAX_BAD_SSE_LINES { return Err("模型响应包含过多非法帧".into()); }
+            if terminal { break; }
+        }
+        if !terminal { return Err("模型响应流缺少结束标记".into()); }
+        let reply=state.into_reply();
+        if reply.text.trim().is_empty() && reply.tool_calls.is_empty() { return Err("模型未返回正文".into()); }
+        Ok(reply)
+    });
+    let mut receiver=abort.clone();
+    let result=tokio::select! {
+        result=task=>match result {Ok(r)=>r,Err(_)=>Err("模型请求任务异常".into())},
+        _=wait_for_abort(&mut receiver)=>Err("发送已停止".into()),
+    };
+    let mut partial=shared.lock().map_err(|_|ModelFailure{message:"模型流状态不可用".into(),partial:ModelReply::default()})?;
+    partial.closed=true;
+    match result {Ok(reply)=>Ok(reply),Err(message)=>Err(ModelFailure {message,partial:partial.reply.clone()})}
+}
+
+/// 保留客户端测试入口；生产调用显式传模型预算。
+async fn request_model(turn: &PlatformTurn,messages: &[ChatMsg],defs: &[crate::commands::ai_tools::ToolDef],
+    channel: &tauri::ipc::Channel<Value>,abort: &tokio::sync::watch::Receiver<bool>) -> Result<ModelReply,String> {
+    request_model_captured(turn,messages,defs,Some(channel),abort,&crate::commands::platform_context::ContextBudget::from_model(None,None))
+        .await.map_err(|f|f.message)
+}
+
+/// 工具循环入口保留既有行为测试；生产平台轮次使用带上下文的同一实现。
+async fn run_tool_loop(turn: &PlatformTurn,ctx: &crate::commands::ai_tools::ToolContext,messages: &mut Vec<ChatMsg>,
+    channel: &tauri::ipc::Channel<Value>,abort: &tokio::sync::watch::Receiver<bool>,outcome: &mut StreamOutcome) -> Result<(),String> {
+    run_tool_loop_context(turn,ctx,messages,channel,abort,outcome,None).await
+}
+
+fn merge_reply(outcome: &mut StreamOutcome, reply: &ModelReply) {
+    outcome.assistant_text.push_str(&reply.text);
+    outcome.thinking_text.push_str(&reply.thinking);
+    context_runtime::add_usage(&mut outcome.usage,reply.usage);
+}
+
+fn close_pending_pairs(messages: &mut Vec<ChatMsg>,outcome: &mut StreamOutcome,reason: &str) {
+    let mut missing=std::collections::BTreeMap::new();
+    for msg in messages.iter() {
+        match msg {ChatMsg::Assistant{tool_calls,..}=>for call in tool_calls {missing.insert(call.id.clone(),call.clone());},
+            ChatMsg::Tool{call_id,..}=>{missing.remove(call_id);},_=>{}}
+    }
+    for (_,call) in missing {
+        let content=format!("未执行：{reason}");
+        if !outcome.tool_uses.iter().any(|c|c.0==call.id) {let input=visible_tool_input(&call);outcome.tool_uses.push((call.id.clone(),call.name,input));}
+        outcome.tool_results.push((call.id.clone(),content.clone(),true));
+        messages.push(ChatMsg::Tool{call_id:call.id,content,is_error:true});
+    }
+}
+
+fn validate_platform_read(conn: &rusqlite::Connection,ctx: &crate::commands::ai_tools::ToolContext,call: &ToolCall) -> Result<(),String> {
+    if call.name!="fs_read" {return Ok(());}
+    let args: Value=serde_json::from_str(&call.arguments).map_err(|_|"参数不是有效JSON".to_string())?;
+    let given=args.get("projectId").and_then(Value::as_str);
+    if ctx.project_id.as_deref().is_some_and(|p|given.is_some_and(|g|g!=p)) {return Err("读取项目与会话不一致".into());}
+    let project=ctx.project_id.as_deref().or(given).ok_or("读取缺少项目身份")?;
+    let path=args.get("path").and_then(Value::as_str).ok_or("读取缺少path")?;
+    let root: String=conn.query_row("SELECT rootUri FROM project WHERE id=?1",[project],|r|r.get(0)).map_err(|_|"读取项目不存在".to_string())?;
+    let target=crate::commands::chat::checked_file_ref(conn,project,std::path::Path::new(&root),path)?;
+    if std::fs::canonicalize(&ctx.data_dir).ok().is_some_and(|data|target.starts_with(data)) {return Err("禁止读取应用私密配置目录".into());}
+    Ok(())
+}
+
+fn visible_tool_input(call: &ToolCall)->String {
+    if call.name!="compress_context" {return call.arguments.clone();}
+    let mut args=serde_json::from_str::<Value>(&call.arguments).unwrap_or_else(|_|json!({}));
+    if let Some(args)=args.as_object_mut() {args.remove("summary");}
+    args.to_string()
+}
+
+fn with_platform_connection<T>(database: Option<&std::sync::Arc<std::sync::Mutex<rusqlite::Connection>>>,
+    action: impl FnOnce(&rusqlite::Connection)->Result<T,String>) -> Result<T,String> {
+    if let Some(database)=database {
+        let conn=database.lock().map_err(|_|"隔离数据库锁不可用".to_string())?;action(&conn)
+    } else {
+        let guard=crate::db::conn()?;action(guard.as_ref().ok_or("db not initialized")?)
+    }
+}
+
+async fn run_tool_loop_context(turn: &PlatformTurn,ctx: &crate::commands::ai_tools::ToolContext,messages: &mut Vec<ChatMsg>,
+    channel: &tauri::ipc::Channel<Value>,abort: &tokio::sync::watch::Receiver<bool>,outcome: &mut StreamOutcome,
+    context: Option<&mut context_runtime::Prepared>) -> Result<(),String> {
+    run_tool_loop_database(turn,ctx,messages,channel,abort,outcome,context,None).await
+}
+
+/// 唯一循环实现；隔离连接仅用于上下文工具测试，不是可由模型选择的运行配置。
+async fn run_tool_loop_database(turn: &PlatformTurn,ctx: &crate::commands::ai_tools::ToolContext,messages: &mut Vec<ChatMsg>,
+    channel: &tauri::ipc::Channel<Value>,abort: &tokio::sync::watch::Receiver<bool>,outcome: &mut StreamOutcome,
+    mut context: Option<&mut context_runtime::Prepared>, database: Option<&std::sync::Arc<std::sync::Mutex<rusqlite::Connection>>>) -> Result<(),String> {
+    let budget=context.as_ref().map(|c|c.budget.clone()).unwrap_or_else(||crate::commands::platform_context::ContextBudget::from_model(None,None));
+    let mut total=0usize;
+    let mut call_ids=std::collections::BTreeSet::new();
+    let mut executed=std::collections::HashSet::new();
+    for round in 1..=MAX_TOOL_ROUNDS {
+        if *abort.borrow() {outcome.aborted=true;close_pending_pairs(messages,outcome,"发送已停止");return Err("发送已停止".into());}
+        if let Some(c)=context.as_deref_mut() {
+            with_platform_connection(database,|conn|{c.verify(conn)?;c.refresh_projection(messages);Ok(())})?;
+        }
+        let mut defs=with_platform_connection(database,|conn|Ok(platform_tool_defs(conn)))?;
+        if context.is_some() {defs.extend(crate::commands::platform_context::tool_defs());}
+        let body=budgeted_body(turn,messages,&defs,&budget)?;
+        let reply=match request_model_captured(turn,messages,&defs,Some(channel),abort,&budget).await {
+            Ok(reply)=>reply,
+            Err(failure)=>{
+                merge_reply(outcome,&failure.partial);
+                if !failure.partial.text.is_empty() {messages.push(ChatMsg::Assistant{text:failure.partial.text,tool_calls:vec![]});}
+                outcome.aborted=*abort.borrow();
+                return Err(failure.message);
+            }
+        };
+        merge_reply(outcome,&reply);
+        if *abort.borrow() {
+            outcome.aborted=true;
+            if !reply.text.is_empty() {messages.push(ChatMsg::Assistant{text:reply.text,tool_calls:vec![]});}
+            return Err("发送已停止".into());
+        }
+        if let Some(c)=context.as_deref() {with_platform_connection(database,|conn|c.verify(conn))?;}
+        if reply.tool_calls.is_empty() {messages.push(ChatMsg::Assistant{text:reply.text,tool_calls:vec![]});return Ok(());}
+        if round>=MAX_TOOL_ROUNDS {return Err(format!("工具轮次已达上限 {MAX_TOOL_ROUNDS}；本轮未完成"));}
+        if reply.tool_calls.len()>MAX_TOOL_CALLS_PER_ROUND {return Err(format!("单轮工具调用超过 {MAX_TOOL_CALLS_PER_ROUND} 个"));}
+        total+=reply.tool_calls.len();
+        if total>MAX_TOOL_CALLS_TOTAL {return Err(format!("累计工具调用超过 {MAX_TOOL_CALLS_TOTAL} 次"));}
+        if reply.tool_calls.iter().any(|c|c.id.is_empty() || !call_ids.insert(c.id.clone())) {return Err("模型工具调用ID无效或重复".into());}
+        messages.push(ChatMsg::Assistant{text:reply.text,tool_calls:reply.tool_calls.clone()});
+        for call in reply.tool_calls {
+            if *abort.borrow() {outcome.aborted=true;close_pending_pairs(messages,outcome,"发送已停止");return Err("发送已停止".into());}
+            let internal=context.is_some() && crate::commands::platform_context::CONTEXT_TOOLS.contains(&call.name.as_str());
+            let allowed=internal || PLATFORM_TOOL_ALLOWLIST.contains(&call.name.as_str());
+            let enabled=internal || (allowed && with_platform_connection(database,|conn|Ok(
+                business_tools_enabled(conn) && crate::commands::ai_tools::workbench_tools().into_iter().find(|d|d.name==call.name).is_some_and(|d|crate::commands::ai_tools::tool_enabled(conn,d.registry_id))
+            ))?);
+            let key=format!("{round}:{}:{}",call.name,call.arguments);
+            let duplicate=is_side_effect_tool(&call.name) && !executed.insert(key);
+            if context.is_some() || (allowed && enabled && !duplicate) {
+                let input=visible_tool_input(&call);
+                let _=channel.send(json!({"type":"toolUse","toolId":call.id,"name":call.name,"inputJson":input}));
+                outcome.tool_uses.push((call.id.clone(),call.name.clone(),input));
+            }
+            let source_check=if context.is_some() && !internal {
+                with_platform_connection(database,|conn|validate_platform_read(conn,ctx,&call))
+            } else {Ok(())};
+            let mut result=if let Err(error)=source_check {ToolOutcome{content:error,is_error:true}}
+            else if !allowed || !enabled {
+                ToolOutcome{content:format!("工具 {} 不可用（未在允许清单或已停用）",call.name),is_error:true}
+            } else if duplicate {
+                ToolOutcome{content:"相同调用已执行过，未重复执行；如需继续请改变参数或确认结果".into(),is_error:true}
+            } else if internal {
+                let result=serde_json::from_str::<Value>(&call.arguments).map_err(|_|"参数不是有效JSON".to_string()).and_then(|args|{
+                    with_platform_connection(database,|conn|context.as_deref_mut().ok_or("上下文不存在")?.tool(conn,&call.name,&args,&body))
+                });
+                match result {Ok(v)=>ToolOutcome{content:v.to_string(),is_error:false},Err(e)=>ToolOutcome{content:e,is_error:true}}
+            } else {execute_tool_safely(ctx,&call)};
+            if let Some(c)=context.as_deref() {
+                if let Err(error)=with_platform_connection(database,|conn|c.verify(conn)) {result=ToolOutcome{content:error,is_error:true};}
+            }
+            // 拒绝与重复调用也回填结果，保持平台新回放的工具交换完整。
+            let wire_content=if !internal {
+                context.as_deref_mut().map(|c|c.wire_result(&call.id,&result.content)).unwrap_or_else(||result.content.clone())
+            } else {result.content.clone()};
+            outcome.tool_results.push((call.id.clone(),result.content.clone(),result.is_error));
+            let _=channel.send(json!({"type":"toolResult","toolId":call.id,"content":result.content,"isError":result.is_error}));
+            messages.push(ChatMsg::Tool{call_id:call.id,content:wire_content,is_error:result.is_error});
+        }
+    }
+    Err("工具循环已达上限".into())
+}
+
+#[cfg(test)]
+#[path = "platform_context_agent_tests.rs"]
+mod context_tests;
 
 #[cfg(test)]
 mod tests {

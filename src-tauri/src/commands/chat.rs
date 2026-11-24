@@ -1202,7 +1202,7 @@ fn validate_office_ref(project_id: Option<&str>, kind: Option<&str>, id: &str, c
     Ok(())
 }
 
-fn checked_file_ref(conn: &rusqlite::Connection, project_id: &str, root: &std::path::Path, target: &str) -> Result<std::path::PathBuf, String> {
+pub(crate) fn checked_file_ref(conn: &rusqlite::Connection, project_id: &str, root: &std::path::Path, target: &str) -> Result<std::path::PathBuf, String> {
     let path = std::path::Path::new(target);
     let absolute = if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
     let canonical = std::fs::canonicalize(absolute).map_err(|_| "引用文件不可访问".to_string())?;
