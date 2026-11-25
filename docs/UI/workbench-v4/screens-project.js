@@ -5,38 +5,72 @@
   const Screens = window.Screens;
 
   /* ================= 设计 ================= */
+  /* UI-CR073（用户第 10 项）：左轨只保留 PRD／UI／方案／数据库四个分区入口。
+     UI 分区下的 .md 说明与 .html 原型通过顶部文档下拉切换（同 docs/UI/ 目录多文件），
+     .html 以页面预览呈现。 */
   const DESIGN_TABS = [
     ["prd", "PRD", "fileText", "产品需求文档"],
     ["ui", "UI", "layers", "界面与交互说明"],
     ["lld", "方案", "code", "技术实现方案"],
     ["db", "模型", "database", "数据模型设计"]
   ];
+  /** UI 分区内的文档集合：说明文档 + 可预览的 HTML 原型。 */
+  const UI_DOCS = [
+    { id: "ui", name: D.design.ui.name, label: "主流程说明" },
+    { id: "html", name: D.design.html.name, label: "主流程原型" }
+  ];
+  /* UI-CR073（用户第 9 项）：HTML 设计文件渲染预览，不显示源码。
+     预览为沙箱 iframe（sandbox 为空 = 最严格：不执行脚本、不同源、不提交表单），
+     只读、不加载外部资源；提供「预览 / 源码」切换，预览不可用时仍可读源码。 */
+  function designPreview(key, doc, liveText) {
+    const mode = store.designViewMode === "source" ? "source" : "preview";
+    const isHtml = /\.html?$/i.test(doc.name || "");
+    if (!isHtml) return null;
+    if (mode === "source") {
+      return `<div class="design-preview-host">
+        <div class="design-preview-bar">${icon("code", "ico-14")}<span>源码视图（只读）</span><span class="spacer"></span><button class="btn sm" data-act="design-view" data-view="preview">${icon("eye", "ico-14")}预览</button></div>
+        <pre class="design-source mono" style="flex:1 1 auto;overflow:auto;margin:0;padding:16px">${esc(liveText)}</pre>
+      </div>`;
+    }
+    return `<div class="design-preview-host">
+      <div class="design-preview-bar">${icon("eye", "ico-14")}<span>页面预览（沙箱渲染，只读）</span><span class="spacer"></span><button class="btn sm" data-act="design-view" data-view="source">${icon("code", "ico-14")}源码</button></div>
+      <iframe class="design-preview-frame" title="设计页面预览：${esc(doc.name)}" sandbox referrerpolicy="no-referrer" srcdoc="${esc(liveText)}"></iframe>
+      <div class="design-preview-note">预览不执行脚本、不加载外部资源；相对路径的资源不会显示。</div>
+    </div>`;
+  }
   function designTab(p) {
     if (p.id !== "PRJ-1042") {
       return `<div class="card"><div class="empty" style="padding:64px 24px"><span class="e-icon">${icon("layers", "ico-20")}</span><b>该项目还没有设计资料</b><p>预约服务（PRJ-1042）已有完整样例。</p><button class="btn primary" data-act="open-project" data-id="PRJ-1042">查看预约服务设计</button></div></div>`;
     }
-    const key = DESIGN_TABS.some(([k]) => k === store.designTab) ? store.designTab : "prd";
+    const section = DESIGN_TABS.some(([k]) => k === store.designTab) ? store.designTab : "prd";
+    /* UI 分区同时包含说明文档与可预览原型；当前文件由 store.designUiDoc 决定。 */
+    const uiDocId = UI_DOCS.some(d => d.id === store.designUiDoc) ? store.designUiDoc : "ui";
+    const key = section === "ui" ? uiDocId : section;
     const doc = D.design[key];
     const liveId=JSON.stringify(['design',p.id,key]);
     const liveText=LiveDoc.get(liveId)?.text??doc.body;
     const heads = toc(liveText);
+    const preview = designPreview(key, doc, liveText);
+    const filePicker = section === "ui"
+      ? `<select class="select design-file-select" aria-label="UI 设计文件" data-act="design-ui-doc">${UI_DOCS.map(d => `<option value="${esc(d.id)}" ${key === d.id ? "selected" : ""}>docs/UI/${esc(d.name)}</option>`).join("")}</select>`
+      : `<span class="path">${icon("file", "ico-14")}<span class="ellipsis">docs/${section === "lld" ? "LLD" : section === "db" ? "DB" : section.toUpperCase()}/${esc(doc.name)}</span></span>`;
+    /* UI-CR073（用户第 10 项）：设计左轨只保留四个分区入口；
+       「关联需求」「目录」删除，目录显隐移到顶部文档操作区。 */
     return `<div class="design-shell">
       <nav class="design-rail" aria-label="设计资料">
-        ${DESIGN_TABS.map(([k, label, ic, tip]) => `<button class="rail-btn ${key === k ? "on" : ""}" data-act="design-tab" data-tab="${k}" aria-label="${esc(tip)}" data-tip="${esc(tip)}">${icon(ic)}<span>${label}</span></button>`).join("")}
-        <div class="rail-sep"></div>
-        <button class="rail-btn" data-act="toast" data-msg="演示：关联需求已在右侧文档信息中" data-tip="关联需求">${icon("link")}<span>关联</span></button>
-        <button class="rail-btn" data-act="design-toc" data-tip="${store.designToc ? "收起目录" : "展开目录"}">${icon(store.designToc ? "panelRight" : "panelLeft")}<span>目录</span></button>
+        ${DESIGN_TABS.map(([k, label, ic, tip]) => `<button class="rail-btn ${section === k ? "on" : ""}" data-act="design-tab" data-tab="${k}" aria-label="${esc(tip)}" data-tip="${esc(tip)}">${icon(ic)}<span>${label}</span></button>`).join("")}
       </nav>
       <section class="design-main">
         <div class="design-topbar">
-          <span class="path">${icon("file", "ico-14")}<span class="ellipsis">docs/${key === "lld" ? "LLD" : key === "db" ? "DB" : key.toUpperCase()}/${esc(doc.name)}</span></span>
+          ${filePicker}
           <span class="tag gray">${esc(doc.version)}</span>
           <span class="spacer"></span>
           <span class="caption hide-narrow">更新于 ${esc(doc.updated)}</span>
-          <span class="caption">所见即所得 · 自动保存</span>
+          <span class="caption">${preview ? "页面预览 · 只读" : "所见即所得 · 自动保存"}</span>
+          <button class="btn sm" data-act="design-toc" aria-pressed="${store.designToc}" title="${store.designToc ? "收起目录" : "展开目录"}">${icon(store.designToc ? "panelRight" : "panelLeft", "ico-14")}目录</button>
           <button class="btn sm hide-narrow" data-act="design-export">${icon("download", "ico-14")}导出</button>
         </div>
-        ${LiveDoc.render(liveId,liveText,{write:(text,expected)=>{if(doc.body!==expected)return {ok:false,conflict:true,error:'设计来源版本已改变，内容保留。'};doc.body=text;doc.updated='刚刚 · 仿真';doc.pendingSync=true;return {ok:true};},onChange:text=>{ const root=document.querySelector('.design-shell'); if(!root)return;if(root.querySelector('.toc-list'))root.querySelector('.toc-list').innerHTML='<div class="toc-label">本页目录</div>'+toc(text).map((h,n)=>'<button class="toc-item" data-act="live-design-anchor" data-index="'+n+'">'+esc(h.title)+'</button>').join('');const badge=root.querySelector('.toc-info .tag');if(badge)badge.textContent='待同步';}})}
+        ${preview || LiveDoc.render(liveId,liveText,{write:(text,expected)=>{if(doc.body!==expected)return {ok:false,conflict:true,error:'设计来源版本已改变，内容保留。'};doc.body=text;doc.updated='刚刚 · 仿真';doc.pendingSync=true;return {ok:true};},onChange:text=>{ const root=document.querySelector('.design-shell'); if(!root)return;if(root.querySelector('.toc-list'))root.querySelector('.toc-list').innerHTML='<div class="toc-label">本页目录</div>'+toc(text).map((h,n)=>'<button class="toc-item" data-act="live-design-anchor" data-index="'+n+'">'+esc(h.title)+'</button>').join('');const badge=root.querySelector('.toc-info .tag');if(badge)badge.textContent='待同步';}})}
       </section>
       ${store.designToc ? `<aside class="design-toc">
         <div class="toc-info">
@@ -47,8 +81,10 @@
           <div class="meta-row"><span>负责人</span><b>林澈</b></div>
           <button class="btn sm" style="width:100%" data-act="toast" data-msg="演示：同步设计依据">${icon("refresh", "ico-14")}同步设计依据</button>
         </div>
-        <div class="toc-list"><div class="toc-label">本页目录</div>
-          ${heads.length ? heads.map(h => `<button class="toc-item ${h.level === 3 ? "lv3" : ""}" data-act="toast" data-msg="演示：跳转到章节">${esc(h.title)}</button>`).join("") : '<span class="caption">无章节</span>'}
+        <div class="toc-list"><div class="toc-label">${preview ? "预览说明" : "本页目录"}</div>
+          ${preview
+            ? `<span class="caption">HTML 设计文件以页面预览呈现，目录来自源码标题，切到「源码」后可用。</span>`
+            : heads.length ? heads.map(h => `<button class="toc-item ${h.level === 3 ? "lv3" : ""}" data-act="toast" data-msg="演示：跳转到章节">${esc(h.title)}</button>`).join("") : '<span class="caption">无章节</span>'}
         </div>
       </aside>` : ""}
     </div>`;

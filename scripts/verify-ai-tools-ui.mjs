@@ -31,8 +31,8 @@ const check = (name, ok, detail = "") => {
   if (!ok) failed++;
 };
 
-check("映射条数一致（21：13 工作台工具 + 6 原有内置 + ssh 审批查询 + 右栏请求）",
-  Object.keys(tsMap).length === 21 && Object.keys(rsMap).length === 21,
+check("映射条数一致（22：14 工作台工具 + 6 原有内置 + ssh 审批查询 + 右栏请求 + 派发工作）",
+  Object.keys(tsMap).length === 22 && Object.keys(rsMap).length === 22,
   `前端 ${Object.keys(tsMap).length} / 后端 ${Object.keys(rsMap).length}`);
 const mismatch = Object.keys(rsMap).filter((k) => tsMap[k] !== rsMap[k]);
 check("前后端映射逐条一致", mismatch.length === 0, mismatch.join(", "));

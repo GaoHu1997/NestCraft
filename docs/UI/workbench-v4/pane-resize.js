@@ -7,7 +7,9 @@
   const specs = [
     { root: ".body", center: ".main", fixed: 0, min: 480, panes: [[".sidebar", "管理导航", "left", 224, 176, 320]] },
     { root: ".workarea", center: ".content", fixed: 0, min: 320, panes: [[".ai-panel", "AI 侧栏", "right", 372, 320, 620]] },
-    { root: ".req-workspace", center: ".req-document-pane", fixed: 56, min: 320, panes: [[".req-tree-pane", "需求文件", "left", 320, 200, 480], [".req-toc-pane", "需求目录", "right", 240, 160, 360]] },
+    { root: ".req-workspace", center: ".req-main", fixed: 56, min: 320, panes: [[".req-tree-pane", "需求文件", "left", 320, 200, 480]] },
+    /* UI-CR073：页签条移入 .req-main，目录改挂 .req-body 作为右侧可调栏。 */
+    { root: ".req-body", center: ".req-document-pane", fixed: 0, min: 320, panes: [[".req-toc-pane", "需求目录", "right", 240, 160, 360]] },
     { root: ".design-shell", center: ".design-main", fixed: 56, min: 320, panes: [[".design-toc", "设计目录", "right", 240, 160, 360]] },
     { root: ".code-shell", center: ".code-main", fixed: 56, min: 320, panes: [[".code-panel", "文件与 Git", "left", 260, 180, 480]] },
     { root: ".task-body", center: ".task-list-pane", fixed: 0, min: 320, panes: [[".task-detail-pane", "任务详情", "right", 360, 240, 520]] },

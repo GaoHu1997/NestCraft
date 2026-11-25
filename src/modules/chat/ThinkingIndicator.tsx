@@ -18,10 +18,10 @@ export function formatElapsed(ms: number): string {
 }
 
 const LOGO_SRC = "/brand/logo-sail.png";
-/** 画布 CSS 尺寸：打散重组需要物理空间，30px 下粒子会糊成一团噪点。 */
-const SIZE = 44;
-/** 内部渲染倍率：粒子更密，散开时仍能看出粒子结构。 */
-const SCALE = 3;
+/** UI-CR074 / WP-074-F010：外部占位与文字同高，粒子精度只通过内部采样调整。 */
+const SIZE = 14;
+/** 内部渲染倍率：保持14px外尺寸下的帆船像素和粒子细节。 */
+const SCALE = 4;
 const CYCLE = 2800;
 
 interface Particle {
@@ -63,7 +63,7 @@ function useLogoParticles(sizePx: number): Particle[] | null {
         setParticles([]);
         return;
       }
-      const logoSize = sizePx * 0.56;
+      const logoSize = sizePx * 0.8;
       ctx.drawImage(img, (sizePx - logoSize) / 2, (sizePx - logoSize) / 2, logoSize, logoSize);
       let data: ImageData;
       try {
@@ -147,7 +147,7 @@ export function ThinkingIndicator(props: { since?: number; label?: string }) {
         ctx.fillRect(x, y, p.size, p.size);
       }
       ctx.globalAlpha = 1;
-      raf = requestAnimationFrame(draw);
+      if (!reduceMotion) raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(raf);

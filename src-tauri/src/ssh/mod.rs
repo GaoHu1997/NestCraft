@@ -74,6 +74,22 @@ pub async fn connect(
     let mut handle = russh::client::connect(config, addr.clone(), SshHandler)
         .await
         .map_err(|e| format!("SSH 连接失败（{}）：{}", addr, e))?;
+    authenticate(&mut handle, username, auth).await?;
+    CONNECTIONS.lock().unwrap().insert(
+        key.clone(),
+        Arc::new(SshConnection { handle: AsyncMutex::new(handle), connected_at: crate::models::now_ms() }),
+    );
+    CONNECTED_HOSTS.lock().unwrap().insert(host_id.to_string(), key);
+    Ok(())
+}
+
+/// 认证（none / password / publickey）。connect 与 test_connect 共用同一实现，
+/// 避免两处认证分支各改一份后漂移；错误文案只描述失败原因，不回显密码或密钥内容。
+async fn authenticate(
+    handle: &mut ClientHandle,
+    username: &str,
+    auth: &crate::commands::servers::HostAuth,
+) -> Result<(), String> {
     let ok = match auth {
         crate::commands::servers::HostAuth::None => handle
             .authenticate_none(username)
@@ -95,12 +111,76 @@ pub async fn connect(
     if !ok {
         return Err("认证被拒绝（密码或密钥不正确）".into());
     }
-    CONNECTIONS.lock().unwrap().insert(
-        key.clone(),
-        Arc::new(SshConnection { handle: AsyncMutex::new(handle), connected_at: crate::models::now_ms() }),
-    );
-    CONNECTED_HOSTS.lock().unwrap().insert(host_id.to_string(), key);
     Ok(())
+}
+
+/// 测试连接的建连+认证总预算（秒）：用户点了按钮要尽快拿到结论。
+const TEST_CONNECT_TIMEOUT_SECS: u64 = 10;
+/// 测试连接探测远端系统名；非 Linux（无 /etc/os-release）回退 uname -s。
+const TEST_OS_CMD: &str = "cat /etc/os-release 2>/dev/null | grep -E '^PRETTY_NAME=' || uname -s";
+
+/// 一次性连接测试：建连并认证后立即断开；不写入 CONNECTIONS / CONNECTED_HOSTS，
+/// 因此不会把主机标记为已连接。返回 (系统名文本, 耗时毫秒)。
+pub async fn test_connect(
+    host: &str,
+    port: u16,
+    username: &str,
+    auth: &crate::commands::servers::HostAuth,
+) -> Result<(String, i64), String> {
+    let started = std::time::Instant::now();
+    let addr = format!("{}:{}", host, port);
+    let config = Arc::new(russh::client::Config {
+        inactivity_timeout: Some(Duration::from_secs(30)),
+        keepalive_interval: Some(Duration::from_secs(15)),
+        keepalive_max: 4,
+        ..Default::default()
+    });
+    // 建连 + 认证整段限时；超时后未返回的 handle 由 Drop 回收，不会注册到任何全局表。
+    let establish = async {
+        let mut handle = russh::client::connect(config, addr.clone(), SshHandler)
+            .await
+            .map_err(|e| format!("SSH 连接失败（{}）：{}", addr, e))?;
+        authenticate(&mut handle, username, auth).await?;
+        Ok::<ClientHandle, String>(handle)
+    };
+    let handle = tokio::time::timeout(Duration::from_secs(TEST_CONNECT_TIMEOUT_SECS), establish)
+        .await
+        .map_err(|_| format!("连接超时（{}s）", TEST_CONNECT_TIMEOUT_SECS))??;
+    // 临时连接对象只存在于本栈帧，不进入 CONNECTIONS（不注册 = 不影响连接状态）。
+    let conn = SshConnection {
+        handle: AsyncMutex::new(handle),
+        connected_at: crate::models::now_ms(),
+    };
+    let probe = exec_command(&conn, TEST_OS_CMD, 10).await;
+    // 探测失败也要先尽力断开，再把原始错误返回（不因断开失败改变结论）。
+    let result = match probe {
+        Ok((out, _code)) => Ok((parse_os_name(&out), started.elapsed().as_millis() as i64)),
+        Err(e) => Err(e),
+    };
+    best_effort_disconnect(&conn).await;
+    result
+}
+
+/// 取首行非空内容，去掉 `PRETTY_NAME=` 前缀与两端引号；空则「系统未知」。
+fn parse_os_name(output: &str) -> String {
+    let line = output.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    let line = line.strip_prefix("PRETTY_NAME=").unwrap_or(line).trim_matches('"').trim();
+    if line.is_empty() {
+        "系统未知".to_string()
+    } else {
+        line.to_string()
+    }
+}
+
+/// 一次性连接的断开：锁等待与发送都限时，任何失败都忽略。
+async fn best_effort_disconnect(conn: &SshConnection) {
+    if let Ok(handle) = lock_conn(conn, "测试连接断开", LOCK_WAIT_MS).await {
+        let _ = tokio::time::timeout(
+            Duration::from_millis(LOCK_WAIT_MS),
+            handle.disconnect(russh::Disconnect::ByApplication, "test", "en"),
+        )
+        .await;
+    }
 }
 
 pub fn conn_key(username: &str, host: &str, port: u16) -> String {

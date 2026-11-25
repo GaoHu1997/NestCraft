@@ -1,7 +1,6 @@
 //! 通用命令：连通性、应用目录、全局设置。
 
 use crate::db;
-use tauri::Manager;
 use crate::models::now_ms;
 
 #[tauri::command]
@@ -10,9 +9,8 @@ pub fn ping() -> String {
 }
 
 #[tauri::command]
-pub fn app_data_dir(app: tauri::AppHandle) -> Result<String, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    Ok(dir.to_string_lossy().to_string())
+pub fn app_data_dir(_app: tauri::AppHandle) -> Result<String, String> {
+    Ok(crate::storage_layout::root()?.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -28,6 +26,59 @@ pub fn get_setting(key: String) -> Result<Option<String>, String> {
     } else {
         Ok(None)
     }
+}
+
+pub const STORAGE_DATA_KEY: &str = "storage.dataDir";
+
+/// 安装目录下的 data。开发时当前程序在 target 目录，打包后是安装目录。
+pub fn install_data_dir() -> Result<std::path::PathBuf, String> {
+    let exe = std::env::current_exe().map_err(|e| format!("无法定位安装目录：{e}"))?;
+    let dir = exe.parent().ok_or("安装目录不可用")?.join("data");
+    std::fs::create_dir_all(&dir).map_err(|_| "无法创建默认数据目录".to_string())?;
+    Ok(dir)
+}
+
+pub fn resolve_data_dir(_conn: &rusqlite::Connection) -> Result<std::path::PathBuf, String> {
+    crate::storage_layout::root()
+}
+
+pub fn knowledge_root(conn: &rusqlite::Connection) -> Result<std::path::PathBuf, String> {
+    let dir = resolve_data_dir(conn)?.join("knowledge");
+    std::fs::create_dir_all(&dir).map_err(|_| "无法创建知识库根目录".to_string())?;
+    Ok(dir)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageLocation { pub path: String, pub default_path: String, pub knowledge_root: String, pub restart_required: bool }
+
+#[tauri::command]
+pub fn storage_data_dir() -> Result<StorageLocation, String> {
+    // path 是配置指向的位置；restartRequired 表示本次进程仍在使用旧根。
+    let configured = crate::storage_layout::configured_root()?;
+    let default_path = install_data_dir()?;
+    Ok(StorageLocation {
+        knowledge_root: configured.join("knowledge").to_string_lossy().to_string(),
+        path: configured.to_string_lossy().to_string(),
+        default_path: default_path.to_string_lossy().to_string(),
+        restart_required: crate::storage_layout::restart_required(),
+    })
+}
+
+#[tauri::command]
+pub fn storage_set_data_dir(path: Option<String>) -> Result<(), String> {
+    let value = match path.map(|item| item.trim().to_string()).filter(|item| !item.is_empty()) {
+        None => None,
+        Some(value) => {
+            let dir = std::path::PathBuf::from(&value);
+            if !dir.is_absolute() { return Err("数据存储位置必须是绝对路径".into()); }
+            std::fs::create_dir_all(&dir).map_err(|_| "无法创建数据存储目录".to_string())?;
+            std::fs::create_dir_all(dir.join("knowledge")).map_err(|_| "无法创建知识库根目录".to_string())?;
+            Some(dir.to_string_lossy().to_string())
+        }
+    };
+    crate::storage_layout::write_pointer(value.as_deref().map(std::path::Path::new))?;
+    set_setting(STORAGE_DATA_KEY.to_string(), value)
 }
 
 #[tauri::command]
@@ -156,7 +207,7 @@ fn load_avatar(conn: &rusqlite::Connection, dir: &std::path::Path) -> Result<Opt
 
 #[tauri::command]
 pub fn get_avatar_image(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("avatar");
+    let dir = crate::storage_layout::category("avatar")?;
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
     Ok(match load_avatar(conn, &dir)? {
@@ -198,7 +249,7 @@ fn save_avatar_inner(conn: &rusqlite::Connection, dir: &std::path::Path, data_ur
 #[tauri::command]
 pub fn set_avatar_image(app: tauri::AppHandle, data_url: String, original_name: Option<String>) -> Result<serde_json::Value, String> {
     let _ = original_name;
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("avatar");
+    let dir = crate::storage_layout::category("avatar")?;
     let guard = db::conn()?;
     save_avatar_inner(guard.as_ref().ok_or("db not initialized")?, &dir, Some(&data_url), None)
 }
@@ -206,7 +257,7 @@ pub fn set_avatar_image(app: tauri::AppHandle, data_url: String, original_name: 
 /// 风格与新图片作为一次提交；data_url 缺省时保留已有图片。
 #[tauri::command]
 pub fn save_avatar(app: tauri::AppHandle, data_url: Option<String>, style: String) -> Result<serde_json::Value, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("avatar");
+    let dir = crate::storage_layout::category("avatar")?;
     let guard = db::conn()?;
     save_avatar_inner(guard.as_ref().ok_or("db not initialized")?, &dir, data_url.as_deref(), Some(&style))
 }
@@ -236,7 +287,7 @@ pub fn validate_avatar_payload(mime: &str, payload: &[u8]) -> Result<(), String>
 /// 只读取本命令自己写入的 app_data/avatar/ 下文件；引用失效返回 null。
 #[tauri::command]
 pub fn avatar_image_data(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("avatar");
+    let dir = crate::storage_layout::category("avatar")?;
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
     Ok(load_avatar(conn, &dir)?.map(|(_,_,bytes,mime)| format!("data:{mime};base64,{}", base64_encode(&bytes))))
@@ -260,7 +311,7 @@ fn base64_encode(data: &[u8]) -> String {
 /// CR-051 r6：清除自定义头像，回落品牌 Logo。
 #[tauri::command]
 pub fn clear_avatar_image(app: tauri::AppHandle) -> Result<(), String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("avatar");
+    let dir = crate::storage_layout::category("avatar")?;
     let guard = db::conn()?;
     clear_avatar_inner(guard.as_ref().ok_or("db not initialized")?, &dir)
 }

@@ -48,6 +48,8 @@ pub(crate) struct ModelReply {
     pub finish_reason: Option<String>,
     /// (input, output, cache_read)
     pub usage: Option<(i64, i64, i64)>,
+    /// 仅实际进入模型请求后存在；预检/拒绝不能生成步骤边界。
+    pub timing: Option<crate::commands::chat::stats::ModelTiming>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -320,6 +322,7 @@ impl StreamState {
                 .collect(),
             finish_reason,
             usage,
+            timing: None,
         }
     }
 }
@@ -682,7 +685,7 @@ pub async fn send_platform(app: tauri::AppHandle,payload: SendPayload,channel: t
         (resolve_platform_turn(conn,&app,&session)?,context_runtime::Prepared::load(conn,session.clone(),prompt)?,platform_tool_defs(conn))
     };
     defs.extend(crate::commands::platform_context::tool_defs());
-    let data_dir={use tauri::Manager;app.path().app_data_dir().map_err(|e| e.to_string())?};
+    let data_dir=crate::storage_layout::root().map_err(|e| e.to_string())?;
     if let Err(error)=context_runtime::prepare(&turn,&mut prepared,&defs,&abort).await {
         send_usage(&channel,prepared.usage);
         return Err(error);
@@ -692,6 +695,7 @@ pub async fn send_platform(app: tauri::AppHandle,payload: SendPayload,channel: t
         if let Err(error)=prepared.accept(conn,&payload,&abort) {send_usage(&channel,prepared.usage);return Err(error);}
     }
     let ctx=crate::commands::ai_tools::ToolContext {project_id:session.project_id.clone(),data_dir,execution_feature_id:session.feature_id.clone()};
+    let _=channel.send(json!({"type":"sessionStats","sessionId":session.id}));
     tokio::spawn(async move {
         let mut messages=prepared.messages();
         prepared.base_len=messages.len();
@@ -753,7 +757,11 @@ fn budgeted_body(turn: &PlatformTurn, messages: &[ChatMsg], defs: &[crate::comma
 
 struct ModelFailure { message: String, partial: ModelReply }
 #[derive(Default)]
-struct Capture { reply: ModelReply, closed: bool }
+struct Capture {
+    reply: ModelReply, closed: bool,
+    started: Option<std::time::Instant>, started_at: Option<i64>,
+    first_delta: Option<std::time::Instant>, output_tokens: Option<i64>,
+}
 
 async fn wait_for_abort(rx: &mut tokio::sync::watch::Receiver<bool>) {
     loop {
@@ -784,6 +792,12 @@ async fn request_model_captured(turn: &PlatformTurn, messages: &[ChatMsg], defs:
             else {request.set("Authorization",&format!("Bearer {}",turn.api_key))};
         for (name,value) in &turn.extra_headers { request=request.set(name,value); }
         let redact=|text: String| if turn.api_key.is_empty(){text}else{text.replace(&turn.api_key,"[redacted]")};
+        if stopped() {return Err("发送已停止".into());}
+        if let Ok(mut c)=capture.lock() {
+            if c.closed {return Err("发送已停止".into());}
+            c.started=Some(std::time::Instant::now());
+            c.started_at=Some(crate::models::now_ms());
+        }
         let response=match request.send_bytes(&payload) {
             Ok(response)=>response,
             Err(ureq::Error::Status(code,response))=>{
@@ -828,12 +842,14 @@ async fn request_model_captured(turn: &PlatformTurn, messages: &[ChatMsg], defs:
             if let Ok(mut c)=capture.lock() {
                 if !c.closed {
                     c.reply.finish_reason=state.finish_reason.clone();
+                    c.output_tokens=state.output_tokens;
                     if state.input_tokens.is_some() || state.output_tokens.is_some() {
                         c.reply.usage=Some((state.input_tokens.unwrap_or(0),state.output_tokens.unwrap_or(0),state.cache_read_tokens.unwrap_or(0)));
                     }
                     // 同帧usage先记录，再立即发送该帧增量；取消回调不会丢掉已提供的用量。
                     for event in events.into_inner() {
                         let text=event["delta"].as_str().unwrap_or("");
+                        if !text.is_empty() && c.first_delta.is_none() {c.first_delta=Some(std::time::Instant::now());}
                         if event["type"]==json!("delta") {c.reply.text.push_str(text);}else{c.reply.thinking.push_str(text);}
                         if let Some(ch)=&sink {let _=ch.send(event);}
                     }
@@ -855,7 +871,18 @@ async fn request_model_captured(turn: &PlatformTurn, messages: &[ChatMsg], defs:
     };
     let mut partial=shared.lock().map_err(|_|ModelFailure{message:"模型流状态不可用".into(),partial:ModelReply::default()})?;
     partial.closed=true;
-    match result {Ok(reply)=>Ok(reply),Err(message)=>Err(ModelFailure {message,partial:partial.reply.clone()})}
+    let end=std::time::Instant::now();
+    let timing=partial.started.zip(partial.started_at).map(|(start,started_at)| crate::commands::chat::stats::ModelTiming {
+        started_at, finished_at:crate::models::now_ms(), model_ms:end.duration_since(start).as_millis() as u64,
+        ttft_ms:partial.first_delta.map(|first|first.duration_since(start).as_millis() as u64),
+        // 只有assembled成功且输出token明确上报，才能使用首非空delta到assembled的decode窗口。
+        decode_ms:if result.is_ok() && partial.output_tokens.is_some() {partial.first_delta.map(|first|end.duration_since(first).as_millis() as u64)} else {None},
+        output_tokens:partial.output_tokens,
+    });
+    match result {
+        Ok(mut reply)=>{reply.timing=timing;Ok(reply)},
+        Err(message)=>{partial.reply.timing=timing;Err(ModelFailure {message,partial:partial.reply.clone()})},
+    }
 }
 
 /// 保留客户端测试入口；生产调用显式传模型预算。
@@ -872,8 +899,8 @@ async fn run_tool_loop(turn: &PlatformTurn,ctx: &crate::commands::ai_tools::Tool
 }
 
 fn merge_reply(outcome: &mut StreamOutcome, reply: &ModelReply) {
-    outcome.assistant_text.push_str(&reply.text);
-    outcome.thinking_text.push_str(&reply.thinking);
+    outcome.push_thinking(&reply.thinking);
+    outcome.push_text(&reply.text);
     context_runtime::add_usage(&mut outcome.usage,reply.usage);
 }
 
@@ -885,8 +912,8 @@ fn close_pending_pairs(messages: &mut Vec<ChatMsg>,outcome: &mut StreamOutcome,r
     }
     for (_,call) in missing {
         let content=format!("未执行：{reason}");
-        if !outcome.tool_uses.iter().any(|c|c.0==call.id) {let input=visible_tool_input(&call);outcome.tool_uses.push((call.id.clone(),call.name,input));}
-        outcome.tool_results.push((call.id.clone(),content.clone(),true));
+        if !outcome.tool_uses.iter().any(|c|c.0==call.id) {let input=visible_tool_input(&call);outcome.push_tool_use(call.id.clone(),call.name,input);}
+        outcome.push_tool_result(call.id.clone(),content.clone(),true,None);
         messages.push(ChatMsg::Tool{call_id:call.id,content,is_error:true});
     }
 }
@@ -934,6 +961,8 @@ async fn run_tool_loop_database(turn: &PlatformTurn,ctx: &crate::commands::ai_to
     let mut total=0usize;
     let mut call_ids=std::collections::BTreeSet::new();
     let mut executed=std::collections::HashSet::new();
+    let turn_id=context.as_ref().map(|c|c.user_id.clone()).unwrap_or_else(||crate::models::new_id("stats-turn"));
+    outcome.session_stats=Some(crate::commands::chat::stats::TurnStats::new(&turn.session_id,&turn_id));
     for round in 1..=MAX_TOOL_ROUNDS {
         if *abort.borrow() {outcome.aborted=true;close_pending_pairs(messages,outcome,"发送已停止");return Err("发送已停止".into());}
         if let Some(c)=context.as_deref_mut() {
@@ -942,7 +971,25 @@ async fn run_tool_loop_database(turn: &PlatformTurn,ctx: &crate::commands::ai_to
         let mut defs=with_platform_connection(database,|conn|Ok(platform_tool_defs(conn)))?;
         if context.is_some() {defs.extend(crate::commands::platform_context::tool_defs());}
         let body=budgeted_body(turn,messages,&defs,&budget)?;
-        let reply=match request_model_captured(turn,messages,&defs,Some(channel),abort,&budget).await {
+        let captured=request_model_captured(turn,messages,&defs,Some(channel),abort,&budget).await;
+        // 每次已进入生成调用恰一次闭合；工具数量和外层done不参与计数。
+        let (observed,status)=match &captured {
+            Ok(reply)=>(reply,if matches!(reply.finish_reason.as_deref(),Some("length"|"max_tokens")){"max_tokens"}else{"completed"}),
+            Err(failure)=>(&failure.partial,if *abort.borrow(){"cancelled"}else if matches!(failure.partial.finish_reason.as_deref(),Some("length"|"max_tokens")){"max_tokens"}else{"failed"}),
+        };
+        if observed.timing.is_some() {
+            let stats=outcome.session_stats.as_mut().expect("platform stats initialized");
+            stats.closed_steps.push(crate::commands::chat::stats::ClosedStep {
+                event_type:"step/end".into(),session_id:turn.session_id.clone(),turn_id:turn_id.clone(),step_id:format!("{round}"),
+                outcome:status.into(),timing:observed.timing.clone(),usage:observed.usage,
+            });
+            if context.is_some() {
+                // 实时持久观察不改变transcript；最终complete标记与回放在Prepared.persist同一事务。
+                with_platform_connection(database,|conn|crate::commands::chat::stats::save_turn(conn,stats,false))?;
+                let _=channel.send(json!({"type":"sessionStats","sessionId":turn.session_id}));
+            }
+        }
+        let reply=match captured {
             Ok(reply)=>reply,
             Err(failure)=>{
                 merge_reply(outcome,&failure.partial);
@@ -977,7 +1024,7 @@ async fn run_tool_loop_database(turn: &PlatformTurn,ctx: &crate::commands::ai_to
             if context.is_some() || (allowed && enabled && !duplicate) {
                 let input=visible_tool_input(&call);
                 let _=channel.send(json!({"type":"toolUse","toolId":call.id,"name":call.name,"inputJson":input}));
-                outcome.tool_uses.push((call.id.clone(),call.name.clone(),input));
+                outcome.push_tool_use(call.id.clone(),call.name.clone(),input);
             }
             let source_check=if context.is_some() && !internal {
                 with_platform_connection(database,|conn|validate_platform_read(conn,ctx,&call))
@@ -1000,7 +1047,7 @@ async fn run_tool_loop_database(turn: &PlatformTurn,ctx: &crate::commands::ai_to
             let wire_content=if !internal {
                 context.as_deref_mut().map(|c|c.wire_result(&call.id,&result.content)).unwrap_or_else(||result.content.clone())
             } else {result.content.clone()};
-            outcome.tool_results.push((call.id.clone(),result.content.clone(),result.is_error));
+            outcome.push_tool_result(call.id.clone(),result.content.clone(),result.is_error,None);
             let _=channel.send(json!({"type":"toolResult","toolId":call.id,"content":result.content,"isError":result.is_error}));
             messages.push(ChatMsg::Tool{call_id:call.id,content:wire_content,is_error:result.is_error});
         }

@@ -220,6 +220,7 @@ export function checkFileIdentity(info: KnowledgeFileInfo, node: NoteNode): void
 export function readableKind(info: KnowledgeFileInfo): boolean {
   if (!info.previewSupported) return false;
   if (info.kind === "markdown") return isMarkdown(info.relativeUri);
+  if (info.kind === "html") return /\.html?$/i.test(info.relativeUri);
   if (info.kind === "text") return /\.(txt|text|json|csv|log|yaml|yml)$/i.test(info.relativeUri);
   return info.kind === "image" && /\.(png|jpe?g|gif|webp)$/i.test(info.relativeUri);
 }

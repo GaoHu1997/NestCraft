@@ -1,0 +1,9 @@
+/* FEAT-021 / UI-CR074-v1：仅宿主高度/布局，不改消息、模型、输入、统计及原生滚动。 */
+.project-chat-slot, .project-chat-surface {
+  display: flex; flex-direction: column; flex: 1 1 auto;
+  min-height: 0; min-width: 0; width: 100%; height: 100%;
+}
+.project-chat-surface > .chat-panel { flex: 1 1 auto; min-height: 0; width: 100% !important; max-width: none; }
+.project-chat-surface > .chat-panel[hidden] { display: none; }
+.wb-conv .project-chat-surface > .chat-panel { border-left: 0; border-right: 0; background: var(--surface); }
+.project-chat-parking[hidden], .nc-chat-host[hidden] { display: none; }

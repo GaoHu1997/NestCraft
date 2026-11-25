@@ -46,6 +46,18 @@ export function MonitorPane({ hostId, hostName, address, connected = false, visi
   }, [hostId, connected, visible, active]);
 
   const current = connected && !error ? metrics : null;
+
+  /* CR-075：未连接时不铺满"未知（主机未连接）"这类重复提示，只给一行状态，
+     避免把连接状态说明堆成正文；连接由工作台自动发起，失败原因在中间区域显示。 */
+  if (!connected) {
+    return (
+      <aside className="wb-monitor" aria-label="实时监控">
+        <div className="mon-head"><b>实时监控</b><span /></div>
+        <div className="mon-offline">无数据</div>
+      </aside>
+    );
+  }
+
   const cpu = current?.cpuCores?.length ? pct(current.cpuAvg) : null;
   const cores = current?.cpuCores ?? [];
   const memKnown = !!current && Number.isFinite(current.memTotalMb) && current.memTotalMb > 0 && Number.isFinite(current.memUsedMb) && current.memUsedMb >= 0 && current.memUsedMb <= current.memTotalMb;

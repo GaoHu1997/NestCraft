@@ -15,9 +15,10 @@ type General = {
   port: string; defaultUser: string; auth: string; confirmDanger: boolean; sendMode: string;
   /** CR-051：头像风格（a–e，缺省 b）。 */
   avatarStyle: string;
+  dataDir: string;
 };
-const DEFAULTS: General = { name: "", email: "", role: "", timezone: "Asia/Shanghai", codeTheme: "system", fontSize: "13", tabSize: "2", wrap: true, port: "22", defaultUser: "", auth: "key", confirmDanger: true, sendMode: "queue", avatarStyle: "b" };
-const KEYS: Record<Exclude<keyof General, "avatarStyle" | "wrap" | "confirmDanger">, string> = {
+const DEFAULTS: General = { name: "", email: "", role: "", timezone: "Asia/Shanghai", codeTheme: "system", fontSize: "13", tabSize: "2", wrap: true, port: "22", defaultUser: "", auth: "key", confirmDanger: true, sendMode: "queue", avatarStyle: "b", dataDir: "" };
+const KEYS: Record<Exclude<keyof General, "avatarStyle" | "wrap" | "confirmDanger" | "dataDir">, string> = {
   name: "user.name", email: "user.email", role: "user.role", timezone: "user.timezone", codeTheme: "editor.theme", fontSize: "editor.fontSize", tabSize: "editor.tabSize",
   port: "server.port", defaultUser: "server.defaultUser", auth: "server.auth", sendMode: "chat.sendMode",
 };
@@ -41,6 +42,7 @@ export function SettingsGeneral() {
     Promise.all([
       ...Object.entries(KEYS).map(async ([field, key]) => [field, await getSetting(key)] as const),
       getAvatarStyle().then(style => ["avatarStyle", style] as const).catch(() => ["avatarStyle", "b"] as const),
+      api.storageDataDir().then(location => ["dataDir", location.path] as const).catch(() => ["dataDir", ""] as const),
     ]).then(values => {
       if (!alive) return;
       const next = { ...DEFAULTS };
@@ -68,16 +70,30 @@ export function SettingsGeneral() {
     try {
       for (const [field, key] of Object.entries(KEYS)) await setSetting(key, String(normalized[field as keyof typeof KEYS]));
       await setAvatarStyle(normalized.avatarStyle);
+      await api.storageSetDataDir(normalized.dataDir.trim() || null);
       await setSetting("settings.general", JSON.stringify(normalized));
       setForm(normalized);
       window.dispatchEvent(new CustomEvent("app:settings-changed", { detail: { keys: [...Object.values(KEYS), "ui.avatarStyle", "settings.general"], profile: { name: normalized.name, email: normalized.email, role: normalized.role, timezone: normalized.timezone }, general: normalized, avatarStyle: normalized.avatarStyle } }));
-      toast("设置已保存；未接入的执行选项仍只作为偏好记录");
+      const location = await api.storageDataDir().catch(() => null);
+      if (location?.restartRequired) {
+        toast("数据存储位置已记录；重启后迁移到新位置并生效", "warn");
+      } else {
+        toast("设置已保存；未接入的执行选项仍只作为偏好记录");
+      }
     } catch (e) { toast(`保存未全部完成，请重试：${errMsg(e)}`, "err"); } finally { setSaving(false); }
   };
   if (loading) return <p className="set-caption">加载设置中…</p>;
   if (error) return <div className="set-note" role="alert">读取设置失败：{error}<button className="btn sm" onClick={() => setAttempt(n => n + 1)}>重试</button></div>;
   const dark = form.codeTheme === "dark" || (form.codeTheme === "system" && theme === "dark");
   return <fieldset className="set-fieldset" disabled={saving}>
+    <section className="set-section"><h3>数据存储</h3>
+      <Row label="数据存储位置" hint="默认是安装目录下的 data。其下按类分开：db 数据库与会话、chat 会话文件、knowledge 知识库、skills 技能、mcp、secrets 密钥、avatar、logs、editor、git、recycle、index、examples。">
+        <div className="row">
+          <input className="input" aria-label="数据存储位置" value={form.dataDir} onChange={e => update({ dataDir: e.target.value })} placeholder="安装目录/data" />
+          <button type="button" className="btn" onClick={() => void api.pickProjectDirectory().then(path => { if (path) update({ dataDir: path }); }).catch(e => toast(errMsg(e), "err"))}>选择目录</button>
+        </div>
+      </Row>
+    </section>
     <section className="set-section"><h3>用户基本信息</h3>
       <Row label="显示名称" hint="用于账户显示"><input className="input" aria-label="显示名称" value={form.name} onChange={e => update({ name: e.target.value })} /></Row>
       <Row label="邮箱" hint="仅保存信息，不发送邮件"><input className="input" type="email" aria-label="邮箱" value={form.email} onChange={e => update({ email: e.target.value })} /></Row>

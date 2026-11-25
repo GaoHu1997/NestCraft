@@ -2,6 +2,7 @@
 
 - 关联：[CR-058](../PRD/CR-058-模型检测十九针探针.md) / [STORY-075](../Plan/Story/STORY-075-设置模型检测十九针探针.md) / [UI-CR058](../UI/文档/UI-CR058-模型检测设计.md) / [DB-CR058](../DB/DB-CR058-模型检测历史数据设计.md)。
 - 本次设计范围：后端 19 针探针引擎（r4 由 9 针扩展）（OpenAI Chat 与 Anthropic Messages 双协议）、厂商档位回显校验、评分与双轴判决、历史存储、前端检测区块。
+- **r5 增量（2026-11-24，用户「可以就这么干，然后在结果页显示一下」授权）**：新增 P20 行为指纹与归因（权重 0 辅助信号）+ 结果页归因面板；P2/P5/P7 厂商盲区修补。调研依据 [RESEARCH-006](../调研/RESEARCH-006-模型指纹检测调研.md)；设计基线 UI-CR058-v8（hash 见其 §6）。实现要点见 §10。
 
 ## 1. 当前实现与受影响模块
 
@@ -120,3 +121,49 @@
 - 中转站可伪造回显 `model` 字段与错误对象，P2 结论是「回显一致性」而非服务器端实证；P9 行为验证部分弥补，但无法 100% 反制伪造（记录为固有限制）。
 - Anthropic 无 strict JSON Schema，P8② 记 skip；OpenAI Responses 协议供应商暂按 Chat 端点探测（若供应商仅开 Responses 会握手失败并如实报告）。
 - 超长思考链推理模型可能触及 60s 超时：P9 对推理模型放宽参数；仍超时记 fail 并在摘要注明「超时」。
+
+## 10. r5 增量：P20 行为指纹与归因（辅助信号，权重 0）
+
+依据 [RESEARCH-006](../调研/RESEARCH-006-模型指纹检测调研.md) §5.2 阶段 A+B 与 §6；设计基线 [UI-CR058-v8](../UI/文档/UI-CR058-模型检测设计.md)。授权：用户 2026-11-24「可以就这么干，然后在结果页显示一下」。
+
+### 10.1 探针编排变更
+
+- `PROBE_CODES/PROBE_NAMES` 扩至 20（末位 `P20 行为指纹与归因`）；`PROBE_WEIGHTS` 扩至 20，**P20 权重 0**（合计仍 100，前 19 针权重不变）。
+- P1 失败时 P2～P20 全部 skip（沿用现有循环，自动覆盖）。
+- P20 在 P19 之后顺序执行；两条请求（全新短会话，单条 user 消息，不复用任何多轮上下文）：
+  1. **数字偏好序列**（NumPrint 式，arXiv:2611.14010）：要求一次输出 N=64 个 1..=355 的整数（逗号分隔），题面含当次随机盐值 `FP_SALT_{hex6}` 防背题；`max_tokens` 推理模型 900 / 普通 400；temperature 固定 0.7（OpenAI 侧显式传；推理模型省略 temperature 沿用现有规则）。本地解析为 64 维桶频率向量（12 桶，每桶约 30 宽），L1 归一化。
+  2. **身份自述弱信号**（LLMmap 式）：问「你是哪家公司开发的什么模型？只输出 JSON {"vendor":"…","model":"…"}」；`max_tokens` 120。仅用于一致性辅助判定与 note，不单独定红牌（自述可被 system prompt 伪造）。
+- 解析失败/请求失败 → P20 记 warn「无法判定：响应不可解析」或 fail（网络错误），attribution.consistency=unknown、candidates 空。
+
+### 10.2 基线库与距离比对（纯统计，零 ML 依赖）
+
+- 内置常量 `FINGERPRINT_BASELINES: &[BaselineEntry]`（编译期 JSON 或 const 数组）：每条 `{ id, family, displayName, collectedAt, buckets: [f64; 12], vendorKeywords: &[&str] }`。
+- **首版基线为「结构先验 + 待实测校准」**：由于本次无法调用真实官方 API 采集（无可用密钥授权），首版 buckets 用各厂商公开的数字偏好研究结论不可得——**如实降级**：首版基线库只收录*可离线验证的区分特征*（身份自述 vendorKeywords + 数字序列的结构性统计量：均值/方差/重复率/单调段比例/末位分布熵），buckets 字段留空时距离计算退化为结构特征向量（6 维）比对。**基线条目必须标注 `calibrated: false`，前端候选名后缀「（未校准基线）」**；后续版本用官方端点实测采集替换（采集脚本属阶段 C 工具，不在本次范围）。
+- 距离：结构特征向量欧氏距离（各维 min-max 归一到 [0,1]），越小越像；top-3 升序。
+- 一致性判定：
+  - 声称家族 = `family_of(model_id)`（命名规则映射：gpt/o系→openai；claude→anthropic；gemini→google；deepseek→deepseek；glm/chatglm→zhipu；qwen/qwq→qwen；minimax/abab→minimax；grok→xai；kimi/moonshot→moonshot；doubao→bytedance；hunyuan→tencent；ernie→baidu；其余→unknown）。
+  - top-1 距离 ≤ 0.25 且 top-1.family == 声称家族 → `match`（pass）；
+  - top-1 距离 ≤ 0.25 且 family ≠ 声称家族 → `mismatch`（warn，note 列出最像候选）；
+  - top-1 距离 > 0.25 或声称家族 unknown 且无近邻 → `unknown`（na，「与所有已知候选都不像」）。
+  - 身份自述 vendorKeywords 命中声称家族 → 一致性加分佐证（note 注明）；命中其他家族 → mismatch 佐证；自述缺失不影响三态主判定。
+- **阈值 0.25 为首版保守值，未经真实网关校准**（LLD 风险节登记）；P20 永不扣分/封顶/改判真伪轴，误报代价限于提示文案。
+
+### 10.3 报告与存储契约
+
+- `ProbeOutcome` 不变；P20 的 note 形如「行为指纹偏离声称家族（最像 glm-5.3-flash d=0.12，辅助信号不计分）」。
+- 新增 `Attribution { consistency: "match"|"mismatch"|"unknown", claimedFamily, candidates: [{name, family, distance}], note }`；随 report 顶层字段 `attribution` 返回；`resultJson` 增 `"attribution"` 键（DB 表结构不变，JSON 内扩展，旧记录无该键时前端不渲染面板）。
+- `model_probe_history_list` 透传 `attribution`（从 resultJson 解析，缺省 null）。
+- 前端 `ProbeReport/ProbeHistoryItem` 增 `attribution?: ProbeAttribution | null`；`SettingsModelProbe.tsx` 在结果区与逐针列表之间渲染归因面板（仅完成/历史回看态），样式 `.probe-attr*` 与原型 cr058.css 同名同布局；PENDING_SLOTS=20、PROBE_LIST 补 P20。
+
+### 10.4 厂商盲区修补（阶段 A）
+
+- P2 `tier_rank`/代际规则补：MiniMax `m\d+`（m3>m2.7>m2）与 `abab(\d+\.?\d*)` 代际；Grok `grok-(\d+)` 代际 + fast/heavy 档（heavy>标准>fast）；Kimi `kimi-k(\d+)`/`moonshot-v1-(\d+)k` 代际；Doubao pro>标准>lite/turbo；Hunyuan turbo/pro/lite；ERNIE 4.5>4.0>3.5 与 speed/lite 档。规则未覆盖时仍走 Mismatch 兜底（不虚构档位）。
+- P5 头指纹增补：`request-id` + `anthropic-ratelimit-*` → Anthropic 官方特征；`x-ms-request-id`/`apim-request-id` → Azure 通道（辅助）。国产厂商特征头**待实测采集后登记，本次不虚构**。
+- P7 `WRAPPER_KEYWORDS` 增补：`grok cli`、`gemini cli`、`qwen-code`、`iflow`、`you are grok`、`you are gemini`、`you are qwen`、`you are deepseek`、`you are glm`（身份套壳变体）。
+
+### 10.5 验证方法（r5）
+
+- 单测：20 针权重合计 100 且 P20=0；P20 不参与封顶/判决（构造 P20 fail 其余 pass → score 100 verdict 真实）；数字序列解析与桶向量；结构特征距离排序；一致性三态边界（0.25 阈值两侧）；family_of 映射（含 minimax/grok/kimi/doubao）；P2 新厂商降级判定；P5 Anthropic 头识别；attribution 入库/读出往返；旧 resultJson 无 attribution 键时读出 null。
+- 构建：`cargo test --lib`、`npm run build`。
+- 设计稿断言：`scripts/verify-cr058-r5-design.mjs` 26/26（已执行，见 UI-CR058 §5）。
+- 真实网关端到端与基线校准：**未验证**（需真实密钥，属用户验收范围）；首版基线 calibrated=false 如实标注。

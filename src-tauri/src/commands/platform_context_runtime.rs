@@ -77,6 +77,11 @@ impl Prepared {
     pub fn persist(&self, conn: &Connection, outcome: &StreamOutcome, transcript: &[ChatMsg]) -> Result<(),String> {
         let tx=conn.unchecked_transaction().map_err(|e| e.to_string())?;
         crate::commands::chat::insert_assistant_messages(&tx,&self.session.id,outcome).map_err(|e| e.to_string())?;
+        if let Some(stats)=&outcome.session_stats {
+            if stats.session_id!=self.session.id || stats.turn_id!=self.user_id {return Err("步骤统计会话身份冲突".into());}
+            crate::commands::chat::stats::save_turn(&tx,stats,true)?;
+        }
+        // 回放hash包括元信息，必须在统计合并后计算，不使历史重开误判原文漂移。
         memory::save_transcript(&tx,&self.scope,&self.user_id,transcript)?;
         tx.commit().map_err(|e| e.to_string())
     }

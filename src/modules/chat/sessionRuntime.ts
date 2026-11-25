@@ -1,3 +1,5 @@
+import { emptyPlan, type SessionPlan } from "./sessionPlan";
+
 /**
  * 会话运行时记录（CR-042 / CR-019 / STORY-062）。
  * - 步骤：来自本会话真实 toolUse/toolResult 事件的执行记录；不伪造步骤，
@@ -19,7 +21,7 @@ export interface ChatStep {
   meta?: string;
 }
 
-export type SessionGoalState = "active" | "paused" | "cancelled";
+export type SessionGoalState = "active" | "paused" | "blocked" | "cancelled" | "complete";
 
 export interface SessionGoal {
   id: string;
@@ -83,6 +85,9 @@ export type SessionStatus = "success" | "failed" | "pending" | "read";
 
 export interface SessionRuntime {
   goal: SessionGoal | null;
+  goalArmed: boolean;
+  plan: SessionPlan;
+  todoExpanded: boolean;
   tasks: SessionTask[];
   steps: ChatStep[];
   subagents: SubagentRow[];
@@ -133,6 +138,9 @@ const store = new Map<string, SessionRuntime>();
 function blank(): SessionRuntime {
   return {
     goal: null,
+    goalArmed: false,
+    plan: emptyPlan(),
+    todoExpanded: false,
     tasks: [],
     steps: [],
     subagents: [],
@@ -177,14 +185,17 @@ export function setGoal(sid: string, text: string): SessionGoal {
   const rt = getRuntime(sid);
   const prior = rt.goal;
   const revision = (prior?.revision ?? 0) + 1;
+  const isNew = !prior || prior.state === "cancelled" || prior.state === "complete";
+  const state = isNew ? "active" : prior.state;
   const goal: SessionGoal = {
-    id: prior?.id ?? `goal-${sid}`,
+    id: isNew ? `goal-${sid}-${revision}` : prior.id,
     text: text.trim(),
-    state: prior?.state === "paused" ? "paused" : "active",
+    state,
     revision,
-    history: [...(prior?.history ?? []), { revision, state: prior?.state === "paused" ? "paused" : "active", text: text.trim(), at: Date.now() }],
+    history: [...(prior?.history ?? []), { revision, state, text: text.trim(), at: Date.now() }],
   };
   rt.goal = goal;
+  if (isNew) rt.goalArmed = true;
   return goal;
 }
 
@@ -192,6 +203,7 @@ export function updateGoalState(sid: string, state: SessionGoalState): SessionGo
   const rt = getRuntime(sid);
   if (!rt.goal) return null;
   const revision = rt.goal.revision + 1;
+  rt.goalArmed = state === "active";
   rt.goal = { ...rt.goal, state, revision, history: [...rt.goal.history, { revision, state, text: rt.goal.text, at: Date.now() }] };
   return rt.goal;
 }
@@ -385,6 +397,8 @@ const WORKBENCH_TOOL_LABELS: Record<string, string> = {
   ssh_exec_status: "工作台·审批结论",
   // CR-054 / STORY-073：右栏请求
   open_panel: "工作台·打开预览面板",
+  // CR-069 / STORY-091：派发工作给受管执行（与后端 ai_tools.rs TOOL_LABELS 一致）
+  dispatch_work: "工作台·派发工作",
 };
 
 export function toolDisplayName(name: string | null | undefined): string | null {

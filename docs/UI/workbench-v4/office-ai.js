@@ -3,7 +3,7 @@ window.OfficeAI = (function () {
   "use strict";
   const { D, store, esc, icon } = UI;
   const codeAI = D.ai, projects = new Map(), codeState = {};
-  const defaults = { aiHistory: false, aiTop: null, aiBgOpen: null, aiStepsOpen: false, aiMenu: null, aiMenuQuery: "", aiStats: null, aiMenuTab: "add", aiBusy: false, aiGen: 0, aiPermission: "默认模式", aiCli: "claude", aiInput: "", aiStick: true, aiQueue: [], aiPop: null, aiModelQuery: "", aiModelMenu: false, aiPermissionMenu: false, aiCliMenu: false, aiSubagents: false, aiBackground: false, aiContext: false, aiTokens: false };
+  const defaults = { aiHistory: false, aiTop: null, aiBgOpen: null, aiMenu: null, aiMenuQuery: "", aiStats: null, aiMenuTab: "add", aiBusy: false, aiGen: 0, aiPermission: "默认模式", aiCli: "claude", aiInput: "", aiStick: true, aiQueue: [], aiPop: null, aiModelQuery: "", aiModelMenu: false, aiPermissionMenu: false, aiCliMenu: false, aiSubagents: false, aiBackground: false, aiContext: false, aiTokens: false };
   const keys = [...Object.keys(defaults), "aiMessages", "aiSession", "aiOpen"];
   let pid = null, serial = 0;
   const clone = x => structuredClone(x);
@@ -35,7 +35,7 @@ window.OfficeAI = (function () {
       { role: "user", time: "10:05", text: `把${p.name}资料整理为三页汇报，保留证据和待确认项。` },
       { role: "assistant", time: "10:06", text: `**汇报结构建议**\n\n- 第 1 页：范围与背景。${first ? `依据《${first.file.name}》：${summary(first)}` : "等待选择资料。"}\n- 第 2 页：资料证据。${second ? `优先复核《${second.file.name}》中的口径与结论。` : "尚无可引用证据。"}\n- 第 3 页：行动与待确认事项。明确负责人、下一次复核节点；未核验的数字不作为结论。\n\n当前仅完成合成结构整理。生成文件前，请确认来源、受众和发送范围；候选不会覆盖原件，接受后仍需保存。`, sources: first?.citation ? [first.citation] : [], officeAction: { kind: "ppt", purpose: `整理${p.name}三页评审汇报` }, tools: [{ name: "office.outline", state: "完成", arg: "三页汇报结构", detail: "只拟定结构 · 未生成或发送文件" }] }
     ];
-    const s = { id, title: seeded ? p.name + (n ? " · 汇报结构" : " · 资料简报") : "新会话", status: seeded ? "success" : "read", updated: seeded ? "今天 · 仿真" : "刚刚", tokens: "用量未知", duration: "未计时", messages, goal: "核对本项目来源，整理可审阅的报告与汇报；保留待确认事项。", steps: seeded ? [{ title: "确认当前项目资料范围", state: "done", meta: "合成场景" }, { title: n ? "拟定汇报结构与证据位置" : "整理简报与资料口径", state: "done", meta: "合成场景" }, { title: "确认来源后生成并人工审阅", state: "todo" }] : [] };
+    const s = { id, title: seeded ? p.name + (n ? " · 汇报结构" : " · 资料简报") : "新会话", status: seeded ? "success" : "read", updated: seeded ? "今天 · 仿真" : "刚刚", tokens: "用量未知", duration: "未计时", messages, goal: seeded ? "核对本项目来源，整理可审阅的报告与汇报；保留待确认事项。" : "", tasks: seeded ? [{ title: "确认当前项目资料范围", state: "completed" }, { title: n ? "拟定汇报结构与证据位置" : "整理简报与资料口径", state: "completed" }, { title: "确认来源后生成并人工审阅", state: "pending" }] : [] };
     s.state = { ...clone(defaults), aiSession: id, aiMessages: messages, aiOpen: true };
     s.data = { stats: stats(seeded ? 1 : 0), subagents: seeded ? [{ cli: "claude", title: n ? "汇报结构核对（合成）" : "资料口径核对（合成）", model: codeAI.modelCatalog.current.model, duration: "未计时", tokens: "用量未知", status: "已完成" }] : [], background: seeded && first ? [{ jobId: id + "-inspect", cmd: "office.inspect " + first.path, state: "已结束", exit: "0", duration: "未计时", output: "合成结构检查已结束。未启动真实命令，未写入原件。" }] : [], feedback: [], current: clone(codeAI.modelCatalog.current) };
     s.office = null;
@@ -89,15 +89,15 @@ window.OfficeAI = (function () {
   }
   function referenceItems() {
     if (!pid) return null;
-    const files = references(pid).map(r => ({ icon: "fileText", name: r.path, meta: "当前项目文件" + (r.readable ? "" : " · 不可读取"), insert: "@" + r.path }));
+    const files = references(pid).map(r => ({ icon: "fileText", name: r.path, meta: "当前项目文件" + (r.readable ? "" : " · 不可读取"), key: "file:office:" + r.file.id, insert: "" }));
     const libraries = D.knowledge.libraries.filter(l => l.allProjects || (l.grantedTo || []).includes(pid));
-    const docs = libraries.flatMap(l => (D.knowledge.docs[l.id] || []).map(d => ({ icon: "book", name: d.title, meta: "已授权知识 · " + l.name + " / " + d.path, insert: "@" + d.title })));
-    const conv = D.ai.sessions.map(s => ({ icon: "message", name: s.title, meta: "当前项目会话", insert: "@" + s.title }));
+    const docs = libraries.flatMap(l => (D.knowledge.docs[l.id] || []).map(d => ({ icon: "book", name: d.title, meta: "已授权知识 · " + l.name + " / " + d.path, key: `knowledge:${l.id}:${d.id || d.path}`, insert: "" })));
+    const conv = D.ai.sessions.map(s => ({ icon: "message", name: s.title, meta: "当前项目会话", key: "session:" + s.id, insert: "" }));
     return [...files, ...conv, ...docs];
   }
   function filePicker() {
     const items = referenceItems() || [];
-    UI.openDialog(UI.dlgShell("选择文件或对话", "仅当前项目文件、已授权知识与本项目会话；引用不代表发送授权。", `<div class="stack-sm">${items.map(x => `<button class="menu-item" data-act="officeai-insert" data-text="${esc(x.insert)}">${icon(x.icon, "ico-14")}<span class="mi-main"><b>${esc(x.name)}</b><span>${esc(x.meta)}</span></span></button>`).join("") || '<p class="caption">暂无可引用资料，请先添加本项目文件。</p>'}</div>`, '<button class="btn" data-act="close-dialog">取消</button>', "modal-md"));
+    UI.openDialog(UI.dlgShell("选择文件或对话", "仅当前项目文件、已授权知识与本项目会话；引用不代表发送授权。", `<div class="stack-sm">${items.map(x => `<button class="menu-item" data-act="officeai-insert" data-ref="${esc(x.key)}" data-label="${esc(x.name)}">${icon(x.icon, "ico-14")}<span class="mi-main"><b>${esc(x.name)}</b><span>${esc(x.meta)}</span></span></button>`).join("") || '<p class="caption">暂无可引用资料，请先添加本项目文件。</p>'}</div>`, '<button class="btn" data-act="close-dialog">取消</button>', "modal-md"));
   }
   function captureRequest() {
     // Keep a stable backing object. Late callbacks address the captured project/session,
@@ -109,14 +109,17 @@ window.OfficeAI = (function () {
     const state = new Proxy(backing, { get: (o, k) => current() ? store[k] : o[k], set: (o, k, v) => { o[k] = v; if (current()) store[k] = v; return true; } });
     return { projectId, sessionId, ai, session: s, state, current, refs: projectId ? references(projectId) : [], selectedId: projectId ? Office.model.getProject(projectId).selectedId : null };
   }
-  function response(context, text) {
+  function response(context, text, selectedRefs) {
     const p = Office.model.getProject(context.projectId), intent = /ppt|幻灯|汇报/i.test(text) ? "ppt" : /word|docx|生成.*报告|写.*报告/i.test(text) ? "word" : /润色|改写/.test(text) ? "polish" : /分析.*表|表格分析/.test(text) ? "sheet" : "read";
-    const refs = context.refs.filter(r => r.readable && (r.file.id === context.selectedId || text.includes(r.file.name))).slice(0, 3);
-    if (!refs.length && context.refs.some(r => r.readable)) refs.push(context.refs.find(r => r.readable));
+    const fileKeys = new Set(selectedRefs.filter(r => r.key.startsWith("file:office:")).map(r => r.key));
+    const refs = context.refs.filter(r => r.readable && (fileKeys.size
+      ? fileKeys.has(`file:office:${r.file.id}`)
+      : r.file.id === context.selectedId || text.includes(r.file.name))).slice(0, 3);
+    if (!fileKeys.size && !refs.length && context.refs.some(r => r.readable)) refs.push(context.refs.find(r => r.readable));
     if (p.scenario === "model-unavailable") return { failed: true, text: "所选模型当前不可用（合成故障）。输入与来源已保留；可在模型设置中检查，恢复正常场景后重发。", tools: [{ name: "office.check", state: "失败", arg: "模型可用性", detail: "未调用远程模型，未生成或改写文件" }] };
     const valid = refs.filter(r => Office.model.readReference(context.projectId, r.citation).ok);
     if (!valid.length) return { failed: true, text: "当前没有可读取的项目来源。请先添加资料，或恢复源权限／检查扫描 PDF 的文本条件后重试；不会改用其他项目或代码文件。", tools: [{ name: "office.sources", state: "待确认", arg: "当前项目资料", detail: "来源为空或不可读取 · 未发送" }] };
-    context.session.steps = [{ title: "核对当前项目与引用范围", state: "done", meta: "合成检查" }, { title: "整理意图与资料摘要", state: "done", meta: "未调用模型" }, { title: "确认来源后执行并审阅候选", state: "todo" }];
+    context.session.tasks = [{ title: "核对当前项目与引用范围", state: "completed" }, { title: "整理意图与资料摘要", state: "completed" }, { title: "确认来源后执行并审阅候选", state: "pending" }];
     return { text: `**已整理本次${intent === "read" ? "解读" : "交付"}请求**\n\n${valid.map(r => `- 《${r.file.name}》：${summary(r)}`).join("\n")}\n\n${intent === "read" ? "建议先核对上述来源的事实与版本，再区分已确认结论和待验证问题。" : "建议按背景、证据与行动组织内容；表格数据沿用原口径，未核验内容明确标为待确认。"}\n\n这一步仅整理合成资料与执行计划。请确认来源、用途和发送范围后${intent === "read" ? "查看完整解读" : "生成候选"}；接受只进入草稿，原件不会被覆盖。`, sources: valid.map(r => r.citation), officeAction: { kind: intent, purpose: text, refs: valid.map(r => ({ fileId: r.file.id, location: r.citation.location })) }, tools: [{ name: "office.sources", state: "完成", arg: valid.map(r => r.path).join("、"), detail: "当前项目来源检查 · 仅内存合成资料 · 尚未发送" }] };
   }
   function messageExtra(m) {
@@ -128,7 +131,7 @@ window.OfficeAI = (function () {
     const el = e.target.closest('[data-act^="officeai-"]'); if (!el || !pid) return;
     e.preventDefault(); e.stopImmediatePropagation();
     if (el.dataset.project && (el.dataset.project !== pid || el.dataset.session !== store.aiSession)) return;
-    if (el.dataset.act === "officeai-insert") { UI.closeDialog(); AIPanel.insert(el.dataset.text); }
+    if (el.dataset.act === "officeai-insert") { UI.closeDialog(); AIPanel.insert("", { key: el.dataset.ref, label: el.dataset.label }); }
     else if (el.dataset.act === "officeai-source") Office.actions.citation(pid, el);
     else if (el.dataset.act === "officeai-confirm") {
       const action = store.aiMessages[Number(el.dataset.message)]?.officeAction; if (!action) return;

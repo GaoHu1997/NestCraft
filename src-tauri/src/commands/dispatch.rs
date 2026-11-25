@@ -91,8 +91,7 @@ pub(crate) fn openai_base(base: &str) -> String {
 }
 
 pub(crate) fn read_secret(app: &tauri::AppHandle, key_id: &str) -> Option<String> {
-    use tauri::Manager;
-    let path = app.path().app_data_dir().ok()?.join("secrets.json");
+    let path = crate::storage_layout::category("secrets").ok()?.join("secrets.json");
     let text = std::fs::read_to_string(path).ok()?;
     let map: BTreeMap<String, String> = serde_json::from_str(&text).ok()?;
     map.get(key_id).cloned().filter(|s| !s.is_empty())
@@ -186,12 +185,9 @@ fn enabled_mcp_servers() -> Result<Vec<McpRow>, String> {
 /// 按会话稳定的线程存储目录：`<app_data>/claude-profiles/<sessionId>` 等。
 /// 目录只创建不删除；同一会话跨轮、跨重启命中同一存储，是 `--resume` / `exec resume` 的前提。
 pub fn stable_profile_dir(app: &tauri::AppHandle, cli_id: &str, session_id: &str) -> Result<PathBuf, String> {
-    use tauri::Manager;
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join(format!("{}-profiles", cli_id))
+    let _ = app;
+    let dir = crate::storage_layout::category("chat")?
+        .join(format!("{cli_id}-profiles"))
         .join(session_id);
     std::fs::create_dir_all(&dir).map_err(|e| format!("创建会话线程存储目录失败：{}", e))?;
     Ok(dir)
@@ -231,8 +227,8 @@ fn built_in_workbench_config(
     if !enabled {
         return Ok(None);
     }
-    use tauri::Manager;
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    // 传给 workbench MCP 子进程的必须是统一数据根：子进程据此打开与主程序同一个库。
+    let dir = crate::storage_layout::root().map_err(|e| e.to_string())?;
     Ok(Some((
         dir,
         project_id.filter(|p| !p.is_empty()).map(|p| p.to_string()),
@@ -919,8 +915,7 @@ mod tests {
 
 /// 受管 Skill 目录。
 pub fn skill_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
-    use tauri::Manager;
-    let dir = app.path().app_data_dir().ok()?.join("skills");
+    let dir = crate::storage_layout::category("skills").ok()?;
     if dir.is_dir() {
         Some(dir)
     } else {

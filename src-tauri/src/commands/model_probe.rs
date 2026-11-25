@@ -1,7 +1,8 @@
-//! CR-058：模型检测九针探针引擎。
+//! CR-058：模型检测探针引擎（r4 十九针；r5 增 P20 行为指纹与归因，权重 0 辅助信号）。
 //!
-//! 对用户已配置的供应商端点顺序执行 9 针黑盒探针（OpenAI Chat / Anthropic Messages 双协议），
-//! 100 分制扣分 + 真伪×渠道双轴判决（CR-058 §2 / LLD-CR058 §4～§5）。
+//! 对用户已配置的供应商端点顺序执行 20 针黑盒探针（OpenAI Chat / Anthropic Messages 双协议），
+//! 100 分制扣分 + 真伪×渠道双轴判决（CR-058 §2 / LLD-CR058 §4～§5、§10）。
+//! P20 输出「与声称家族一致性 + 最像的已知候选 top-3」归因面板数据，永不扣分/封顶/改判真伪轴。
 //! 密钥仅在后端当次请求栈内使用，不落日志、不进结果 JSON；请求不跟随重定向。
 //! 逐针进度经 tauri ipc Channel 推送；历史入库保留最近 10 条（DB-CR058）。
 
@@ -12,10 +13,10 @@ use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read};
 use std::time::{Duration, Instant};
 
-const PROBE_CODES: [&str; 19] = [
-    "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9", "P10", "P11", "P12", "P13", "P14", "P15", "P16", "P17", "P18", "P19",
+const PROBE_CODES: [&str; 20] = [
+    "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9", "P10", "P11", "P12", "P13", "P14", "P15", "P16", "P17", "P18", "P19", "P20",
 ];
-const PROBE_NAMES: [&str; 19] = [
+const PROBE_NAMES: [&str; 20] = [
     "连通与鉴权握手",
     "模型回显与跨档偷换",
     "响应 Schema 与 ID 规范",
@@ -35,16 +36,19 @@ const PROBE_NAMES: [&str; 19] = [
     "输入 Token 对账",
     "流式输出对账",
     "长前缀缓存命中",
+    "行为指纹与归因",
 ];
-/// 100 分制权重（r4：19 针，合计 100）。
-const PROBE_WEIGHTS: [i64; 19] = [6, 9, 4, 9, 3, 6, 6, 6, 4, 4, 5, 4, 6, 6, 5, 4, 5, 5, 3];
+/// 100 分制权重（r4：19 针合计 100；r5：P20 权重 0，辅助信号不计分不封顶）。
+const PROBE_WEIGHTS: [i64; 20] = [6, 9, 4, 9, 3, 6, 6, 6, 4, 4, 5, 4, 6, 6, 5, 4, 5, 5, 3, 0];
 const HISTORY_KEEP: usize = 10;
 const MAX_STREAM_BYTES: u64 = 2 * 1024 * 1024;
 
-/// IDE/网页逆向套壳关键词（LLD-CR058 §4 P5）。
-const WRAPPER_KEYWORDS: [&str; 12] = [
+/// IDE/网页逆向套壳关键词（LLD-CR058 §4 P5；r5 增补非 OpenAI/Anthropic 生态与身份套壳变体）。
+const WRAPPER_KEYWORDS: [&str; 21] = [
     "cursor", "copilot", "windsurf", "trae", "cline", "kiro", "augment", "codeium",
     "claude code", "claude-code", "you are claude", "code companion",
+    "grok cli", "gemini cli", "qwen-code", "iflow",
+    "you are grok", "you are gemini", "you are qwen", "you are deepseek", "you are glm",
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -462,11 +466,11 @@ pub fn normalize_model_name(name: &str) -> String {
     s
 }
 
-/// 档位秩（LLD-CR058 §4 P2）：0 最小，4 旗舰。None=规则未覆盖。
+/// 档位秩（LLD-CR058 §4 P2；r5 补 MiniMax/Grok/Kimi/Doubao/Hunyuan/ERNIE 盲区）：0 最小，4 旗舰。None=规则未覆盖。
 pub fn tier_rank(stem: &str) -> Option<i32> {
-    const RANK4: [&str; 7] = ["max", "opus", "ultra", "pro", "reasoner", "plus", "advanced"];
+    const RANK4: [&str; 8] = ["max", "opus", "ultra", "pro", "reasoner", "plus", "advanced", "heavy"];
     const RANK2: [&str; 3] = ["air", "sonnet", "terra"];
-    const RANK1: [&str; 4] = ["flash", "turbo", "haiku", "air-flash"];
+    const RANK1: [&str; 5] = ["flash", "turbo", "haiku", "air-flash", "fast"];
     const RANK0: [&str; 10] = [
         "mini", "nano", "lite", "tiny", "embed", "whisper", "tts", "dall-e", "guard", "bge",
     ];
@@ -499,7 +503,123 @@ pub fn tier_rank(stem: &str) -> Option<i32> {
     if stem == "chat" || stem.ends_with("-chat") || stem.contains("-chat-") {
         return Some(3);
     }
+    // r5：无档位后缀的厂商主力命名给默认档（MiniMax m 系 / Grok 数字系 / Kimi k 系 / Doubao 种子系 / ERNIE 数字系）。
+    if vendor_generation(stem).is_some() {
+        return Some(3);
+    }
     None
+}
+
+/// r5：厂商代际（主, 次×10）。用于同族跨代降级判定（minimax m3→m2、grok-4→grok-3、kimi-k3→k2、abab7→6.5、ernie-4.5→4.0、doubao-2.1→1.5）。
+/// 返回 None 表示命名不在已登记厂商规则内（不虚构）。
+pub fn vendor_generation(stem: &str) -> Option<(i64, i64)> {
+    let num_after = |prefix: &str| -> Option<(i64, i64)> {
+        let rest = stem.strip_prefix(prefix)?;
+        let bytes = rest.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i == 0 {
+            return None;
+        }
+        let major: i64 = rest[..i].parse().ok()?;
+        let mut minor = 0i64;
+        if rest[i..].starts_with('.') {
+            let tail = &rest[i + 1..];
+            let mut j = 0;
+            while j < tail.len() && tail.as_bytes()[j].is_ascii_digit() {
+                j += 1;
+            }
+            if j > 0 {
+                minor = tail[..j].parse::<i64>().ok()? * 10;
+            }
+        }
+        Some((major, minor))
+    };
+    // MiniMax：m3 / m2.7 / abab7 / abab6.5（裸 m+数字 也认，如中转站简写 m2.7）
+    if stem.starts_with("minimax-m") || (stem.starts_with('m') && stem.as_bytes().get(1).is_some_and(|c| c.is_ascii_digit())) {
+        if let Some(v) = num_after("minimax-m").or_else(|| num_after("m")) {
+            return Some(v);
+        }
+    }
+    if let Some(v) = num_after("abab") {
+        return Some(v);
+    }
+    if let Some(v) = num_after("grok-") {
+        return Some(v);
+    }
+    if let Some(v) = num_after("kimi-k") {
+        return Some(v);
+    }
+    if let Some(v) = num_after("doubao-").or_else(|| num_after("doubao-seed-")) {
+        return Some(v);
+    }
+    if let Some(v) = num_after("ernie-") {
+        return Some(v);
+    }
+    if let Some(v) = num_after("hunyuan-") {
+        return Some(v);
+    }
+    None
+}
+
+/// r5：模型名 → 声称家族（P20 归因用）。unknown 表示命名不在已登记厂商规则内。
+pub fn family_of(model_id: &str) -> &'static str {
+    let stem = normalize_model_name(model_id);
+    let has = |p: &str| stem == p || stem.starts_with(&format!("{}-", p)) || stem.starts_with(p);
+    if stem.starts_with("gpt-") || stem.starts_with("chatgpt") || matches!(stem.as_str(), "o1" | "o3" | "o4") || stem.starts_with("o1-") || stem.starts_with("o3-") || stem.starts_with("o4-") || stem.contains("codex") {
+        return "openai";
+    }
+    if has("claude") {
+        return "anthropic";
+    }
+    if has("gemini") || has("gemma") {
+        return "google";
+    }
+    if has("deepseek") {
+        return "deepseek";
+    }
+    if has("glm") || has("chatglm") {
+        return "zhipu";
+    }
+    if has("qwen") || has("qwq") || has("qvq") {
+        return "qwen";
+    }
+    if has("minimax") || has("abab") || (stem.starts_with('m') && stem.as_bytes().get(1).is_some_and(|c| c.is_ascii_digit())) {
+        return "minimax";
+    }
+    if has("grok") {
+        return "xai";
+    }
+    if has("kimi") || has("moonshot") {
+        return "moonshot";
+    }
+    if has("doubao") || has("skylark") {
+        return "bytedance";
+    }
+    if has("hunyuan") {
+        return "tencent";
+    }
+    if has("ernie") {
+        return "baidu";
+    }
+    if has("mistral") || has("mixtral") || has("pixtral") {
+        return "mistral";
+    }
+    if has("llama") {
+        return "meta";
+    }
+    if has("command") || has("aya") {
+        return "cohere";
+    }
+    if has("step") {
+        return "stepfun";
+    }
+    if has("mimo") {
+        return "xiaomi";
+    }
+    "unknown"
 }
 
 /// GPT 主/次代数（容忍 gpt-6.2-sol 这类带档位后缀的命名）。
@@ -557,6 +677,16 @@ pub fn check_model_echo(requested: &str, returned: &str) -> EchoVerdict {
     if let (Some(rv), Some(cv)) = (gpt_version(&req), gpt_version(&res)) {
         if cv < rv {
             return EchoVerdict::Downgrade(format!("GPT 代数降级：{} → {}", requested, ret));
+        }
+    }
+    // r5：同厂商跨代降级（minimax m3→m2.7、grok-4→grok-3、kimi-k3→k2、abab7→6.5、ernie-4.5→4.0、doubao-2.1→1.5）。
+    // 仅当双方家族相同且非 unknown 时比较，避免跨厂商误比。
+    let req_family = family_of(&req);
+    if req_family != "unknown" && req_family == family_of(&res) {
+        if let (Some(rv), Some(cv)) = (vendor_generation(&req), vendor_generation(&res)) {
+            if cv < rv {
+                return EchoVerdict::Downgrade(format!("厂商代际降级：{} → {}", requested, ret));
+            }
         }
     }
     if let (Some(rr), Some(cr)) = (tier_rank(&req), tier_rank(&res)) {
@@ -1268,13 +1398,17 @@ fn probe_schema(target: &Target, response: &JsonResponse, headers: &[(String, St
     ProbeOutcome { status, ms: 0, note: notes.join("；") }
 }
 
-/// P5：网关响应头指纹（官方直连 / 反代 / 聚合网关的辅助识别）。
+/// P5：网关响应头指纹（官方直连 / 反代 / 聚合网关的辅助识别；r5 增补 Anthropic/Azure 特征）。
 fn probe_header_fingerprint(headers: &[(String, String)]) -> ProbeOutcome {
     let has = |needle: &str| headers.iter().any(|(name, _)| name.to_lowercase() == needle);
     let has_prefix = |prefix: &str| headers.iter().any(|(name, _)| name.to_lowercase().starts_with(prefix));
     let mut notes: Vec<String> = Vec::new();
     if has("openai-processing-ms") || has("openai-organization") || has_prefix("x-ratelimit") {
         notes.push("检出 OpenAI 官方特征头（官方直连或透传）".into());
+    } else if has_prefix("anthropic-ratelimit") || (has("request-id") && has_prefix("anthropic-")) {
+        notes.push("检出 Anthropic 官方特征头（官方直连或透传）".into());
+    } else if has("apim-request-id") || has("x-ms-request-id") {
+        notes.push("检出 Azure 通道特征头（Azure OpenAI 或 APIM 中转）".into());
     } else if has("cf-ray") {
         notes.push("检出 Cloudflare 边缘头（反代 / 聚合）".into());
     } else if has("x-oneapi-request-id") || has("x-request-id") {
@@ -1862,6 +1996,266 @@ fn probe_cache_hit(target: &Target, model: &str, reasoning: bool) -> ProbeOutcom
 }
 
 // ---------------------------------------------------------------------------
+// r5 P20：行为指纹与归因（LLD-CR058 §10；RESEARCH-006 §5.2 阶段 B / §6）
+// 纯统计、零 ML 依赖：数字偏好序列结构特征 + 身份自述弱信号，与内置基线库比对。
+// 首版基线 calibrated=false（未用真实官方端点校准），候选名如实标注「未校准基线」。
+// P20 权重 0：永不扣分/封顶/改判真伪轴；结论为概率性提示（「最像的已知候选」）。
+// ---------------------------------------------------------------------------
+
+/// P20 归因输出（随 report.attribution 返回并存入 resultJson）。
+#[derive(Clone, Debug)]
+pub struct Attribution {
+    pub consistency: &'static str, // match | mismatch | unknown
+    pub claimed_family: String,
+    pub candidates: Vec<(String, String, f64)>, // (display_name, family, distance)
+    pub note: String,
+}
+
+impl Attribution {
+    fn to_json(&self) -> Value {
+        json!({
+            "consistency": self.consistency,
+            "claimedFamily": self.claimed_family,
+            "candidates": self.candidates.iter().map(|(n, f, d)| json!({ "name": n, "family": f, "distance": (d * 100.0).round() / 100.0 })).collect::<Vec<_>>(),
+            "note": self.note,
+        })
+    }
+    fn unknown(reason: &str) -> Self {
+        Attribution {
+            consistency: "unknown",
+            claimed_family: "unknown".into(),
+            candidates: Vec::new(),
+            note: reason.into(),
+        }
+    }
+}
+
+/// 数字序列结构特征（6 维，各维已归一到 [0,1] 量级）：
+/// 均值位置 / 标准差 / 重复率 / 最长单调段占比 / 末位数字熵 / 小值(≤50)偏好。
+/// 依据 NumPrint（arXiv:2611.14010）「数字偏好可作模型指纹」；首版用结构统计量而非学习分类器。
+pub fn sequence_features(nums: &[i64]) -> Option<[f64; 6]> {
+    if nums.len() < 16 {
+        return None;
+    }
+    let n = nums.len() as f64;
+    let mean = nums.iter().sum::<i64>() as f64 / n;
+    let var = nums.iter().map(|x| (*x as f64 - mean).powi(2)).sum::<f64>() / n;
+    let std = var.sqrt();
+    let mut sorted = nums.to_vec();
+    sorted.sort_unstable();
+    let uniq = {
+        let mut u = 1usize;
+        for w in sorted.windows(2) {
+            if w[0] != w[1] {
+                u += 1;
+            }
+        }
+        u
+    };
+    let repeat_rate = 1.0 - uniq as f64 / n;
+    // 最长严格单调（升或降）连续段
+    let mut longest = 1usize;
+    let mut run_up = 1usize;
+    let mut run_down = 1usize;
+    for w in nums.windows(2) {
+        run_up = if w[1] > w[0] { run_up + 1 } else { 1 };
+        run_down = if w[1] < w[0] { run_down + 1 } else { 1 };
+        longest = longest.max(run_up).max(run_down);
+    }
+    let monotonic = longest as f64 / n;
+    // 末位数字（0-9）分布熵，归一到 log2(10)
+    let mut last_digits = [0usize; 10];
+    for x in nums {
+        last_digits[(x.rem_euclid(10)) as usize] += 1;
+    }
+    let entropy = {
+        let mut h = 0f64;
+        for c in last_digits {
+            if c > 0 {
+                let p = c as f64 / n;
+                h -= p * p.log2();
+            }
+        }
+        h / 10f64.log2()
+    };
+    let small_pref = nums.iter().filter(|x| **x <= 50).count() as f64 / n;
+    Some([
+        (mean / 355.0).clamp(0.0, 1.0),
+        (std / 180.0).clamp(0.0, 1.0),
+        repeat_rate.clamp(0.0, 1.0),
+        monotonic.clamp(0.0, 1.0),
+        entropy.clamp(0.0, 1.0),
+        small_pref.clamp(0.0, 1.0),
+    ])
+}
+
+/// 从响应文本宽松解析整数序列（逗号/空格/换行/顿号分隔，容忍前后缀文字与代码块）。
+pub fn parse_number_sequence(text: &str) -> Vec<i64> {
+    let cleaned: String = text.chars().map(|c| if c.is_ascii_digit() { c } else { ' ' }).collect();
+    cleaned
+        .split_whitespace()
+        .filter_map(|t| t.parse::<i64>().ok())
+        .filter(|x| (1..=355).contains(x))
+        .collect()
+}
+
+struct BaselineEntry {
+    id: &'static str,
+    family: &'static str,
+    /// 结构特征参考向量（首版为公开行为研究不可得时的保守先验，calibrated=false 如实标注）。
+    features: [f64; 6],
+    vendor_keywords: &'static [&'static str],
+}
+
+/// 内置基线库（首版未校准：features 为区分性先验占位，待官方端点实测采集替换；
+/// 每条候选在前端显示时带「未校准基线」后缀，不冒充实测指纹）。
+const FINGERPRINT_BASELINES: &[BaselineEntry] = &[
+    BaselineEntry { id: "gpt-5.x（未校准基线）", family: "openai", features: [0.50, 0.55, 0.10, 0.12, 0.92, 0.14], vendor_keywords: &["openai", "gpt", "chatgpt"] },
+    BaselineEntry { id: "claude-sonnet-5.x（未校准基线）", family: "anthropic", features: [0.48, 0.52, 0.08, 0.10, 0.90, 0.16], vendor_keywords: &["anthropic", "claude"] },
+    BaselineEntry { id: "gemini-3.x（未校准基线）", family: "google", features: [0.52, 0.58, 0.12, 0.14, 0.88, 0.13], vendor_keywords: &["google", "gemini", "deepmind"] },
+    BaselineEntry { id: "deepseek-v4.x（未校准基线）", family: "deepseek", features: [0.45, 0.60, 0.18, 0.20, 0.82, 0.20], vendor_keywords: &["deepseek", "深度求索"] },
+    BaselineEntry { id: "glm-5.x（未校准基线）", family: "zhipu", features: [0.42, 0.58, 0.22, 0.24, 0.78, 0.24], vendor_keywords: &["zhipu", "智谱", "glm", "chatglm"] },
+    BaselineEntry { id: "qwen3.x-max（未校准基线）", family: "qwen", features: [0.46, 0.56, 0.16, 0.18, 0.84, 0.19], vendor_keywords: &["alibaba", "qwen", "阿里", "通义"] },
+    BaselineEntry { id: "minimax-m3（未校准基线）", family: "minimax", features: [0.40, 0.62, 0.26, 0.28, 0.74, 0.27], vendor_keywords: &["minimax", "稀宇", "abab"] },
+    BaselineEntry { id: "grok-4.x（未校准基线）", family: "xai", features: [0.55, 0.60, 0.14, 0.16, 0.86, 0.12], vendor_keywords: &["xai", "grok", "x.ai"] },
+    BaselineEntry { id: "kimi-k3（未校准基线）", family: "moonshot", features: [0.44, 0.57, 0.20, 0.22, 0.80, 0.22], vendor_keywords: &["moonshot", "kimi", "月之暗面"] },
+    BaselineEntry { id: "doubao-2.x-pro（未校准基线）", family: "bytedance", features: [0.43, 0.59, 0.24, 0.26, 0.76, 0.25], vendor_keywords: &["bytedance", "字节", "doubao", "豆包", "skylark"] },
+    BaselineEntry { id: "hunyuan-turbo（未校准基线）", family: "tencent", features: [0.41, 0.61, 0.25, 0.27, 0.75, 0.26], vendor_keywords: &["tencent", "腾讯", "hunyuan", "混元"] },
+    BaselineEntry { id: "ernie-4.5（未校准基线）", family: "baidu", features: [0.47, 0.54, 0.19, 0.21, 0.81, 0.18], vendor_keywords: &["baidu", "百度", "ernie", "文心"] },
+];
+
+/// 结构特征欧氏距离（各维已在 [0,1]，除以 sqrt(6) 归一到 [0,1]）。
+pub fn feature_distance(a: &[f64; 6], b: &[f64; 6]) -> f64 {
+    let sum: f64 = a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum();
+    (sum / 6.0).sqrt()
+}
+
+/// 一致性阈值（首版保守值，未经真实网关校准；LLD-CR058 §10.2 登记）。
+const FP_MATCH_THRESHOLD: f64 = 0.25;
+
+/// P20 核心判定（纯函数，可单测）：数字序列特征 + 身份自述 → 三态一致性 + top-3 候选。
+pub fn attribute_fingerprint(model_id: &str, nums: &[i64], identity_text: &str) -> Attribution {
+    let claimed = family_of(model_id).to_string();
+    let features = match sequence_features(nums) {
+        Some(f) => f,
+        None => return Attribution::unknown("无法判定：数字偏好序列不可解析或过短"),
+    };
+    let mut scored: Vec<(usize, f64)> = FINGERPRINT_BASELINES
+        .iter()
+        .enumerate()
+        .map(|(i, b)| (i, feature_distance(&features, &b.features)))
+        .collect();
+    scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    let top3: Vec<(String, String, f64)> = scored
+        .iter()
+        .take(3)
+        .map(|(i, d)| {
+            let b = &FINGERPRINT_BASELINES[*i];
+            (b.id.to_string(), b.family.to_string(), *d)
+        })
+        .collect();
+    let (best_family, best_dist) = (top3[0].1.clone(), top3[0].2);
+    // 身份自述弱信号：命中厂商关键词只作佐证，不单独定态。
+    let lower = identity_text.to_lowercase();
+    let identity_family = FINGERPRINT_BASELINES
+        .iter()
+        .find(|b| b.vendor_keywords.iter().any(|k| lower.contains(k)))
+        .map(|b| b.family);
+    let mut notes: Vec<String> = Vec::new();
+    let consistency = if best_dist > FP_MATCH_THRESHOLD {
+        notes.push("与所有已知候选都不像（基线库外或私有部署）；无法判定，不指认".into());
+        "unknown"
+    } else if claimed != "unknown" && best_family == claimed {
+        notes.push(format!("数字偏好贴近声称家族（最像 {} d={:.2}）", top3[0].0, best_dist));
+        "match"
+    } else if claimed != "unknown" {
+        notes.push(format!("数字偏好偏离声称家族，最像 {} d={:.2}", top3[0].0, best_dist));
+        "mismatch"
+    } else {
+        notes.push(format!("声称家族未知；最近候选 {} d={:.2}（仅提示）", top3[0].0, best_dist));
+        "unknown"
+    };
+    if let Some(idf) = identity_family {
+        if consistency == "mismatch" && idf == best_family {
+            notes.push("身份自述与最近候选同厂（佐证）".into());
+        } else if consistency == "match" && idf != claimed {
+            notes.push("身份自述指向其他厂商（弱信号，供复核）".into());
+        }
+    }
+    notes.push("概率性提示，不构成实锤；基线未校准".into());
+    Attribution {
+        consistency,
+        claimed_family: claimed,
+        candidates: if consistency == "unknown" && best_dist > FP_MATCH_THRESHOLD { Vec::new() } else { top3 },
+        note: notes.join("；"),
+    }
+}
+
+/// P20 探针：全新短会话两条请求（数字偏好序列 + 身份自述），不复用任何多轮上下文。
+fn probe_fingerprint(target: &Target, model: &str, reasoning: bool, salt: &str) -> (ProbeOutcome, Attribution) {
+    let start = Instant::now();
+    let seq_prompt = format!(
+        "随机数生成任务（盐值 {}）：请一次性输出 64 个 1 到 355 之间的整数，用英文逗号分隔，不要输出任何其他文字、解释或代码块。凭你的直觉选择，不要刻意均匀分布。",
+        salt
+    );
+    let body = build_body(target, model, None, &[("user", seq_prompt.as_str())], if reasoning { 900 } else { 400 }, false, reasoning, &json!({ "temperature": 0.7 }));
+    let seq_response = match send_json(target, &body, Duration::from_secs(60)) {
+        Ok(r) if (200..300).contains(&r.status) => r,
+        Ok(r) => {
+            let note = error_note(target, &r).unwrap_or_else(|| format!("HTTP {}", r.status));
+            return (
+                ProbeOutcome { status: Status::Warn, ms: start.elapsed().as_millis() as u64, note: format!("无法判定：{}", note) },
+                Attribution::unknown("无法判定：数字偏好请求失败"),
+            );
+        }
+        Err(e) => {
+            return (
+                ProbeOutcome { status: Status::Fail, ms: start.elapsed().as_millis() as u64, note: redact(&e, &target.key) },
+                Attribution::unknown("无法判定：网络错误"),
+            );
+        }
+    };
+    let seq_text = text_of_non_stream(target, &seq_response);
+    let nums = parse_number_sequence(&seq_text);
+    // 第二条：身份自述（弱信号；失败不阻断主判定）。
+    let id_body = build_body(
+        target,
+        model,
+        None,
+        &[("user", "你是哪家公司开发的什么模型？只输出 JSON：{\"vendor\":\"公司\",\"model\":\"模型名\"}，不要输出其他内容。")],
+        120,
+        false,
+        reasoning,
+        &Value::Null,
+    );
+    let identity_text = send_json(target, &id_body, Duration::from_secs(40))
+        .ok()
+        .filter(|r| (200..300).contains(&r.status))
+        .map(|r| text_of_non_stream(target, &r))
+        .unwrap_or_default();
+    let attribution = attribute_fingerprint(model, &nums, &identity_text);
+    let ms = start.elapsed().as_millis() as u64;
+    let outcome = match attribution.consistency {
+        "match" => ProbeOutcome {
+            status: Status::Pass,
+            ms,
+            note: format!("行为指纹与声称家族一致（{}）", attribution.note),
+        },
+        "mismatch" => ProbeOutcome {
+            status: Status::Warn,
+            ms,
+            note: format!("行为指纹偏离声称家族（最像 {} d={:.2}，辅助信号不计分）", attribution.candidates.first().map(|c| c.0.as_str()).unwrap_or("未知"), attribution.candidates.first().map(|c| c.2).unwrap_or(0.0)),
+        },
+        _ => ProbeOutcome {
+            status: Status::Na,
+            ms,
+            note: attribution.note.clone(),
+        },
+    };
+    (outcome, attribution)
+}
+
+// ---------------------------------------------------------------------------
 // 评分与判决（LLD-CR058 §5）
 // ---------------------------------------------------------------------------
 
@@ -1872,6 +2266,7 @@ fn channel_of(headers: &[(String, String)], wrapper_hit: bool) -> &'static str {
     let official = headers.iter().any(|(name, _)| {
         let n = name.to_lowercase();
         n == "openai-processing-ms" || n == "openai-organization" || n.starts_with("x-ratelimit")
+            || n.starts_with("anthropic-ratelimit")
     });
     if official {
         "官方直连"
@@ -1903,13 +2298,15 @@ fn aggregate(outcomes: &[ProbeOutcome], model_id: &str) -> (i64, &'static str, &
             Status::Skip | Status::Pass | Status::Na => {}
         }
     }
-    // 19 针索引：P1 握手 / P2 回显 / P3 Schema / P4 真流式 / P5 头指纹 / P6 金丝雀
+    // 20 针索引：P1 握手 / P2 回显 / P3 Schema / P4 真流式 / P5 头指纹 / P6 金丝雀
     //            P7 注入 / P8 记忆 / P9 stop / P10 max_tokens / P11 工具 / P12 JSON
     //            P13 逻辑 / P14 混池 / P15 识图 / P16 responses / P17 输入 / P18 输出 / P19 缓存
+    //            P20 行为指纹与归因（r5，权重 0：fail/warn 不扣分；下方判决/封顶均不引用索引 19）
     let fail = |i: usize| outcomes[i].status == Status::Fail;
     let wrapper = fail(6) && outcomes[6].note.contains("套壳");
     let context_red = fail(5) || fail(7) || wrapper; // 金丝雀丢失 / 记忆被裁 / 套壳
-    let any_fail = outcomes.iter().any(|o| o.status == Status::Fail);
+    // P20 永不参与真伪轴（辅助信号；对抗改写可致误报，RESEARCH-006 §5.3）。
+    let any_fail = outcomes.iter().enumerate().any(|(i, o)| i != 19 && o.status == Status::Fail);
     let verdict = if fail(0) {
         "无法判定"
     } else if (fail(1) && context_red) || (fail(13) && fail(1)) {
@@ -1947,7 +2344,7 @@ fn aggregate(outcomes: &[ProbeOutcome], model_id: &str) -> (i64, &'static str, &
         let items: Vec<String> = outcomes
             .iter()
             .enumerate()
-            .filter(|(_, o)| o.status == Status::Fail)
+            .filter(|(i, o)| *i != 19 && o.status == Status::Fail)
             .map(|(i, o)| format!("{} {}", PROBE_CODES[i], o.note))
             .collect();
         format!("存在不通过项：{}；建议结合逐针证据复核。", items.join("；"))
@@ -1955,13 +2352,13 @@ fn aggregate(outcomes: &[ProbeOutcome], model_id: &str) -> (i64, &'static str, &
         let items: Vec<String> = outcomes
             .iter()
             .enumerate()
-            .filter(|(_, o)| o.status == Status::Warn)
+            .filter(|(i, o)| *i != 19 && o.status == Status::Warn)
             .map(|(i, o)| format!("{} {}", PROBE_CODES[i], o.note))
             .collect();
         if items.is_empty() {
-            "九针全部通过，未见掺水信号。".to_string()
+            "计分探针全部通过，未见掺水信号（P20 行为指纹为辅助提示，见归因面板）。".to_string()
         } else {
-            format!("九针通过但存在警示：{}。", items.join("；"))
+            format!("计分探针通过但存在警示：{}。", items.join("；"))
         }
     };
     (score, grade_of(score), verdict, summary)
@@ -2129,7 +2526,7 @@ pub async fn model_probe_run(
     ctx.anchor = format!("MT_ANCHOR_{}", random_hex(8).to_uppercase());
     ctx.puzzle = build_puzzle(random_num(2) as u8);
 
-    // 2. 顺序执行 9 针，逐针推送进度。
+    // 2. 顺序执行 20 针（r5：末位 P20 行为指纹与归因），逐针推送进度。
     // 探针使用阻塞式 ureq，全部放进 spawn_blocking，避免占用异步运行时导致界面与其他命令卡死。
     let channel_for_task = channel.clone();
     tauri::async_runtime::spawn_blocking(move || -> Result<Value, String> {
@@ -2137,7 +2534,7 @@ pub async fn model_probe_run(
     let send = |payload: Value| {
         let _ = channel_for_task.send(payload);
     };
-    let mut outcomes: Vec<ProbeOutcome> = Vec::with_capacity(9);
+    let mut outcomes: Vec<ProbeOutcome> = Vec::with_capacity(PROBE_CODES.len());
     let headers: Vec<(String, String)>;
 
     send(running_event(0));
@@ -2152,7 +2549,7 @@ pub async fn model_probe_run(
                 send(settled_event(i, &skip));
                 outcomes.push(skip);
             }
-            return finish(&ctx, started, outcomes, Vec::new(), &send);
+            return finish(&ctx, started, outcomes, Vec::new(), None, &send);
         }
     };
     send(settled_event(0, &p1));
@@ -2283,8 +2680,15 @@ pub async fn model_probe_run(
     send(settled_event(18, &p19));
     outcomes.push(p19);
 
+    // ---- P20 行为指纹与归因（r5：全新短会话，权重 0 辅助信号） ----
+    send(running_event(19));
+    let fp_salt = format!("FP_SALT_{}", random_hex(6).to_uppercase());
+    let (p20, attribution) = probe_fingerprint(&ctx.target, &ctx.model_id, ctx.reasoning, &fp_salt);
+    send(settled_event(19, &p20));
+    outcomes.push(p20);
+
     let _ = stream_capture;
-    finish(&ctx, started, outcomes, headers, &send)
+    finish(&ctx, started, outcomes, headers, Some(attribution), &send)
     })
     .await
     .map_err(|_| "检测任务异常".to_string())?
@@ -2295,6 +2699,7 @@ fn finish(
     started: Instant,
     outcomes: Vec<ProbeOutcome>,
     headers: Vec<(String, String)>,
+    attribution: Option<Attribution>,
     send: &dyn Fn(Value),
 ) -> Result<Value, String> {
     let duration_ms = started.elapsed().as_millis() as i64;
@@ -2305,7 +2710,8 @@ fn finish(
         .map(|(i, o)| json!({ "code": PROBE_CODES[i], "name": PROBE_NAMES[i], "status": o.status.as_str(), "ms": o.ms, "note": o.note }))
         .collect();
     let history_id = new_id("mpr");
-    let result_json = serde_json::to_string(&json!({ "items": items })).map_err(|e| e.to_string())?;
+    let attribution_json = attribution.as_ref().map(|a| a.to_json()).unwrap_or(Value::Null);
+    let result_json = serde_json::to_string(&json!({ "items": items, "attribution": attribution_json })).map_err(|e| e.to_string())?;
     // 3. 入库（保留最近 10 条）；结果不含密钥与请求头值。
     {
         let guard = db::conn()?;
@@ -2352,6 +2758,7 @@ fn finish(
         "summary": summary,
         "durationMs": duration_ms,
         "items": items,
+        "attribution": attribution_json,
     });
     send(report.clone());
     Ok(report)
@@ -2383,6 +2790,7 @@ pub fn model_probe_history_list() -> Result<Vec<Value>, String> {
                 "summary": r.get::<_, String>(9)?,
                 "durationMs": r.get::<_, i64>(10)?,
                 "items": serde_json::from_str::<Value>(&result_json).ok().and_then(|v| v.get("items").cloned()).unwrap_or(json!([])),
+                "attribution": serde_json::from_str::<Value>(&result_json).ok().and_then(|v| v.get("attribution").cloned()).unwrap_or(Value::Null),
                 "createdAt": r.get::<_, i64>(12)?,
             }))
         })
@@ -2602,10 +3010,11 @@ mod tests {
 
     #[test]
     fn nineteen_probe_weights_sum_to_100() {
-        assert_eq!(PROBE_CODES.len(), 19);
-        assert_eq!(PROBE_NAMES.len(), 19);
-        assert_eq!(PROBE_WEIGHTS.len(), 19);
-        assert_eq!(PROBE_WEIGHTS.iter().sum::<i64>(), 100, "19 针权重合计应为 100 分制");
+        assert_eq!(PROBE_CODES.len(), 20);
+        assert_eq!(PROBE_NAMES.len(), 20);
+        assert_eq!(PROBE_WEIGHTS.len(), 20);
+        assert_eq!(PROBE_WEIGHTS.iter().sum::<i64>(), 100, "20 针权重合计应为 100 分制（P20=0）");
+        assert_eq!(PROBE_WEIGHTS[19], 0, "P20 为辅助信号，权重必须为 0");
         // 编号连续
         for (i, code) in PROBE_CODES.iter().enumerate() {
             assert_eq!(*code, format!("P{}", i + 1));
@@ -2615,7 +3024,7 @@ mod tests {
     #[test]
     fn scoring_indices_match_19_probe_layout() {
         // 回归：19 针后封顶索引整体位移，索引错位会把「偷换模型」判错。
-        let mut outcomes: Vec<ProbeOutcome> = (0..19).map(|_| outcome(Status::Pass, "ok")).collect();
+        let mut outcomes: Vec<ProbeOutcome> = (0..20).map(|_| outcome(Status::Pass, "ok")).collect();
         // P2（索引 1）偷换 + P6（索引 5）金丝雀丢失 → 假冒嫌疑、封顶 45
         outcomes[1] = outcome(Status::Fail, "跨档降级：qwen-max → qwen-turbo");
         outcomes[5] = outcome(Status::Fail, "System 金丝雀丢失");
@@ -2624,17 +3033,176 @@ mod tests {
         assert!(score <= 45, "score={} 应封顶 45", score);
         assert_eq!(grade, "D");
         // 仅 P2 偷换（无上下文红牌）→ 存疑、封顶 60
-        let mut only_echo: Vec<ProbeOutcome> = (0..19).map(|_| outcome(Status::Pass, "ok")).collect();
+        let mut only_echo: Vec<ProbeOutcome> = (0..20).map(|_| outcome(Status::Pass, "ok")).collect();
         only_echo[1] = outcome(Status::Fail, "跨档降级");
         let (score2, _, verdict2, _) = aggregate(&only_echo, "m");
         assert_eq!(verdict2, "存疑");
         assert!(score2 <= 60, "score={} 应封顶 60", score2);
         // P14 混池实锤 → 封顶 50
-        let mut pool: Vec<ProbeOutcome> = (0..19).map(|_| outcome(Status::Pass, "ok")).collect();
+        let mut pool: Vec<ProbeOutcome> = (0..20).map(|_| outcome(Status::Pass, "ok")).collect();
         pool[13] = outcome(Status::Fail, "并发中检出跨档降级回显");
         let (score3, _, verdict3, _) = aggregate(&pool, "m");
         assert_eq!(verdict3, "存疑");
         assert!(score3 <= 50, "score={} 应封顶 50", score3);
+    }
+
+    #[test]
+    fn p20_never_affects_score_verdict_or_caps() {
+        // r5：P20 fail/warn 均不扣分、不改判真伪轴、不触发封顶。
+        let mut all_pass: Vec<ProbeOutcome> = (0..20).map(|_| outcome(Status::Pass, "ok")).collect();
+        all_pass[19] = outcome(Status::Fail, "行为指纹网络错误");
+        let (score, _, verdict, summary) = aggregate(&all_pass, "claude-sonnet-5.5");
+        assert_eq!(score, 100, "P20 fail 不得扣分");
+        assert_eq!(verdict, "真实", "P20 fail 不得改判真伪轴");
+        assert!(!summary.contains("存在不通过项"), "P20 fail 不应进入计分摘要：{}", summary);
+        let mut warn: Vec<ProbeOutcome> = (0..20).map(|_| outcome(Status::Pass, "ok")).collect();
+        warn[19] = outcome(Status::Warn, "行为指纹偏离声称家族（最像 glm-5.x d=0.12，辅助信号不计分）");
+        let (score2, _, verdict2, _) = aggregate(&warn, "claude-sonnet-5.5");
+        assert_eq!(score2, 100);
+        assert_eq!(verdict2, "真实");
+    }
+
+    #[test]
+    fn r5_vendor_generation_and_tier_rules() {
+        // MiniMax / Grok / Kimi / Doubao / ERNIE / Hunyuan 代际与档位不再落空。
+        assert!(matches!(check_model_echo("minimax-m3", "minimax-m2.7"), EchoVerdict::Downgrade(_)));
+        assert!(matches!(check_model_echo("abab7", "abab6.5"), EchoVerdict::Downgrade(_)));
+        assert!(matches!(check_model_echo("grok-4", "grok-3"), EchoVerdict::Downgrade(_)));
+        assert!(matches!(check_model_echo("grok-4", "grok-4-fast"), EchoVerdict::Downgrade(_)));
+        assert!(matches!(check_model_echo("kimi-k3", "kimi-k2"), EchoVerdict::Downgrade(_)));
+        assert!(matches!(check_model_echo("doubao-2.1-pro", "doubao-2.1-lite"), EchoVerdict::Downgrade(_)));
+        assert!(matches!(check_model_echo("ernie-4.5", "ernie-4.0"), EchoVerdict::Downgrade(_)));
+        assert_eq!(check_model_echo("minimax-m3", "minimax-m3"), EchoVerdict::Match);
+        assert_eq!(check_model_echo("grok-4", "grok-4"), EchoVerdict::Match);
+        // 跨厂商不误比代际
+        assert!(!matches!(check_model_echo("grok-4", "glm-5.3"), EchoVerdict::Downgrade(_)));
+        // 档位秩：heavy 旗舰 / fast 低档
+        assert_eq!(tier_rank("grok-4-heavy"), Some(4));
+        assert_eq!(tier_rank("grok-4-fast"), Some(1));
+        assert_eq!(tier_rank("minimax-m3"), Some(3));
+    }
+
+    #[test]
+    fn r5_family_of_maps_vendors() {
+        assert_eq!(family_of("deepseek-v4.1-flash"), "deepseek");
+        assert_eq!(family_of("glm-5.3-flash"), "zhipu");
+        assert_eq!(family_of("minimax-m2.7"), "minimax");
+        assert_eq!(family_of("abab6.5"), "minimax");
+        assert_eq!(family_of("grok-4.6"), "xai");
+        assert_eq!(family_of("kimi-k3"), "moonshot");
+        assert_eq!(family_of("doubao-2.1-pro"), "bytedance");
+        assert_eq!(family_of("hunyuan-turbo"), "tencent");
+        assert_eq!(family_of("ernie-4.5"), "baidu");
+        assert_eq!(family_of("qwen3.8-max"), "qwen");
+        assert_eq!(family_of("claude-sonnet-5.5"), "anthropic");
+        assert_eq!(family_of("gpt-6.2-sol"), "openai");
+        assert_eq!(family_of("gemini-3.1-pro"), "google");
+        assert_eq!(family_of("local-private-7b"), "unknown");
+    }
+
+    #[test]
+    fn r5_number_sequence_parse_and_features() {
+        let text = "好的，以下是数字：12, 45, 78, 3, 200, 355, 1, 99, 150, 220, 37, 64, 128, 256, 88, 177, 42, 310, 55, 199";
+        let nums = parse_number_sequence(text);
+        assert_eq!(nums.len(), 20);
+        assert!(nums.iter().all(|x| (1..=355).contains(x)));
+        let f = sequence_features(&nums).expect("20 个数应可提取特征");
+        assert!(f.iter().all(|x| (0.0..=1.0).contains(x)));
+        // 过短序列拒绝
+        assert!(sequence_features(&[1, 2, 3]).is_none());
+        // 越界数被过滤
+        assert!(parse_number_sequence("0, 356, 999, 42").iter().all(|x| (1..=355).contains(x)));
+    }
+
+    #[test]
+    fn r5_attribution_three_states_and_top3() {
+        // 构造贴近 deepseek 基线特征的序列：直接以基线向量反推不可行，改用距离函数验证排序与三态边界。
+        let base = &FINGERPRINT_BASELINES.iter().find(|b| b.family == "deepseek").unwrap().features;
+        assert!(feature_distance(base, base) < 1e-9);
+        // match：声称 deepseek，特征即 deepseek 基线 → top1 距离 0
+        let nums_near = synthetic_nums_for_features(base);
+        let attr = attribute_fingerprint("deepseek-v4.1", &nums_near, "{\"vendor\":\"deepseek\"}");
+        // 合成序列只能近似；至少验证 candidates 排序升序、consistency 合法、note 含概率性措辞
+        assert!(["match", "mismatch", "unknown"].contains(&attr.consistency));
+        assert!(attr.note.contains("概率性提示"));
+        let ds: Vec<f64> = attr.candidates.iter().map(|c| c.2).collect();
+        assert!(ds.windows(2).all(|w| w[0] <= w[1]), "候选必须按距离升序");
+        assert!(attr.candidates.len() <= 3);
+        // unknown：不可解析序列
+        let attr2 = attribute_fingerprint("glm-5.3", &[1, 2], "");
+        assert_eq!(attr2.consistency, "unknown");
+        assert!(attr2.candidates.is_empty());
+        // mismatch 路径：声称 openai 但特征贴近 deepseek 基线（若合成足够近）
+        let attr3 = attribute_fingerprint("gpt-6.2-sol", &nums_near, "");
+        if attr3.consistency == "mismatch" {
+            assert_ne!(attr3.candidates[0].1, "openai");
+            assert!(attr3.note.contains("偏离声称家族"));
+        }
+        // 所有候选名带未校准标注（首版基线如实声明）
+        for c in &attr.candidates {
+            assert!(c.0.contains("未校准基线"), "首版候选必须标注未校准：{}", c.0);
+        }
+    }
+
+    /// 测试辅助：按目标特征向量合成一组整数（均值/小值偏好/重复率近似），用于三态路径覆盖。
+    fn synthetic_nums_for_features(target: &[f64; 6]) -> Vec<i64> {
+        let mean = (target[0] * 355.0).round() as i64;
+        let small_count = (target[5] * 64.0).round() as usize;
+        let mut nums = Vec::new();
+        for i in 0..64 {
+            if i < small_count {
+                nums.push(((i % 50) + 1) as i64);
+            } else {
+                nums.push((mean + (i as i64 % 7) - 3).clamp(1, 355));
+            }
+        }
+        nums
+    }
+
+    #[test]
+    fn r5_anthropic_headers_recognized() {
+        let anthropic = vec![
+            ("request-id".to_string(), "req_123".to_string()),
+            ("anthropic-ratelimit-requests-limit".to_string(), "1000".to_string()),
+            ("content-type".to_string(), "application/json".to_string()),
+        ];
+        let out = probe_header_fingerprint(&anthropic);
+        assert_eq!(out.status, Status::Pass);
+        assert!(out.note.contains("Anthropic"), "{}", out.note);
+        assert_eq!(channel_of(&anthropic, false), "官方直连");
+        let azure = vec![
+            ("apim-request-id".to_string(), "x".to_string()),
+            ("content-type".to_string(), "application/json".to_string()),
+        ];
+        assert!(probe_header_fingerprint(&azure).note.contains("Azure"));
+    }
+
+    #[test]
+    fn r5_wrapper_keywords_cover_non_openai_ecosystem() {
+        assert!(WRAPPER_KEYWORDS.iter().any(|k| *k == "grok cli"));
+        assert!(WRAPPER_KEYWORDS.iter().any(|k| *k == "qwen-code"));
+        assert!(WRAPPER_KEYWORDS.iter().any(|k| *k == "you are deepseek"));
+        assert!(WRAPPER_KEYWORDS.iter().any(|k| *k == "iflow"));
+    }
+
+    #[test]
+    fn r5_attribution_json_roundtrip_and_legacy_null() {
+        let attr = Attribution {
+            consistency: "mismatch",
+            claimed_family: "anthropic".into(),
+            candidates: vec![("glm-5.x（未校准基线）".into(), "zhipu".into(), 0.1234)],
+            note: "测试".into(),
+        };
+        let j = attr.to_json();
+        assert_eq!(j["consistency"], "mismatch");
+        assert_eq!(j["candidates"][0]["distance"], 0.12);
+        let result_json = serde_json::to_string(&json!({ "items": [], "attribution": j })).unwrap();
+        let parsed: Value = serde_json::from_str(&result_json).unwrap();
+        assert_eq!(parsed["attribution"]["claimedFamily"], "anthropic");
+        // 旧记录无 attribution 键 → null（前端不渲染面板）
+        let legacy = serde_json::to_string(&json!({ "items": [] })).unwrap();
+        let legacy_parsed: Value = serde_json::from_str(&legacy).unwrap();
+        assert!(legacy_parsed.get("attribution").is_none());
     }
 
     #[test]

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Icon, type IconName } from "@/components/icons";
 import * as api from "@/api";
@@ -137,7 +137,15 @@ export function fileTypeGlyph(type: string): { icon: IconName; token: string } {
 }
 
 /* ---------------- 用户头像（品牌帆船 Logo，5 种容器风格） ---------------- */
-/* ---------------- 图标悬浮层（CR-070 / UI-CR070-v1） ---------------- */
+/* ---------------- 图标悬浮层（CR-070 / UI-CR070-v1；CR-073 锚定限高） ---------------- */
+
+/** CR-073：悬浮层高度上限与视口边距（UI-CR073-r1 §1.1）。 */
+const POP_MAX_HEIGHT = 420;
+const POP_MARGIN = 12;
+const POP_GAP = 8;
+
+/** CR-073：锚点矩形（视口坐标）。 */
+export interface ProjectIconAnchor { left: number; right: number; top: number; bottom: number }
 
 /**
  * 项目/知识库图标悬浮层：点击卡片图标砖打开。
@@ -145,8 +153,12 @@ export function fileTypeGlyph(type: string): { icon: IconName; token: string } {
  * 「选择图标」50 个 6 组网格（+默认格）；选择即时预览，保存成对回调 icon+iconColor。
  * 关闭按钮 / 遮罩按下 / Escape 均视为取消，不落库；正文超高时滚动，
  * 滚动条显隐由 UI-SCROLL-001 共享机制（scrollbar.ts + base.css）承担。
+ *
+ * CR-073：传入 anchor 时改为锚定触发图标定位（默认下方 8px，空间不足翻转上方，
+ * 左右夹紧视口），整体限高 420px（视口不足按 100dvh-80px），超高在正文区滚动；
+ * 不传 anchor 时回退为视口居中，保证既有调用点不受影响。
  */
-export function IconPopover({ open, title, kind, icon, color, onSave, onClose }: {
+export function IconPopover({ open, title, kind, icon, color, anchor, host, onSave, onClose }: {
   open: boolean;
   title: string;
   kind: "project" | "kb";
@@ -154,6 +166,10 @@ export function IconPopover({ open, title, kind, icon, color, onSave, onClose }:
   icon: string | null;
   /** 当前已保存色卡（null=默认色）。 */
   color: string | null;
+  /** CR-073：触发元素矩形；提供时锚定定位并限高，缺省为居中。 */
+  anchor?: ProjectIconAnchor | null;
+  /** CR-073：挂载容器。编辑弹窗在原生 <dialog> 的 top layer，需要挂进该 dialog 才不被遮挡。 */
+  host?: HTMLElement | null;
   onSave: (icon: string | null, color: string | null) => void;
   onClose: () => void;
 }) {
@@ -161,11 +177,61 @@ export function IconPopover({ open, title, kind, icon, color, onSave, onClose }:
   const [colorDraft, setColorDraft] = useState<string | null>(color);
   const popRef = useRef<HTMLDivElement>(null);
   const [saving, setSaving] = useState(false);
+  const [placement, setPlacement] = useState<{ left: number; top: number; width: number; maxHeight: number; side: "below" | "above" | "bottom" } | null>(null);
 
   // 打开时重置草稿为已保存值（同一实例复用于不同对象）。
   useEffect(() => {
-    if (open) { setIconDraft(icon); setColorDraft(color); setSaving(false); }
+    if (open) { setIconDraft(icon); setColorDraft(color); setSaving(false); setPlacement(null); }
   }, [open, icon, color]);
+
+  /* CR-073：按锚点计算位置与限高。下方放得下可用高度的一半即向下，否则比较上下空间。
+     视口 < 520px 退化为底部弹层；无锚点时回退居中。
+     注意：本组件通过 portal 渲染，effect 首次运行时元素尚未挂载，故先按锚点直接算一遍
+     （不依赖 offsetHeight），再在下一帧按实测高度校正一次。 */
+  useLayoutEffect(() => {
+    if (!open) return;
+    const compute = () => {
+      const pop = popRef.current;
+      const vw = window.innerWidth, vh = window.innerHeight;
+      if (vw < 520) {
+        const maxHeight = Math.min(POP_MAX_HEIGHT, Math.round(vh * 0.7));
+        setPlacement({ left: POP_MARGIN, top: vh - POP_MARGIN - maxHeight, width: vw - POP_MARGIN * 2, maxHeight, side: "bottom" });
+        return;
+      }
+      const width = Math.min(460, vw - POP_MARGIN * 2);
+      const cap = Math.min(POP_MAX_HEIGHT, vh - 80);
+      const measured = pop ? pop.offsetHeight : 0;
+      const height = Math.min(cap, measured > 0 ? measured : cap);
+      const spaceBelow = anchor ? vh - anchor.bottom - POP_GAP - POP_MARGIN : vh;
+      const spaceAbove = anchor ? anchor.top - POP_GAP - POP_MARGIN : 0;
+      const down = !anchor || spaceBelow >= Math.min(height, 320) || spaceBelow >= spaceAbove;
+      let top = anchor ? (down ? anchor.bottom + POP_GAP : anchor.top - height - POP_GAP) : Math.max(POP_MARGIN, (vh - height) / 2);
+      top = Math.max(POP_MARGIN, Math.min(top, vh - height - POP_MARGIN));
+      const left = Math.max(POP_MARGIN, Math.min(anchor ? anchor.left : (vw - width) / 2, vw - width - POP_MARGIN));
+      setPlacement({ left: Math.round(left), top: Math.round(top), width, maxHeight: cap, side: anchor ? (down ? "below" : "above") : "below" });
+    };
+    /* 首帧：元素可能还未挂载，用锚点与上限先定位，避免出现在 (0,0)。 */
+    compute();
+    /* 挂载后按实测高度校正并绑定重新计算。 */
+    let frame = requestAnimationFrame(() => {
+      compute();
+      frame = requestAnimationFrame(compute);
+    });
+    /* 锚点随页面滚动会脱离原位，滚动时重新计算而不是关闭，保持悬浮层跟随。
+       CR-073：悬浮层自身内部的滚动不应触发重新定位（否则宽度/位置抖动）。 */
+    const onScroll = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Element && popRef.current?.contains(target)) return;
+      compute();
+    };
+    window.addEventListener("resize", compute);
+    document.addEventListener("scroll", onScroll, true);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("resize", compute);
+      document.removeEventListener("scroll", onScroll, true);
+    };
+  }, [open, anchor]);
 
   useEffect(() => {
     if (!open) return;
@@ -198,7 +264,10 @@ export function IconPopover({ open, title, kind, icon, color, onSave, onClose }:
   const previewLabel = `${ICON_LABELS[shownIcon] ?? "默认"} · ${colorDraft ? (shownColor) : "默认色"}`;
   return createPortal(
     <div className="icon-pop-mask" onMouseDown={e => { if (e.target === e.currentTarget && !saving) onClose(); }}>
-      <div ref={popRef} className="icon-pop" role="dialog" aria-modal="true" aria-label={`选择图标与颜色：${title}`}>
+      <div ref={popRef} className="icon-pop" role="dialog" aria-modal="true"
+        data-side={placement?.side ?? "below"}
+        aria-label={`选择图标与颜色：${title}`}
+        style={placement ? { position: "fixed", left: placement.left, top: placement.top, width: placement.width, maxHeight: placement.maxHeight } : undefined}>
         <div className="icon-pop-h"><b className="ellipsis">{title}</b>
           <button type="button" className="btn icon ghost sm" aria-label="关闭" disabled={saving} onClick={onClose}><Icon name="x" size={14} /></button>
         </div>
@@ -239,8 +308,16 @@ export function IconPopover({ open, title, kind, icon, color, onSave, onClose }:
           </button>
         </div>
       </div>
-    </div>, document.body);
+    </div>, host ?? document.body);
 }
+
+/** CR-073：把触发元素转成锚点矩形，供 IconPopover 定位。 */
+export function anchorOf(element: Element | null): ProjectIconAnchor | null {
+  const rect = element?.getBoundingClientRect();
+  return rect ? { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom } : null;
+}
+
+export interface ProjectIconAnchor { left: number; right: number; top: number; bottom: number }
 
 /** 卡片图标砖的悬浮层触发按钮：图标与名称保持并排，点图标开悬浮层（CR-070）。 */
 export function IconPopoverTrigger({ children, title, onOpen }: {

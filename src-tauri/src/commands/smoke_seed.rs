@@ -24,6 +24,19 @@ pub fn smoke_seed_chat_demo(session_id: String) -> Result<serde_json::Value, Str
     };
 
     insert("user", "帮我看看这段代码，并显示运行结果图片、关联文件", None)?;
+    insert(
+        "system",
+        "",
+        Some(serde_json::json!({
+            "kind": "planUpdate",
+            "items": [
+                { "text": "阅读截断函数", "status": "completed" },
+                { "text": "定位字符边界问题", "status": "completed" },
+                { "text": "核对修复和构建结果", "status": "in_progress" },
+                { "text": "汇总关联文件", "status": "pending" }
+            ]
+        })),
+    )?;
 
     let assistant_md = concat!(
         "先说结论：这段 Rust 代码有一个 UTF-8 边界问题。\n\n",

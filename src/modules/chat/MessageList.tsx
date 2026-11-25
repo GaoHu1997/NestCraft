@@ -8,6 +8,7 @@ import type { AttachmentMeta, ChatMessage, ContextRef } from "@/api";
 import { requestLocate } from "@/modules/locate";
 import { ThinkingIndicator, formatElapsed } from "./ThinkingIndicator";
 import { toolDisplayName } from "./sessionRuntime";
+import { AttachmentImages } from "./AttachmentImages";
 
 /**
  * 消息流渲染（CR-034 / STORY-062）：
@@ -29,6 +30,8 @@ export interface UiMessage {
   toolName: string | null;
   isError: boolean;
   inputJson: string | null;
+  toolOutput?: string | null;
+  exitCode?: number | null;
   refs: ContextRef[] | null;
   usage: { input: number; output: number } | null;
   model?: string | null;
@@ -96,6 +99,8 @@ export function fromChatMessage(m: ChatMessage): UiMessage {
     toolName: m.role === "tool_use" ? m.content : null,
     isError: meta.isError === true,
     inputJson: typeof meta.input === "string" ? meta.input : null,
+    toolOutput: typeof meta.toolOutput === "string" ? meta.toolOutput : null,
+    exitCode: typeof meta.exitCode === "number" ? meta.exitCode : null,
     refs: Array.isArray(refs) ? refs : null,
     model: typeof meta.model === "string" ? meta.model : typeof meta.modelId === "string" ? meta.modelId : null,
     createdAt: m.createdAt,
@@ -330,27 +335,32 @@ interface ToolPair {
   resultMsg: UiMessage | null;
 }
 
-/** 按顺序把消息折叠为渲染单元：普通消息原样；tool_use/tool_result 合并为工具块 */
-function buildBlocks(msgs: UiMessage[]): (UiMessage | { kind: "tool"; pair: ToolPair })[] {
-  const out: (UiMessage | { kind: "tool"; pair: ToolPair })[] = [];
-  const index = new Map<string, number>(); // toolId -> out 下标
+type ToolItem = { kind: "tool"; pair: ToolPair; part: "call" | "result" | "both" };
+type Block = UiMessage | ToolItem;
+
+function buildBlocks(msgs: UiMessage[]): Block[] {
+  const out: Block[] = [];
+  const pending = new Map<string, ToolItem>();
   for (const m of msgs) {
+    if (m.role === "user") pending.clear();
+    if (m.role === "system" && m.kind === "planUpdate") continue;
     if (m.role === "tool_use" && m.toolId) {
-      const i = out.length;
-      out.push({
-        kind: "tool",
+      const item: ToolItem = {
+        kind: "tool", part: "call",
         pair: { toolId: m.toolId, name: m.toolName, inputJson: m.inputJson, result: null, useMsg: m, resultMsg: null },
-      });
-      index.set(m.toolId, i);
+      };
+      out.push(item);
+      pending.set(m.toolId, item);
       continue;
     }
     if (m.role === "tool_result" && m.toolId) {
-      if (index.has(m.toolId)) {
-        const blk = out[index.get(m.toolId)!] as { kind: "tool"; pair: ToolPair };
-        blk.pair.result = { content: m.content, isError: m.isError };
-        blk.pair.resultMsg = m;
-        index.delete(m.toolId); // toolId重复时不能覆盖早期已配对结果
-      } else out.push({ kind: "tool", pair: { toolId: m.toolId, name: null, inputJson: null, result: { content: m.content, isError: m.isError }, useMsg: null, resultMsg: m } });
+      const call = pending.get(m.toolId);
+      const pair: ToolPair = call?.pair ?? { toolId: m.toolId, name: null, inputJson: null, result: null, useMsg: null, resultMsg: null };
+      pair.result = { content: m.content, isError: m.isError };
+      pair.resultMsg = m;
+      if (call && out[out.length - 1] === call) call.part = "both";
+      else out.push({ kind: "tool", part: "result", pair });
+      pending.delete(m.toolId);
       continue;
     }
     out.push(m);
@@ -368,50 +378,94 @@ function briefOf(inputJson: string | null): string {
   }
 }
 
-function ToolBlock({ pair }: { pair: ToolPair }) {
+function ToolBlock({ pair, part }: ToolItem) {
   const running = pair.result == null && !!pair.useMsg?.streaming;
   const orphanResult = pair.useMsg == null;
   const orphanUse = pair.result == null && !running;
   const status = running ? "run" : pair.result?.isError ? "fail" : pair.result ? "ok" : "pending";
-  const statusText = orphanResult ? "来源调用未记录" : running ? "执行中" : pair.result?.isError ? "失败" : orphanUse ? "结果未返回" : "完成";
-  const failureSummary = pair.result?.isError
+  const statusText = part === "call" && pair.result ? "结果见下方" : orphanResult ? "来源调用未记录" : running ? "执行中" : pair.result?.isError ? "失败" : orphanUse ? "结果未返回" : "完成";
+  const failureSummary = part !== "call" && pair.result?.isError
     ? pair.result.content.trim().replace(/\s+/g, " ").slice(0, 160) || "工具执行失败，未返回错误详情"
     : "";
-  const { pretty } = useMemo(() => {
-    let obj: Record<string, unknown> = {};
-    try {
-      obj = JSON.parse(pair.inputJson ?? "{}") as Record<string, unknown>;
-    } catch {
-      /* 非 JSON 原文显示 */
-    }
-    return { pretty: JSON.stringify(obj, null, 2) };
-  }, [pair.inputJson]);
+  const input = parseJson<Record<string, unknown>>(pair.inputJson);
+  const command = typeof input?.command === "string" ? input.command : null;
+  const inputText = input ? JSON.stringify(input, null, 2) : pair.inputJson;
+  const parametersText = command !== null && input
+    ? JSON.stringify(Object.fromEntries(Object.entries(input).filter(([key]) => key !== "command")), null, 2)
+    : null;
+  const output = part === "call" && pair.result ? null : pair.result?.content ?? pair.useMsg?.toolOutput;
+  const exitCode = part === "call" ? null : pair.resultMsg?.exitCode;
   return (
     <div className="chat-msg">
       <div className={`chat-toolblock ${status}`}>
         <div className="chat-toolblock-head">
-          <span className={`tag ${status === "fail" ? "bad" : status === "ok" ? "good" : "blue"}`}>{toolDisplayName(pair.name) ?? "工具调用"}</span>
+          <span className={`tag ${status === "fail" ? "bad" : status === "ok" ? "good" : "blue"}`}>{toolDisplayName(pair.name) ?? "工具调用"}{part === "result" && " · 结果"}</span>
           {briefOf(pair.inputJson) && <span className="small muted ellipsis chat-toolblock-brief">{briefOf(pair.inputJson)}</span>}
           <span className="spacer" />
-          <span className={`chat-tool-state st-${status}`}>{statusText}</span>
+          <span className={`chat-tool-state st-${status}`}>{statusText}{exitCode != null && ` · 退出码 ${exitCode}`}</span>
         </div>
         {failureSummary && <div className="chat-tool-fail-summary" title={pair.result?.content}>{failureSummary}</div>}
-        {(pair.inputJson || pair.result) && (
+        {(inputText || output != null) && (
           <details className="chat-tool-detail">
-            <summary>
-              {pair.result ? (pair.result.isError ? "失败摘要与输入参数" : "查看结果与输入参数") : "输入参数"}
-            </summary>
-            {pretty !== "{}" && <pre>{pretty}</pre>}
-            {pair.result && (
-              <pre className={pair.result.isError ? "chat-tool-err" : ""}>
-                {pair.result.content || "（无输出）"}
-              </pre>
-            )}
+            <summary>{command !== null ? "命令与输出" : output != null ? "查看输入与输出" : "输入参数"}</summary>
+            {command !== null ? <pre className="chat-tool-command">{command || "（命令未记录）"}</pre> : inputText && inputText !== "{}" && <pre>{inputText}</pre>}
+            {parametersText && parametersText !== "{}" && <pre title="输入参数">{parametersText}</pre>}
+            {output != null && <pre className={pair.result?.isError ? "chat-tool-err" : ""}>{output || "（无输出）"}</pre>}
           </details>
         )}
       </div>
     </div>
   );
+}
+
+interface Turn {
+  id: string;
+  user: UiMessage | null;
+  reply: Block[];
+}
+
+function buildTurns(blocks: Block[]): Turn[] {
+  const turns: Turn[] = [];
+  for (const block of blocks) {
+    if (!("pair" in block) && block.role === "user") {
+      turns.push({ id: block.id, user: block, reply: [] });
+    } else {
+      if (!turns.length) turns.push({ id: "history-start", user: null, reply: [] });
+      turns[turns.length - 1].reply.push(block);
+    }
+  }
+  return turns;
+}
+
+function toolKey({ pair, part }: ToolItem) { return (part === "result" ? pair.resultMsg?.id : pair.useMsg?.id) ?? pair.toolId; }
+
+function ExecutionProcess({ blocks, working, renderMessage }: {
+  blocks: Block[];
+  working: boolean;
+  renderMessage: (m: UiMessage) => React.ReactNode;
+}) {
+  const steps: (UiMessage | ToolItem[])[] = [];
+  for (const block of blocks) {
+    if ("pair" in block) {
+      const last = steps[steps.length - 1];
+      if (Array.isArray(last)) last.push(block);
+      else steps.push([block]);
+    } else steps.push(block);
+  }
+  const hasError = blocks.some(block => "pair" in block ? block.pair.result?.isError : block.role === "error");
+  return <details className="chat-turn-process">
+    <summary><Icon name="chevronRight" size={12} />执行过程 <span className="chat-process-status" aria-live="polite">{working ? "进行中" : hasError ? "有错误" : "已结束"}</span></summary>
+    <div className="chat-turn-process-body">
+      {steps.map(step => {
+        if (!Array.isArray(step)) return renderMessage(step);
+        if (step.length < 2) return <ToolBlock key={toolKey(step[0])} {...step[0]} />;
+        return <details className="chat-tool-group" key={toolKey(step[0])}>
+          <summary><Icon name="chevronRight" size={12} />{`${step.length} 条工具记录`}</summary>
+          {step.map(item => <ToolBlock key={toolKey(item)} {...item} />)}
+        </details>;
+      })}
+    </div>
+  </details>;
 }
 
 /* ---------- 消息列表 ---------- */
@@ -458,7 +512,7 @@ export function MessageList(props: {
     return () => window.removeEventListener("keydown", onKey);
   }, [zoom, props.visible]);
 
-  const blocks = useMemo(() => buildBlocks(props.msgs), [props.msgs]);
+  const turns = useMemo(() => buildTurns(buildBlocks(props.msgs)), [props.msgs]);
   const workingSince = useMemo(() => {
     for (let i = props.msgs.length - 1; i >= 0; i -= 1) {
       const m = props.msgs[i];
@@ -481,16 +535,24 @@ export function MessageList(props: {
     );
   }
 
+  const renderMessage = (m: UiMessage, showReplyActions = false) => <MessageRow key={m.id} m={m} showReplyActions={showReplyActions} projectId={props.projectId} rootUri={props.rootUri} officeFiles={props.officeFiles} canLocate={canLocate} onOpenAgent={props.onOpenAgent} onImageOpen={(src, alt, el) => setZoom({ src, alt, back: el })} />;
   return (
     <>
       <div className="chat-msgs" ref={boxRef} onScroll={onScroll}>
-        {blocks.map((b, i) =>
-          "pair" in b ? (
-            <ToolBlock key={`tb-${b.pair.toolId}-${i}`} pair={b.pair} />
-          ) : (
-            <MessageRow key={b.id} m={b} projectId={props.projectId} rootUri={props.rootUri} officeFiles={props.officeFiles} canLocate={canLocate} onOpenAgent={props.onOpenAgent} onImageOpen={(src, alt, el) => setZoom({ src, alt, back: el })} />
-          )
-        )}
+        {turns.map((turn, index) => {
+          const working = !!props.working && index === turns.length - 1;
+          const tail = turn.reply[turn.reply.length - 1];
+          const final = !working && tail && !("pair" in tail) && tail.role === "assistant" && !!tail.content && !tail.streaming ? tail : null;
+          const terminalError = tail && !("pair" in tail) && tail.role === "error" ? tail : null;
+          const process = final || terminalError ? turn.reply.slice(0, -1) : turn.reply;
+          const hasProcess = process.some(block => "pair" in block || block.thinking || block.role === "subagent" || block.role === "assistant");
+          return <section className="chat-turn" key={turn.id}>
+            {turn.user && renderMessage(turn.user)}
+            {hasProcess || working ? <ExecutionProcess blocks={process} working={working} renderMessage={renderMessage} /> : process.map(block => "pair" in block ? <ToolBlock key={toolKey(block)} {...block} /> : renderMessage(block))}
+            {final && renderMessage(final, true)}
+            {terminalError && renderMessage(terminalError)}
+          </section>;
+        })}
         {props.working && (
           <div className="chat-msg assistant chat-working-row">
             <ThinkingIndicator since={workingSince} />
@@ -518,6 +580,7 @@ function MessageRow(props: {
   rootUri?: string;
   officeFiles?: OfficeFileRef[];
   canLocate: boolean;
+  showReplyActions?: boolean;
   onOpenAgent?: (agentId: string) => void;
   onImageOpen: (src: string, alt: string, el: HTMLElement) => void;
 }) {
@@ -541,7 +604,7 @@ function MessageRow(props: {
             </div>
           )}
           {m.content}
-          {m.attachments?.map((a, i) => <div className="chat-attachment" key={`${a.name}-${i}`} title="仅附件元信息，未读取正文">{a.name} · 附件元信息</div>)}
+          {m.attachments?.length ? <AttachmentImages attachments={m.attachments} /> : null}
           </div>
           <div className="chat-msg-name chat-msg-time">{messageTime(m.createdAt)}</div>
         </div>
@@ -580,7 +643,7 @@ function MessageRow(props: {
               onImageOpen={props.onImageOpen}
             />
           )}
-          {!m.streaming && !!m.content && (
+          {props.showReplyActions === true && !m.streaming && !!m.content && (
             <div className="chat-msg-actions">
               <button type="button" className="chat-msg-action" onClick={copyMessage} title="复制这条回复的正文">
                 <Icon name={copied ? "check" : "copy"} size={13} />

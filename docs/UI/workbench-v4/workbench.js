@@ -113,91 +113,7 @@ window.WorkbenchUI = (function () {
      与 AI 侧栏历史浮层（ai.js historyRail / CR-063 分批 / CR-065 状态标识）保持同一套结构与类名：
      .ai-session / .ai-hist-mark|dot|spin / .s-main / .ai-hist-more。
      不复制样式，直接复用 ai.css + cr063.css + cr065.css。 */
-  function markOf(s) {
-    if ((D.ai.runningIds || []).includes(s.id)) return "running";
-    if (s.id === currentId()) return "none";
-    if (s.status === "success") return "unread-success";
-    if (s.status === "failed") return "unread-failed";
-    if (s.status === "pending") return "unread-pending";
-    return "none";
-  }
-
-  function histMark(s) {
-    const m = markOf(s);
-    if (m === "running") return `<span class="ai-hist-spin" role="status" aria-label="运行中" title="运行中"></span>`;
-    if (m === "none") return `<span class="ai-hist-mark" aria-hidden="true"></span>`;
-    const cls = m === "unread-success" ? "good" : m === "unread-failed" ? "bad" : "warn";
-    const label = m === "unread-success" ? "未读 · 成功" : m === "unread-failed" ? "未读 · 失败" : "待处理";
-    return `<span class="ai-hist-dot dot-${cls}" role="img" aria-label="${label}" title="${label}"></span>`;
-  }
-
-  function historyRail() {
-    const list = sessions();
-    const kw = String(store.wbHistQuery || "").trim().toLowerCase();
-    /* 置顶优先；其余保持数组顺序（与 ai.js historyRail 口径一致） */
-    const ordered = [...list].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
-    const matched = kw ? ordered.filter(s => String(s.title || "").toLowerCase().includes(kw)) : ordered;
-    const limit = Math.max(HIST_PAGE, Number(store.wbHistLimit) || HIST_PAGE);
-    const shown = matched.slice(0, limit);
-    const hasMore = shown.length < matched.length;
-    const cur = list.find(s => s.id === currentId());
-    const pinned = !kw && cur && !shown.some(s => s.id === cur.id) ? cur : null;
-
-    const row = (s, extra = "") => {
-      const isCur = s.id === currentId();
-      return `<div class="ai-session ${isCur ? "active" : ""}${extra ? " pinned-row" : ""}" role="button" tabindex="0" data-act="wb-session" data-id="${esc(s.id)}" aria-current="${isCur}">
-        ${histMark(s)}<span class="s-main">
-          <b class="ellipsis">${s.pinned ? icon("arrowUp", "ico-12 ai-hist-pin-ico") : ""}${esc(s.title || "未命名会话")}</b>
-          <span>${esc(s.updated || "")}${s.tokens && s.tokens !== "—" ? " · " + esc(s.tokens) : ""}${s.duration && s.duration !== "—" ? " · " + esc(s.duration) : ""}</span>
-        </span></div>`;
-    };
-
-    const empty = kw
-      ? `<div class="ai-hist-empty">没有匹配的会话<button class="link-btn" data-act="wb-hist-reset">清除搜索</button></div>`
-      : `<div class="ai-hist-empty">暂无历史会话</div>`;
-    const tail = hasMore
-      ? `<button class="ai-hist-more" data-act="wb-hist-more">继续加载 · 还剩 ${matched.length - shown.length} 条</button>`
-      : `<div class="ai-hist-end">已到全部</div>`;
-
-    const body = `${pinned ? row(pinned, true) : ""}${shown.map(s => row(s)).join("")}${shown.length ? tail : ""}${!shown.length && !pinned ? empty : ""}`;
-
-    return `<aside class="wb-hist ai-history" aria-label="会话历史">
-      <div class="ai-history-h">
-        <span class="ah-title">${icon("history", "ico-14")}<b>会话历史</b><span class="caption" title="已加载 / 全部">${shown.length} / ${matched.length}</span></span>
-        <button class="icon-btn" data-act="wb-new" title="新会话" aria-label="新会话">${icon("plus", "ico-14")}</button>
-      </div>
-      <div class="ai-history-search">
-        <span class="ahs-ico">${icon("search", "ico-14")}</span>
-        <input id="wb-hist-q" type="search" autocomplete="off" value="${esc(store.wbHistQuery || "")}" placeholder="搜索本项目会话标题" aria-label="搜索本项目会话标题">
-        <button class="ahs-all" data-act="wb-hist-reset"${kw ? "" : " disabled"} title="${kw ? "清空搜索" : "当前没有搜索词"}">重置</button>
-      </div>
-      <div class="ai-history-list">${body}</div>
-    </aside>`;
-  }
-
-  /* 执行步骤：复用 AI 侧栏 StepsBox 的结构与类名（ai.js stepsBlock / ai.css .ai-steps） */
-  function stepsOf(s) {
-    const steps = (s && s.steps) || [];
-    if (!steps.length) return "";
-    const done = steps.filter(x => x.state === "done").length;
-    const running = steps.some(x => x.state === "running");
-    const failed = steps.some(x => x.state === "failed");
-    const allDone = done === steps.length;
-    const state = running ? "进行中" : failed ? "有失败" : allDone ? "已完成" : "等待继续";
-    const open = store.wbStepsOpen === true;
-    return `<section class="ai-steps ${open ? "open" : "collapsed"}" aria-label="执行步骤">
-      <button class="steps-h" data-act="wb-steps-toggle" aria-expanded="${open}">
-        ${icon("steps", "ico-14")}<b>执行步骤</b><span class="steps-count">${done}/${steps.length}</span>
-        <span class="steps-state ${running ? "run" : failed ? "fail" : allDone ? "done" : ""}">${state}</span>
-        <span class="spacer"></span><span class="steps-chev">${icon("chevronDown", "ico-14")}</span>
-      </button>
-      ${open ? `<div class="steps-list">${steps.map(st => `<div class="ai-step ${st.state}">
-        <span class="ai-step-ico">${st.state === "done" ? icon("check", "ico-13") : st.state === "running" ? '<span class="ai-step-spin" aria-hidden="true"></span>' : st.state === "failed" ? icon("alert", "ico-13") : icon("clock", "ico-13")}</span>
-        <span class="ai-step-title">${esc(st.title)}</span>
-        <span class="ai-step-meta">${esc(st.state === "done" ? "已完成" + (st.meta ? " · " + st.meta : "") : st.state === "running" ? "执行中" : st.state === "failed" ? "失败" + (st.meta ? " · " + st.meta : "") : "未开始")}</span>
-      </div>`).join("")}</div>` : ""}
-    </section>`;
-  }
+  function historyRail() { return AI().historyRail({ inline: true }); }
 
   /* 消息：复用 AI 侧栏的 .msg 结构与类名（样式全部来自 ai.css）。 */
   /* ---------- 消息里的可点击目标 ----------
@@ -252,38 +168,7 @@ window.WorkbenchUI = (function () {
      + 添加 / CLI / 权限 / 模型 四个 chip、发送按钮与统计行，全部沿用
      ai.js 的 .ai-composer / .ai-tools / .ai-chip / .ai-send / .ai-stats 类名与尺寸，
      不另造一套外观。统计行沿用 statsRow 的三项（会话轮次/Token/上下文）。 */
-  function composerBlock() {
-    const runtimeBusy = () => Boolean(store.aiBusy || store.aiRuntimeBusy);
-    const usableCli = c => Boolean(c.installed && c.enabled !== false && c.available !== false);
-    const usableModel = m => m.on !== false && m.enabled !== false && m.available !== false;
-    const cli = (D.settings.clis || []).find(c => c.id === store.aiCli) || { id: "", name: "未配置 CLI" };
-    const cm = (AI().currentModel && AI().currentModel()) || { name: "未配置", thinking: false };
-    const busy = runtimeBusy();
-    const platformRunner = !!(window.CR069 && CR069.isPlatform());
-    const cliDisabled = busy || platformRunner || !(D.settings.clis || []).some(usableCli);
-    const permDisabled = busy || platformRunner || !(D.ai.permissions || []).some(p => p.available !== false && p.enabled !== false);
-    const modelDisabled = busy || !(D.ai.modelCatalog.providers || []).some(p => p.enabled !== false && p.available !== false && (AI().visibleModels(p) || []).some(usableModel));
-    const running = busy;
-    const canStop = running && !String(store.aiInput || "").trim();
-
-    const stats = AI().statsRow();
-
-    return `<div class="ai-composer-wrap wb-composer">
-      <div class="ai-plan-dock">${stepsOf(currentSession())}</div>
-      <div class="ai-composer">
-        <textarea id="wb-input" placeholder="描述你想构建的内容，/ 调用指令，@ 文件或对话">${esc(store.aiInput || "")}</textarea>
-        <div class="ai-tools">
-          <button class="ai-chip icon-only" data-act="wb-menu-open" title="添加" aria-label="添加">${icon("plus")}</button>
-          ${window.CR069 ? `<button class="ai-chip runner${CR069.isPlatform() ? " platform" : ""}" data-act="wb-runner" data-wb-anchor="runner" aria-haspopup="dialog" aria-expanded="${store.aiPop === "runner"}" ${busy ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : CR069.isPlatform() ? "运行通道：平台主代理——由平台直接调用已配置模型作答，不依赖 CLI 安装" : "运行通道：CLI 进程——由已安装的 CLI 程序作答，支持原生线程续接"}" aria-label="切换运行通道">${icon("bot", "ico-14")}${CR069.isPlatform() ? "平台主代理" : "CLI 进程"}</button>` : ""}
-          <button class="ai-chip cli" data-act="wb-cli" data-wb-anchor="cli" aria-haspopup="dialog" aria-expanded="false" ${cliDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : platformRunner ? "平台会话不使用 CLI；可用操作由平台工具白名单决定" : cliDisabled ? "没有可用 CLI" : "切换 CLI：" + esc(cli.name)}" aria-label="切换 CLI：${esc(cli.name)}">${AI().cliLogo(cli.id, 16)}</button>
-          <button class="ai-chip perm" data-act="wb-perm" data-wb-anchor="perm" aria-haspopup="dialog" aria-expanded="false" ${permDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : platformRunner ? "平台会话不使用 CLI 权限档位；边界由平台工具白名单决定" : "权限模式"}" aria-label="权限模式">${icon("shield")}${esc(store.aiPermission || "默认模式")}</button>
-          <button class="ai-chip model" data-act="wb-model" data-wb-anchor="model" aria-haspopup="dialog" aria-expanded="false" ${modelDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : modelDisabled ? "没有可用模型" : !usableModel(cm) ? "当前模型失效，请重新选择" : "选择模型"}" aria-label="选择模型">${esc(cm.name)}${cm.available === false ? "（不可用）" : ""} · ${esc(cm.thinking ? D.ai.modelCatalog.current.level : "无思考档位")}</button>
-          <button class="ai-send" data-act="wb-send" title="${canStop ? "停止" : "发送"}" aria-label="${canStop ? "停止" : "发送"}">${icon(canStop ? "stop" : "arrowUp", "ico-18")}</button>
-        </div>
-      </div>
-      ${stats}
-    </div>`;
-  }
+  function composerBlock() { return AI().composerBlock(true); }
 
   function conversation() {
     const s = currentSession();
@@ -404,14 +289,14 @@ window.WorkbenchUI = (function () {
   }
 
   /* 页签条：替换项目页签条，加入工作台。
-     工作台为纯图标页签（坐在电脑前的小人），不显示文字，靠 aria-label 与 title 提供可读名称。 */
+     CR-082：工作台页签为「电脑（显示器）图标 + 文字『工作台』」，与相邻文字页签同一套 padding 与下划线内缩。 */
   function tabsHtml(p) {
     const kind = p && p.kind === "work" ? "work" : "code";
     const list = TABS[kind];
     const active = (store.projectTab === "workbench") ? "workbench" : (kind === "work" ? (store.projectTab === "design" ? "design" : "code") : store.projectTab);
     return list.map(([k, label]) => {
       if (k === "workbench") {
-        return `<button class="ws-tab ws-tab-icon" role="tab" aria-selected="${active === k}" data-act="project-tab" data-tab="${k}" aria-label="${esc(label)}" title="${esc(label)}">${icon("atDesk", "ico-18")}</button>`;
+        return `<button class="ws-tab ws-tab-icon" role="tab" aria-selected="${active === k}" data-act="project-tab" data-tab="${k}" aria-label="${esc(label)}" title="${esc(label)}">${icon("monitor", "ico-16")}<span>${esc(label)}</span></button>`;
       }
       return `<button class="ws-tab" role="tab" aria-selected="${active === k}" data-act="project-tab" data-tab="${k}">${label}</button>`;
     }).join("");
@@ -578,9 +463,8 @@ window.WorkbenchUI = (function () {
         OfficeAI.switchSession(el.dataset.id);
         return; /* switchSession 内部会 render */
       }
-      store.aiSession = el.dataset.id;
       const s = sessions().find(x => x.id === el.dataset.id);
-      if (s) store.aiMessages = (s.messages || []).slice();
+      if (s) AI().selectCodeSession(s);
       store.wbDrawer = null;
       UI.render();
     },
@@ -590,11 +474,9 @@ window.WorkbenchUI = (function () {
         return;
       }
       const n = sessions().length + 1;
-      const s = { id: "S-WB-" + n, title: "新会话", status: "read", updated: "刚刚", tokens: "—", duration: "—", messages: [], steps: [] };
+      const s = { id: "S-WB-" + n, title: "新会话", status: "read", updated: "刚刚", tokens: "—", duration: "—", messages: [], tasks: [] };
+      AI().selectCodeSession(s);
       D.ai.sessions.unshift(s);
-      store.aiSession = s.id;
-      store.aiMessages = [];
-      store.aiInput = "";
       toast("已新建会话（仅主动新建时创建）");
       UI.render();
     },
@@ -645,7 +527,7 @@ window.WorkbenchUI = (function () {
     "wb-drawer-close": () => { store.wbDrawer = null; UI.render(); },
     "wb-hist-more": () => { store.wbHistLimit = Math.max(HIST_PAGE, Number(store.wbHistLimit) || HIST_PAGE) + HIST_PAGE; UI.render(); },
     "wb-hist-reset": () => { store.wbHistQuery = ""; UI.render(); },
-    "wb-steps-toggle": () => { store.wbStepsOpen = !store.wbStepsOpen; UI.render(); },
+
     "wb-send": () => {
       toast("原型演示：工作台与 AI 侧栏共用会话，发送请使用右侧 AI 栏");
     },

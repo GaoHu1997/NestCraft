@@ -1,0 +1,703 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>CR-080 知识库文件类型彩色图标 · 设计稿 · 栖造 NestCraft</title>
+<link rel="icon" type="image/png" href="../brand-assets-v2/favicon.png">
+<style>
+:root{
+  --bg:#f4f7fb; --panel:#ffffff; --line:#e2e8f2; --line-soft:#eef2f8;
+  --ink:#141b26; --ink-2:#41506b; --ink-3:#6b7a92; --ink-4:#93a0b4;
+  --primary:#2b6cf6; --primary-soft:#eaf1ff; --primary-ink:#1d4fc4;
+  --shadow:0 1px 2px rgba(16,32,64,.06),0 8px 24px -12px rgba(16,32,64,.16);
+  --mono:ui-monospace,SFMono-Regular,"Cascadia Mono",Consolas,monospace;
+
+  /* ── 文件类型色（浅色主题）── */
+  --ftc-folder:#E9A13B;
+  --ftc-md:#0FA98E;
+  --ftc-html:#2E9BC6;
+  --ftc-text:#6B7A90;
+  --ftc-json:#4E65D8;
+  --ftc-csv:#8CAF2E;
+  --ftc-image:#C75BB5;
+  --ftc-pdf:#E24C4B;
+  --ftc-word:#3B72E8;
+  --ftc-excel:#22A05C;
+  --ftc-ppt:#E25C3D;
+  --ftc-drawio:#8B5CF6;
+  --ftc-zip:#A8794C;
+  --ftc-unknown:#98A1AE;
+}
+html[data-theme="dark"]{
+  --bg:#0e131b; --panel:#151c26; --line:#26303d; --line-soft:#1e2733;
+  --ink:#e8eef7; --ink-2:#b6c2d4; --ink-3:#8b99ad; --ink-4:#6c7a8e;
+  --primary:#6f9bff; --primary-soft:#1b2740; --primary-ink:#a9c4ff;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.6);
+
+  --ftc-folder:#F2B559;
+  --ftc-md:#3BC6AA;
+  --ftc-html:#5BB8DC;
+  --ftc-text:#9DABBF;
+  --ftc-json:#8B9BFF;
+  --ftc-csv:#AEC958;
+  --ftc-image:#E08DD2;
+  --ftc-pdf:#FF8584;
+  --ftc-word:#7FA6FF;
+  --ftc-excel:#4FC489;
+  --ftc-ppt:#FF8E70;
+  --ftc-drawio:#B49CFF;
+  --ftc-zip:#C9A276;
+  --ftc-unknown:#B7C0CB;
+}
+
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--bg); color:var(--ink);
+  font:400 14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased; padding:0 0 64px;
+}
+a{color:var(--primary);text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* ── 图标：颜色经内联 style 的 CSS 变量注入 symbol，随自定义属性继承进 <use> shadow tree ── */
+.fti{display:inline-block;flex:none;vertical-align:middle;line-height:0}
+.fti svg{width:100%;height:100%;display:block;overflow:visible}
+.fti-solid{
+  --ft-fill:var(--ftc);
+  --ft-stroke:var(--ftc);
+  --ft-sw:1px;
+  --ft-fold:rgba(255,255,255,.34);
+  --ft-deep:color-mix(in srgb, var(--ftc) 78%, #4a3200);
+  --ft-glyph:#fff;
+}
+.fti-soft{
+  --ft-fill:color-mix(in srgb, var(--ftc) 11%, transparent);
+  --ft-stroke:var(--ftc);
+  --ft-sw:1.35px;
+  --ft-fold:color-mix(in srgb, var(--ftc) 26%, transparent);
+  --ft-deep:color-mix(in srgb, var(--ftc) 42%, transparent);
+  --ft-glyph:var(--ftc);
+}
+html[data-theme="dark"] .fti-soft{
+  --ft-fill:color-mix(in srgb, var(--ftc) 17%, transparent);
+  --ft-fold:color-mix(in srgb, var(--ftc) 32%, transparent);
+  --ft-deep:color-mix(in srgb, var(--ftc) 46%, transparent);
+}
+
+/* ── 页面骨架 ── */
+.wrap{max-width:1180px;margin:0 auto;padding:0 28px}
+header.top{
+  position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 88%, transparent);
+  backdrop-filter:saturate(140%) blur(8px);border-bottom:1px solid var(--line);
+}
+header.top .wrap{display:flex;align-items:center;gap:14px;height:60px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:650;letter-spacing:.2px}
+.brand img{width:22px;height:22px;border-radius:5px}
+.brand small{font-weight:400;color:var(--ink-3);font-size:12px}
+.spacer{flex:1}
+.theme-btn{
+  display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 12px;border-radius:8px;
+  border:1px solid var(--line);background:var(--panel);color:var(--ink-2);font:inherit;font-size:12.5px;cursor:pointer;
+}
+.theme-btn:hover{border-color:var(--primary);color:var(--primary-ink)}
+
+h1{font-size:26px;line-height:1.35;margin:34px 0 8px;letter-spacing:-.2px}
+.lead{color:var(--ink-2);max-width:840px;margin:0 0 6px}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 0}
+.chip{
+  display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border-radius:6px;
+  background:var(--panel);border:1px solid var(--line);color:var(--ink-3);font-size:11.5px;font-family:var(--mono)
+}
+.chip.acc{background:var(--primary-soft);border-color:color-mix(in srgb,var(--primary) 30%, transparent);color:var(--primary-ink)}
+.chip.warn{background:color-mix(in srgb,#e9a13b 14%, transparent);border-color:color-mix(in srgb,#e9a13b 40%, transparent);color:#9a6412}
+html[data-theme="dark"] .chip.warn{color:#f2b559}
+
+section{margin-top:38px;scroll-margin-top:76px}
+h2{font-size:17px;margin:0 0 4px;letter-spacing:.1px;display:flex;align-items:baseline;gap:10px}
+h2 .n{font:600 11px/1 var(--mono);color:var(--ink-4);letter-spacing:.05em}
+h2 + .sub{color:var(--ink-3);font-size:12.5px;margin:0 0 16px;max-width:860px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:20px}
+.grid{display:grid;gap:14px}
+
+/* §1 两变体对照 */
+.variant-grid{grid-template-columns:1fr 1fr;gap:16px}
+.variant{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+.variant-head{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line-soft)}
+.variant-head b{font-size:13.5px}
+.variant-head .tag{font:600 10.5px/1 var(--mono);letter-spacing:.04em;padding:4px 7px;border-radius:5px;background:var(--primary-soft);color:var(--primary-ink)}
+.variant-body{padding:20px 16px;display:flex;align-items:center;justify-content:center;gap:18px;min-height:120px;background:
+  radial-gradient(circle at 1px 1px, var(--line-soft) 1px, transparent 0) 0 0/14px 14px}
+.variant-foot{padding:12px 16px 16px;border-top:1px solid var(--line-soft);color:var(--ink-3);font-size:12.5px}
+.variant-foot b{color:var(--ink-2)}
+
+/* §2/§3 类型网格 */
+.type-grid{grid-template-columns:repeat(7,minmax(0,1fr));gap:10px}
+.type-cell{
+  display:flex;flex-direction:column;align-items:center;gap:8px;padding:14px 6px 11px;border-radius:10px;
+  border:1px solid transparent;transition:background .15s,border-color .15s;
+}
+.type-cell:hover{background:var(--line-soft);border-color:var(--line)}
+.type-cell .ico{width:34px;height:34px}
+.type-cell .nm{font-size:11.5px;color:var(--ink-2);text-align:center;line-height:1.35;font-weight:500}
+.type-cell .ext{font:400 9.5px/1.2 var(--mono);color:var(--ink-4);letter-spacing:.02em;text-align:center;word-break:break-all;max-width:100%}
+
+/* §4 尺寸阶梯 */
+.size-row{display:flex;align-items:flex-end;gap:26px;flex-wrap:wrap;padding:6px 2px 2px}
+.size-item{display:flex;flex-direction:column;align-items:center;gap:7px}
+.size-item .lb{font:400 10.5px/1 var(--mono);color:var(--ink-4)}
+.size-item .box{display:flex;align-items:center;justify-content:center;border-bottom:1px dashed var(--line);padding:0 4px 8px;min-width:46px}
+.tree-line-16{display:flex;align-items:center;gap:0;flex-wrap:wrap;row-gap:10px;margin-top:18px;padding-top:16px;border-top:1px solid var(--line-soft)}
+.tree-line-16 .cell16{display:flex;align-items:center;justify-content:center;width:16px;height:16px;margin-right:16px}
+
+/* §5 场景仿真 */
+.sim{display:grid;grid-template-columns:270px 1fr;gap:0;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel)}
+.sim-tree{border-right:1px solid var(--line);padding:10px 8px;font-size:12.5px}
+.sim-tree .t-head{display:flex;align-items:center;gap:7px;padding:4px 8px 10px;color:var(--ink-3);font-size:11.5px;font-weight:600;letter-spacing:.02em}
+.sim-row{display:flex;align-items:center;gap:7px;height:30px;padding:0 8px;border-radius:6px;color:var(--ink-2)}
+.sim-row .ico{width:16px;height:16px}
+.sim-row .arr{width:9px;height:9px;color:var(--ink-4);flex:none}
+.sim-row .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sim-row .kb{font:400 9px/1 var(--mono);color:var(--ink-4);margin-left:auto;flex:none}
+.sim-row.d1{padding-left:20px}
+.sim-row.d2{padding-left:34px}
+.sim-row.sel{background:var(--primary-soft);color:var(--primary-ink);font-weight:600}
+.sim-row.sel .kb{color:var(--primary-ink);opacity:.7}
+.sim-doc{padding:16px 20px;min-width:0}
+.doc-head{display:flex;align-items:center;gap:9px;padding-bottom:12px;border-bottom:1px solid var(--line-soft)}
+.doc-head .ico{width:20px;height:20px}
+.doc-head .t{font-size:14.5px;font-weight:650}
+.doc-head .badge-row{margin-left:auto;display:flex;gap:6px}
+.cap-badge{font:600 10px/1 var(--mono);padding:4px 7px;border-radius:5px;letter-spacing:.03em;white-space:nowrap}
+.cap-read{background:color-mix(in srgb,#22A05C 14%, transparent);color:#1a7a47}
+.cap-meta{background:color-mix(in srgb,#6B7A90 16%, transparent);color:#5a6779}
+.cap-img{background:color-mix(in srgb,#C75BB5 14%, transparent);color:#a1458f}
+html[data-theme="dark"] .cap-read{color:#4FC489}
+html[data-theme="dark"] .cap-meta{color:#9DABBF}
+html[data-theme="dark"] .cap-img{color:#E08DD2}
+.doc-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px 20px;margin:14px 0 0;font-size:12.5px}
+.doc-meta div{display:flex;flex-direction:column;gap:2px}
+.doc-meta dt{color:var(--ink-4);font-size:11px}
+.doc-meta dd{margin:0;color:var(--ink-2);font-family:var(--mono);font-size:11.5px;overflow:hidden;text-overflow:ellipsis}
+.doc-body{margin-top:14px;color:var(--ink-2);font-size:13px;line-height:1.75}
+.doc-body h4{margin:0 0 6px;font-size:13.5px;color:var(--ink)}
+.doc-body p{margin:0 0 8px}
+.doc-body ul{margin:0;padding-left:18px}
+.sim-note{margin:10px 2px 0;color:var(--ink-4);font-size:11.5px}
+
+/* §6 能力分组 */
+.cap-grid{grid-template-columns:repeat(3,1fr);gap:14px}
+.cap-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+.cap-card h3{margin:0 0 3px;font-size:13px;display:flex;align-items:center;gap:8px}
+.cap-card h3 .dot{width:7px;height:7px;border-radius:50%;flex:none}
+.cap-card p{margin:0 0 12px;color:var(--ink-3);font-size:12px}
+.cap-list{display:flex;flex-wrap:wrap;gap:10px 14px}
+.cap-list .ci{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-2)}
+.cap-list .ico{width:18px;height:18px}
+
+/* §7 规范 */
+.spec-grid{grid-template-columns:300px 1fr;gap:20px;align-items:start}
+.anatomy{position:relative;background:var(--line-soft);border-radius:12px;padding:26px;display:flex;align-items:center;justify-content:center}
+.anatomy .stage{position:relative;width:132px;height:132px}
+.anatomy .fti{width:132px;height:132px}
+.anatomy .safe{
+  position:absolute;left:33.3%;top:44%;width:41.7%;height:33.3%;
+  border:1px dashed color-mix(in srgb,var(--primary) 55%, transparent);border-radius:4px;
+}
+.anatomy .anno{position:absolute;font:500 10.5px/1.3 var(--mono);color:var(--primary-ink);background:color-mix(in srgb,var(--primary) 10%, var(--panel));padding:2px 5px;border-radius:4px;white-space:nowrap}
+.anatomy .a1{left:-18px;top:-2px}
+.anatomy .a2{right:-30px;top:14%}
+.anatomy .a3{left:-24px;bottom:2px}
+.spec-list{margin:0;padding:0;list-style:none;display:grid;gap:9px;font-size:12.5px;color:var(--ink-2)}
+.spec-list li{display:grid;grid-template-columns:96px 1fr;gap:10px}
+.spec-list li b{color:var(--ink);font-weight:600;font-size:12px}
+
+table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
+th{color:var(--ink-4);font-weight:600;font-size:11px;letter-spacing:.03em;text-transform:uppercase}
+td.mono,th.mono{font-family:var(--mono);font-size:11.5px}
+tr:last-child td{border-bottom:none}
+td .sw{display:inline-block;width:13px;height:13px;border-radius:4px;vertical-align:-2px;margin-right:6px;border:1px solid rgba(0,0,0,.08)}
+.tbl-wrap{overflow-x:auto}
+
+.rule-grid{grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}
+.rule{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:12.5px;color:var(--ink-2)}
+.rule h4{margin:0 0 7px;font-size:12.5px;color:var(--ink);display:flex;align-items:center;gap:7px}
+.rule ul{margin:0;padding-left:17px}
+.rule li{margin:3px 0}
+.rule code{font-family:var(--mono);font-size:11.5px;background:var(--line-soft);padding:1px 4px;border-radius:4px}
+
+.callout{
+  display:flex;gap:11px;padding:13px 15px;border-radius:10px;font-size:12.5px;line-height:1.65;
+  background:var(--primary-soft);border:1px solid color-mix(in srgb,var(--primary) 24%, transparent);color:var(--ink-2);
+}
+.callout.warn{background:color-mix(in srgb,#e9a13b 11%, transparent);border-color:color-mix(in srgb,#e9a13b 34%, transparent)}
+.callout b{color:var(--ink)}
+.callout .ci-ico{flex:none;color:var(--primary)}
+footer{margin-top:44px;padding-top:18px;border-top:1px solid var(--line);color:var(--ink-4);font-size:11.5px}
+@media (max-width:900px){
+  .variant-grid,.cap-grid,.rule-grid{grid-template-columns:1fr}
+  .type-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .spec-grid{grid-template-columns:1fr}
+  .sim{grid-template-columns:1fr}
+  .sim-tree{border-right:none;border-bottom:1px solid var(--line)}
+  .wrap{padding:0 16px}
+}
+</style>
+</head>
+<body>
+
+<!-- ═══ 图标定义（唯一来源）：24×24，纸+折角+内容符，颜色全由 CSS 变量驱动 ═══ -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- 目录：后片深色 + 前片类型色 -->
+    <symbol id="ft-folder" viewBox="0 0 24 24">
+      <path style="fill:var(--ft-deep)" d="M3.2 7.1a2 2 0 0 1 2-2h4.1l2.1 2.3h7.4a2 2 0 0 1 2 2v1.2H3.2z"/>
+      <path style="fill:var(--ft-fill);stroke:var(--ft-stroke);stroke-width:var(--ft-sw);stroke-linejoin:round" d="M3.2 8.6h17.6v9.5a2 2 0 0 1-2 2H5.2a2 2 0 0 1-2-2z"/>
+    </symbol>
+
+    <!-- Markdown：M 形折线 + 下行箭头（Markdown 标志几何化，非字母块） -->
+    <symbol id="ft-md" viewBox="0 0 24 24">
+      <path style="fill:var(--ft-fill);stroke:var(--ft-stroke);stroke-width:var(--ft-sw);stroke-linejoin:round" d="M6 3h7l7 7v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/>
+      <path style="fill:var(--ft-fold)" d="M13 3v3.2A2 2 0 0 0 15 8.2h5z"/>
+      <path style="fill:none;stroke:var(--ft-glyph);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" d="M6.6 17.2v-4.1l2.6 3 2.6-3v4.1M14.4 13.1v4.1M13.1 16l1.3 1.4 1.3-1.4"/>
+    </symbol>
+
+    <!-- 富文本 HTML：尖括号 + 斜杠 -->
+    <symbol id="ft-html" viewBox="0 0 24 24">
+      <path style="fill:var(--ft-fill);stroke:var(--ft-stroke);stroke-width:var(--ft-sw);stroke-linejoin:round" d="M6 3h7l7 7v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/>
+      <path style="fill:var(--ft-fold)" d="M13 3v3.2A2 2 0 0 0 15 8.2h5z"/>
+      <path style="fill:none;stroke:var(--ft-glyph);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round" d="m9.4 12.6-2.7 2.5 2.7 2.5m5.2-5 2.7 2.5-2.7 2.5m-1.9-5.9-1.5 6.8"/>
+    </symbol>
+
+    <!-- 纯文本：三行文本线 -->
+    <symbol id="ft-text" viewBox="0 0 24 24">
+      <path style="fill:var(--ft-fill);stroke:var(--ft-stroke);stroke-width:var(--ft-sw);stroke-linejoin:round" d="M6 3h7l7 7v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/>
+      <path style="fill:var(--ft-fold)" d="M13 3v3.2A2 2 0 0 0 15 8.2h5z"/>
+      <path style="fill:none;stroke:var(--ft-glyph);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" d="M7.2 12.8h9.6M7.2 15.4h9.6M7.2 18h5.6"/>
+    </symbol>
+
+    <!-- JSON：花括号对 + 中心点 -->
+    <symbol id="ft-json" viewBox="0 0 24 24">
+      <path style="fill:var(--ft-fill);stroke:var(--ft-stroke);stroke-width:var(--ft-sw);stroke-linejoin:round" d="M6 3h7l7 7v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/>
+      <path style="fill:var(--ft-fold)" d="M13 3v3.2A2 2 0 0 0 15 8.2h5z"/>
+      <path style="fill:none;stroke:var(--ft-glyph);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round" d="M10.7 12.5c-1.9 0-1.9 4.9 0 4.9M13.3 12.5c1.9 0 1.9 4.9 0 4.9"/>
+      <circle style="fill:var(--ft-glyph)" cx="12" cy="14.95" r="1.05"/>
+    </symbol>
+
+    <!-- CSV：四格表 + 表头强调 -->
+    <symbol id="ft-csv" viewBox="0 0 24 24">
+      <path style="fill:var(--ft-fill);stroke:var(--ft-stroke);stroke-width:var(--ft-sw);stroke-linejoin:round" d="M6 3h7l7 7v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/>
+      <path style="fill:var(--ft-fold)" d="M13 3v3.2A2 2 0 0 0 15 8.2h5z"/>
+      <rect style="fill:none;stroke:var(--ft-glyph);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round" x="6.9" y="12.4" width="10.2" height="5.2" rx="1"/>
+      <path style="fill:none;stroke:var(--ft-glyph);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round" d="M6.9 14.5h10.2M12 12.4v5.2"/>
+    </symbol>
+
+    <!-- 图片：山形 + 日 -->
+    <symbol id="ft-image" viewBox="0 0 24 24">
+      <path style="fill:var(--ft-fill);stroke:var(--ft-stroke);stroke-width:var(--ft-sw);stroke-linejoin:round" d="M6 3h7l7 7v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/>
+      <path style="fill:var(--ft-fold)" d="M13 3v3.2A2 2 0 0 0 15 8.2h5z"/>
+      <circle style="fill:var(--ft-glyph)" cx="14.7" cy="13" r="1.25"/>
+      <path style="fill:var(--ft-glyph)" d="M6.9 17.8l3.5-4.5 2.2 2.7 1.6-2 3 3.8z"/>
+    </symbol>
+
+    <!-- PDF：书签丝带 -->
+    <symbol id="ft-pdf" viewBox="0 0 24 24">
+      <path style="fill:var(--ft-fill);stroke:var(--ft-stroke);stroke-width:var(--ft-sw);stroke-linejoin:round" d="M6 3h7l7 7v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/>
+      <path style="fill:var(--ft-fold)" d="M13 3v3.2A2 2 0 0 0 15 8.2h5z"/>
+      <path style="fill:var(--ft-glyph)" d="M9.3 12.1v6.6l2.7-2.2 2.7 2.2v-6.6z"/>
+    </symbol>
+
+    <!-- Word：标题条 + 正文行 -->
+    <symbol id="ft-word" viewBox="0 0 24 24">
+      <path style="fill:var(--ft-fill);stroke:var(--ft-stroke);stroke-width:var(--ft-sw);stroke-linejoin:round" d="M6 3h7l7 7v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/>
+      <path style="fill:var(--ft-fold)" d="M13 3v3.2A2 2 0 0 0 15 8.2h5z"/>
+      <rect style="fill:var(--ft-glyph)" x="7" y="12.2" width="10" height="2.4" rx=".8"/>
+      <path style="fill:none;stroke:var(--ft-glyph);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" d="M7 17.1h6.6"/>
+    </symbol>
+
+    <!-- Excel：表格网格 + 选中格 -->
+    <symbol id="ft-excel" viewBox="0 0 24 24">
+      <path style="fill:var(--ft-fill);stroke:var(--ft-stroke);stroke-width:var(--ft-sw);stroke-linejoin:round" d="M6 3h7l7 7v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/>
+      <path style="fill:var(--ft-fold)" d="M13 3v3.2A2 2 0 0 0 15 8.2h5z"/>
+      <rect style="fill:var(--ft-glyph)" x="12" y="14.5" width="5.1" height="3.1" rx=".5"/>
+      <rect style="fill:none;stroke:var(--ft-glyph);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round" x="6.9" y="12.1" width="10.2" height="5.6" rx="1"/>
+      <path style="fill:none;stroke:var(--ft-glyph);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round" d="M6.9 14.4h10.2M12 11.6v6.6"/>
+    </symbol>
+
+    <!-- PPT：幻灯片屏框 + 柱条 -->
+    <symbol id="ft-ppt" viewBox="0 0 24 24">
+      <path style="fill:var(--ft-fill);stroke:var(--ft-stroke);stroke-width:var(--ft-sw);stroke-linejoin:round" d="M6 3h7l7 7v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/>
+      <path style="fill:var(--ft-fold)" d="M13 3v3.2A2 2 0 0 0 15 8.2h5z"/>
+      <rect style="fill:none;stroke:var(--ft-glyph);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round" x="6.7" y="11.9" width="10.6" height="6.3" rx="1.1"/>
+      <rect style="fill:var(--ft-glyph)" x="8.8" y="14.6" width="1.7" height="2.3" rx=".4"/>
+      <rect style="fill:var(--ft-glyph)" x="11.8" y="13.5" width="1.7" height="3.4" rx=".4"/>
+    </symbol>
+
+    <!-- 图纸 drawio：节点 + 连线 -->
+    <symbol id="ft-drawio" viewBox="0 0 24 24">
+      <path style="fill:var(--ft-fill);stroke:var(--ft-stroke);stroke-width:var(--ft-sw);stroke-linejoin:round" d="M6 3h7l7 7v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/>
+      <path style="fill:var(--ft-fold)" d="M13 3v3.2A2 2 0 0 0 15 8.2h5z"/>
+      <path style="fill:none;stroke:var(--ft-glyph);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round" d="M9.4 13.7l1.5 1.2M13.1 14.9l1.5-1.2"/>
+      <circle style="fill:var(--ft-glyph)" cx="8.2" cy="12.9" r="1.35"/>
+      <circle style="fill:var(--ft-glyph)" cx="12" cy="15.5" r="1.35"/>
+      <circle style="fill:var(--ft-glyph)" cx="15.8" cy="12.9" r="1.35"/>
+    </symbol>
+
+    <!-- 压缩包：拉链齿 + 拉头 -->
+    <symbol id="ft-zip" viewBox="0 0 24 24">
+      <path style="fill:var(--ft-fill);stroke:var(--ft-stroke);stroke-width:var(--ft-sw);stroke-linejoin:round" d="M6 3h7l7 7v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/>
+      <path style="fill:var(--ft-fold)" d="M13 3v3.2A2 2 0 0 0 15 8.2h5z"/>
+      <path style="fill:none;stroke:var(--ft-glyph);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" d="M10.6 12.2h2.8M10.6 14.2h2.8M10.6 16.2h2.8"/>
+      <rect style="fill:var(--ft-glyph)" x="10.5" y="17.1" width="3" height="2.2" rx=".6"/>
+    </symbol>
+
+    <!-- 未知格式：问号 -->
+    <symbol id="ft-unknown" viewBox="0 0 24 24">
+      <path style="fill:var(--ft-fill);stroke:var(--ft-stroke);stroke-width:var(--ft-sw);stroke-linejoin:round" d="M6 3h7l7 7v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/>
+      <path style="fill:var(--ft-fold)" d="M13 3v3.2A2 2 0 0 0 15 8.2h5z"/>
+      <path style="fill:none;stroke:var(--ft-glyph);stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round" d="M9.9 13.4a2.15 2.15 0 1 1 3 2c-.7.35-.9.8-.9 1.5"/>
+      <circle style="fill:var(--ft-glyph)" cx="12" cy="18.5" r=".95"/>
+    </symbol>
+  </defs>
+</svg>
+
+<header class="top">
+  <div class="wrap">
+    <div class="brand"><img src="../brand-assets-v2/favicon.png" alt="">栖造 NestCraft <small>· 设计稿</small></div>
+    <div class="spacer"></div>
+    <button class="theme-btn" id="themeBtn" type="button"><span id="themeIco">◐</span> <span id="themeTxt">深色预览</span></button>
+  </div>
+</header>
+
+<div class="wrap">
+  <h1>知识库文件类型彩色图标</h1>
+  <p class="lead">按知识库<strong>实际支持的文件格式</strong>设计的一版彩色文件类型标识：14 类（含目录），每类一张纸 + 格式色 + 白色内容符号，浅色与深色两套取值，16px 文件树内可辨、20px 文档头可直接用。</p>
+
+  <div class="meta">
+    <span class="chip acc">CR-080</span>
+    <span class="chip">FEAT-008 / FEAT-009</span>
+    <span class="chip">v1 · 2026-11-24</span>
+    <span class="chip warn">状态：待确认（未接入软件）</span>
+  </div>
+
+  <!-- ═══ §1 两种呈现变体 ═══ -->
+  <section id="variants">
+    <h2><span class="n">01</span>两种呈现变体</h2>
+    <p class="sub">同一套图形，只切“纸面怎么上色”。两个变体共用一套 24×24 symbol 与类型色令牌，实施时选一套或按场景混用。</p>
+    <div class="grid variant-grid">
+      <div class="variant">
+        <div class="variant-head"><b>A · 实底彩色</b><span class="tag">SOLID</span></div>
+        <div class="variant-body">
+          <span class="fti fti-solid" style="width:38px;height:38px;--ftc:var(--ftc-md)"><svg><use href="#ft-md"/></svg></span>
+          <span class="fti fti-solid" style="width:38px;height:38px;--ftc:var(--ftc-word)"><svg><use href="#ft-word"/></svg></span>
+          <span class="fti fti-solid" style="width:38px;height:38px;--ftc:var(--ftc-excel)"><svg><use href="#ft-excel"/></svg></span>
+          <span class="fti fti-solid" style="width:38px;height:38px;--ftc:var(--ftc-ppt)"><svg><use href="#ft-ppt"/></svg></span>
+          <span class="fti fti-solid" style="width:38px;height:38px;--ftc:var(--ftc-pdf)"><svg><use href="#ft-pdf"/></svg></span>
+          <span class="fti fti-solid" style="width:38px;height:38px;--ftc:var(--ftc-image)"><svg><use href="#ft-image"/></svg></span>
+        </div>
+        <div class="variant-foot"><b>色彩最强，远看即分类型。</b>适合 20px 以上：文档头、空态大图、类型说明卡、导出图。<br>建议用于：知识库阅读区标题、上传/导入结果、类型图例。</div>
+      </div>
+      <div class="variant">
+        <div class="variant-head"><b>B · 淡底描边</b><span class="tag">SOFT</span></div>
+        <div class="variant-body">
+          <span class="fti fti-soft" style="width:38px;height:38px;--ftc:var(--ftc-md)"><svg><use href="#ft-md"/></svg></span>
+          <span class="fti fti-soft" style="width:38px;height:38px;--ftc:var(--ftc-word)"><svg><use href="#ft-word"/></svg></span>
+          <span class="fti fti-soft" style="width:38px;height:38px;--ftc:var(--ftc-excel)"><svg><use href="#ft-excel"/></svg></span>
+          <span class="fti fti-soft" style="width:38px;height:38px;--ftc:var(--ftc-ppt)"><svg><use href="#ft-ppt"/></svg></span>
+          <span class="fti fti-soft" style="width:38px;height:38px;--ftc:var(--ftc-pdf)"><svg><use href="#ft-pdf"/></svg></span>
+          <span class="fti fti-soft" style="width:38px;height:38px;--ftc:var(--ftc-image)"><svg><use href="#ft-image"/></svg></span>
+        </div>
+        <div class="variant-foot"><b>密集列表更安静，深色主题更稳。</b>适合 14–16px：知识库文件树、会话引用、搜索结果行。<br>建议用于：文件树默认态（选中行仍保留类型色）。</div>
+      </div>
+    </div>
+    <p class="cap-note sim-note">两变体差异仅在“纸面填充/描边”，折角、内容符号、比例与网格完全一致，切换不引起布局变化。</p>
+  </section>
+
+  <!-- ═══ §2 全部类型（实底） ═══ -->
+  <section id="all-solid">
+    <h2><span class="n">02</span>全部 14 类 · 实底彩色（A）</h2>
+    <p class="sub">类型集合按知识库真实格式矩阵确定：可渲染/可检索的文本类、可预览的图片、仅元信息的原件类、以及必须兜底的未知格式。</p>
+    <div class="panel">
+      <div class="grid type-grid" id="gridSolid"></div>
+    </div>
+  </section>
+
+  <!-- ═══ §3 B 变体 ═══ -->
+  <section id="all-soft">
+    <h2><span class="n">03</span>全部 14 类 · 淡底描边（B）</h2>
+    <p class="sub">同一组图形在文件树里的推荐形态；与 A 变体逐类对照，形状、折角与符号位置一致。</p>
+    <div class="panel">
+      <div class="grid type-grid" id="gridSoft"></div>
+    </div>
+  </section>
+
+  <!-- ═══ §4 尺寸阶梯 ═══ -->
+  <section id="sizes">
+    <h2><span class="n">04</span>尺寸阶梯</h2>
+    <p class="sub">单一 24×24 网格等比缩放，不做逐尺寸重绘；15px 为文件树行内值，20px 为文档头，44px 为类型说明与空态。</p>
+    <div class="panel">
+      <div class="size-row" id="sizeRow"></div>
+      <div class="tree-line-16" id="tree16"></div>
+      <p class="sim-note">上排：单个图标在 14 / 15 / 16 / 20 / 24 / 32 / 44px 的实际观感；下排：14 类全部按 16px 并排，检查彼此是否仍可区分。</p>
+    </div>
+  </section>
+
+  <!-- ═══ §5 场景仿真 ═══ -->
+  <section id="sim">
+    <h2><span class="n">05</span>知识库场景仿真</h2>
+    <p class="sub">按知识库三栏阅读的真实结构排布：左侧目录树（B 变体 16px）、右侧文档头（A 变体 20px）与信息区。树内文件名为示例知识库的演示样例。</p>
+    <div class="sim">
+      <div class="sim-tree">
+        <div class="t-head">
+          <span class="fti fti-soft" style="width:15px;height:15px;--ftc:var(--ftc-folder)"><svg><use href="#ft-folder"/></svg></span>
+          NestCraft 产品资料库
+        </div>
+        <div class="sim-row"><svg class="arr" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 2.5 8 6l-4 3.5"/></svg><span class="fti fti-soft" style="width:16px;height:16px;--ftc:var(--ftc-folder)"><svg><use href="#ft-folder"/></svg></span><span class="nm">01-产品与定位</span><span class="kb">4</span></div>
+        <div class="sim-row d1"><span class="fti fti-soft" style="width:16px;height:16px;--ftc:var(--ftc-md)"><svg><use href="#ft-md"/></svg></span><span class="nm">NestCraft-一句话定位与价值主张.md</span></div>
+        <div class="sim-row"><svg class="arr" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 2.5 8 6l-4 3.5"/></svg><span class="fti fti-soft" style="width:16px;height:16px;--ftc:var(--ftc-folder)"><svg><use href="#ft-folder"/></svg></span><span class="nm">02-功能手册</span><span class="kb">4</span></div>
+        <div class="sim-row d1 sel"><span class="fti fti-soft" style="width:16px;height:16px;--ftc:var(--ftc-md)"><svg><use href="#ft-md"/></svg></span><span class="nm">03-知识库授权与检索.md</span></div>
+        <div class="sim-row d1"><span class="fti fti-soft" style="width:16px;height:16px;--ftc:var(--ftc-html)"><svg><use href="#ft-html"/></svg></span><span class="nm">平台总览.html</span></div>
+        <div class="sim-row"><svg class="arr" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 2.5 8 6l-4 3.5"/></svg><span class="fti fti-soft" style="width:16px;height:16px;--ftc:var(--ftc-folder)"><svg><use href="#ft-folder"/></svg></span><span class="nm">07-参考资料</span><span class="kb">9</span></div>
+        <div class="sim-row d1"><span class="fti fti-soft" style="width:16px;height:16px;--ftc:var(--ftc-word)"><svg><use href="#ft-word"/></svg></span><span class="nm">NestCraft-产品白皮书.docx</span></div>
+        <div class="sim-row d1"><span class="fti fti-soft" style="width:16px;height:16px;--ftc:var(--ftc-excel)"><svg><use href="#ft-excel"/></svg></span><span class="nm">能力地图.xlsx</span></div>
+        <div class="sim-row d1"><span class="fti fti-soft" style="width:16px;height:16px;--ftc:var(--ftc-ppt)"><svg><use href="#ft-ppt"/></svg></span><span class="nm">产品介绍.pptx</span></div>
+        <div class="sim-row d1"><span class="fti fti-soft" style="width:16px;height:16px;--ftc:var(--ftc-pdf)"><svg><use href="#ft-pdf"/></svg></span><span class="nm">产品白皮书.pdf</span></div>
+        <div class="sim-row d1"><span class="fti fti-soft" style="width:16px;height:16px;--ftc:var(--ftc-drawio)"><svg><use href="#ft-drawio"/></svg></span><span class="nm">组件关系.drawio</span></div>
+        <div class="sim-row d1"><span class="fti fti-soft" style="width:16px;height:16px;--ftc:var(--ftc-image)"><svg><use href="#ft-image"/></svg></span><span class="nm">界面截图.png</span></div>
+        <div class="sim-row d1"><span class="fti fti-soft" style="width:16px;height:16px;--ftc:var(--ftc-csv)"><svg><use href="#ft-csv"/></svg></span><span class="nm">指标清单.csv</span></div>
+        <div class="sim-row d1"><span class="fti fti-soft" style="width:16px;height:16px;--ftc:var(--ftc-json)"><svg><use href="#ft-json"/></svg></span><span class="nm">检索配置.json</span></div>
+        <div class="sim-row d1"><span class="fti fti-soft" style="width:16px;height:16px;--ftc:var(--ftc-zip)"><svg><use href="#ft-zip"/></svg></span><span class="nm">资料打包.zip</span></div>
+        <div class="sim-row d1"><span class="fti fti-soft" style="width:16px;height:16px;--ftc:var(--ftc-unknown)"><svg><use href="#ft-unknown"/></svg></span><span class="nm">附件格式样本.pos</span></div>
+      </div>
+      <div class="sim-doc">
+        <div class="doc-head">
+          <span class="fti fti-solid" style="width:20px;height:20px;--ftc:var(--ftc-md)"><svg><use href="#ft-md"/></svg></span>
+          <span class="t">知识库授权与检索</span>
+          <span class="badge-row"><span class="cap-badge cap-read">正文可检索</span><span class="cap-badge cap-read">可编辑</span></span>
+        </div>
+        <dl class="doc-meta">
+          <div><dt>类型 / MIME</dt><dd>MD / text/markdown</dd></div>
+          <div><dt>路径</dt><dd>02-功能手册/03-知识库授权与检索.md</dd></div>
+          <div><dt>大小</dt><dd>4,182 B</dd></div>
+          <div><dt>原件版本</dt><dd>fnv1a64:9c1f…</dd></div>
+        </dl>
+        <div class="doc-body">
+          <h4>知识库授权与检索</h4>
+          <p>知识库 = 一个受管的本机目录。平台对它做三件事：列目录、建索引、受控读取。</p>
+          <ul><li>Markdown 与文本格式切片建全文索引；其它格式只登记文件名与路径。</li><li>读取正文前检查知识库是否启用、是否被授权给当前项目。</li></ul>
+        </div>
+        <p class="sim-note">文档头用 20px 实底图标，与左侧 16px 淡底图标同形不同色深，避免“同一文件两种外观”被误读为两种文件。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ §6 能力分组 ═══ -->
+  <section id="caps">
+    <h2><span class="n">06</span>按知识库能力分组</h2>
+    <p class="sub">图标只负责“是什么格式”；能力（能否检索、能否预览）仍由文字徽标表达，不让图标承担权限或能力语义。</p>
+    <div class="grid cap-grid">
+      <div class="cap-card">
+        <h3><span class="dot" style="background:#22A05C"></span>正文可读 / 可检索</h3>
+        <p>切片进全文索引，AI 可读；Markdown 与 HTML 可编辑。</p>
+        <div class="cap-list" id="capRead"></div>
+      </div>
+      <div class="cap-card">
+        <h3><span class="dot" style="background:#C75BB5"></span>图片可预览</h3>
+        <p>受检 MIME 后安全预览；不进全文索引，AI 不可读正文。</p>
+        <div class="cap-list" id="capImg"></div>
+      </div>
+      <div class="cap-card">
+        <h3><span class="dot" style="background:#6B7A90"></span>仅原件与元信息</h3>
+        <p>不解析正文、不内联渲染；可导出原件。AI 只拿到文件名。</p>
+        <div class="cap-list" id="capMeta"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ §7 规范 ═══ -->
+  <section id="spec">
+    <h2><span class="n">07</span>图形规范与色彩令牌</h2>
+    <p class="sub">24×24 网格；纸面 16×18 圆角 2；右上折角 7×7；内容符号限制在安全区（相对 33%–75% × 44%–77%），不贴边、不压折角。</p>
+    <div class="grid spec-grid">
+      <div class="anatomy">
+        <div class="stage">
+          <span class="fti fti-solid" style="width:132px;height:132px;--ftc:var(--ftc-pdf)"><svg><use href="#ft-pdf"/></svg></span>
+          <span class="safe"></span>
+        </div>
+        <span class="anno a1">纸面 / 类型色</span>
+        <span class="anno a2">折角 34% 白</span>
+        <span class="anno a3">内容安全区</span>
+      </div>
+      <ul class="spec-list">
+        <li><b>轮廓</b><span>纸张 16×18、圆角 2；右上 7×7 斜折角。所有类型共用同一轮廓，只有内容符号与颜色变化。</span></li>
+        <li><b>内容符号</b><span>白色、线宽 1.75（24 网格内），端点圆角；面积不超过安全区，保证 15px 时仍成“可辨认的小块”而不是糊成一团。</span></li>
+        <li><b>目录</b><span>不套纸张：后片 = 类型色 78% + 深，前片 = 类型色；与文件形成“容器 / 内容”的区别，不用颜色区分。</span></li>
+        <li><b>不用字母块</b><span>沿用平台规范：不用 W / X / P 这类字母砖代替图形。Markdown 的 M↓ 是 Markdown 标志的几何化轮廓，属于图形而非字母；未知格式的“?”为全库唯一允许的符号化例外，与现行实现一致。</span></li>
+        <li><b>能力不内置</b><span>图标不画锁、眼睛、AI 角标；能否检索/预览由文字徽标与状态表达，避免图标同时承担格式与权限两种语义。</span></li>
+      </ul>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <h3 style="margin:0 0 2px;font-size:13px">类型色令牌（浅色 / 深色）</h3>
+      <p class="sim-note" style="margin:0 0 10px">实施时按 <code style="font-family:var(--mono)">--ftc-&lt;type&gt;</code> 命名并入 tokens；深色不是简单反转，而是提高明度、略降饱和，保证深底上不刺眼且仍可区分。</p>
+      <div class="tbl-wrap">
+        <table id="tokenTable">
+          <thead><tr><th style="width:52px">图标</th><th>类型</th><th class="mono">令牌</th><th>扩展名</th><th class="mono">浅色</th><th class="mono">深色</th><th>说明</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="grid rule-grid">
+      <div class="rule">
+        <h4>使用规则</h4>
+        <ul>
+          <li>文件树行 15–16px（B 变体）；文档头 20px（A 变体）；类型说明/空态 32–44px（A 变体）。</li>
+          <li>选中行只换底色与文字色，<strong>图标保留类型色</strong>，不跟着变主色。</li>
+          <li>同一文件在不同位置必须同形：只用“实底 / 淡底”两个壳切换颜色强度，不改轮廓与符号。</li>
+          <li>未知扩展名回退 <code>ft-unknown</code>；不阻止上传、阅读元信息与索引登记。</li>
+        </ul>
+      </div>
+      <div class="rule">
+        <h4>与现行实现的关系</h4>
+        <ul>
+          <li>现行 CR-051 §5.2 是 <strong>14 类单色线稿</strong>（1.6px 描边，只换颜色）；本稿把“类型色”升级为彩色纸面，轮廓从线稿改为实心/淡底。</li>
+          <li>扩展名映射沿用并收窄到知识库范围：新增 <code>html</code>（富文本）、<code>drawio</code>（图纸）、<code>zip</code>（导入包），<code>pos</code> 等归未知。</li>
+          <li>本稿未改任何源码、依赖或构建产物；接入需另行授权，并同步 tokens、sprite 与文件树组件。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ §8 边界 ═══ -->
+  <section id="boundary">
+    <h2><span class="n">08</span>确认点与验收边界</h2>
+    <div class="callout warn">
+      <span class="ci-ico">▲</span>
+      <div><b>本页只是设计稿，未接入软件。</b>「看得见」仅指本页在浏览器中的呈现；知识库文件树、文档头与上传结果仍显示现行单色线稿，直到获得编码授权并完成实施与视觉对照。</div>
+    </div>
+    <div class="grid rule-grid">
+      <div class="rule">
+        <h4>需要你确认的 3 项</h4>
+        <ul>
+          <li><strong>变体取舍</strong>：A 实底 / B 淡底 / 按场景混用（推荐混用：树用 B、文档头用 A）。</li>
+          <li><strong>类型集合</strong>：14 类是否够——是否要单独区分 <code>svg</code>、<code>代码文件</code>（js/ts/css）或 <code>odt/ods/odp</code>。</li>
+          <li><strong>色彩浓度</strong>：是否接受当前明度（若觉得“太花”，可整体降一档饱和）。</li>
+        </ul>
+      </div>
+      <div class="rule">
+        <h4>确认后的实施范围（另需授权）</h4>
+        <ul>
+          <li>tokens：14 组 <code>--ftc-*</code> 浅/深取值，并入主题 CSS。</li>
+          <li>sprite：14 个 symbol 并入 <code>icon-sprite.svg</code>，保留现行 113 个语义图标不动。</li>
+          <li>组件：文件树与文档头切换新符号，扩展名映射迁到同一来源；旧 14 类线稿保留为历史，不并存两套入口。</li>
+          <li>验证：16px 树内可辨、浅/深两主题、选中态保色、未知回退、与设计稿逐场景对照截图。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    CR-080 · 知识库文件类型彩色图标 v1 · 2026-11-24 · 本页为自包含设计稿（无外部依赖，可直接双击打开）· 图形与色值为设计预期，非软件现状
+  </footer>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* 类型清单：唯一来源，页面各区块由它渲染，改一处即全页一致 */
+  var TYPES = [
+    {id:"folder",  name:"目录",        ext:"—",                 token:"folder",  light:"#E9A13B", dark:"#F2B559", note:"后片深色 + 前片类型色", caps:[]},
+    {id:"md",      name:"Markdown",    ext:"md · markdown · mdx", token:"md",    light:"#0FA98E", dark:"#3BC6AA", note:"可编辑；正文进索引", caps:["read"]},
+    {id:"html",    name:"富文本 HTML", ext:"html · htm",         token:"html",    light:"#2E9BC6", dark:"#5BB8DC", note:"可编辑；不执行脚本", caps:["read"]},
+    {id:"text",    name:"纯文本",      ext:"txt · log · ini · conf", token:"text", light:"#6B7A90", dark:"#9DABBF", note:"安全源码阅读", caps:["read"]},
+    {id:"json",    name:"JSON",        ext:"json",               token:"json",    light:"#4E65D8", dark:"#8B9BFF", note:"按源码阅读并索引", caps:["read"]},
+    {id:"csv",     name:"CSV / TSV",   ext:"csv · tsv",          token:"csv",     light:"#8CAF2E", dark:"#AEC958", note:"不是电子表格引擎", caps:["read"]},
+    {id:"image",   name:"图片",        ext:"png · jpg · jpeg · gif · webp", token:"image", light:"#C75BB5", dark:"#E08DD2", note:"受检 MIME 后预览", caps:["img"]},
+    {id:"pdf",     name:"PDF",         ext:"pdf",                token:"pdf",     light:"#E24C4B", dark:"#FF8584", note:"元信息 + 导出原件", caps:["meta"]},
+    {id:"word",    name:"Word 文档",   ext:"doc · docx · dot · rtf · odt", token:"word", light:"#3B72E8", dark:"#7FA6FF", note:"仅原件与元信息", caps:["meta"]},
+    {id:"excel",   name:"Excel 表格",  ext:"xls · xlsx · ods",   token:"excel",   light:"#22A05C", dark:"#4FC489", note:"仅原件与元信息", caps:["meta"]},
+    {id:"ppt",     name:"演示文稿",    ext:"ppt · pptx · pps · pot · odp", token:"ppt", light:"#E25C3D", dark:"#FF8E70", note:"仅原件与元信息", caps:["meta"]},
+    {id:"drawio",  name:"图纸",        ext:"drawio",             token:"drawio",  light:"#8B5CF6", dark:"#B49CFF", note:"仅原件与元信息", caps:["meta"]},
+    {id:"zip",     name:"压缩包",      ext:"zip · 7z · rar · tar · gz", token:"zip", light:"#A8794C", dark:"#C9A276", note:"导入时解包为文档", caps:["meta"]},
+    {id:"unknown", name:"未知格式",    ext:"其它（如 .pos）",     token:"unknown", light:"#98A1AE", dark:"#B7C0CB", note:"不阻止上传与登记", caps:["meta"]}
+  ];
+
+  function icon(t, size, variant){
+    return '<span class="fti fti-' + (variant || "solid") + '" style="width:' + size + 'px;height:' + size + 'px;--ftc:var(--ftc-' + t.token + ')">' +
+           '<svg role="img" aria-label="' + t.name + '"><use href="#ft-' + t.id + '"/></svg></span>';
+  }
+
+  function cell(t, variant){
+    return '<div class="type-cell" title="' + t.name + '">' +
+             '<span class="ico">' + icon(t, 34, variant) + '</span>' +
+             '<span class="nm">' + t.name + '</span>' +
+             '<span class="ext">' + t.ext + '</span>' +
+           '</div>';
+  }
+
+  var el = function(id){ return document.getElementById(id); };
+
+  el("gridSolid").innerHTML = TYPES.map(function(t){ return cell(t, "solid"); }).join("");
+  el("gridSoft").innerHTML  = TYPES.map(function(t){ return cell(t, "soft"); }).join("");
+
+  /* 尺寸阶梯：以 Markdown 为例（内容符号最复杂，压力最大） */
+  var SIZES = [14, 15, 16, 20, 24, 32, 44];
+  var md = TYPES.filter(function(t){ return t.id === "md"; })[0];
+  el("sizeRow").innerHTML = SIZES.map(function(s){
+    var v = s >= 20 ? "solid" : "soft";
+    return '<div class="size-item"><span class="lb">' + s + 'px</span><span class="box">' + icon(md, s, v) + '</span></div>';
+  }).join("");
+
+  el("tree16").innerHTML = TYPES.filter(function(t){ return t.id !== "folder"; }).map(function(t){
+    return '<span class="cell16" title="' + t.name + '">' + icon(t, 16, "soft") + '</span>';
+  }).join("");
+
+  /* 能力分组 */
+  function capRow(t){ return '<span class="ci">' + icon(t, 18, "soft") + '<span>' + t.name + '</span></span>'; }
+  el("capRead").innerHTML = TYPES.filter(function(t){ return t.caps.indexOf("read") > -1; }).map(capRow).join("");
+  el("capImg").innerHTML  = TYPES.filter(function(t){ return t.caps.indexOf("img") > -1; }).map(capRow).join("");
+  el("capMeta").innerHTML = TYPES.filter(function(t){ return t.caps.indexOf("meta") > -1; }).map(capRow).join("");
+
+  /* 令牌表 */
+  el("tokenTable").querySelector("tbody").innerHTML = TYPES.map(function(t){
+    return '<tr>' +
+      '<td>' + icon(t, 24, "solid") + '</td>' +
+      '<td>' + t.name + '</td>' +
+      '<td class="mono">--ftc-' + t.token + '</td>' +
+      '<td class="mono">' + t.ext + '</td>' +
+      '<td class="mono"><span class="sw" style="background:' + t.light + '"></span>' + t.light + '</td>' +
+      '<td class="mono"><span class="sw" style="background:' + t.dark + '"></span>' + t.dark + '</td>' +
+      '<td>' + t.note + '</td>' +
+    '</tr>';
+  }).join("");
+
+  /* 主题切换：仅本页预览用 */
+  var btn = el("themeBtn"), txt = el("themeTxt"), ico = el("themeIco");
+  function apply(theme){
+    document.documentElement.setAttribute("data-theme", theme);
+    var dark = theme === "dark";
+    txt.textContent = dark ? "浅色预览" : "深色预览";
+    ico.textContent = dark ? "☀" : "◐";
+    try { localStorage.setItem("cr080-theme", theme); } catch(e) {}
+  }
+  btn.addEventListener("click", function(){
+    apply(document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+  try {
+    var q = new URLSearchParams(location.search).get("theme");
+    if (q === "dark") apply("dark");
+    else if (q === "light") apply("light");
+    else {
+      var saved = localStorage.getItem("cr080-theme");
+      if (saved === "dark") apply("dark");
+    }
+  } catch(e) {}
+})();
+</script>
+</body>
+</html>

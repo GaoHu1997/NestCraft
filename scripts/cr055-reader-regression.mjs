@@ -127,6 +127,36 @@ assert.equal(pm.findDirectoryId(nested.entries.values(), 'A'), 'A');
 assert.equal(pm.findDirectoryId(nested.entries.values(), 'A/B/C'), null);
 checks.push('R03 新建目录：父项不在当前页时按路径逐级解析，刷新父目录而非新建的空目录');
 
+// 目录模型的 Map key 是分页 id（kbf…），已知文件与打开路径用稳定 noteId（n…）。
+// 用 entries.keys() 当可达集会把仍显示在目录里的文件立刻清掉，阅读区就报「所选文件不存在」。
+const visibleFile = { id: 'kbf-1', noteId: 'n4242469960324755245', title: '存在的文件.md', relativeUri: '目录/存在的文件.md', isDir: false, sizeBytes: '12', sourceRevision: 'stat:1', hasChildren: false };
+const openedModel = new pm.DirectoryModel();
+const openedReq = openedModel.begin('');
+openedModel.accept('', openedReq, pageOf([visibleFile]), false);
+const reachable = pm.reachableNoteIds(openedModel.entries.values());
+assert.equal(reachable.has(visibleFile.noteId), true);
+assert.equal(reachable.has(visibleFile.id), false);
+const opened = new Map();
+const openedRemoved = pm.reconcileKnownEntries(opened, {
+  parentUri: '',
+  entries: [{ noteId: visibleFile.noteId, relativeUri: visibleFile.relativeUri, title: visibleFile.title }],
+  complete: true,
+}, { keep: new Set(), reachable, rootComplete: true });
+assert.deepEqual(openedRemoved, []);
+assert.equal(opened.has(visibleFile.noteId), true);
+const mistaken = new Map([[visibleFile.noteId, { noteId: visibleFile.noteId, relativeUri: visibleFile.relativeUri }]]);
+pm.reconcileKnownEntries(mistaken, {
+  parentUri: '',
+  entries: [{ noteId: visibleFile.noteId, relativeUri: visibleFile.relativeUri }],
+  complete: true,
+}, { keep: new Set(), reachable: new Set(openedModel.entries.keys()), rootComplete: true });
+assert.equal(mistaken.has(visibleFile.noteId), false);
+checks.push('R03 身份：可达集必须用稳定 noteId；分页 id 会把目录里仍存在的文件清掉并误报不存在');
+assert.equal(pm.unlistedSelectionAction({ listed: true, backendConfirmedMissing: false }), 'load');
+assert.equal(pm.unlistedSelectionAction({ listed: false, backendConfirmedMissing: false }), 'resolve');
+assert.equal(pm.unlistedSelectionAction({ listed: false, backendConfirmedMissing: true }), 'missing');
+checks.push('R03 未入页：已加载页没有稳定 ID 时先向后端解析，不能把子目录文件当成不存在');
+
 // ---------------------------------------------------------------- R05 稳定焦点
 const row = (key, kind = 'entry') => ({ key, kind });
 assert.deepEqual(pm.resolveTreeLead([row('a'), row('b'), row('c')], 'b', 1), { index: 1, key: 'b' });
@@ -184,7 +214,13 @@ checks.push('R09-1 v1.4 external-change：dirty 草稿不被静默替换，提�
 const selectionGone = pm.selectionGoneNotice();
 assert.equal(selectionGone.text, '所选文件已不存在；不会跳到其它文件或清除草稿。');
 assert.deepEqual(selectionGone.action, { id: 'refresh-directory', label: '刷新目录', confirm: false });
-assert.match(readerSource, /setSelectionGone\(true\); setNoteError\(selectionGoneNotice\(\)\.text\)/);
+assert.match(readerSource, /setSelectionGone\(true\); setNoteErrorKind\("missing"\)/);
+assert.match(readerSource, /unlistedSelectionAction\(\{ listed: !!\(node && !node\.isDir\), backendConfirmedMissing: false \}\)/);
+assert.match(readerSource, /else if \(decision === "resolve"\) void resolveUnlisted\(/);
+assert.ok(!readerSource.includes('else if (tree !== null && !treeError)'));
+assert.ok(!readerSource.includes('const missing: ReaderFailure = { kind: "missing", text: "" }'));
+assert.match(readerSource, /reachableNoteIds\(session\.directory\.entries\.values\(\)\)/);
+assert.ok(!readerSource.includes('session.directory.entries.keys()'));
 assert.match(readerSource, /id="refresh-directory" data-action="refresh-directory" onClick=\{\(\) => void refreshDirectory\(\)\}/);
 assert.match(readerSource, /const refreshDirectory = async[\s\S]{0,400}await loadTree\(\)/);
 assert.match(readerSource, /directoryHandle\.current\?\.refresh\(session\.selectedFolder\)/);

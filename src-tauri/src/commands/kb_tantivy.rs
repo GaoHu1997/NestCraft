@@ -148,6 +148,14 @@ fn identity(conn:&Connection,lib:&str,generation:i64)->Result<Ownership,String> 
 pub(super) fn managed_root(conn:&Connection)->Result<PathBuf,String> {
     let db=conn.path().filter(|p|!p.is_empty()).ok_or("INDEX_PATH_UNAVAILABLE")?;
     let db=fs::canonicalize(db).map_err(err)?;
+    // 生产库位于统一数据根的 db/ 下，索引固定落在同一根的 index/；
+    // 其它位置（测试、冒烟隔离库）保持与库文件同级，避免跨环境互相污染。
+    if let Ok(data) = crate::commands::general::resolve_data_dir(conn) {
+        let db_dir = data.join("db");
+        if db.parent() == Some(db_dir.as_path()) {
+            return Ok(data.join("index"));
+        }
+    }
     Ok(db.parent().ok_or("INDEX_PATH_UNAVAILABLE")?.join("kb-index"))
 }
 fn safe_chain(path:&Path)->Result<(),String> {

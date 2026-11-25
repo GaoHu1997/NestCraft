@@ -289,6 +289,10 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     migrate_cr059_model_config(conn)?;
     // CR-059 / BUG-CR059-01 二期：跨进程待审批命令（DB-CR059 §5.1）。
     migrate_cr059_pending_approval(conn)?;
+    // CR-072：项目管理／知识库／服务器扩展字段（DB-CR072）。纯增量、幂等。
+    migrate_cr072(conn)?;
+    // CR-078：概览页日程 / 待办两表与索引（DB-CR078）。纯新增、幂等。
+    migrate_cr078(conn)?;
     // CR-047 / FEAT-019 基线：任务执行账本、工作包义务与检查点（DB-FEAT-019 / DB-CR047 的 M0 子集）。
     crate::commands::execution::ensure_schema(conn)?;
     // CR-032 / FEAT-004/005 基线：双向同步共同基线、批次与目标写入日志（DB-CR032 的 M0 子集）。
@@ -378,6 +382,92 @@ fn migrate_cr065_session_pin(conn: &Connection) -> Result<(), String> {
         )
         .map_err(|e| e.to_string())?;
     }
+    Ok(())
+}
+
+/// CR-072：项目管理／知识库／服务器扩展字段（DB-CR072）。纯增量 ALTER，幂等可重复执行。
+fn migrate_cr072(conn: &Connection) -> Result<(), String> {
+    fn columns(conn: &Connection, table: &str) -> Result<Vec<String>, String> {
+        let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table)).map_err(|e| e.to_string())?;
+        let names = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .collect::<Vec<String>>();
+        Ok(names)
+    }
+    let mut batch = String::new();
+    let project_cols = columns(conn, "project")?;
+    if !project_cols.iter().any(|n| n == "owner") {
+        batch.push_str("ALTER TABLE project ADD COLUMN owner TEXT NOT NULL DEFAULT '';\n");
+    }
+    if !project_cols.iter().any(|n| n == "description") {
+        batch.push_str("ALTER TABLE project ADD COLUMN description TEXT NOT NULL DEFAULT '';\n");
+    }
+    if !project_cols.iter().any(|n| n == "tagsJson") {
+        batch.push_str("ALTER TABLE project ADD COLUMN tagsJson TEXT NOT NULL DEFAULT '[]';\n");
+    }
+    let kb_cols = columns(conn, "knowledge_library")?;
+    if !kb_cols.iter().any(|n| n == "owner") {
+        batch.push_str("ALTER TABLE knowledge_library ADD COLUMN owner TEXT NOT NULL DEFAULT '';\n");
+    }
+    if !kb_cols.iter().any(|n| n == "description") {
+        batch.push_str("ALTER TABLE knowledge_library ADD COLUMN description TEXT NOT NULL DEFAULT '';\n");
+    }
+    let host_cols = columns(conn, "server_host")?;
+    for (col, def) in [("os", "TEXT"), ("lastSeenAt", "INTEGER"), ("cpuPct", "REAL"), ("memPct", "REAL"), ("diskPct", "REAL")] {
+        if !host_cols.iter().any(|n| n == col) {
+            batch.push_str(&format!("ALTER TABLE server_host ADD COLUMN {} {};\n", col, def));
+        }
+    }
+    if !batch.is_empty() {
+        conn.execute_batch(&batch).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn migrate_cr078(conn: &Connection) -> Result<(), String> {
+    // CR-078 / DB-CR078：日程与待办。软删除（deletedAt）；endDate >= startDate 用 CHECK 约束兜底，
+    // 应用层在保存前另做校验给出中文错误。颜色白名单用 CHECK，防止界面之外的脏数据。
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS schedule_event (
+            id        TEXT PRIMARY KEY,
+            title     TEXT NOT NULL,
+            startDate TEXT NOT NULL,
+            endDate   TEXT NOT NULL CHECK (endDate >= startDate),
+            allDay    INTEGER NOT NULL DEFAULT 1,
+            startTime TEXT NOT NULL DEFAULT '',
+            endTime   TEXT NOT NULL DEFAULT '',
+            note      TEXT NOT NULL DEFAULT '',
+            color     TEXT NOT NULL DEFAULT 'blue' CHECK (color IN ('blue','green','amber','violet','rose')),
+            createdAt INTEGER NOT NULL,
+            updatedAt INTEGER NOT NULL,
+            deletedAt INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_schedule_event_range
+            ON schedule_event(startDate, endDate) WHERE deletedAt IS NULL;
+        CREATE TABLE IF NOT EXISTS schedule_todo (
+            id        TEXT PRIMARY KEY,
+            date      TEXT NOT NULL,
+            title     TEXT NOT NULL,
+            done      INTEGER NOT NULL DEFAULT 0,
+            createdAt INTEGER NOT NULL,
+            updatedAt INTEGER NOT NULL,
+            deletedAt INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_schedule_todo_date
+            ON schedule_todo(date) WHERE deletedAt IS NULL;
+        "#,
+    )
+    .map_err(|e| e.to_string())?;
+    // 用量聚合按时间跨会话查询的索引（DB-CR078 §4.3）；只读查询用，删掉即回退。
+    conn.execute_batch(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_message_createdAt ON message(createdAt);
+        "#,
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -633,6 +723,61 @@ fn migrate_cr037_native_binding(conn: &Connection) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// CR-078：日程 / 待办表与索引幂等创建；CHECK 约束拦截非法颜色与倒置日期；
+    /// 软删除行被部分索引排除；message 时间索引存在且幂等。
+    #[test]
+    fn cr078_schedule_tables_idempotent_and_constrained() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE message (
+                id TEXT PRIMARY KEY, sessionId TEXT NOT NULL, role TEXT NOT NULL,
+                content TEXT NOT NULL, metaJson TEXT, createdAt INTEGER NOT NULL
+             );",
+        )
+        .unwrap();
+        migrate_cr078(&conn).unwrap();
+        migrate_cr078(&conn).unwrap(); // 幂等：重复执行不报错
+        conn.execute(
+            "INSERT INTO schedule_event (id,title,startDate,endDate,createdAt,updatedAt) VALUES ('e1','评审','2026-11-24','2026-11-24',1,1)",
+            [],
+        )
+        .unwrap();
+        // 非法颜色被 CHECK 拒绝
+        assert!(conn
+            .execute(
+                "INSERT INTO schedule_event (id,title,startDate,endDate,color,createdAt,updatedAt) VALUES ('e2','x','2026-11-24','2026-11-24','black',1,1)",
+                []
+            )
+            .is_err());
+        // endDate < startDate 被 CHECK 拒绝
+        assert!(conn
+            .execute(
+                "INSERT INTO schedule_event (id,title,startDate,endDate,createdAt,updatedAt) VALUES ('e3','x','2026-11-26','2026-11-20',1,1)",
+                []
+            )
+            .is_err());
+        // 软删除后不在部分索引覆盖的查询结果中
+        conn.execute("UPDATE schedule_event SET deletedAt=1 WHERE id='e1'", []).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM schedule_event WHERE deletedAt IS NULL", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+        // 待办默认未完成；message 时间索引存在
+        conn.execute(
+            "INSERT INTO schedule_todo (id,date,title,createdAt,updatedAt) VALUES ('t1','2026-11-24','回复邮件',1,1)",
+            [],
+        )
+        .unwrap();
+        let done: i64 = conn
+            .query_row("SELECT done FROM schedule_todo WHERE id='t1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(done, 0);
+        let idx: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name IN ('idx_schedule_event_range','idx_schedule_todo_date','idx_message_createdAt')", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(idx, 3);
+    }
 
     /// CR-063：三个分页索引幂等创建，且 project-only / project+server / server-only 查询计划免排序。
     /// CR-065：pinnedAt 字段迁移、索引重建与 project-only 查询计划。

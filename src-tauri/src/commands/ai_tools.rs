@@ -72,7 +72,7 @@ pub fn run_stdio_server(args: &[String]) -> Result<(), String> {
     let ctx = parse_stdio_args(args)
         .ok_or("未提供 --app-mcp-stdio")?
         .map_err(|e| e)?;
-    let db_file = ctx.data_dir.join("workbench.db");
+    let db_file = ctx.data_dir.join("db").join("workbench.db");
     db::init(&db_file)?;
     {
         let guard = db::conn()?;
@@ -762,7 +762,7 @@ fn tool_create_project(args: &Value) -> Result<Value, String> {
     let name = req_str(args, "name")?;
     let kind = req_str(args, "kind")?;
     let root_uri = req_str(args, "rootUri")?;
-    let project = crate::commands::projects::create_project(name, kind, root_uri)?;
+    let project = crate::commands::projects::create_project(name, kind, root_uri, None, None, None)?;
     Ok(json!({ "projectId": project.id, "name": project.name, "kind": project.kind, "rootUri": project.root_uri }))
 }
 
@@ -1133,8 +1133,11 @@ fn tool_list_kbs(ctx: &ToolContext, args: &Value) -> Result<Value, String> {
 
 fn tool_create_kb(ctx: &ToolContext, args: &Value) -> Result<Value, String> {
     let name = req_str(args, "name")?;
-    let base = ctx.data_dir.join("knowledge-managed");
-    std::fs::create_dir_all(&base).map_err(|e| format!("创建受管目录失败：{e}"))?;
+    let base = {
+        let guard = crate::db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        crate::commands::general::knowledge_root(conn)?
+    };
     let clean = sanitize_filename(&name);
     let mut dir = base.join(&clean);
     let mut n = 2;
@@ -1219,6 +1222,7 @@ fn tool_save_server(ctx: &ToolContext, args: &Value) -> Result<Value, String> {
         secret: str_arg(args, "secret").map(|v| v.to_string()),
         key_path: str_arg(args, "keyPath").map(|v| v.to_string()),
         group_tag: str_arg(args, "groupTag").map(|v| v.trim().to_string()),
+        os: None,
     };
     let id = crate::commands::servers::server_save_at(&ctx.data_dir, draft)?;
     Ok(json!({
@@ -1925,8 +1929,8 @@ mod tests {
         assert_eq!(row.get("host").unwrap(), "10.0.0.8");
         assert!(row.get("secret").is_none(), "清单不得含密钥");
         assert!(serde_json::to_string(row).unwrap().contains("s3cret") == false, "返回值不得含密钥明文");
-        // 密钥只进受管文件
-        let secrets = std::fs::read_to_string(db.dir.join("server-secrets.json")).unwrap();
+        // 密钥只进受管文件（统一数据根的 secrets 分类）
+        let secrets = std::fs::read_to_string(db.dir.join("secrets").join("server-secrets.json")).unwrap();
         assert!(secrets.contains("s3cret-明文"));
         // 校验与 UI 同源
         let (err, _) = call(&c, "save_server", json!({

@@ -11,9 +11,15 @@
   const CHILD_KIND = { vision: "epic", epic: "feature", feature: "story" };
   const H_GAP = 58, V_GAP = 16, NODE_H = 46;
 
+  /** UI-CR073：当前渲染工作区的项目 id（store.projectId 在切换窗口时不更新）。 */
+  function activeProjectId() {
+    const root = document.querySelector(".req-workspace");
+    return (root && root.dataset.project) || store.projectId;
+  }
+  function activeState() { return stateOf(activeProjectId()); }
   const states = new Map();
   function stateOf(projectId) {
-    if (!states.has(projectId)) states.set(projectId, { selected: null, collapsed: new Set(), locate: null });
+    if (!states.has(projectId)) states.set(projectId, { selected: null, collapsed: new Set(), locate: null, draft: null });
     return states.get(projectId);
   }
 
@@ -120,31 +126,97 @@
   function detailHtml(node) {
     const status = (D.statusMeta && D.statusMeta[node.status] && D.statusMeta[node.status].label) || node.status || "未提供";
     const acs = Array.isArray(node.acs) ? node.acs : [];
-    return `<aside class="req-map-detail" role="dialog" aria-label="${esc(node.title || node.id)}详情">
+    /* UI-CR073（用户第 7 项）：右侧悬浮栏由「查看」改为「编辑」。
+       有了右侧面板就不再弹窗：字段直接可改，底部保存/取消；模型节点保持只读。 */
+    const editable = node.kind !== "model";
+    const statusOptions = Object.keys(D.statusMeta || {}).map(k => `<option value="${esc(k)}" ${node.status === k ? "selected" : ""}>${esc(D.statusMeta[k].label)}</option>`).join("");
+    const body = editable
+      ? `<div class="req-map-editor-form" data-edit-id="${esc(node.id)}">
+          <div><label for="rme-title">标题</label><input class="input" id="rme-title" data-field="title" value="${esc(node.title || "")}"></div>
+          <div class="req-map-editor-fields">
+            <div><label for="rme-status">状态</label><select class="select" id="rme-status" data-field="status">${statusOptions}</select></div>
+            <div><label for="rme-owner">负责人</label><input class="input" id="rme-owner" data-field="owner" value="${esc(node.owner || "")}"></div>
+          </div>
+          <div><label for="rme-summary">摘要</label><textarea class="textarea" id="rme-summary" rows="2" data-field="summary">${esc(node.summary || "")}</textarea></div>
+          <div class="req-map-editor-fields">
+            <div><label for="rme-estimate">工作量</label><input class="input" id="rme-estimate" data-field="estimate" value="${esc(node.estimate || "")}" placeholder="例如：2 人日"></div>
+            <div><label for="rme-updated">最近更新</label><input class="input" id="rme-updated" data-field="updated" value="${esc(node.updated || "")}" readonly></div>
+          </div>
+          ${node.kind === "story" || node.kind === "bug" ? `<div><label for="rme-acs">可观察验收（每行一条，保留已有 AC 编号）</label><textarea class="textarea mono" id="rme-acs" rows="4" data-field="acs">${esc(acs.map(a => `${a.id}：${a.text || ""}`).join("\n"))}</textarea></div>` : ""}
+          <div><label for="rme-body">正文（Markdown）</label><textarea class="textarea mono" id="rme-body" rows="6" data-field="body">${esc(String(node.body ?? node.content ?? node.markdown ?? "").replace(/^\s*#\s+[^\n]*(?:\n|$)/, ""))}</textarea></div>
+          <p class="req-map-editor-note">保存写回该项目源文档；取消不改动。完整正文仍在「文档」页签可读。</p>
+        </div>`
+      : `<div class="req-map-detail-scroll">
+          <h3>${esc(node.title || node.id)}</h3>
+          <dl class="req-map-detail-meta">
+            <dt>类型</dt><dd>数据库／领域设计模型</dd>
+            <dt>关联</dt><dd>项目级独立分支，不作为 Story 的第二父项</dd>
+            <dt>来源</dt><dd>${esc(node.relPath || "未提供")}</dd>
+          </dl>
+        </div>`;
+    return `<aside class="req-map-detail${editable ? " req-map-editor" : ""}" role="dialog" aria-label="${esc(node.title || node.id)}${editable ? "编辑" : "详情"}" data-edit-id="${esc(node.id)}">
       <header class="req-map-detail-head">
         <span class="req-kind ${esc(node.kind)}">${esc(KIND_LABEL[node.kind] || node.kind)}</span>
         <b>${esc(node.id)}</b>
-        <button class="icon-btn" data-act="req-map-detail-close" aria-label="关闭详情">${icon("x", "ico-14")}</button>
+        <span class="caption">${editable ? "编辑" : "只读"}</span>
+        <button class="icon-btn" data-act="req-map-detail-close" aria-label="关闭面板">${icon("x", "ico-14")}</button>
       </header>
-      <div class="req-map-detail-scroll">
-        <h3>${esc(node.title || node.id)}</h3>
-        <dl class="req-map-detail-meta">
-          <dt>状态</dt><dd>${esc(status)}</dd>
-          <dt>负责人</dt><dd>${esc(node.owner || "未提供")}</dd>
-          ${node.kind === "model" ? `<dt>关联</dt><dd>项目级独立分支，不作为 Story 的第二父项</dd><dt>来源</dt><dd>${esc(node.relPath || "未提供")}</dd>` : `<dt>工作量</dt><dd>${esc(node.estimate || "未提供")}</dd><dt>更新</dt><dd>${esc(node.updated || "未提供")}</dd>`}
-        </dl>
-        ${node.summary ? `<p class="req-map-detail-summary">${esc(node.summary)}</p>` : `<p class="req-map-detail-summary muted">源未提供摘要；不生成虚构正文。</p>`}
-        ${acs.length ? `<h4>可观察验收</h4><div class="req-map-detail-acs">${acs.map(ac => `<div class="req-ac"><b>${esc(ac.id)}</b><p>${esc(ac.text || "验收正文未提供")}</p></div>`).join("")}</div>` : `<p class="req-map-detail-summary muted">当前实体没有验收条目。</p>`}
-      </div>
+      <div class="req-map-detail-scroll">${body}</div>
       <footer class="req-map-detail-foot">
-        ${node.kind === "model"
-          ? `<button class="btn sm" data-act="req-map-open-model" data-id="${esc(node.id)}">${icon("database", "ico-14")}打开模型文档</button>`
-          : `<button class="btn sm" data-act="req-map-open-doc" data-id="${esc(node.id)}" data-kind="${esc(node.kind)}">${icon("fileText", "ico-14")}在文档中打开</button><button class="btn sm" data-act="req-edit" data-id="${esc(node.id)}">${icon("edit", "ico-14")}编辑</button>`}
+        ${editable
+          ? `<button class="btn sm primary" data-act="req-map-save" data-id="${esc(node.id)}">保存</button><button class="btn sm" data-act="req-map-cancel" data-id="${esc(node.id)}">取消</button><span class="spacer"></span><button class="btn sm" data-act="req-map-open-doc" data-id="${esc(node.id)}" data-kind="${esc(node.kind)}">${icon("fileText", "ico-14")}文档</button>`
+          : `<button class="btn sm" data-act="req-map-open-model" data-id="${esc(node.id)}">${icon("database", "ico-14")}打开模型文档</button>`}
       </footer>
     </aside>`;
   }
 
-  /** 导图主区：整块是画布 + 右侧悬浮详情框，不再是「上导图、下正文」。 */
+  /* UI-CR073（用户第 7 项）：新建下级不再弹窗。画布先出现虚线占位节点，
+     右侧复用同一编辑面板（新建态）；保存后落库并选中，取消则移除占位。 */
+  function draftHtml(draft, graph) {
+    const parent = graph.nodes.find(node => node.id === draft.parentId);
+    if (!parent) return "";
+    const x = parent._x + parent._w + H_GAP, y = parent._y + parent._h + V_GAP;
+    const label = KIND_LABEL[draft.kind] || draft.kind;
+    return `<div class="req-map-node ${esc(draft.kind)} req-map-draft" data-draft-kind="${esc(draft.kind)}" data-draft-parent="${esc(draft.parentId)}"
+        style="left:${x}px;top:${y}px;width:200px;height:${NODE_H}px" aria-label="新建${esc(label)}占位">
+        <span class="req-map-draft-tag">未保存</span>
+        <span class="req-map-node-hit"><small>${esc(label)} · 新建</small><b>${esc(draft.title || "填写标题后保存")}</b></span>
+      </div>`;
+  }
+
+  function draftPanelHtml(draft) {
+    const label = KIND_LABEL[draft.kind] || draft.kind;
+    const statusOptions = Object.keys(D.statusMeta || {}).map(k => `<option value="${esc(k)}" ${draft.status === k ? "selected" : ""}>${esc(D.statusMeta[k].label)}</option>`).join("");
+    return `<aside class="req-map-detail req-map-editor" role="dialog" aria-label="新建${esc(label)}" data-create-kind="${esc(draft.kind)}">
+      <header class="req-map-detail-head">
+        <span class="req-kind ${esc(draft.kind)}">${esc(label)}</span>
+        <b>新建</b>
+        <span class="caption">在 ${esc(draft.parentId)} 下</span>
+        <button class="icon-btn" data-act="req-map-draft-close" aria-label="取消新建">${icon("x", "ico-14")}</button>
+      </header>
+      <div class="req-map-detail-scroll">
+        <div class="req-map-editor-form" data-create="1">
+          <div><label for="rmc-title">标题</label><input class="input" id="rmc-title" data-field="title" value="${esc(draft.title || "")}" placeholder="一句话说明价值"></div>
+          <div class="req-map-editor-fields">
+            <div><label for="rmc-status">状态</label><select class="select" id="rmc-status" data-field="status">${statusOptions}</select></div>
+            <div><label for="rmc-owner">负责人</label><input class="input" id="rmc-owner" data-field="owner" value="${esc(draft.owner || "")}"></div>
+          </div>
+          <div><label for="rmc-summary">摘要</label><textarea class="textarea" id="rmc-summary" rows="2" data-field="summary">${esc(draft.summary || "")}</textarea></div>
+          <div><label for="rmc-estimate">工作量</label><input class="input" id="rmc-estimate" data-field="estimate" value="${esc(draft.estimate || "")}" placeholder="例如：2 人日"></div>
+          ${draft.kind === "story" ? `<div><label for="rmc-acs">可观察验收（每行一条）</label><textarea class="textarea mono" id="rmc-acs" rows="4" data-field="acs">${esc(draft.acs || "")}</textarea></div>` : ""}
+          <div><label for="rmc-body">正文（Markdown）</label><textarea class="textarea mono" id="rmc-body" rows="5" data-field="body">${esc(draft.body || "")}</textarea></div>
+          <p class="req-map-editor-note">保存后按现有规则分配编号并写入项目目录；取消不会产生文件。</p>
+        </div>
+      </div>
+      <footer class="req-map-detail-foot">
+        <button class="btn sm primary" data-act="req-map-draft-save">保存</button>
+        <button class="btn sm" data-act="req-map-draft-close">取消</button>
+      </footer>
+    </aside>`;
+  }
+
+  /** 导图主区：整块是画布 + 右侧编辑面板（新建时复用同一面板），不再是「上导图、下正文」。
+   *  UI-CR073：画布支持空白处拖拽平移与 Ctrl/⌘ + 滚轮缩放。 */
   function mapHtml(p, s, data) {
     const st = stateOf(p.id);
     const zoom = s.mapZoom || 1;
@@ -153,7 +225,8 @@
     const selectedVisible = selected && graph.nodes.some(node => node.id === selected.id) ? selected : null;
     const paths = graph.edges.map(edge => `<path class="req-map-edge${edge.to.kind === "model" ? " dashed" : ""}" d="${edgePath(edge.from, edge.to)}"/>`).join("");
     const folds = graph.nodes.map(node => foldHtml(node, data, st)).join("");
-    return `<section class="req-map-area" data-mode="map">
+    const draft = st.draft || null;
+    return `<section class="req-map-area" data-mode="map" data-zoom="${zoom}">
       <div class="req-map-controls">
         <b>思维导图</b>
         <button class="btn sm" data-act="req-map-zoom" data-delta="-0.1" aria-label="缩小">−</button>
@@ -164,6 +237,7 @@
         <button class="btn sm" data-act="req-map-all" data-collapse="false">全部展开</button>
         <button class="btn sm" data-act="req-map-all" data-collapse="true">折叠分支</button>
         <span class="spacer"></span>
+        <span class="caption">空白处拖动平移 · Ctrl+滚轮缩放</span>
         <button class="btn sm" data-act="req-map-add" data-id="${esc(data.vision.id)}" data-kind="epic">${icon("plus", "ico-14")}新增 Epic</button>
       </div>
       <div class="req-map-stage">
@@ -172,11 +246,12 @@
             <svg class="req-map-edges" width="${graph.width}" height="${graph.height}" aria-hidden="true">${paths}</svg>
             ${graph.nodes.map(node => nodeHtml(node, data, st)).join("")}
             ${folds}
+            ${draft ? draftHtml(draft, graph) : ""}
           </div>
         </div></div>
-        ${selectedVisible ? detailHtml(selectedVisible) : ""}
+        ${draft ? draftPanelHtml(draft) : selectedVisible ? detailHtml(selectedVisible) : ""}
       </div>
-      <div class="req-map-help">整块为思维导图：Vision 连接 Epic、Epic 连接 Feature、Feature 连接 Story；点击节点在右侧悬浮框查看内容，左侧「导图目录」可定位节点，节点上可直接新增下级。</div>
+      <div class="req-map-help">整块为思维导图：Vision 连接 Epic、Epic 连接 Feature、Feature 连接 Story；点击节点在右侧面板直接编辑，左侧「导图目录」可定位节点，节点上可直接新增下级（同样在右侧面板填写）。</div>
     </section>`;
   }
 
@@ -217,28 +292,28 @@
   }
 
   actions["req-map-select"] = el => {
-    const st = stateOf(store.projectId);
+    const st = activeState();
     st.selected = el.dataset.id;
     st.locate = null;
     UI.render();
   };
-  actions["req-map-detail-close"] = () => { stateOf(store.projectId).selected = null; UI.render(); };
+  actions["req-map-detail-close"] = () => { activeState().selected = null; UI.render(); };
   actions["req-map-fit"] = () => { fitToView(store.projectId); UI.render(); };
   actions["req-map-locate"] = el => {
-    const st = stateOf(store.projectId);
+    const st = activeState();
     st.selected = el.dataset.id;
     st.locate = el.dataset.id;
     UI.render();
   };
   actions["req-map-fold"] = el => {
-    const st = stateOf(store.projectId);
+    const st = activeState();
     const id = el.dataset.id;
     st.collapsed.has(id) ? st.collapsed.delete(id) : st.collapsed.add(id);
     UI.render();
   };
   actions["req-map-all"] = el => {
-    const st = stateOf(store.projectId);
-    const p = D.projects.find(project => project.id === store.projectId);
+    const st = activeState();
+    const p = D.projects.find(project => project.id === activeProjectId());
     const data = p && window.RequirementsWorkspace.inventoryById(p.id);
     if (!data) return;
     st.collapsed = new Set(el.dataset.collapse === "true" ? data.all.filter(node => node.kind !== "vision").map(node => node.id) : []);
@@ -247,20 +322,91 @@
   actions["req-map-add"] = el => {
     const kind = el.dataset.kind || "epic";
     const parent = el.dataset.id || "";
-    const p = D.projects.find(project => project.id === store.projectId);
+    const p = D.projects.find(project => project.id === activeProjectId());
     const data = p && window.RequirementsWorkspace.inventoryById(p.id);
     /* 合成情景愿景不是真实来源，不在其下新增条目，避免把演示节点当真实父项。 */
     if (data && data.vision.scenario && parent === data.vision.id) { UI.toast("情景愿景不是真实来源，不能在其下新增需求"); return; }
     store.reqMenu = null;
-    window.Screens.reqFormModal("new", "", parent, kind);
+    /* UI-CR073：不弹窗；画布出现占位节点，右侧复用编辑面板（新建态）。 */
+    const st = activeState();
+    st.selected = null;
+    st.draft = { parentId: parent, kind, title: "", owner: D.user?.name || "", status: kind === "story" ? "unconfirmed" : "running", summary: "", estimate: "", acs: "", body: "" };
+    UI.render();
+    requestAnimationFrame(() => document.getElementById("rmc-title")?.focus());
+  };
+  /* UI-CR073：右侧编辑面板保存 —— 写回同一份演示数据并刷新文档页签。 */
+  actions["req-map-save"] = el => {
+    const p = D.projects.find(project => project.id === activeProjectId());
+    const data = p && window.RequirementsWorkspace.inventoryById(p.id);
+    const node = data && data.all.find(item => item.id === el.dataset.id);
+    const form = document.querySelector(".req-map-editor .req-map-editor-form");
+    if (!node || !form) return;
+    const read = name => form.querySelector(`[data-field="${name}"]`)?.value ?? "";
+    const title = read("title").trim();
+    if (!title) { UI.toast("标题不能为空"); return; }
+    node.title = title;
+    node.status = read("status") || node.status;
+    node.owner = read("owner").trim();
+    node.summary = read("summary").trim();
+    node.estimate = read("estimate").trim();
+    if (node.kind === "story" || node.kind === "bug") {
+      const lines = read("acs").split("\n").map(line => line.trim()).filter(Boolean);
+      node.acs = lines.map((line, i) => {
+        const hit = /^(AC-[\w-]+)[：:]\s*(.*)$/.exec(line);
+        return hit ? { id: hit[1], text: hit[2], state: (node.acs?.[i]?.state) || "pending" } : { id: `AC-${String(i + 1).padStart(2, "0")}`, text: line, state: (node.acs?.[i]?.state) || "pending" };
+      });
+    }
+    const bodyText = read("body");
+    if (node.body != null) node.body = bodyText; else if (node.content != null) node.content = bodyText; else node.markdown = bodyText;
+    node.updated = "刚刚";
+    UI.toast("已保存 " + node.id);
+    UI.render();
+  };
+  actions["req-map-cancel"] = () => {
+    /* 取消不改数据；重新渲染即丢弃面板内未保存输入。 */
+    UI.render();
+  };
+  actions["req-map-draft-save"] = () => {
+    const st = activeState();
+    if (!st.draft) return;
+    const form = document.querySelector(".req-map-editor .req-map-editor-form[data-create]");
+    if (!form) return;
+    const read = name => form.querySelector(`[data-field="${name}"]`)?.value ?? "";
+    const title = read("title").trim();
+    if (!title) { UI.toast("标题不能为空"); return; }
+    const kind = st.draft.kind;
+    /* 编号沿用现有 nextId 规则（见 main.js），在演示数据里追加实体。 */
+    const prefix = kind === "epic" ? "EPIC-" : kind === "feature" ? "FEAT-" : "STORY-";
+    const nums = D.requirements.filter(r => r.kind === kind).map(r => parseInt(String(r.id).replace(/\D+/g, ""), 10) || 0);
+    let n = Math.max(0, ...nums) + 1;
+    let id = prefix + String(n).padStart(kind === "epic" ? 2 : 3, "0");
+    while (D.requirements.some(r => r.id === id)) { n++; id = prefix + String(n).padStart(kind === "epic" ? 2 : 3, "0"); }
+    const acLines = kind === "story" ? read("acs").split("\n").map(line => line.trim()).filter(Boolean) : [];
+    D.requirements.push({
+      id, kind, project: activeProjectId(), parent: st.draft.parentId || undefined, title,
+      summary: read("summary").trim(), owner: read("owner").trim(), estimate: read("estimate").trim(),
+      status: read("status") || (kind === "story" ? "unconfirmed" : "running"),
+      updated: "刚刚", deps: [], tests: "未执行", hash: "req 草稿 · design —",
+      body: read("body"),
+      acs: kind === "story" ? acLines.map((text, i) => ({ id: `AC-${String(i + 1).padStart(2, "0")}`, text, state: "pending" })) : undefined,
+      cli: kind === "story" ? "claude" : undefined, model: kind === "story" ? "tierflow-lite" : undefined,
+    });
+    st.draft = null;
+    st.selected = id;
+    UI.toast("已创建 " + id + "：" + title);
+    UI.render();
+  };
+  actions["req-map-draft-close"] = () => {
+    activeState().draft = null;
+    UI.render();
   };
   actions["req-map-open-doc"] = el => {
-    const p = D.projects.find(project => project.id === store.projectId);
+    const p = D.projects.find(project => project.id === activeProjectId());
     if (!p) return;
     window.RequirementsWorkspace.openNode(p.id, el.dataset.kind, el.dataset.id);
   };
   actions["req-map-open-model"] = el => {
-    const p = D.projects.find(project => project.id === store.projectId);
+    const p = D.projects.find(project => project.id === activeProjectId());
     const data = p && window.RequirementsWorkspace.inventoryById(p.id);
     const model = data && data.all.find(node => node.id === el.dataset.id && node.kind === "model");
     if (!model) { UI.toast("模型源未提供"); return; }
@@ -269,7 +415,7 @@
 
   /** 目录定位后把画布滚动到目标节点。 */
   function locateSelected() {
-    const st = stateOf(store.projectId);
+    const st = activeState();
     if (!st.locate) return;
     const target = document.querySelector(`.req-map-node[data-node-id="${CSS.escape(st.locate)}"]`);
     const canvas = document.querySelector(".req-map-scroll");
@@ -283,8 +429,92 @@
     st.locate = null;
   }
 
+  /* ---------- UI-CR073：画布拖拽平移与 Ctrl/⌘ + 滚轮缩放 ---------- */
+  /* 只在画布空白处（未命中节点卡、折叠点、占位）开始平移，避免抢走节点点击。
+     位移小于 PAN_THRESHOLD 视为点击，不改变选中与折叠状态。 */
+  const PAN_THRESHOLD = 4;
+  let pan = null;
+
+  function interactiveTarget(el) {
+    return Boolean(el.closest(".req-map-node, .req-map-foldpoint, .req-map-detail, a, input, textarea, select, .req-map-controls"));
+  }
+  function currentCanvas() { return document.querySelector(".req-workspace .req-map-scroll"); }
+
+  document.addEventListener("pointerdown", e => {
+    if (e.button !== 0) return;
+    const canvas = currentCanvas();
+    if (!canvas || !canvas.contains(e.target)) return;
+    if (interactiveTarget(e.target)) return;
+    pan = {
+      canvas,
+      id: e.pointerId,
+      x: e.clientX,
+      y: e.clientY,
+      left: canvas.scrollLeft,
+      top: canvas.scrollTop,
+      moved: false,
+    };
+    canvas.setPointerCapture?.(e.pointerId);
+  }, true);
+
+  document.addEventListener("pointermove", e => {
+    if (!pan || pan.id !== e.pointerId) return;
+    const dx = e.clientX - pan.x, dy = e.clientY - pan.y;
+    if (!pan.moved && Math.abs(dx) < PAN_THRESHOLD && Math.abs(dy) < PAN_THRESHOLD) return;
+    if (!pan.moved) { pan.moved = true; pan.canvas.classList.add("is-panning"); }
+    pan.canvas.scrollLeft = pan.left - dx;
+    pan.canvas.scrollTop = pan.top - dy;
+    /* 平移同步到阅读状态，切换模式回来保持位置。 */
+    const ws = window.RequirementsWorkspace.getState(activeProjectId());
+    if (ws) ws.mapScroll = [pan.canvas.scrollLeft, pan.canvas.scrollTop];
+  }, true);
+
+  function endPan(e) {
+    if (!pan || (e && pan.id !== e.pointerId)) return;
+    const canvas = pan.canvas;
+    if (pan.moved) {
+      canvas.classList.remove("is-panning");
+      /* 平移结束后的点击不应再触发节点选中。 */
+      canvas.addEventListener("click", swallow, { capture: true, once: true });
+    }
+    try { if (canvas.hasPointerCapture?.(pan.id)) canvas.releasePointerCapture(pan.id); } catch (_) { /* 已释放 */ }
+    pan = null;
+  }
+  function swallow(e) { e.stopPropagation(); e.preventDefault(); }
+  document.addEventListener("pointerup", endPan, true);
+  document.addEventListener("pointercancel", endPan, true);
+
+  /* Ctrl／⌘ + 滚轮：以画布中心为锚点缩放；不按修饰键保持原生纵向滚动。 */
+  document.addEventListener("wheel", e => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    const canvas = currentCanvas();
+    if (!canvas || !canvas.contains(e.target)) return;
+    e.preventDefault();
+    const s = window.RequirementsWorkspace.getState(activeProjectId());
+    if (!s) return;
+    const before = s.mapZoom || 1;
+    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+    const next = Math.max(0.5, Math.min(1.8, Math.round((before + delta) * 10) / 10));
+    if (next === before) return;
+    /* 记录指针相对内容的比例位置，缩放后回滚到同一处。 */
+    const rect = canvas.getBoundingClientRect();
+    const px = (e.clientX - rect.left) / Math.max(1, rect.width);
+    const py = (e.clientY - rect.top) / Math.max(1, rect.height);
+    const scrollX = canvas.scrollLeft, scrollY = canvas.scrollTop;
+    s.mapZoom = next;
+    s.mapScroll = [0, 0];
+    UI.render();
+    requestAnimationFrame(() => {
+      const after = currentCanvas();
+      if (!after) return;
+      after.scrollLeft = (scrollX + px * rect.width) * (next / before) - px * rect.width;
+      after.scrollTop = (scrollY + py * rect.height) * (next / before) - py * rect.height;
+      s.mapScroll = [after.scrollLeft, after.scrollTop];
+    });
+  }, { capture: true, passive: false });
+
   window.RequirementsMindmap = Object.freeze({
-    version: "UI-CR066-v1",
+    version: "UI-CR073-r1",
     mapHtml,
     outlineHtml,
     locateSelected

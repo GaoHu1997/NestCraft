@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::Path;
-use tauri::Manager;
 use tokio::process::Command;
 
 /// 与 `gitcmd.rs` 共用同一套执行约定：数组参数、无窗口、失败回 stderr。
@@ -199,7 +198,8 @@ fn credential_reference(host: &str) -> String {
 }
 
 fn secrets_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let _ = app;
+    let dir = crate::storage_layout::category("secrets")?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir.join("secrets.json"))
 }

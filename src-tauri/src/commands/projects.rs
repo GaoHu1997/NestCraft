@@ -64,10 +64,11 @@ pub fn list_projects() -> Result<Vec<Project>, String> {
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
     let mut stmt = conn
-        .prepare("SELECT id, name, type, rootUri, icon, iconColor, createdAt, updatedAt FROM project ORDER BY updatedAt DESC")
+        .prepare("SELECT id, name, type, rootUri, icon, iconColor, createdAt, updatedAt, owner, description, tagsJson FROM project ORDER BY updatedAt DESC")
         .map_err(|e| e.to_string())?;
-    let rows = stmt
+    let mut projects: Vec<Project> = stmt
         .query_map([], |r| {
+            let tags_json: String = r.get(10)?;
             Ok(Project {
                 id: r.get(0)?,
                 name: r.get(1)?,
@@ -77,19 +78,82 @@ pub fn list_projects() -> Result<Vec<Project>, String> {
                 icon_color: r.get(5)?,
                 created_at: r.get(6)?,
                 updated_at: r.get(7)?,
+                owner: r.get(8)?,
+                description: r.get(9)?,
+                tags: parse_tags(&tags_json),
+                story_total: 0,
+                story_done: 0,
+                running_count: 0,
             })
         })
-        .map_err(|e| e.to_string())?;
-    Ok(rows.filter_map(|r| r.ok()).collect())
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    // CR-072：派生只读统计——需求故事完成/总数、活跃运行数（表不存在时按 0，不新增存储）。
+    let req_has = table_exists(conn, "requirement_index");
+    let task_has = table_exists(conn, "execution_task");
+    if req_has || task_has {
+        for p in projects.iter_mut() {
+            if req_has {
+                if let Ok((total, done)) = conn.query_row(
+                    "SELECT COUNT(*), COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END),0) FROM requirement_index WHERE projectId=?1 AND type='story'",
+                    [&p.id],
+                    |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+                ) {
+                    p.story_total = total;
+                    p.story_done = done;
+                }
+            }
+            if task_has {
+                if let Ok(n) = conn.query_row(
+                    "SELECT COUNT(*) FROM execution_task WHERE projectId=?1 AND status NOT IN ('succeeded','failed','cancelled','blocked','paused')",
+                    [&p.id],
+                    |r| r.get::<_, i64>(0),
+                ) {
+                    p.running_count = n;
+                }
+            }
+        }
+    }
+    Ok(projects)
+}
+
+fn table_exists(conn: &rusqlite::Connection, table: &str) -> bool {
+    conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+        [table],
+        |r| r.get::<_, i64>(0),
+    )
+    .map(|n| n > 0)
+    .unwrap_or(false)
+}
+
+fn parse_tags(json: &str) -> Vec<String> {
+    serde_json::from_str::<Vec<String>>(json).unwrap_or_default()
+}
+
+fn tags_json(tags: &[String]) -> String {
+    serde_json::to_string(tags).unwrap_or_else(|_| "[]".into())
 }
 
 #[tauri::command]
-pub fn create_project(name: String, kind: String, root_uri: String) -> Result<Project, String> {
+pub fn create_project(
+    name: String,
+    kind: String,
+    root_uri: String,
+    owner: Option<String>,
+    description: Option<String>,
+    tags: Option<Vec<String>>,
+) -> Result<Project, String> {
     if kind != "code" && kind != "work" {
         return Err("项目类型必须是 code 或 work".into());
     }
     let name = validated_project_name(&name)?.to_string();
     let canonical = accessible_project_directory(&root_uri)?;
+    let owner = owner.unwrap_or_default().trim().to_string();
+    let description = description.unwrap_or_default();
+    let tags = tags.unwrap_or_default();
+    let tags_json = tags_json(&tags);
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
     // 同名校验
@@ -102,8 +166,8 @@ pub fn create_project(name: String, kind: String, root_uri: String) -> Result<Pr
     let id = new_id("proj");
     let now = now_ms();
     conn.execute(
-        "INSERT INTO project (id, name, type, rootUri, createdAt, updatedAt) VALUES (?1,?2,?3,?4,?5,?5)",
-        rusqlite::params![id, name, kind, canonical.to_string_lossy(), now],
+        "INSERT INTO project (id, name, type, rootUri, createdAt, updatedAt, owner, description, tagsJson) VALUES (?1,?2,?3,?4,?5,?5,?6,?7,?8)",
+        rusqlite::params![id, name, kind, canonical.to_string_lossy(), now, owner, description, tags_json],
     )
     .map_err(|e| e.to_string())?;
     Ok(Project {
@@ -115,6 +179,12 @@ pub fn create_project(name: String, kind: String, root_uri: String) -> Result<Pr
         icon_color: None,
         created_at: now,
         updated_at: now,
+        owner,
+        description,
+        tags,
+        story_total: 0,
+        story_done: 0,
+        running_count: 0,
     })
 }
 
@@ -125,10 +195,37 @@ pub fn update_project(
     root_uri: Option<String>,
     icon: Option<Option<String>>,
     icon_color: Option<Option<String>>,
+    owner: Option<String>,
+    description: Option<String>,
+    tags: Option<Vec<String>>,
 ) -> Result<Project, String> {
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
-    update_project_inner(conn, &id, &name, root_uri.as_deref(), icon.as_ref().map(|v| v.as_deref()), icon_color.as_ref().map(|v| v.as_deref()))
+    let mut project = update_project_inner(conn, &id, &name, root_uri.as_deref(), icon.as_ref().map(|v| v.as_deref()), icon_color.as_ref().map(|v| v.as_deref()))?;
+    // CR-072：负责人/描述/标签为可选覆盖（None=保持），单独 UPDATE 不改变原有校验与事务语义。
+    let mut changed = false;
+    if let Some(o) = owner {
+        let o = o.trim().to_string();
+        conn.execute("UPDATE project SET owner=?2 WHERE id=?1", rusqlite::params![id, o]).map_err(|e| e.to_string())?;
+        project.owner = o;
+        changed = true;
+    }
+    if let Some(d) = description {
+        conn.execute("UPDATE project SET description=?2 WHERE id=?1", rusqlite::params![id, d]).map_err(|e| e.to_string())?;
+        project.description = d;
+        changed = true;
+    }
+    if let Some(t) = tags {
+        let j = tags_json(&t);
+        conn.execute("UPDATE project SET tagsJson=?2 WHERE id=?1", rusqlite::params![id, j]).map_err(|e| e.to_string())?;
+        project.tags = t;
+        changed = true;
+    }
+    if changed {
+        project.updated_at = now_ms();
+        conn.execute("UPDATE project SET updatedAt=?2 WHERE id=?1", rusqlite::params![id, project.updated_at]).map_err(|e| e.to_string())?;
+    }
+    Ok(project)
 }
 
 fn validated_project_name(name: &str) -> Result<&str, String> {
@@ -160,7 +257,7 @@ pub(crate) fn update_project_inner(
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
     let mut project = tx.query_row(
         "SELECT id, name, type, rootUri, icon, iconColor, createdAt, updatedAt FROM project WHERE id=?1", [id],
-        |r| Ok(Project { id: r.get(0)?, name: r.get(1)?, kind: r.get(2)?, root_uri: r.get(3)?, icon: r.get(4)?, icon_color: r.get(5)?, created_at: r.get(6)?, updated_at: r.get(7)? }),
+        |r| Ok(Project { id: r.get(0)?, name: r.get(1)?, kind: r.get(2)?, root_uri: r.get(3)?, icon: r.get(4)?, icon_color: r.get(5)?, created_at: r.get(6)?, updated_at: r.get(7)?, owner: String::new(), description: String::new(), tags: Vec::new(), story_total: 0, story_done: 0, running_count: 0 }),
     ).map_err(|_| "项目不存在".to_string())?;
     let duplicate: i64 = tx.query_row("SELECT COUNT(*) FROM project WHERE trim(name)=?1 AND id<>?2", [name, id], |r| r.get(0))
         .map_err(|e| e.to_string())?;

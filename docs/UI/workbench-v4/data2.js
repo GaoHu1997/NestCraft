@@ -60,18 +60,20 @@
   D.settings.general = {
     profile: { name: "林澈", email: "lin.che@example.invalid", role: "研发负责人", timezone: "Asia/Shanghai" },
     code: { theme: "跟随系统", fontSize: 13, tabSize: 2, font: "JetBrains Mono", wrap: false, preview: true },
-    server: { port: 22, keepAlive: 30, auth: "密钥文件", confirmDanger: true, defaultUser: "ops" }
+    server: { port: 22, keepAlive: 30, auth: "密钥文件", confirmDanger: true, defaultUser: "ops" },
+    dataDir: "安装目录\\data"
   };
   D.settings.providers = [
     {
       id: "PRV-01", name: "TierFlow", protocol: "Responses", enabled: true, updated: "今天 10:12",
       keys: [
         { label: "主凭证", masked: "sk-****...6ce3", on: true, scope: "2 个模型", protocol: "Responses", models: ["tierflow-pro", "tierflow-lite"] },
-        { label: "备用", masked: "sk-****...a442", on: true, scope: "1 个模型", protocol: "", models: ["tierflow-lite"] }
+        { label: "备用", masked: "sk-****...a442", on: true, scope: "1 个模型", protocol: "", models: ["tierflow-lite"] },
+        { label: "Anthropic 凭证", masked: "sk-ant-****...7f21", on: true, scope: "2 个模型", protocol: "Anthropic", models: ["tierflow-pro", "tierflow-lite"] }
       ],
       endpoints: [
         { protocol: "OpenAI", url: "https://api.demo.invalid/v1", on: true },
-        { protocol: "Anthropic", url: "https://anthropic.demo.invalid", on: false }
+        { protocol: "Anthropic", url: "https://anthropic.demo.invalid", on: true }
       ],
       headers: [{ name: "X-Demo-Client", value: "offline-review" }],
       spoof: "关闭",
@@ -271,11 +273,17 @@
   ];
 
   /* CR-058 模型检测演示夹具：全部为虚构演示数据，未发起任何真实网络请求。
-     固定 19 针顺序：P1 握手 / P2 回显 / P3 Schema / P4 真流式 / P5 头指纹 / P6 金丝雀 / P7 注入 / P8 记忆 / P9 stop / P10 max_tokens / P11 工具 / P12 JSON / P13 逻辑 / P14 混池 / P15 识图 / P16 responses / P17 输入对账 / P18 输出对账 / P19 缓存。 */
+     固定 19+1 针顺序：P1 握手 / P2 回显 / P3 Schema / P4 真流式 / P5 头指纹 / P6 金丝雀 / P7 注入 / P8 记忆 / P9 stop / P10 max_tokens / P11 工具 / P12 JSON / P13 逻辑 / P14 混池 / P15 识图 / P16 responses / P17 输入对账 / P18 输出对账 / P19 缓存 / P20 行为指纹与归因（r5，权重 0 辅助信号）。
+     attribution 为 P20 归因面板演示数据：一致性三态 + top-3「最像的已知候选」（距离越小越像）；候选名均为虚构演示。 */
   D.settings.probeFixtures = {
     clean: {
       score: 97, grade: "S", verdict: "真实", channel: "官方直连", duration: "14.2s",
       summary: "流式真实、金丝雀与锚点完整回显、原生工具调用正常；长前缀缓存命中稳定。",
+      attribution: { consistency: "match", claimedFamily: "tierflow", candidates: [
+        { name: "tierflow-pro（基线 2026-11-20）", family: "tierflow", distance: 0.08 },
+        { name: "tierflow-air（基线 2026-11-20）", family: "tierflow", distance: 0.31 },
+        { name: "glm-5.3（基线 2026-11-18）", family: "glm", distance: 0.62 }
+      ], note: "数字偏好与身份自述均贴近声称家族；概率性提示，不构成实锤。" },
             probes: [
         { status: "pass", ms: 214, note: "HTTP 200 · SSE 建流 96ms" },
         { status: "pass", ms: 236, note: "回显 tierflow-pro 同代同档" },
@@ -295,12 +303,18 @@
         { status: "pass", ms: 512, note: "responses 事件流拼出 OK" },
         { status: "pass", ms: 96, note: "输入差分膨胀 +2（正常）" },
         { status: "pass", ms: 1180, note: "流式/非流式输出一致" },
-        { status: "pass", ms: 2204, note: "长前缀缓存命中 87%" }
+        { status: "pass", ms: 2204, note: "长前缀缓存命中 87%" },
+        { status: "pass", ms: 1462, note: "行为指纹与声称家族一致（最近候选 tierflow-pro d=0.08）" }
       ]
     },
     downgraded: {
       score: 32, grade: "D", verdict: "假冒嫌疑", channel: "聚合中转", duration: "19.6s",
       summary: "检出跨档偷换与上下文篡改（红牌封顶）：请求 lite 档回显 mini 档、System 金丝雀丢失、多轮锚点被裁。",
+      attribution: { consistency: "mismatch", claimedFamily: "tierflow", candidates: [
+        { name: "glm-5.3-flash（基线 2026-11-18）", family: "glm", distance: 0.12 },
+        { name: "deepseek-v4.1-flash（基线 2026-11-19）", family: "deepseek", distance: 0.19 },
+        { name: "qwen3.8-flash（基线 2026-11-18）", family: "qwen", distance: 0.27 }
+      ], note: "数字偏好显著偏离声称家族，最像 glm-5.3-flash；概率性提示，不构成实锤。" },
             probes: [
         { status: "pass", ms: 201, note: "HTTP 200 · SSE 建流 88ms" },
         { status: "fail", ms: 198, note: "请求 lite → 回显 mini（跨档降级）" },
@@ -320,12 +334,14 @@
         { status: "warn", ms: 0, note: "不支持 /v1/responses 协议" },
         { status: "warn", ms: 88, note: "输入差分膨胀 +64" },
         { status: "pass", ms: 1102, note: "流式/非流式输出一致" },
-        { status: "warn", ms: 2318, note: "缓存命中 0%（散池嫌疑）" }
+        { status: "warn", ms: 2318, note: "缓存命中 0%（散池嫌疑）" },
+        { status: "warn", ms: 1518, note: "行为指纹偏离声称家族（最像 glm-5.3-flash d=0.12，辅助信号不计分）" }
       ]
     },
     localWarn: {
       score: 88, grade: "B", verdict: "真实", channel: "聚合中转", duration: "16.8s",
       summary: "流式真实、上下文纯净；工具调用为提示词模拟（P8 警示），Agent 场景需关注兼容。",
+      attribution: { consistency: "unknown", claimedFamily: "qwen", candidates: [], note: "与所有已知候选都不像（本地私有部署不在基线库内）；无法判定，不指认。" },
             probes: [
         { status: "pass", ms: 187, note: "HTTP 200 · SSE 建流 102ms" },
         { status: "pass", ms: 205, note: "回显 local-qwen-72b 一致" },
@@ -345,19 +361,23 @@
         { status: "na", ms: 0, note: "本地上游无 responses 端点" },
         { status: "pass", ms: 91, note: "输入差分膨胀 +3" },
         { status: "pass", ms: 1240, note: "流式/非流式输出一致" },
-        { status: "skip", ms: 0, note: "未执行：本地上游无缓存报告" }
+        { status: "skip", ms: 0, note: "未执行：本地上游无缓存报告" },
+        { status: "na", ms: 1390, note: "无法判定：与所有已知候选都不像（基线库外）" }
       ]
     }
   };
   D.settings.probeHistory = [
     { id: "MP-03", time: "今天 09:15", providerName: "TierFlow", modelId: "tierflow-lite", score: 32, grade: "D", verdict: "假冒嫌疑", channel: "聚合中转", duration: "19.6s",
       summary: "检出跨档偷换与上下文篡改（红牌封顶）：请求 lite 档回显 mini 档、System 金丝雀丢失、多轮锚点被裁。",
+      attribution: D.settings.probeFixtures.downgraded.attribution,
       probes: D.settings.probeFixtures.downgraded.probes },
     { id: "MP-02", time: "昨天 21:47", providerName: "本地网关", modelId: "local-qwen-72b", score: 88, grade: "B", verdict: "真实", channel: "聚合中转", duration: "16.8s",
       summary: "流式真实、上下文纯净；工具调用为提示词模拟（P8 警示）。",
+      attribution: D.settings.probeFixtures.localWarn.attribution,
       probes: D.settings.probeFixtures.localWarn.probes },
     { id: "MP-01", time: "昨天 20:02", providerName: "TierFlow", modelId: "tierflow-pro", score: 97, grade: "S", verdict: "真实", channel: "官方直连", duration: "14.2s",
       summary: "全针通过；长前缀缓存命中稳定。",
+      attribution: D.settings.probeFixtures.clean.attribution,
       probes: D.settings.probeFixtures.clean.probes }
   ];
 
@@ -367,22 +387,23 @@
     active: "S-1042-01",
     sessions: [
       { id: "S-1042-01", title: "让 STORY-0102 容量校验通过 AC-02 / AC-03", status: "success", updated: "14:31", tokens: "128.4K", duration: "46m31s", messages: baseMessages,
-        steps: [
-          { id: "ST-01", title: "核对会话目标与授权范围", state: "done", meta: "0.8s" },
-          { id: "ST-02", title: "读取 STORY-0102 与相关测试证据", state: "done", meta: "1.2s" },
-          { id: "ST-03", title: "生成容量校验差异并自检", state: "running", meta: "进行中" },
-          { id: "ST-04", title: "写入测试文件并运行回归", state: "todo", meta: "未开始" },
-          { id: "ST-05", title: "汇总交付证据与验收说明", state: "todo", meta: "未开始" }
+        goal: "让 STORY-0102 的容量校验通过 AC-02 与 AC-03，并把证据整理到交付包。",
+        tasks: [
+          { id: "TASK-01", title: "核对会话目标与授权范围", state: "completed" },
+          { id: "TASK-02", title: "读取 STORY-0102 与相关测试证据", state: "completed" },
+          { id: "TASK-03", title: "生成容量校验差异并自检", state: "running" },
+          { id: "TASK-04", title: "写入测试文件并运行回归", state: "pending" },
+          { id: "TASK-05", title: "汇总交付证据与验收说明", state: "pending" }
         ] },
       { id: "S-1042-02", title: "调整统一 AI 侧栏与输入菜单", status: "pending", updated: "13:02", tokens: "26.1K", duration: "12m08s", messages: [] },
       { id: "S-1042-03", title: "核验执行计划模型与失败重试", status: "failed", updated: "11:47", tokens: "57.8K", duration: "21m22s", messages: [
         { role: "user", time: "11:36", text: "复现取消后旧锁未释放，确认失败重试是否会误报完成。" },
         { role: "assistant", time: "11:47", text: "复现结果：状态回退用例失败，取消后仍保留旧锁；本次不生成交付产物，等待修复后重跑。" }
       ],
-        steps: [
-          { id: "ST-F1", title: "读取执行计划模型与冻结记录", state: "done", meta: "0.7s" },
-          { id: "ST-F2", title: "复现失败重试的状态回退", state: "failed", meta: "退出码 1" },
-          { id: "ST-F3", title: "整理失败原因与下一步", state: "todo" }
+        tasks: [
+          { id: "TASK-F1", title: "读取执行计划模型与冻结记录", state: "completed" },
+          { id: "TASK-F2", title: "复现失败重试的状态回退", state: "failed" },
+          { id: "TASK-F3", title: "整理失败原因与下一步", state: "pending" }
         ] },
       { id: "S-1042-04", title: "研究 Run 生命周期与交付闭环", status: "read", updated: "昨天", tokens: "110K", duration: "16m34s", messages: [] }
     ],

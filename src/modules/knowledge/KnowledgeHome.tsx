@@ -28,6 +28,9 @@ function HomeView() {
   // CR-051：库图标选择弹窗目标。CR-070：改为卡片图标悬浮层。
   const [iconTarget, setIconTarget] = useState<KnowledgeLibrary | null>(null);
   const [delTarget, setDelTarget] = useState<KnowledgeLibrary | null>(null);
+  // CR-072：编辑知识库信息（负责人/描述/名称）。
+  const [metaTarget, setMetaTarget] = useState<KnowledgeLibrary | null>(null);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [scanningId, setScanningId] = useState<string | null>(null);
   const scanBusy = useRef(false);
   const loadSeq = useRef(0);
@@ -60,6 +63,8 @@ function HomeView() {
     void reloadGrants();
     return () => { loadSeq.current += 1; };
   }, [reload, reloadGrants]);
+  // CR-072：项目名映射（授权标签展示）。
+  useEffect(() => { api.listProjects().then(setProjects).catch(() => {}); }, []);
 
   const rescan = async (lib?: KnowledgeLibrary) => {
     if (scanBusy.current || !libs) return;
@@ -113,7 +118,7 @@ function HomeView() {
       <div className="kb-head">
         <div className="grow">
           <h1>知识库</h1>
-          <p className="muted small">本地文件为原件；授权到项目后，AI 才能检索与引用。当前索引仅支持 Markdown。</p>
+          <p className="muted small">本地多格式文件为原件；授权到项目后，AI 才能检索并读取有界片段。</p>
         </div>
         <div className="row kb-page-actions">
           <button className="btn" disabled={!libs?.length || scanningId !== null} onClick={() => void rescan()}>
@@ -129,36 +134,43 @@ function HomeView() {
           {[0, 1, 2].map((i) => <div key={i} className="card kb-card kb-skel-card"><div className="kb-skel" /><div className="kb-skel" /></div>)}
         </div>
       ) : libs.length === 0 ? (
-        <Empty title="还没有知识库" desc="新建知识库并绑定包含 .md 文件的本地目录，扫描后即可阅读。" action={<button className="btn primary" onClick={() => setCreateOpen(true)}>新建知识库</button>} />
+        <Empty title="还没有知识库" desc="新建后会在数据目录的 knowledge/名称 下建立明文文件夹。直接拷入文件，刷新目录即可使用。" action={<button className="btn primary" onClick={() => setCreateOpen(true)}>新建知识库</button>} />
       ) : (
-        <div className="kb-cards">
+        <div className="kb-cards kb-list">
           {libs.map((lib) => {
             const allowed = grants?.filter((g) => g.libraryId === lib.id && g.projectId && g.readAllowed) ?? [];
+            const projectName = (id: string) => projects.find((p) => p.id === id)?.name ?? id;
             return (
-              <div key={lib.id} className="card kb-card">
-                <div className="row">
-                  <IconPopoverTrigger title="选择知识库图标与颜色" onOpen={() => setIconTarget(lib)}>
-                    <LibraryIconTile library={lib} />
-                  </IconPopoverTrigger>
-                  <h3 className="grow ellipsis" title={lib.name}>{lib.name}</h3>
-                  <span className={`tag ${lib.enabled ? "good" : "bad"}`}>{lib.enabled ? "已启用" : "已停用"}</span>
+              <div key={lib.id} className="card kb-card kb-card-row">
+                <IconPopoverTrigger title="选择知识库图标与颜色" onOpen={() => setIconTarget(lib)}>
+                  <LibraryIconTile library={lib} />
+                </IconPopoverTrigger>
+                <div className="kb-main">
+                  <div className="kb-card-title"><b className="ellipsis" title={lib.name}>{lib.name}</b><span className={`tag ${lib.enabled ? "good" : "bad"}`}>{lib.enabled ? "已启用" : "已停用"}</span></div>
+                  <p className="kb-sub ellipsis" title={`${lib.description}${lib.owner ? " · " + lib.owner : ""}`}>{lib.description || "暂无描述"}{lib.owner ? ` · ${lib.owner}` : ""}</p>
+                  <div className="kb-tags">
+                    {grants ? (allowed.length ? allowed.map((g) => <span key={g.projectId} className="tag blue">{projectName(g.projectId as string)}</span>) : <span className="tag gray">未授权</span>) : <span className="tag">{grantError ? "授权状态未知" : "授权加载中…"}</span>}
+                  </div>
                 </div>
-                <div className="kb-src mono ellipsis" title={lib.sourceRef}>{lib.sourceRef}</div>
-                <div className="kb-tags"><span className={`tag ${allowed.length ? "blue" : ""}`}>{grants ? (allowed.length ? `${allowed.length} 个项目授权` : "未授权") : grantError ? "授权状态未知" : "授权加载中…"}</span></div>
-                <div className="row kb-meta"><span>{lib.noteCount} 篇</span><span className="muted small">索引版本 {lib.revision}</span></div>
-                <div className="row kb-actions">
-                  <button className="btn sm" onClick={() => setIconTarget(lib)} title="选择内置图标"><Icon name="palette" size={13} /> 图标</button>
-                  <button className="btn sm" onClick={() => setGrantTarget(lib)}>{allowed.length ? "管理授权" : "授权"}</button>
-                  <button className="btn sm primary" onClick={() => openObject({ page: "knowledge-lib", libId: lib.id })}>进入</button>
-                  <button className="btn sm" disabled={scanningId !== null} onClick={() => void rescan(lib)}>{scanningId === lib.id ? "扫描中…" : "重新扫描"}</button>
-                  <button className="btn sm danger" onClick={() => setDelTarget(lib)}>删除</button>
+                <div className="kb-side">
+                  <span className="kb-count">{lib.noteCount} 篇</span>
+                  <span className="caption">索引版本 {lib.revision}</span>
+                  <div className="kb-side-actions">
+                    <button className="btn sm" onClick={() => setIconTarget(lib)} title="选择内置图标"><Icon name="palette" size={13} /> 图标</button>
+                    <button className="btn sm" onClick={() => setGrantTarget(lib)}>{allowed.length ? "管理授权" : "授权"}</button>
+                    <button className="btn sm" onClick={() => setMetaTarget(lib)}>编辑</button>
+                    <button className="btn sm primary" onClick={() => openObject({ page: "knowledge-lib", libId: lib.id })}>进入</button>
+                    <button className="btn ghost sm" disabled={scanningId !== null} onClick={() => void rescan(lib)}>{scanningId === lib.id ? "扫描中…" : "重新扫描"}</button>
+                    <button className="btn ghost sm danger" onClick={() => setDelTarget(lib)}>删除</button>
+                  </div>
                 </div>
               </div>
             );
           })}
         </div>
       )}
-      <div className="kb-page-foot"><span>缺少授权记录默认拒绝；索引不改写原件，不调用模型嵌入。</span><span>{libs ? `${libs.length} 个库 · ${libs.reduce((n, l) => n + l.noteCount, 0)} 篇 Markdown` : "统计未知"}</span></div>
+      <div className="kb-page-foot"><span>检索为本地索引仿真，不调用模型嵌入；缺少授权记录默认拒绝。</span><span>{libs ? `${libs.length} 个库 · ${libs.reduce((n, l) => n + l.noteCount, 0)} 篇 Markdown` : "统计未知"}</span></div>
+      {metaTarget && <MetaDialog library={metaTarget} onClose={() => setMetaTarget(null)} onSaved={() => { void reload(); }} />}
       {createOpen && <CreateDialog onClose={() => setCreateOpen(false)} onCreated={() => { void reload(); void reloadGrants(); }} />}
       {iconTarget && <IconPopover open title={iconTarget.name} kind="kb"
         icon={iconTarget.icon} color={iconTarget.iconColor}
@@ -258,13 +270,42 @@ export function GrantDialog({ library, onClose, onSaved, visible = true }: { lib
    旧 LibraryIconDialog 独立弹窗移除，保存语义不变（kbSetAppearance 成对写入）。 */
 
 
-function CreateDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {  const toast = useToast();
-  const [name, setName] = useState("");
-  const [path, setPath] = useState("");
+/** CR-072：编辑知识库名称/负责人/描述。 */
+function MetaDialog({ library, onClose, onSaved }: { library: KnowledgeLibrary; onClose: () => void; onSaved: () => void }) {
+  const toast = useToast();
+  const [name, setName] = useState(library.name);
+  const [owner, setOwner] = useState(library.owner ?? "");
+  const [description, setDescription] = useState(library.description ?? "");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!name.trim() || busy) return;
+    setBusy(true);
+    try {
+      await api.kbUpdateMeta(library.id, { name: name.trim(), owner: owner.trim(), description: description.trim() });
+      toast("知识库信息已保存");
+      onSaved();
+      onClose();
+    } catch (e) { toast(String(e), "err"); } finally { setBusy(false); }
+  };
+  return (
+    <div className="kb-dialog"><Modal title="编辑知识库信息" width={560} onClose={() => { if (!busy) onClose(); }}
+      footer={<><button className="btn" disabled={busy} onClick={onClose}>取消</button><button className="btn primary" disabled={busy} onClick={() => void submit()}>{busy ? "保存中…" : "保存"}</button></>}>
+      <div className="col">
+        <Field label="名称"><input className="input" value={name} onChange={(e) => setName(e.target.value)} disabled={busy} /></Field>
+        <Field label="负责人"><input className="input" value={owner} onChange={(e) => setOwner(e.target.value)} disabled={busy} placeholder="例如：陈雨" /></Field>
+        <Field label="描述"><textarea className="textarea" rows={3} value={description} onChange={(e) => setDescription(e.target.value)} disabled={busy} placeholder="一句话说明知识库内容" /></Field>
+      </div>
+    </Modal></div>
+  );
+}
+
+function CreateDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {  const toast = useToast();  const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
   const [createdId, setCreatedId] = useState<string | null>(null);
+  const [root, setRoot] = useState("");
   const busy = useRef(false);
-  const canSave = name.trim().length > 0 && path.trim().length > 0 && !saving;
+  const canSave = name.trim().length > 0 && !saving;
+  useEffect(() => { api.storageDataDir().then(location => setRoot(location.knowledgeRoot)).catch(() => setRoot("")); }, []);
 
   const submit = async () => {
     if (!canSave || busy.current) return;
@@ -272,7 +313,7 @@ function CreateDialog({ onClose, onCreated }: { onClose: () => void; onCreated: 
     setSaving(true);
     let id = createdId;
     try {
-      id = id ?? await api.kbSave(name.trim(), path.trim());
+      id = id ?? await api.kbCreateLibrary(name.trim());
       setCreatedId(id);
       onCreated();
       const n = await api.kbScan(id);
@@ -288,7 +329,7 @@ function CreateDialog({ onClose, onCreated }: { onClose: () => void; onCreated: 
   };
   return (
     <div className="kb-dialog"><Modal title="新建知识库" onClose={() => { if (!busy.current) onClose(); }} width={620} heightRatio={0.42} footer={<><button className="btn" disabled={saving} onClick={onClose}>取消</button><button className="btn primary" disabled={!canSave} onClick={() => void submit()}>{saving ? "扫描中…" : createdId ? "重试扫描" : "创建并扫描"}</button></>}>
-      <div className="col"><Field label="名称"><input className="input" value={name} disabled={saving || !!createdId} onChange={(e) => setName(e.target.value)} placeholder="例如：产品协作约定" autoFocus /></Field><Field label="本地目录路径" hint="当前扫描仅索引 .md 文件；后端校验目录可访问性，不会复制或修改原件。"><input className="input mono" value={path} disabled={saving || !!createdId} onChange={(e) => setPath(e.target.value)} placeholder={"例如：D:\\notes\\docs"} /></Field></div>
+      <div className="col"><Field label="名称"><input className="input" value={name} disabled={saving || !!createdId} onChange={(e) => setName(e.target.value)} placeholder="例如：产品协作约定" autoFocus /></Field><p className="muted small">明文目录：{root || "数据目录/knowledge"}/{name.trim() || "名称"}。直接把文件拷进该文件夹，刷新目录即可使用，不必走上传。</p></div>
     </Modal></div>
   );
 }

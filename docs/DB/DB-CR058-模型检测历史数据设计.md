@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS model_probe_history (
     channel           TEXT NOT NULL,             -- 官方直连/聚合中转/逆向套壳嫌疑
     summary           TEXT NOT NULL,             -- 一句话结论
     durationMs        INTEGER NOT NULL,          -- 检测总耗时
-    resultJson        TEXT NOT NULL,             -- 逐针结果 [{code,name,status,ms,note}] + 金丝雀/锚点/题目指纹等证据
+    resultJson        TEXT NOT NULL,             -- 逐针结果 [{code,name,status,ms,note}] + 金丝雀/锚点/题目指纹等证据；r5 增 "attribution" 键（P20 归因：consistency/claimedFamily/candidates[{name,family,distance}]/note），旧记录无该键读出 null
     createdAt         INTEGER NOT NULL           -- epoch ms
 );
 CREATE INDEX IF NOT EXISTS idx_model_probe_history_created ON model_probe_history(createdAt DESC);
@@ -30,8 +30,8 @@ CREATE INDEX IF NOT EXISTS idx_model_probe_history_created ON model_probe_histor
 
 - **保留 10 条**：每次插入后执行 `DELETE FROM model_probe_history WHERE id NOT IN (SELECT id FROM model_probe_history ORDER BY createdAt DESC, rowid DESC LIMIT 10)`。
 - **不做外键**：供应商/模型删除后历史保留为只读记录（providerName 冗余保证可读性）；检测本身要求供应商存在且启用。
-- **密钥安全**：`resultJson` 只含状态、耗时、证据摘要与判定；错误信息经密钥/令牌正则脱敏；不含 Authorization、x-api-key 等请求头值。
-- 迁移：`db.rs::migrate_cr058_model_probe`（`CREATE TABLE IF NOT EXISTS`，幂等，符合本库迁移惯例）。
+- **密钥安全**：`resultJson` 只含状态、耗时、证据摘要与判定；错误信息经密钥/令牌正则脱敏；不含 Authorization、x-api-key 等请求头值。attribution 候选名只含基线库公开模型名与采集日期，不含端点/密钥。
+- 迁移：`db.rs::migrate_cr058_model_probe`（`CREATE TABLE IF NOT EXISTS`，幂等，符合本库迁移惯例）。**r5 无表结构变更**：attribution 存于 resultJson JSON 内，无需新迁移；旧记录兼容（缺键 → null → 前端不渲染归因面板）。
 
 ## 2. 读写路径
 

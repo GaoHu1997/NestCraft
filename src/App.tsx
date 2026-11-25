@@ -9,8 +9,10 @@ import { AvatarHoverEdit } from "@/components/avatar";
 import { usePaneWidth, ResizeHandle, PaneToggle } from "@/components/pane-resize";
 import { TabMoreDropdown, TabMoreIcon, useTabOverflow } from "@/components/tab-overflow";
 import { useWindowChrome } from "@/store/window-chrome";
-import { WorkbenchHome } from "@/modules/WorkbenchHome";
+import { OverviewHome } from "@/modules/overview/OverviewHome";
 import { ChatPanel } from "@/modules/chat/ChatPanel";
+import type { ChatController } from "@/modules/chat/ChatPanel";
+import { ProjectChatHost } from "@/modules/workbench/ProjectChatHost";
 import { officeFileList } from "@/modules/office/office-model";
 import { useOfficeVersion } from "@/modules/office/OfficeFileTree";
 import { onLocate } from "@/modules/locate";
@@ -21,7 +23,8 @@ import { SettingsCenter } from "@/modules/settings";
 import { UpdateBadge } from "@/modules/update/UpdateBadge";
 
 const NAV_ITEMS = [
-  { page: "workbench", label: "工作台", icon: "grid" },
+  // CR-078：主菜单「工作台」更名「概览」，路由键 workbench 保持不变；图标 grid → layout。
+  { page: "workbench", label: "概览", icon: "layout" },
   { page: "projects", label: "项目管理", icon: "folder" },
   { page: "knowledge", label: "知识库", icon: "book" },
   { page: "servers", label: "服务器管理", icon: "server" },
@@ -80,6 +83,7 @@ export default function App() {
     if ((detail.kind === "file" || detail.kind === "requirement") && detail.projectId) {
       const key = `project:${detail.projectId}`;
       const window = windows.find(window => window.key === key);
+      if (window?.route.page === "project" && window.route.tab === "workbench" && routeKey(route) === key) return;
       if (window?.route.page === "project") {
         activateWindow(key);
         go({ ...window.route, tab: detail.kind === "file" ? "code" : "requirements" });
@@ -87,7 +91,7 @@ export default function App() {
     } else if (detail.kind === "office-file" && detail.projectId) {
       activateWindow(`project:${detail.projectId}`);
     }
-  }), [windows, activateWindow, go]);
+  }), [windows, activateWindow, go, route]);
 
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
@@ -131,7 +135,7 @@ export default function App() {
   const activePage = route.page === "project" ? "projects" : route.page === "knowledge-lib" ? "knowledge" : route.page === "server" ? "servers" : route.page;
   const windowTitle = (item: Route) => item.page === "project" ? projects.find(project => project.id === item.projectId)?.name ?? "项目"
     : item.page === "knowledge-lib" ? libraries.find(library => library.id === item.libId)?.name ?? "知识库"
-      : item.page === "server" ? hosts.find(host => host.id === item.hostId)?.name ?? "服务器" : "工作台";
+      : item.page === "server" ? hosts.find(host => host.id === item.hostId)?.name ?? "服务器" : "概览";
   // CR-052 / UI-TAB-001：对象窗口页签溢出统一走共享「更多」下拉，不出现横向滚动条。
   const openWindows = windows.filter(window => window.open !== false);
   const windowTabItems = openWindows.map(window => ({ key: window.key, label: window.key === "home" ? "首页" : windowTitle(window.route), active: routeKey(route) === window.key }));
@@ -163,7 +167,7 @@ export default function App() {
       </header>
       <nav ref={windowTabsOverflow.barRef} className="nc-window-tabs" aria-label="首页与打开的对象">
         {openWindows.map(window => <div key={window.key} className={`nc-window-tab ${window.key === "home" ? "home-tab" : ""} ${routeKey(route) === window.key ? "active" : ""}`}>
-          <button className="nc-tab-focus" onClick={() => activateWindow(window.key)}><Icon name={window.key === "home" ? "home" : window.route.page === "project" ? "folder" : window.route.page === "knowledge-lib" ? "book" : "server"} size={14} />{window.key === "home" ? "首页" : windowTitle(window.route)}</button>
+          <button className="nc-tab-focus" onClick={() => activateWindow(window.key)} title={window.key === "home" ? "首页" : windowTitle(window.route)}><Icon name={window.key === "home" ? "home" : window.route.page === "project" ? "folder" : window.route.page === "knowledge-lib" ? "book" : "server"} size={14} /><span className="nc-tab-label">{window.key === "home" ? "首页" : windowTitle(window.route)}</span></button>
           {window.key !== "home" && <button className="nc-tab-close" aria-label={`关闭 ${windowTitle(window.route)}`} title="关闭此Tab，保留内存状态" onClick={() => setClosingTab(window.key)}><Icon name="close" size={13} /></button>}
         </div>)}
         <button {...windowTabsOverflow.moreProps}><TabMoreIcon /></button>
@@ -205,7 +209,7 @@ export default function App() {
           openObject({ page: "project", projectId: project.id, tab: "workbench" }); setSearchOpen(false);
         }}>{project.name}<small>{project.kind === "code" ? "编码" : "办公"}</small></button>)}</div>
       </Modal>}
-      {closingTab && <Modal title="关闭对象 Tab？" width={460} onClose={() => setClosingTab(null)} footer={<><button className="btn" onClick={() => setClosingTab(null)}>取消，保留 Tab</button><button className="btn primary" onClick={() => { closeWindow(closingTab); setClosingTab(null); }}>保留状态并关闭 Tab</button></>}><p>关闭只移除此 Tab，内存中的未保存内容和会话实例保留，重新打开可继续查看；不删除文件，不停止会话或连接。内存状态在退出应用后仍会丢失，请先保存重要内容。</p></Modal>}
+      {closingTab && <Modal title="关闭对象 Tab？" width={460} onClose={() => setClosingTab(null)} footer={<><button className="btn" onClick={() => setClosingTab(null)}>取消，保留 Tab</button><button className="btn primary" onClick={() => { closeWindow(closingTab); setClosingTab(null); }}>保留状态并关闭 Tab</button></>}><p>关闭只移除此 Tab，内存中的未保存内容和会话实例保留，重新打开可继续查看；不删除文件，也不停止其他页签的会话。关闭服务器工作台页签会断开该主机的连接（CR-075：进入工作台自动连接、关闭页签自动断开）。内存状态在退出应用后仍会丢失，请先保存重要内容。</p></Modal>}
       {chrome.closeToken && <Modal title="关闭栖造窗口？" width={460} onClose={() => void chrome.cancelClose()} footer={<><button className="btn" onClick={() => void chrome.cancelClose()}>取消，继续编辑</button><button className="btn danger" onClick={() => void chrome.confirmClose()}>确认退出</button></>}><p>退出会结束当前应用，尚未保存的编辑和内存仿真草稿可能丢失，正在运行的本机会话也会随进程结束。此操作不会删除项目目录。若需要保存，请取消并先保存。</p>{chrome.error && <p role="alert">{chrome.error}</p>}</Modal>}
       {chrome.error && !chrome.closeToken && <div className="nc-window-error" role="status">{chrome.error}<button aria-label="关闭窗口操作提示" onClick={chrome.clearError}><Icon name="close" size={14} /></button></div>}
       {notificationsOpen && <Modal title="通知" width={460} onClose={() => setNotificationsOpen(false)}><p>目前没有可读取的系统通知。项目的待处理需求在工作台中查看。</p></Modal>}
@@ -235,7 +239,7 @@ function WindowContent({ route, visible }: { route: Route; visible: boolean }) {
 
 function HomeWindow({ route, visible }: { route: Route; visible: boolean }) {
   return <div className="nc-home-window">
-    <section hidden={route.page !== "workbench"}><WorkbenchHome /></section>
+    <section hidden={route.page !== "workbench"}><OverviewHome /></section>
     <section hidden={route.page !== "projects"}><ProjectsModule.Home /></section>
     <section hidden={route.page !== "knowledge"}><KnowledgeModule.Home /></section>
     <section hidden={route.page !== "servers"}><ServersModule.Home /></section>
@@ -246,11 +250,14 @@ function ProjectWindow({ projectId, tab, visible }: { projectId: string; tab: "w
   const { aiVisible, aiWidth, setAiWidth, featureTargets } = useApp();
   const [project, setProject] = useState<api.Project | null>(null);
   const officeVersion = useOfficeVersion();
+  const [chatController, setChatController] = useState<ChatController | null>(null);
+  const [workbenchChatSlot, setWorkbenchChatSlot] = useState<HTMLDivElement | null>(null);
+  const [sidebarChatSlot, setSidebarChatSlot] = useState<HTMLDivElement | null>(null);
   const layoutRef = useRef<HTMLDivElement>(null);
-  const ai = usePaneWidth(`project:${projectId}`, "ai", { default: 372, min: 320, max: 620, side: "right", containerRef: layoutRef, minCenter: 376, disabled: !visible });
   const preferencesRef = useRef({ visible: aiVisible, width: aiWidth });
   if (visible) preferencesRef.current = { visible: aiVisible, width: aiWidth };
   const preferences = preferencesRef.current;
+  const ai = usePaneWidth(`project:${projectId}`, "ai", { default: 372, min: 320, max: 620, side: "right", containerRef: layoutRef, minCenter: 376, visible: preferences.visible, disabled: !visible });
   useEffect(() => {
     let alive = true;
     api.listProjects().then(projects => { if (alive) setProject(projects.find(project => project.id === projectId) ?? null); }).catch(() => {});
@@ -262,18 +269,23 @@ function ProjectWindow({ projectId, tab, visible }: { projectId: string; tab: "w
   }, [ai.preferred, setAiWidth, visible]);
   const officeFiles = project?.kind === "work" ? officeFileList(project.id) : undefined;
   void officeVersion;
-  /* CR-054：工作台页签自带会话视图（全项目唯一的 ChatPanel）。
-     此页签下不再渲染侧栏 ChatPanel，避免同一会话出现两个实例与两套流式订阅。 */
+  /* FEAT-021 / CR-074：ProjectWindow持有唯一持久ChatPanel；工作台与侧栏
+     只改变同一portal容器的位置，隐藏页面与关闭侧栏不卸载会话。 */
   const onWorkbench = tab === "workbench";
   const showSidebar = preferences.visible && ai.visible && !onWorkbench;
   return (
     <div className="nc-project-window pane-container" ref={layoutRef}>
-      <div className="nc-project-content"><ProjectsModule.Workspace projectId={projectId} tab={tab} visible={visible} /></div>
-      {project && showSidebar && <aside {...ai.paneProps} className={`${ai.paneProps.className} nc-chat-host`} style={ai.style}>
+      <div className="nc-project-content"><ProjectsModule.Workspace projectId={projectId} tab={tab} visible={visible} chatController={chatController} chatSlotRef={setWorkbenchChatSlot} /></div>
+      {project && <aside {...ai.paneProps} hidden={!showSidebar} className={`${ai.paneProps.className} nc-chat-host`} style={ai.style}>
         <ResizeHandle pane={ai} label="AI 侧栏" />
-        <ChatPanel projectId={project.id} rootUri={project.rootUri} office={project.kind === "work"} officeFiles={officeFiles} visible={visible && showSidebar} width={ai.width}
-          featureTarget={featureTargets[project.id] ?? null} />
+        <div ref={setSidebarChatSlot} className="project-chat-slot" data-project-chat-slot="sidebar" />
       </aside>}
+      {project && <ProjectChatHost layout={onWorkbench ? "workbench" : showSidebar ? "sidebar" : "parked"} workbenchSlot={workbenchChatSlot} sidebarSlot={sidebarChatSlot} visible={visible && (onWorkbench || showSidebar)}>
+        <ChatPanel projectId={project.id} rootUri={project.rootUri} office={project.kind === "work"} officeFiles={officeFiles}
+          visible={visible && (onWorkbench || showSidebar)} width={onWorkbench ? undefined : ai.width}
+          variant={onWorkbench ? "workbench" : "sidebar"} className={onWorkbench ? "wb-chat-panel" : undefined}
+          onController={setChatController} featureTarget={featureTargets[project.id] ?? null} />
+      </ProjectChatHost>}
       {project && onWorkbench && preferences.visible && <div className="pane-controls"><span className="nc-workbench-note" title="工作台已包含会话区，此页签不显示独立 AI 侧栏">会话区已合并在工作台</span></div>}
     </div>
   );

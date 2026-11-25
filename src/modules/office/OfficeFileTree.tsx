@@ -1,4 +1,5 @@
 import { Icon } from "@/components/icons";
+import { FileTypeIcon, fileKindOf } from "@/components/file-type-icon";
 import { useEffect, useState } from "react";
 import { Modal, useToast } from "@/components/ui";
 import {
@@ -28,24 +29,14 @@ import { loadSample, sampleKindFor } from "./office-samples";
  * - 只改内存，不创建真实磁盘目录（LLD-FEAT-006 §1 / CR-043 §1）。
  */
 
-const FILE_GLYPH: Record<string, string> = {
-  md: "fileText", docx: "fileWord", xlsx: "fileSheet", pptx: "fileSlides", pdf: "filePdf", txt: "fileText",
-};
-
-function extOf(name: string): string {
-  const i = name.lastIndexOf(".");
-  return i > 0 ? name.slice(i + 1).toLowerCase() : "";
-}
-
+/** CR-080：文件类型彩色图标（B 淡底描边）；目录用 folder 类型。 */
 function FileGlyph({ name }: { name: string }) {
-  const ext = extOf(name);
-  return <span className={`office-glyph platform-glyph ${FILE_GLYPH[ext] ? `g-${ext}` : "g-bin"}`}><Icon name={FILE_GLYPH[ext] ?? "file"} size={14} /></span>;
+  return <span className="office-glyph"><FileTypeIcon kind={fileKindOf(name)} size={14} /></span>;
 }
 
 function FolderGlyph({ open }: { open: boolean }) {
-  return (
-    <Icon name={open ? "folderOpen" : "folder"} size={14} aria-hidden />
-  );
+  void open;
+  return <span className="office-glyph"><FileTypeIcon kind="folder" size={14} /></span>;
 }
 
 /** 订阅办公模型变更（树/查看器共用） */

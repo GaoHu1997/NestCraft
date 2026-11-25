@@ -5,7 +5,6 @@
 //! - Tool：内置只读工具注册表（含风险等级）
 
 use crate::db;
-use tauri::Manager;
 use crate::models::{McpServer, McpToolInfo, SkillEntry, ToolEntry, now_ms, new_id};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde_json::Value;
@@ -18,7 +17,7 @@ use std::thread;
 
 #[tauri::command]
 pub fn skill_list(app: tauri::AppHandle) -> Result<Vec<SkillEntry>, String> {
-    let skills_dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("skills");
+    let skills_dir = crate::storage_layout::category("skills")?;
     std::fs::create_dir_all(&skills_dir).map_err(|e| e.to_string())?;
     // 目录扫描 + DB 状态
     let guard = db::conn()?;
@@ -75,7 +74,7 @@ pub fn skill_save(app: tauri::AppHandle, draft: SkillDraft) -> Result<(), String
     if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         return Err("技能名称只能包含字母、数字、连字符和下划线".into());
     }
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("skills").join(&name);
+    let dir = crate::storage_layout::category("skills")?.join(&name);
     if !dir.exists() {
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     }
@@ -98,7 +97,7 @@ pub fn skill_save(app: tauri::AppHandle, draft: SkillDraft) -> Result<(), String
 
 #[tauri::command]
 pub fn skill_delete(app: tauri::AppHandle, name: String) -> Result<(), String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("skills").join(&name);
+    let dir = crate::storage_layout::category("skills")?.join(&name);
     if dir.exists() {
         std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
     }
@@ -130,7 +129,7 @@ pub fn skill_set_enabled(name: String, enabled: bool) -> Result<(), String> {
 
 #[tauri::command]
 pub fn skill_read(app: tauri::AppHandle, name: String) -> Result<String, String> {
-    let p = app.path().app_data_dir().map_err(|e| e.to_string())?.join("skills").join(&name).join("SKILL.md");
+    let p = crate::storage_layout::category("skills")?.join(&name).join("SKILL.md");
     std::fs::read_to_string(&p).map_err(|e| e.to_string())
 }
 
@@ -267,7 +266,7 @@ pub fn skill_import_folder(
     if final_slug.is_empty() {
         return Err("技能标识无效".into());
     }
-    let skills_root = app.path().app_data_dir().map_err(|e| e.to_string())?.join("skills");
+    let skills_root = crate::storage_layout::category("skills")?;
     std::fs::create_dir_all(&skills_root).map_err(|e| e.to_string())?;
     let target = skills_root.join(&final_slug);
     if target.exists() {
@@ -327,7 +326,7 @@ pub fn skill_import_folder(
 #[tauri::command]
 pub fn skill_scan_sources(app: tauri::AppHandle) -> Result<Vec<SkillScanGroup>, String> {
     let home = dirs::home_dir().ok_or("无法定位用户主目录")?;
-    let skills_root = app.path().app_data_dir().map_err(|e| e.to_string())?.join("skills");
+    let skills_root = crate::storage_layout::category("skills")?;
     let imported: Vec<String> = std::fs::read_dir(&skills_root)
         .map(|rd| rd.flatten().filter(|e| e.path().is_dir()).map(|e| e.file_name().to_string_lossy().to_string()).collect())
         .unwrap_or_default();
@@ -1348,9 +1347,8 @@ fn query_value(query: &str, key: &str) -> Option<String> {
 }
 
 fn mcp_secret_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    Ok(dir.join("secrets.json"))
+    let _ = app;
+    Ok(crate::storage_layout::category("secrets")?.join("secrets.json"))
 }
 
 fn read_secret_map(app: &tauri::AppHandle) -> Result<BTreeMap<String, String>, String> {

@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "@/api";
-import type { ProbeHistoryItem, ProbeItemState, ProbeProgressEvent, ProbeReport, Provider } from "@/api";
+import type { ProbeAttribution, ProbeHistoryItem, ProbeItemState, ProbeProgressEvent, ProbeReport, Provider } from "@/api";
 import { useToast } from "@/components/ui";
 import { SettingsIcon } from "./SettingsDialog";
 import { errMsg } from "./shared";
 
-// CR-058：模型检测十九针探针（设置左栏「模型检测」页签；r4 十九针，r5 结果区置顶 + 历史改悬浮下拉）。
-// 固定 19 针、无探针选择入口；端点与密钥取自已保存供应商配置；历史保留最近 10 次。
+// CR-058：模型检测探针（设置左栏「模型检测」页签；r4 十九针，r5 结果区置顶 + 历史改悬浮下拉；r5(CR-058 r5) 增 P20 行为指纹与归因面板）。
+// 固定 20 针、无探针选择入口；端点与密钥取自已保存供应商配置；历史保留最近 10 次。
 const PROBE_STATUS_LABEL: Record<string, string> = { pass: "通过", warn: "警示", fail: "不通过", skip: "未执行", na: "不适用" };
 const EMPTY_ITEMS: ProbeItemState[] = [];
-const PENDING_SLOTS = 19;
-// 固定 19 针清单：与后端 PROBE_CODES / PROBE_NAMES 一致（r4 完整对齐）。
+const PENDING_SLOTS = 20;
+// 固定 20 针清单：与后端 PROBE_CODES / PROBE_NAMES 一致（r5 末位 P20 行为指纹与归因，权重 0 辅助信号）。
 // 名称在此固定，保证「执行中」阶段就能显示编号+名称，不依赖后端回传（AC-03）。
 const PROBE_LIST: [string, string][] = [
   ["P1", "连通与鉴权握手"],
@@ -32,6 +32,7 @@ const PROBE_LIST: [string, string][] = [
   ["P17", "输入 Token 对账"],
   ["P18", "流式输出对账"],
   ["P19", "长前缀缓存命中"],
+  ["P20", "行为指纹与归因"],
 ];
 
 interface Slot {
@@ -54,7 +55,7 @@ function Dot({ slot }: { slot: Slot }) {
 }
 
 function ProbeRows({ slots, items }: { slots: Slot[]; items: ProbeItemState[] }) {
-  return <div className="probe-rows" role="list" aria-label="十九针探针结果">
+  return <div className="probe-rows" role="list" aria-label="二十针探针结果">
     {slots.map((slot, i) => {
       // 名称取固定清单（后端回传仅用于覆盖状态与证据，不作为名称来源）。
       const [code, name] = PROBE_LIST[i] || [`P${i + 1}`, ""];
@@ -66,6 +67,35 @@ function ProbeRows({ slots, items }: { slots: Slot[]; items: ProbeItemState[] })
         <span className="p-ms">{slot.phase === "settled" && slot.ms != null ? `${slot.ms}ms` : slot.phase === "running" ? "—" : ""}</span>
       </div>;
     })}
+  </div>;
+}
+
+/* CR-058 r5：P20 归因面板（结果区下方、逐针列表上方；仅完成/历史回看态渲染）。
+   一致性三态 + top-3「最像的已知候选」距离条；概率性提示，措辞不得出现实锤断言（AC-18）。 */
+const ATTR_CONSISTENCY: Record<string, { label: string; tone: string }> = {
+  match: { label: "与声称家族一致", tone: "good" },
+  mismatch: { label: "与声称家族不一致", tone: "warn" },
+  unknown: { label: "无法判定", tone: "gray" },
+};
+function AttributionPanel({ attr }: { attr: ProbeAttribution }) {
+  const c = ATTR_CONSISTENCY[attr.consistency] || ATTR_CONSISTENCY.unknown;
+  const maxD = Math.max(0.001, ...attr.candidates.map(x => x.distance));
+  return <div className="probe-attr" aria-label="行为指纹归因">
+    <div className="probe-attr-head">
+      <span className="probe-attr-title">行为指纹归因</span>
+      <span className={`tag ${c.tone}`}>{c.label}</span>
+      <span className="set-caption probe-attr-claimed">声称家族 · <span className="mono">{attr.claimedFamily || "未知"}</span></span>
+      <span className="set-caption probe-attr-hint">最像的已知候选 · 概率性提示，不构成实锤</span>
+    </div>
+    <div className="probe-attr-list" role="list">
+      {attr.candidates.length ? attr.candidates.map((x, i) => <div className="probe-attr-cand" key={i} role="listitem">
+        <span className="a-rank mono">#{i + 1}</span>
+        <span className="a-name mono">{x.name}</span>
+        <span className="a-bar" aria-hidden="true"><span className={`a-bar-fill${i === 0 ? " top" : ""}`} style={{ width: `${Math.round((1 - x.distance / maxD) * 100)}%` }} /></span>
+        <span className="a-dist mono">d={x.distance.toFixed(2)}</span>
+      </div>) : <p className="set-caption probe-attr-empty">与所有已知候选都不像（基线库外）；无法判定，不指认。</p>}
+    </div>
+    {attr.note ? <p className="set-caption probe-attr-note">{attr.note}</p> : null}
   </div>;
 }
 
@@ -218,7 +248,7 @@ export function SettingsModelProbe() {
     }
   };
 
-  // 选中历史：下拉收起，结果区与 19 针列表切到该次结果。
+  // 选中历史：下拉收起，结果区与 20 针列表切到该次结果。
   const openHistory = () => { setHistoryOpen(v => !v); if (!historyOpen) void loadHistory(); };
   const pickHistory = (h: ProbeHistoryItem) => {
     setHistoryOpen(false);
@@ -248,7 +278,7 @@ export function SettingsModelProbe() {
     <div className="probe-head">
       <div>
         <h3>模型检测</h3>
-        <p className="set-caption">固定 19 针黑盒探针 · 检测中转掺水（偷换模型 / 吞指令 / 裁历史 / 假流式）· 结果仅本地展示，不改写配置</p>
+        <p className="set-caption">固定 20 针黑盒探针 · 检测中转掺水（偷换模型 / 吞指令 / 裁历史 / 假流式）· P20 行为指纹给出「最像的已知候选」归因提示 · 结果仅本地展示，不改写配置</p>
       </div>
       <div className="probe-hist-wrap" ref={historyRef}>
         <button className="btn sm" aria-expanded={historyOpen} onClick={openHistory}>
@@ -294,7 +324,7 @@ export function SettingsModelProbe() {
     {providerNotice && <p className="set-caption probe-hint" role="status">{providerNotice}<button className="set-link" onClick={() => setProviderNotice("")}>知道了</button></p>}
     {blockReason && <p className="set-caption probe-hint">{blockReason}</p>}
 
-    {/* 结果区紧贴 19 针列表上方：空闲 → 进行中（进度）→ 完成 / 历史回看 */}
+    {/* 结果区紧贴 20 针列表上方：空闲 → 进行中（进度）→ 完成 / 历史回看 */}
     <div className={`probe-result ${running ? "running" : shown ? "done" : "idle"}`}>
       {running && <>
         <div className="probe-result-top">
@@ -322,6 +352,9 @@ export function SettingsModelProbe() {
       </>}
       {!running && !shown && idleBlock()}
     </div>
+
+    {/* r5：归因面板仅在完成/历史回看态渲染（待检测与运行中不出现，不影响结果区 108px 固定高度） */}
+    {!running && shown?.attribution ? <AttributionPanel attr={shown.attribution} /> : null}
 
     <ProbeRows slots={slots} items={items} />
   </section>;

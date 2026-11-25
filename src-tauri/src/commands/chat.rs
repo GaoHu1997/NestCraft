@@ -16,6 +16,9 @@ use std::sync::{Arc, Mutex};
 use tokio::process::{Child, Command};
 use tokio::sync::watch;
 
+#[path = "chat_stats.rs"]
+pub(crate) mod stats;
+
 /// 每个注册项带独立 turn ID；旧任务的清理不得移除新代次。
 struct RunningEntry {
     turn_id: String,
@@ -544,7 +547,7 @@ pub fn chat_messages(session_id: String) -> Result<Vec<ChatMessage>, String> {
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
     let mut stmt = conn
-        .prepare("SELECT id, sessionId, role, content, metaJson, refsJson, gitContextJson, createdAt FROM message WHERE sessionId=?1 ORDER BY createdAt")
+        .prepare("SELECT id, sessionId, role, content, metaJson, refsJson, gitContextJson, createdAt FROM message WHERE sessionId=?1 ORDER BY createdAt, rowid")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([&session_id], |r| {
@@ -596,6 +599,9 @@ pub async fn chat_send(
         runner.as_deref().unwrap_or("cli") == "platform"
     };
     if is_platform {
+        if payload.attachments.iter().any(|a| a.image_base64.is_some()) {
+            return Err("平台模型通道暂不支持发送图片".into());
+        }
         return crate::commands::platform_agent::send_platform(app, payload, channel).await;
     }
     let session_id = payload.session_id.clone();
@@ -733,7 +739,8 @@ pub async fn chat_send(
     };
     if *abort_rx.borrow() { return Err("发送已停止".into()); }
     let permission_id = payload.permission_id.clone();
-    let child = spawn_cli(&cli_id, &model_id, &effort, project_root.as_deref(), dispatch.0.as_ref(), permission_id.as_deref(), requested_resume.as_deref())?;
+    let images = CliImages::prepare(&cli_id, &payload.attachments)?;
+    let child = spawn_cli(&cli_id, &model_id, &effort, project_root.as_deref(), dispatch.0.as_ref(), permission_id.as_deref(), requested_resume.as_deref(), &images.paths)?;
 
     // 持久化用户消息
     let msg_id = new_id("msg");
@@ -742,13 +749,14 @@ pub async fn chat_send(
         let conn = guard.as_ref().ok_or("db not initialized")?;
         tx_debug(conn, "before-user-msg");
         conn.execute(
-            "INSERT INTO message (id, sessionId, role, content, refsJson, createdAt) VALUES (?1,?2,'user',?3,?4,?5)",
+            "INSERT INTO message (id, sessionId, role, content, refsJson, createdAt, metaJson) VALUES (?1,?2,'user',?3,?4,?5,?6)",
             rusqlite::params![
                 msg_id,
                 session_id,
                 payload.content,
                 serde_json::to_string(&payload.refs).ok(),
-                now_ms()
+                now_ms(),
+                (!payload.attachments.is_empty()).then(|| serde_json::json!({"attachments": payload.attachments}).to_string())
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -773,6 +781,7 @@ pub async fn chat_send(
         // RAII 在成功、错误、任务取消或 panic 时都只清理本代次。
         let _running_turn = running_turn;
         let _dispatch_holder = dispatch;
+        let images = images;
         let max_attempts: i64 = 2;
         let mut attempt: i64 = 0;
         let mut current_child = child;
@@ -794,7 +803,7 @@ pub async fn chat_send(
                     if *abort_rx.borrow() {
                         break Err(fail);
                     }
-                    match spawn_cli(&cli_id2, &model_id, &effort, project_root.as_deref(), _dispatch_holder.0.as_ref(), permission_id.as_deref(), requested_resume.as_deref()) {
+                    match spawn_cli(&cli_id2, &model_id, &effort, project_root.as_deref(), _dispatch_holder.0.as_ref(), permission_id.as_deref(), requested_resume.as_deref(), &images.paths) {
                         Ok(next) => { current_child = next; }
                         Err(message) => break Err(StreamFailure { message, stderr: String::new(), timed_out: false }),
                     }
@@ -1298,8 +1307,7 @@ pub(crate) fn build_prompt(app: &tauri::AppHandle, payload: &SendPayload, projec
                     // 与 skill_list 的受管目录默认启用语义一致，显式停用永不注入。
                     if enabled == Some(0) { return Err("技能已停用，引用已拒绝".into()); }
                 }
-                use tauri::Manager;
-                let root = app.path().app_data_dir().map_err(|e| e.to_string())?.join("skills");
+                let root = crate::storage_layout::category("skills")?;
                 let source = std::fs::canonicalize(root.join(name).join("SKILL.md")).map_err(|_| "技能正文不存在".to_string())?;
                 let root = std::fs::canonicalize(root).map_err(|_| "技能目录不可访问".to_string())?;
                 if !source.starts_with(&root) || std::fs::metadata(&source).map_err(|e| e.to_string())?.len() > MAX_REF_TEXT as u64 {
@@ -1340,19 +1348,46 @@ pub(crate) fn build_prompt(app: &tauri::AppHandle, payload: &SendPayload, projec
     }
     for att in &payload.attachments {
         if att.name.len() > 4096 { return Err("附件名称过长".into()); }
+        if att.image_base64.is_some() { continue; }
         parts.push(format!("<attachment name=\"{}\" size=\"{}\" />", xml_attribute(&att.name), att.byte_size.unwrap_or(0)));
     }
-    parts.push(payload.content.clone());
+    if payload.content.trim().is_empty() && payload.attachments.iter().any(|a| a.image_base64.is_some()) {
+        parts.push("请查看随消息发送的图片。".into());
+    } else {
+        parts.push(payload.content.clone());
+    }
     check_prompt_size(&parts)?;
     Ok(parts.join("\n\n"))
 }
 
+enum TurnSegment {
+    Text(String),
+    Thinking(String),
+    ToolUse(usize),
+    ToolResult(usize, Option<i64>),
+    PlanUpdate(Vec<serde_json::Value>),
+}
+
+struct ClaudeToolBlock {
+    index: u64,
+    id: String,
+    name: String,
+    input: serde_json::Value,
+    partial_json: String,
+}
+
 pub(crate) struct StreamOutcome {
+    claude_streamed: std::collections::HashSet<u64>,
+    claude_tool: Option<ClaudeToolBlock>,
+    segments: Vec<TurnSegment>,
+    command_output: std::collections::HashMap<String, String>,
     pub assistant_text: String,
     pub thinking_text: String,
     pub tool_uses: Vec<(String, String, String)>,  // id, name, input
     pub tool_results: Vec<(String, String, bool)>, // id, content, is_error
     pub usage: Option<(i64, i64, i64)>,
+    /// FEAT-012：仅平台真实生成边界；CLI缺协议时不生成该字段。
+    pub session_stats: Option<stats::TurnStats>,
     /// 流内适配器上报的线程/会话 id（emittedRef）。仅后端内存使用，不进日志与前端。
     pub emitted_ref: Option<String>,
     /// CR-037：本轮请求的 resume 引用（requestedResume）。
@@ -1368,6 +1403,36 @@ pub(crate) struct StreamOutcome {
 }
 
 impl StreamOutcome {
+    pub(crate) fn push_text(&mut self, text: &str) {
+        if text.is_empty() { return; }
+        self.mark_content();
+        self.assistant_text.push_str(text);
+        match self.segments.last_mut() {
+            Some(TurnSegment::Text(tail)) => tail.push_str(text),
+            _ => self.segments.push(TurnSegment::Text(text.into())),
+        }
+    }
+
+    pub(crate) fn push_thinking(&mut self, text: &str) {
+        if text.is_empty() { return; }
+        self.mark_thinking();
+        self.thinking_text.push_str(text);
+        match self.segments.last_mut() {
+            Some(TurnSegment::Thinking(tail)) => tail.push_str(text),
+            _ => self.segments.push(TurnSegment::Thinking(text.into())),
+        }
+    }
+
+    pub(crate) fn push_tool_use(&mut self, id: String, name: String, input: String) {
+        self.segments.push(TurnSegment::ToolUse(self.tool_uses.len()));
+        self.tool_uses.push((id, name, input));
+    }
+
+    pub(crate) fn push_tool_result(&mut self, id: String, content: String, is_error: bool, exit_code: Option<i64>) {
+        self.segments.push(TurnSegment::ToolResult(self.tool_results.len(), exit_code));
+        self.tool_results.push((id, content, is_error));
+    }
+
     /// 收到首段思考内容时开始计时。
     fn mark_thinking(&mut self) {
         if self.thinking_started.is_none() {
@@ -1388,11 +1453,16 @@ impl StreamOutcome {
 impl Default for StreamOutcome {
     fn default() -> Self {
         Self {
+            claude_streamed: Default::default(),
+            claude_tool: None,
+            segments: vec![],
+            command_output: Default::default(),
             assistant_text: String::new(),
             thinking_text: String::new(),
             tool_uses: vec![],
             tool_results: vec![],
             usage: None,
+            session_stats: None,
             emitted_ref: None,
             requested_resume: None,
             is_error: false,
@@ -1410,6 +1480,48 @@ struct StreamFailure {
     timed_out: bool,
 }
 
+struct CliImages {
+    directory: Option<std::path::PathBuf>,
+    paths: Vec<std::path::PathBuf>,
+}
+
+impl CliImages {
+    fn prepare(cli: &str, attachments: &[crate::models::AttachmentMeta]) -> Result<Self, String> {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        const MAX_BYTES: usize = 10 * 1024 * 1024;
+        let mut images = Self { directory: None, paths: vec![] };
+        let entries: Vec<_> = attachments.iter().filter_map(|a| a.image_base64.as_deref().map(|data| (a, data))).collect();
+        if entries.is_empty() { return Ok(images); }
+        if cli != "codex" { return Err("当前 CLI 通道暂不支持发送图片".into()); }
+        if entries.len() > 8 { return Err("每条消息最多发送 8 张图片".into()); }
+        let dir = std::env::temp_dir().join(format!("ai-delelovelop-chat-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).map_err(|_| "无法创建图片临时目录".to_string())?;
+        images.directory = Some(dir.clone());
+        for (index, (attachment, data)) in entries.into_iter().enumerate() {
+            if data.len() > MAX_BYTES.div_ceil(3) * 4 { return Err("单张图片不能超过 10 MiB".into()); }
+            let bytes = STANDARD.decode(data).map_err(|_| "图片编码无效".to_string())?;
+            if bytes.len() > MAX_BYTES { return Err("单张图片不能超过 10 MiB".into()); }
+            if attachment.byte_size.is_some_and(|size| size != bytes.len() as i64) { return Err("图片长度不匹配".into()); }
+            let ext = match attachment.mime.as_deref() {
+                Some("image/png") if bytes.starts_with(b"\x89PNG\r\n\x1a\n") => "png",
+                Some("image/jpeg") if bytes.starts_with(&[0xff, 0xd8, 0xff]) => "jpg",
+                Some("image/webp") if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") => "webp",
+                _ => return Err("请选择有效的 PNG、JPEG 或 WebP 图片".into()),
+            };
+            let path = dir.join(format!("{index}.{ext}"));
+            std::fs::write(&path, bytes).map_err(|_| "无法写入图片临时文件".to_string())?;
+            images.paths.push(path);
+        }
+        Ok(images)
+    }
+}
+
+impl Drop for CliImages {
+    fn drop(&mut self) {
+        if let Some(dir) = &self.directory { let _ = std::fs::remove_dir_all(dir); }
+    }
+}
+
 fn spawn_cli(
     cli_id: &str,
     model_id: &str,
@@ -1418,6 +1530,7 @@ fn spawn_cli(
     dispatch: Option<&crate::commands::dispatch::DispatchConfig>,
     permission_id: Option<&str>,
     resume_ref: Option<&str>,
+    image_paths: &[std::path::PathBuf],
 ) -> Result<Child, String> {
     validate_permission(cli_id, permission_id)?;
     // CR-053：命令工具设置读取 + 启动前复检；所选路径失效时阻止启动并提示改选「自动」，不静默回落。
@@ -1543,7 +1656,9 @@ fn spawn_cli(
         cmd.current_dir(dir);
     }
     if cli_id == "codex" {
-        cmd.arg("-");
+        for path in image_paths { cmd.arg("--image").arg(path); }
+        // End the variadic --image option before the positional stdin marker.
+        cmd.arg("--").arg("-");
     }
 
     // 注入供应商环境；先清理可能串号的原生配置
@@ -1709,7 +1824,7 @@ async fn run_cli_stream(
         }
     }
     if aborted {
-        out.assistant_text.push_str("\n\n[已停止]");
+        out.push_text("\n\n[已停止]");
         out.aborted = true;
         return Ok(out);
     }
@@ -1727,7 +1842,7 @@ async fn run_cli_stream(
         status = child.wait() => status.map_err(|_| StreamFailure { message: "CLI 等待退出失败".into(), stderr: String::new(), timed_out: false })?,
         _ = abort_rx.changed() => {
             let _ = child.kill().await;
-            out.assistant_text.push_str("\n\n[已停止]");
+            out.push_text("\n\n[已停止]");
             out.aborted = true;
             return Ok(out);
         }
@@ -1784,8 +1899,7 @@ fn parse_cli_line(
             "text" => {
                 if let Some(text) = v.get("data").and_then(|d| d.as_str()) {
                     if !text.is_empty() {
-                        out.mark_content();
-                        out.assistant_text.push_str(text);
+                        out.push_text(text);
                         send(channel, serde_json::json!({ "type": "delta", "delta": text }));
                     }
                 }
@@ -1794,8 +1908,7 @@ fn parse_cli_line(
             "thought" => {
                 if let Some(text) = v.get("data").and_then(|d| d.as_str()) {
                     if !text.is_empty() {
-                        out.mark_thinking();
-                        out.thinking_text.push_str(text);
+                        out.push_thinking(text);
                         send(channel, serde_json::json!({ "type": "thinking", "delta": text }));
                     }
                 }
@@ -1841,19 +1954,46 @@ fn parse_cli_line(
         (_, "stream_event") => {
             let ev = v.get("event").cloned().unwrap_or(serde_json::Value::Null);
             let et = ev.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            if v.get("parent_tool_use_id").and_then(|id| id.as_str()).is_some_and(|id| !id.is_empty()) {
+                return;
+            }
+            if et == "message_start" {
+                out.claude_streamed.clear();
+                out.claude_tool = None;
+            }
+            let index = ev["index"].as_u64().unwrap_or(0);
+            if et == "content_block_start" && ev["content_block"]["type"] == "tool_use" {
+                let block = &ev["content_block"];
+                if let (Some(id), Some(name)) = (block["id"].as_str(), block["name"].as_str()) {
+                    out.claude_tool = Some(ClaudeToolBlock {
+                        index, id: id.into(), name: name.into(), input: block["input"].clone(), partial_json: String::new(),
+                    });
+                }
+            }
+            if et == "content_block_stop" && out.claude_tool.as_ref().is_some_and(|tool| tool.index == index) {
+                let tool = out.claude_tool.take().unwrap();
+                let input = serde_json::from_str::<serde_json::Value>(&tool.partial_json).unwrap_or(tool.input).to_string();
+                out.push_tool_use(tool.id.clone(), tool.name.clone(), input.clone());
+                send(channel, serde_json::json!({ "type": "toolUse", "toolId": tool.id, "name": tool.name, "inputJson": input }));
+                out.claude_streamed.insert(index);
+            }
             if et == "content_block_delta" {
-                let delta = ev.get("delta").cloned().unwrap_or(serde_json::Value::Null);
+                let delta = &ev["delta"];
                 let dt = delta.get("type").and_then(|t| t.as_str()).unwrap_or("");
                 if dt == "text_delta" {
                     let text = delta.get("text").and_then(|t| t.as_str()).unwrap_or("");
-                    out.mark_content();
-                    out.assistant_text.push_str(text);
+                    if !text.is_empty() { out.claude_streamed.insert(index); }
+                    out.push_text(text);
                     send(channel, serde_json::json!({ "type": "delta", "delta": text }));
                 } else if dt == "thinking_delta" {
                     let text = delta.get("thinking").and_then(|t| t.as_str()).unwrap_or("");
-                    out.mark_thinking();
-                    out.thinking_text.push_str(text);
+                    if !text.is_empty() { out.claude_streamed.insert(index); }
+                    out.push_thinking(text);
                     send(channel, serde_json::json!({ "type": "thinking", "delta": text }));
+                } else if dt == "input_json_delta" {
+                    if let Some(tool) = out.claude_tool.as_mut().filter(|tool| tool.index == index) {
+                        tool.partial_json.push_str(delta["partial_json"].as_str().unwrap_or(""));
+                    }
                 }
             }
         }
@@ -1896,27 +2036,36 @@ fn parse_cli_line(
                 }
             }
             if let Some(blocks) = msg.get("content").and_then(|c| c.as_array()) {
-                for b in blocks {
+                for (index, b) in blocks.iter().enumerate() {
+                    if out.claude_streamed.contains(&(index as u64)) { continue; }
                     let bt = b.get("type").and_then(|t| t.as_str()).unwrap_or("");
                     match bt {
                         "text" => {
                             let text = b.get("text").and_then(|t| t.as_str()).unwrap_or("");
-                            if !text.is_empty() && !out.assistant_text.contains(text) {
-                                out.assistant_text.push_str(text);
+                            if !text.is_empty() {
+                                out.push_text(text);
                                 send(channel, serde_json::json!({ "type": "delta", "delta": text }));
+                            }
+                        }
+                        "thinking" => {
+                            if let Some(text) = b["thinking"].as_str().filter(|text| !text.is_empty()) {
+                                out.push_thinking(text);
+                                send(channel, serde_json::json!({ "type": "thinking", "delta": text }));
                             }
                         }
                         "tool_use" => {
                             let tid = b.get("id").and_then(|t| t.as_str()).unwrap_or("").to_string();
                             let name = b.get("name").and_then(|t| t.as_str()).unwrap_or("").to_string();
                             let input = b.get("input").cloned().unwrap_or(serde_json::json!({}));
-                            out.tool_uses.push((tid.clone(), name.clone(), input.to_string()));
+                            out.push_tool_use(tid.clone(), name.clone(), input.to_string());
                             send(channel, serde_json::json!({ "type": "toolUse", "toolId": tid, "name": name, "inputJson": input.to_string() }));
                         }
                         _ => {}
                     }
                 }
             }
+            out.claude_streamed.clear();
+            out.claude_tool = None;
             if let Some(u) = msg.get("usage") {
                 out.usage = Some(extract_usage(u));
                 if let Some((i, o, c)) = out.usage {
@@ -1948,8 +2097,12 @@ fn parse_cli_line(
                     if b.get("type").and_then(|t| t.as_str()) == Some("tool_result") {
                         let tid = b.get("tool_use_id").and_then(|t| t.as_str()).unwrap_or("").to_string();
                         let is_err = b.get("is_error").and_then(|t| t.as_bool()).unwrap_or(false);
-                        let content = extract_content_text(b.get("content"));
-                        out.tool_results.push((tid.clone(), content.clone(), is_err));
+                        let content = match b.get("content") {
+                            Some(serde_json::Value::String(text)) => text.clone(),
+                            Some(content) => content.to_string(),
+                            None => String::new(),
+                        };
+                        out.push_tool_result(tid.clone(), content.clone(), is_err, None);
                         send(channel, serde_json::json!({ "type": "toolResult", "toolId": tid, "content": content, "isError": is_err }));
                     }
                 }
@@ -1965,8 +2118,7 @@ fn parse_cli_line(
             }
             if out.assistant_text.is_empty() {
                 if let Some(r) = v.get("result").and_then(|r| r.as_str()) {
-                    out.mark_content();
-                    out.assistant_text = r.to_string();
+                    out.push_text(r);
                     send(channel, serde_json::json!({ "type": "delta", "delta": r }));
                 }
             }
@@ -1975,35 +2127,44 @@ fn parse_cli_line(
             }
         }
         // ---------- codex exec --json ----------
-        (_, "item.completed") | (_, "item.updated") => {
-            let item = v.get("item").cloned().unwrap_or(serde_json::Value::Null);
+        ("codex", "item.started" | "item.updated" | "item.completed") => {
+            let Some(item) = v.get("item") else { return; };
             let it = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
             match it {
-                "agent_message" => {
+                "agent_message" if typ == "item.completed" => {
                     let text = item.get("text").and_then(|t| t.as_str()).unwrap_or("");
-                    if !text.is_empty() && !out.assistant_text.contains(text) {
-                        out.mark_content();
-                        out.assistant_text.push_str(text);
+                    if !text.is_empty() {
+                        out.push_text(text);
                         send(channel, serde_json::json!({ "type": "delta", "delta": text }));
                     }
                 }
-                "reasoning" => {
+                "reasoning" if typ == "item.completed" => {
                     let text = item
                         .get("text")
                         .or_else(|| item.pointer("/summary/0/text"))
                         .and_then(|t| t.as_str())
                         .unwrap_or("");
                     if !text.is_empty() {
-                        out.mark_thinking();
-                        out.thinking_text.push_str(text);
+                        out.push_thinking(text);
                         send(channel, serde_json::json!({ "type": "thinking", "delta": text }));
                     }
                 }
+                "todo_list" => {
+                    if let Some(items) = codex_plan_items(item) {
+                        let duplicate = out.segments.iter().rev().find_map(|segment| match segment {
+                            TurnSegment::PlanUpdate(previous) => Some(previous == &items),
+                            _ => None,
+                        }).unwrap_or(false);
+                        if !duplicate {
+                            send(channel, serde_json::json!({ "type": "planUpdate", "items": items }));
+                            out.segments.push(TurnSegment::PlanUpdate(items));
+                        }
+                    }
+                }
                 "command_execution" => {
-                    let cmdstr = item.get("command").and_then(|t| t.as_str()).unwrap_or("").to_string();
-                    let tid = item.get("id").and_then(|t| t.as_str()).unwrap_or("").to_string();
-                    out.tool_uses.push((tid.clone(), "shell".into(), serde_json::json!({ "command": cmdstr }).to_string()));
-                    send(channel, serde_json::json!({ "type": "toolUse", "toolId": tid, "name": "shell", "inputJson": serde_json::json!({ "command": cmdstr }).to_string() }));
+                    for event in codex_command_events(typ, item, out) {
+                        send(channel, event);
+                    }
                 }
                 _ => {}
             }
@@ -2029,13 +2190,53 @@ fn parse_cli_line(
         _ => {
             if let Some(text) = v.get("text").or_else(|| v.get("content")).and_then(|t| t.as_str()) {
                 if !text.is_empty() && typ != "user" {
-                    out.mark_content();
-                    out.assistant_text.push_str(text);
+                    out.push_text(text);
                     send(channel, serde_json::json!({ "type": "delta", "delta": text }));
                 }
             }
         }
     }
+}
+
+fn codex_plan_items(item: &serde_json::Value) -> Option<Vec<serde_json::Value>> {
+    let entries = item["items"].as_array()?;
+    entries.iter().map(|entry| {
+        let text = entry["text"].as_str()?.trim();
+        if text.is_empty() { return None; }
+        let status = match entry["status"].as_str() {
+            Some(status @ ("pending" | "in_progress" | "completed")) => status,
+            Some(_) => return None,
+            None if entry["completed"].as_bool()? => "completed",
+            None => "pending",
+        };
+        Some(serde_json::json!({ "text": text, "status": status }))
+    }).collect()
+}
+
+/// `aggregated_output` is cumulative. Updates replace the command snapshot in place.
+fn codex_command_events(stage: &str, item: &serde_json::Value, out: &mut StreamOutcome) -> Vec<serde_json::Value> {
+    use serde_json::json;
+    let Some(id) = item["id"].as_str().filter(|id| !id.is_empty()) else { return vec![]; };
+    if out.tool_results.iter().any(|(tool_id, _, _)| tool_id == id) { return vec![]; }
+    let mut events = vec![];
+    if !out.tool_uses.iter().any(|(tool_id, _, _)| tool_id == id) {
+        let input = json!({"command": item["command"].as_str().unwrap_or("")}).to_string();
+        out.push_tool_use(id.into(), "shell".into(), input.clone());
+        events.push(json!({"type":"toolUse","toolId":id,"name":"shell","inputJson":input}));
+    }
+    if let Some(text) = item["aggregated_output"].as_str() {
+        out.command_output.insert(id.into(), text.into());
+    }
+    if stage == "item.completed" {
+        let content = out.command_output.remove(id).unwrap_or_default();
+        let exit_code = item["exit_code"].as_i64();
+        let is_error = exit_code.is_some_and(|code| code != 0) || item["status"].as_str() == Some("failed");
+        out.push_tool_result(id.into(), content.clone(), is_error, exit_code);
+        events.push(json!({"type":"toolResult","toolId":id,"content":content,"isError":is_error,"exitCode":exit_code}));
+    } else if let Some(content) = out.command_output.get(id).filter(|text| !text.is_empty() || stage == "item.updated") {
+        events.push(json!({"type":"toolUpdate","toolId":id,"content":content}));
+    }
+    events
 }
 
 fn extract_usage(u: &serde_json::Value) -> (i64, i64, i64) {
@@ -2078,6 +2279,47 @@ fn extract_content_text(c: Option<&serde_json::Value>) -> String {
 /// 消息落库（无事务）：由 persist_assistant_with_conn 或结算事务复用，禁止嵌套开事务。
 pub(crate) fn insert_assistant_messages(conn: &rusqlite::Connection, session_id: &str, out: &StreamOutcome) -> Result<(), rusqlite::Error> {
     let now = now_ms();
+    if !out.segments.is_empty() {
+        let last_text = out.segments.iter().rposition(|s| matches!(s, TurnSegment::Text(_)))
+            .or_else(|| out.segments.iter().rposition(|s| matches!(s, TurnSegment::Thinking(_))));
+        let mut first_thinking = true;
+        for (index, segment) in out.segments.iter().enumerate() {
+            let (role, content, meta) = match segment {
+                TurnSegment::Text(text) | TurnSegment::Thinking(text) => {
+                    let thinking = matches!(segment, TurnSegment::Thinking(_));
+                    let mut meta = serde_json::json!({});
+                    if thinking {
+                        meta["thinking"] = serde_json::json!(text);
+                        if first_thinking && out.thinking_ms > 0 {
+                            meta["thinkingMs"] = serde_json::json!(out.thinking_ms);
+                        }
+                        first_thinking = false;
+                    }
+                    if Some(index) == last_text {
+                        if let Some((i, o, c)) = out.usage {
+                            meta["usage"] = serde_json::json!({"inputTokens":i,"outputTokens":o,"cacheReadTokens":c});
+                        }
+                    }
+                    ("assistant", if thinking { "" } else { text.as_str() }, meta)
+                }
+                TurnSegment::ToolUse(index) => {
+                    let (id, name, input) = &out.tool_uses[*index];
+                    ("tool_use", name.as_str(), serde_json::json!({"toolId":id,"input":input,"toolOutput":out.command_output.get(id)}))
+                }
+                TurnSegment::ToolResult(index, exit_code) => {
+                    let (id, content, is_error) = &out.tool_results[*index];
+                    ("tool_result", content.as_str(), serde_json::json!({"toolId":id,"isError":is_error,"exitCode":exit_code}))
+                }
+                TurnSegment::PlanUpdate(items) => ("system", "", serde_json::json!({ "kind": "planUpdate", "items": items })),
+            };
+            conn.execute(
+                "INSERT INTO message (id,sessionId,role,content,metaJson,createdAt) VALUES (?1,?2,?3,?4,?5,?6)",
+                rusqlite::params![new_id("msg"), session_id, role, content, meta.to_string(), now],
+            )?;
+        }
+        conn.execute("UPDATE session SET updatedAt=?2 WHERE id=?1", rusqlite::params![session_id,now])?;
+        return Ok(());
+    }
     if !out.assistant_text.trim().is_empty() || !out.thinking_text.trim().is_empty() {
         let mut meta = serde_json::json!({
             "thinking": out.thinking_text,
@@ -2144,6 +2386,157 @@ mod tests {
         conn.execute_batch("DROP TRIGGER reject_tool;").unwrap();
         persist_assistant_with_conn(&conn,"s",&out).unwrap();
         assert_eq!(conn.query_row("SELECT COUNT(*) FROM message",[],|row|row.get::<_,i64>(0)).unwrap(),2);
+    }
+
+    fn cr076_history(out: &StreamOutcome) -> Vec<(String, String, serde_json::Value)> {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE session(id TEXT PRIMARY KEY,updatedAt INTEGER);
+            INSERT INTO session VALUES('s',1);
+            CREATE TABLE message(id TEXT,sessionId TEXT,role TEXT,content TEXT,metaJson TEXT,createdAt INTEGER);").unwrap();
+        persist_assistant_with_conn(&conn, "s", out).unwrap();
+        let mut stmt = conn.prepare("SELECT role, content, metaJson FROM message ORDER BY createdAt, rowid").unwrap();
+        stmt.query_map([], |row| {
+            let meta: String = row.get(2)?;
+            Ok((row.get(0)?, row.get(1)?, serde_json::from_str(&meta).unwrap()))
+        }).unwrap().collect::<Result<_, _>>().unwrap()
+    }
+
+    #[test]
+    fn cr076_codex_command_and_plan_history_preserve_order() {
+        use serde_json::json;
+        let mut out = StreamOutcome::default();
+        let channel = tauri::ipc::Channel::new(|_| Ok(()));
+        let frames = [
+            json!({"type":"item.started","item":{"type":"command_execution","id":"command-1","command":"echo example","aggregated_output":""}}),
+            json!({"type":"item.updated","item":{"type":"command_execution","id":"command-1","aggregated_output":"first"}}),
+            json!({"type":"item.completed","item":{"type":"agent_message","text":"interleaved"}}),
+            json!({"type":"item.updated","item":{"type":"todo_list","items":[{"text":"inspect","completed":false},{"text":"check","status":"in_progress"}]}}),
+            json!({"type":"item.updated","item":{"type":"command_execution","id":"command-1","aggregated_output":"first\nsecond"}}),
+            json!({"type":"item.completed","item":{"type":"command_execution","id":"command-1","exit_code":3,"status":"failed"}}),
+            json!({"type":"item.completed","item":{"type":"command_execution","id":"command-1","exit_code":3}}),
+            json!({"type":"item.updated","item":{"type":"todo_list","items":[{"text":"check","status":"completed"}]}}),
+            json!({"type":"item.completed","item":{"type":"todo_list","items":[]}}),
+            json!({"type":"item.started","item":{"type":"command_execution","id":"command-2","command":"echo partial","aggregated_output":"partial"}}),
+        ];
+        for frame in frames { parse_cli_line(&frame, "codex", &mut out, &channel); }
+        out.aborted = true;
+        let rows = cr076_history(&out);
+        assert_eq!(rows.iter().map(|row| row.0.as_str()).collect::<Vec<_>>(), ["tool_use", "assistant", "system", "tool_result", "system", "system", "tool_use"]);
+        assert_eq!(serde_json::from_str::<serde_json::Value>(rows[0].2["input"].as_str().unwrap()).unwrap()["command"], "echo example");
+        assert_eq!(rows[2].2["items"][0]["status"], "pending");
+        assert_eq!(rows[2].2["items"][1]["status"], "in_progress");
+        assert_eq!(rows[3].1, "first\nsecond");
+        assert_eq!(rows[3].2["exitCode"], 3);
+        assert_eq!(rows[3].2["isError"], true);
+        assert_eq!(rows[4].2["items"], json!([{"text":"check","status":"completed"}]));
+        assert_eq!(rows[5].2["items"], json!([]));
+        assert_eq!(rows[6].2["toolOutput"], "partial");
+    }
+
+    #[test]
+    fn cr076_claude_streaming_and_history_preserve_tool_chronology() {
+        use serde_json::json;
+        let mut out = StreamOutcome::default();
+        let channel = tauri::ipc::Channel::new(|_| Ok(()));
+        let frames = [
+            json!({"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"same"}}}),
+            json!({"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tool-1","name":"Read","input":{}}}}),
+            json!({"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\":"}}}),
+            json!({"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"demo.txt\"}"}}}),
+            json!({"type":"stream_event","event":{"type":"content_block_stop","index":1}}),
+            json!({"type":"stream_event","event":{"type":"content_block_delta","index":2,"delta":{"type":"thinking_delta","thinking":"check"}}}),
+            json!({"type":"assistant","message":{"content":[{"type":"text","text":"same"},{"type":"tool_use","id":"tool-1","name":"Read","input":{"path":"demo.txt"}},{"type":"thinking","thinking":"check"}]}}),
+            json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tool-1","content":[{"type":"text","text":"example"}]}]}}),
+            json!({"type":"assistant","message":{"content":[{"type":"text","text":"same"}]}}),
+        ];
+        for frame in frames { parse_cli_line(&frame, "claude", &mut out, &channel); }
+        let rows = cr076_history(&out);
+        assert_eq!(rows.iter().map(|row| row.0.as_str()).collect::<Vec<_>>(), ["assistant", "tool_use", "assistant", "tool_result", "assistant"]);
+        assert_eq!(rows[0].1, "same");
+        assert_eq!(rows[1].2["input"], "{\"path\":\"demo.txt\"}");
+        assert_eq!(rows[2].2["thinking"], "check");
+        assert_eq!(rows[3].1, "[{\"text\":\"example\",\"type\":\"text\"}]");
+        assert_eq!(rows[4].1, "same");
+    }
+
+    #[test]
+    fn cr076_real_claude_local_process_sample() {
+        use serde_json::json;
+        // Real installed Claude 2.1.331 process, synthetic loopback API, actual Read only.
+        // Sanitization preserves both complete assistant frames BEFORE their block stops.
+        // This sample cannot establish TaskCreate/TaskUpdate/TodoWrite or UI acceptance.
+        let frames: Vec<serde_json::Value> = include_str!("../../tests/fixtures/cr076-claude-2.1.331-local.jsonl")
+            .lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+        assert_eq!(frames[0]["provenance"]["kind"], "sanitized_local_api_fixture");
+        assert_eq!(frames[0]["provenance"]["cli_version"], "2.1.331");
+        assert_eq!(frames[1..].iter().map(|frame| {
+            if frame["type"] == "stream_event" { frame["event"]["type"].as_str().unwrap() }
+            else { frame["type"].as_str().unwrap() }
+        }).collect::<Vec<_>>(), [
+            "message_start", "content_block_start", "content_block_delta", "assistant",
+            "content_block_stop", "message_delta", "message_stop", "user",
+            "message_start", "content_block_start", "content_block_delta", "assistant",
+            "content_block_stop", "message_delta", "message_stop", "result",
+        ]);
+        assert_eq!(frames[2]["event"]["content_block"]["type"], "tool_use");
+        assert_eq!(frames[3]["event"]["delta"]["type"], "input_json_delta");
+        assert_eq!(frames[4]["message"]["content"][0]["type"], "tool_use");
+        assert_eq!(frames[8]["message"]["content"][0]["type"], "tool_result");
+        assert_eq!(frames[11]["event"]["delta"]["type"], "text_delta");
+        assert_eq!(frames[12]["message"]["content"][0]["type"], "text");
+
+        let mut out = StreamOutcome::default();
+        let channel = tauri::ipc::Channel::new(|_| Ok(()));
+        for frame in &frames { parse_cli_line(frame, "claude", &mut out, &channel); }
+        assert_eq!(out.tool_uses.len(), 1);
+        assert_eq!(out.tool_results.len(), 1);
+        assert_eq!(out.assistant_text, "LOCAL_CLAUDE_FIXTURE_OK");
+        assert!(out.thinking_text.is_empty());
+        assert!(!out.is_error && !out.aborted);
+        assert!(!out.segments.iter().any(|segment| matches!(segment, TurnSegment::PlanUpdate(_))));
+
+        // The existing helper invokes production persistence against SQLite :memory:.
+        let rows = cr076_history(&out);
+        assert_eq!(rows.iter().map(|row| row.0.as_str()).collect::<Vec<_>>(), ["tool_use", "tool_result", "assistant"]);
+        assert_eq!(rows[0].1, "Read");
+        assert_eq!(rows[0].2["toolId"], "fixture-read");
+        let input: serde_json::Value = serde_json::from_str(rows[0].2["input"].as_str().unwrap()).unwrap();
+        assert_eq!(input, json!({"file_path":"D:/demo/cr076/input.txt"}));
+        assert_eq!(input["file_path"].as_str().unwrap().replace('\\', "/"), "D:/demo/cr076/input.txt");
+        assert_eq!(rows[1].2["toolId"], "fixture-read");
+        assert_eq!(rows[1].1, "1\tLOCAL_READ_FIXTURE_ONLY\n2\t");
+        assert_eq!(rows[1].2["isError"], false);
+        assert_eq!(rows.iter().filter(|row| row.0 == "tool_use" && row.2["toolId"] == "fixture-read").count(), 1);
+        assert_eq!(rows.iter().filter(|row| row.0 == "tool_result" && row.2["toolId"] == "fixture-read").count(), 1);
+        assert_eq!(rows[2].1, "LOCAL_CLAUDE_FIXTURE_OK");
+        assert_eq!(rows.iter().filter(|row| row.0 == "assistant" && row.1 == "LOCAL_CLAUDE_FIXTURE_OK").count(), 1);
+        assert!(rows.iter().all(|row| row.2["kind"] != "planUpdate"));
+    }
+
+    #[test]
+    fn cr076_image_bytes_are_kept_until_the_turn_releases_them() {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        let encoded = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jPrsAAAAASUVORK5CYII=";
+        let bytes = STANDARD.decode(encoded).unwrap();
+        let attachment = crate::models::AttachmentMeta {
+            name: "fixture image.png".into(),
+            mime: Some("image/png".into()),
+            byte_size: Some(bytes.len() as i64),
+            image_base64: Some(encoded.into()),
+        };
+        for unsupported in ["claude", "grok"] {
+            assert!(CliImages::prepare(unsupported, std::slice::from_ref(&attachment)).is_err());
+        }
+        let images = CliImages::prepare("codex", &[attachment.clone(), attachment]).unwrap();
+        let directory = images.directory.clone().unwrap();
+        let paths = images.paths.clone();
+        assert_eq!(paths.len(), 2);
+        for (index, path) in paths.iter().enumerate() {
+            assert_eq!(path, &directory.join(format!("{index}.png")));
+            assert_eq!(std::fs::read(path).unwrap(), bytes);
+        }
+        drop(images);
+        assert!(!directory.exists());
     }
 
     fn entry(id: &str) -> RunningEntry {

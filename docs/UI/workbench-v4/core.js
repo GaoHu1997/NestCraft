@@ -107,6 +107,7 @@ window.UI = (function () {
 <symbol id="collapse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v6H3M21 9h-6V3M15 21v-6h6M3 15h6v6"/></symbol>
 <symbol id="layout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12"/></symbol>
 <symbol id="atDesk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8.5" cy="5" r="2.3"/><path d="M8.5 7.6v5.4M8.5 9.4h4.2M5.6 13h6.2"/><rect x="13" y="9" width="6.6" height="5" rx=".9"/><path d="M16.3 14v2M3.5 16h17M5.5 16v3M18.5 16v3"/></symbol>
+<symbol id="monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M9 20.5h6M12 16.5v4"/></symbol>
 <symbol id="alignLeft" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v16M8 6h12M8 12h8M8 18h12"/></symbol>
 <symbol id="alignCenter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M4 6h16M7 12h10M4 18h16"/></symbol>
 <symbol id="alignRight" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 4v16M4 6h12M8 12h8M4 18h12"/></symbol>
@@ -283,6 +284,8 @@ window.UI = (function () {
     collapse: '<path d="M9 3v6H3M21 9h-6V3M15 21v-6h6M3 15h6v6"/>',
     layout: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12"/>',
     atDesk: '<circle cx="8.5" cy="5" r="2.3"/><path d="M8.5 7.6v5.4M8.5 9.4h4.2M5.6 13h6.2"/><rect x="13" y="9" width="6.6" height="5" rx=".9"/><path d="M16.3 14v2M3.5 16h17M5.5 16v3M18.5 16v3"/>',
+    /* CR-082：工作台页签图标改为电脑（显示器）图标，并恢复「工作台」文字。 */
+    monitor: '<rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M9 20.5h6M12 16.5v4"/>',
     alignLeft: '<path d="M4 4v16M8 6h12M8 12h8M8 18h12"/>',
     alignCenter: '<path d="M12 3v18M4 6h16M7 12h10M4 18h16"/>',
     alignRight: '<path d="M20 4v16M4 6h12M8 12h8M4 18h12"/>',
@@ -694,11 +697,11 @@ window.UI = (function () {
 
   function topContext() {
     const w = activeWindow();
-    if (w.kind === "home") return store.homePage === "knowledge" ? "知识库" : store.homePage === "servers" ? "服务器管理" : store.homePage === "projects" ? "项目管理" : "工作台";
+    if (w.kind === "home") return store.homePage === "knowledge" ? "知识库" : store.homePage === "servers" ? "服务器管理" : store.homePage === "projects" ? "项目管理" : "概览";
     if (w.kind === "project") { const p = D.projects.find(x => x.id === w.refId); return p ? "项目管理 / " + p.name : "项目"; }
     if (w.kind === "library") { const l = D.knowledge.libraries.find(x => x.id === w.refId); return l ? "知识库 / " + l.name : "知识库"; }
     if (w.kind === "server") return "服务器管理";
-    return "工作台";
+    return "概览";
   }
   function navItem(page, iconName, label, count) {
     const active = store.active === "home" && store.homePage === page;
@@ -765,7 +768,7 @@ window.UI = (function () {
     return `<aside class="sidebar">
       <div class="nav-group">
         <div class="nav-label">工作空间</div>
-        ${navItem("workbench", "home", "工作台")}
+        ${navItem("workbench", "layout", "概览")}
         ${navItem("projects", "folder", "项目管理", D.projects.length)}
         ${navItem("knowledge", "book", "知识库", D.knowledge.libraries.length)}
         ${navItem("servers", "server", "服务器管理", D.servers.length)}
@@ -793,9 +796,11 @@ window.UI = (function () {
     const tab = (w, isHome) => {
       const label = isHome ? "首页" : (w.title || w.refId);
       const iconName = isHome ? "home" : w.kind === "project" ? "folder" : w.kind === "library" ? "book" : "server";
+      /* CR-075：服务器页签用检测到的系统官方标识；未知系统回退统一服务器图标。 */
+      const tabIcon = w.kind === "server" && window.C075 && window.C075.tabIcon ? window.C075.tabIcon(w.refId) : icon(iconName, "ico-14");
       const current = store.active === w.id;
       return `<div class="wtab ${isHome ? "home-tab" : "object-tab"} ${current ? "active" : ""}" role="presentation">
-        <button class="wtab-focus" data-act="switch-window" data-id="${esc(w.id)}" role="tab" aria-selected="${current}" aria-current="${current ? "page" : "false"}" title="${esc(label)}${w.reopened ? " · 已恢复对象视图" : ""}">${icon(iconName, "ico-14")}<span class="ellipsis">${esc(label)}</span></button>
+        <button class="wtab-focus" data-act="switch-window" data-id="${esc(w.id)}" role="tab" aria-selected="${current}" aria-current="${current ? "page" : "false"}" title="${esc(label)}${w.reopened ? " · 已恢复对象视图" : ""}">${tabIcon}<span class="ellipsis">${esc(label)}</span></button>
         ${isHome ? "" : `<button class="w-close" data-act="close-window" data-id="${esc(w.id)}" aria-label="关闭 ${esc(label)}">${icon("close", "ico-12")}</button>`}
       </div>`;
     };
@@ -842,6 +847,7 @@ window.UI = (function () {
     const win = activeWindow();
     if (renderedWindowId === win.id) captureView(win, true);
     if (window.OfficeAI) window.OfficeAI.activate(win);
+    window.AIPanel?.syncRequestState();
     const screens = window.Screens || {};
     let main = "";
     if (win.kind === "home") main = screens.home ? screens.home(store.homePage) : "";
@@ -851,8 +857,8 @@ window.UI = (function () {
     const isOffice = win.kind === "project" && D.projects.find(p => p.id === win.refId)?.kind === "work" && Boolean(window.Office);
     /* CR-054：工作台需要借用 AI 侧栏承载 CLI/权限/模型/添加 浮层（浮层锚点在 .ai-panel 内），
        此时即使 aiOpen=false 也要渲染面板；由 ai.css 的 wb-borrow-ai 规则只显示浮层所需部分。 */
-    const wbBorrow = win.kind === "project" && store.projectTab === "workbench" && Boolean(store.aiPop || store.aiMenu);
-    const showAI = win.kind === "project" && (isOffice ? window.Office.isOpen(win.refId) : (store.aiOpen || wbBorrow));
+    const wbBorrow = false; // CR-074：工作台就地渲染共享弹层，不借用第二个 AI 面板。
+    const showAI = win.kind === "project" && store.projectTab !== "workbench" && (isOffice ? window.Office.isOpen(win.refId) : store.aiOpen);
     if (window.Office) window.Office.onRender(isOffice);
     document.body.classList.toggle("ai-open", showAI);
     document.body.classList.toggle("object-detail", win.kind !== "home");

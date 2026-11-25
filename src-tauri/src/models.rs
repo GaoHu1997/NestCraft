@@ -27,6 +27,16 @@ pub struct Project {
     pub icon_color: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+    /// CR-072：负责人显示名（空串=未设置）。
+    pub owner: String,
+    /// CR-072：项目描述。
+    pub description: String,
+    /// CR-072：项目标签（JSON 数组解析后的列表）。
+    pub tags: Vec<String>,
+    /// CR-072：派生统计——需求故事总数/完成数、活跃运行数（仅列表查询返回，不持久化）。
+    pub story_total: i64,
+    pub story_done: i64,
+    pub running_count: i64,
 }
 
 /// 需求树节点（派生投影，来自项目 Markdown 文档 front matter）
@@ -447,6 +457,8 @@ pub struct AttachmentMeta {
     pub name: String,
     pub mime: Option<String>,
     pub byte_size: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_base64: Option<String>,
 }
 
 // ---------- 服务器 ----------
@@ -462,6 +474,12 @@ pub struct ServerHost {
     pub auth_type: String, // password | key
     pub group_tag: Option<String>,
     pub connected: bool,
+    /// CR-072：最近采样缓存（未连接或未采样为空，前端显示“—/未知”）。
+    pub os: Option<String>,
+    pub last_seen_at: Option<i64>,
+    pub cpu_pct: Option<f64>,
+    pub mem_pct: Option<f64>,
+    pub disk_pct: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -475,6 +493,9 @@ pub struct HostMetrics {
     pub mem_total_mb: i64,
     pub mem_used_mb: i64,
     pub load1: f64,
+    /// CR-072：根分区磁盘用量（采样可得时；否则 0）。
+    pub disk_total_mb: i64,
+    pub disk_used_mb: i64,
 }
 
 /// 终端输出事件
@@ -501,6 +522,9 @@ pub struct KnowledgeLibrary {
     pub icon: Option<String>,
     /// CR-051 r6：背景色卡 id（10 色之一）；NULL 默认青绿。
     pub icon_color: Option<String>,
+    /// CR-072：负责人与描述（空串=未设置）。
+    pub owner: String,
+    pub description: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

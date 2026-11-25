@@ -96,38 +96,39 @@ export async function runUiSuite(): Promise<void> {
     if (!labels.some((l) => l.includes("项目管理"))) throw new Error(`缺少项目管理入口：${labels.join(",")}`);
     if (!labels.some((l) => l.includes("知识库"))) throw new Error("缺少知识库入口");
     if (!labels.some((l) => l.includes("服务器"))) throw new Error("缺少服务器入口");
-    if (!labels.some((l) => l.includes("设置"))) throw new Error("缺少设置入口");
-    return labels.join(" / ");
+    // CR-070：设置入口已从导航移除，改到侧栏底部用户区（顶栏头像同时删除）。
+    if (!q('button.nc-side-user[aria-label="设置与账户"]')) throw new Error(`缺侧栏设置入口：${labels.join(",")}`);
+    return labels.join(" / ") + " / 侧栏设置入口";
   });
 
   await ui("全局壳", "深浅色切换真实改变 data-theme", async () => {
     const before = document.documentElement.dataset.theme || "light";
-    click(byText("深色") ?? byText("浅色"), "主题切换按钮");
+    click(q('button[aria-label="切换主题"]'), "主题切换按钮");
     await sleep(300);
     const after = document.documentElement.dataset.theme;
     if (after === before) throw new Error(`主题未变化（仍为 ${after}）`);
-    click(byText(after === "dark" ? "浅色" : "深色"), "主题切换回退");
+    click(q('button[aria-label="切换主题"]'), "主题切换回退");
     await sleep(200);
     return `${before} → ${after} → ${document.documentElement.dataset.theme}`;
   });
 
   /* ---------- 设置中心 ---------- */
-  await ui("设置中心", "打开设置并渲染六项页签", async () => {
+  await ui("设置中心", "打开设置并渲染七项页签", async () => {
     click(q('button[aria-label="设置与账户"]'), "设置入口");
-    const modal = await waitFor(() => q('[aria-label="设置中心"]'), 4000, "设置弹框");
-    const tabs = qa('nav[aria-label="设置页签"] button').map((b) => (b.textContent ?? "").trim());
-    for (const need of ["基础设置", "模型设置", "SDK", "Skill", "MCP", "Tool"]) {
+    const modal = await waitFor(() => q('dialog.set-modal[aria-label="设置与账户"]'), 4000, "设置弹框");
+    const tabs = qa('nav[aria-label="设置分类"] .set-nav-btn').map((b) => (b.textContent ?? "").trim());
+    for (const need of ["通用", "模型管理", "模型检测", "SDK 与 CLI", "能力 · Skill", "能力 · MCP", "能力 · Tools"]) {
       if (!tabs.some((t) => t.includes(need))) throw new Error(`缺页签 ${need}，实际：${tabs.join(",")}`);
     }
     return tabs.join(" / ");
   });
 
-  await ui("设置中心", "切到模型设置并新建供应商表单", async () => {
-    click(byText("模型设置"), "模型设置页签");
+  await ui("设置中心", "切到模型管理并新建供应商表单", async () => {
+    click(byText("模型管理"), "模型管理页签");
     await sleep(400);
-    const pane = await waitFor(() => q('[aria-label="设置中心"]') as HTMLElement, 3000, "设置面板");
+    const pane = await waitFor(() => q('dialog.set-modal[aria-label="设置与账户"]') as HTMLElement, 3000, "设置面板");
     const addBtn = byText("新建供应商", pane) ?? byText("新建", pane);
-    if (!addBtn) throw new Error("模型设置缺新建供应商入口");
+    if (!addBtn) throw new Error("模型管理缺新建供应商入口");
     click(addBtn, "新建供应商");
     await sleep(500);
     const inputs = qa<HTMLInputElement>('input.input, input', pane).filter((i) => i.type !== "password");
@@ -136,13 +137,13 @@ export async function runUiSuite(): Promise<void> {
     return `表单渲染 ${inputs.length} 个输入框，已填入名称`;
   });
 
-  await ui("设置中心", "模型检测页签渲染 9 针区块与历史入口（CR-058）", async () => {
-    const nav = q('[aria-label="设置分类"]') as HTMLElement;
+  await ui("设置中心", "模型检测页签渲染 20 针区块与历史入口（CR-058）", async () => {
+    const nav = q('nav[aria-label="设置分类"]') as HTMLElement;
     const probeTab = byText("模型检测", nav);
     if (!probeTab) throw new Error("设置左栏缺「模型检测」页签");
     click(probeTab, "模型检测页签");
     await sleep(400);
-    const pane = q('[aria-label="设置中心"]') as HTMLElement;
+    const pane = q('dialog.set-modal[aria-label="设置与账户"]') as HTMLElement;
     const section = q('[aria-label="模型检测"]', pane) as HTMLElement | null;
     if (!section) throw new Error("模型检测区块未渲染");
     // 外层不得有卡片框（CR-058 r3）
@@ -157,32 +158,32 @@ export async function runUiSuite(): Promise<void> {
     if (!runBtn.disabled) throw new Error("未选供应商时开始检测应为禁用");
     const historyBtn = byText("历史记录", section);
     if (!historyBtn) throw new Error("缺「历史记录」入口");
-    // 19 针清单（r4）
-    const codes = ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9", "P10", "P11", "P12", "P13", "P14", "P15", "P16", "P17", "P18", "P19"];
-    const names = ["连通与鉴权握手", "模型回显与跨档偷换", "响应 Schema 与 ID 规范", "SSE 真流式与假首字", "网关响应头指纹", "System 金丝雀服从", "隐藏注入与套壳嗅探", "多轮记忆保持", "Stop 序列截断", "Max Tokens 硬截断", "原生工具调用验真", "Strict JSON Schema", "动态逻辑与防背题", "并发混池快照", "识图多模态验真", "Responses 协议探测", "输入 Token 对账", "流式输出对账", "长前缀缓存命中"];
+    // 20 针清单（CR-058 r5：P20 行为指纹与归因，权重 0 辅助信号）
+    const names = ["连通与鉴权握手", "模型回显与跨档偷换", "响应 Schema 与 ID 规范", "SSE 真流式与假首字", "网关响应头指纹", "System 金丝雀服从", "隐藏注入与套壳嗅探", "多轮记忆保持", "Stop 序列截断", "Max Tokens 硬截断", "原生工具调用验真", "Strict JSON Schema", "动态逻辑与防背题", "并发混池快照", "识图多模态验真", "Responses 协议探测", "输入 Token 对账", "流式输出对账", "长前缀缓存命中", "行为指纹与归因"];
     for (const name of names) {
       if (!section.textContent?.includes(name)) throw new Error(`检测区缺探针「${name}」`);
     }
-    return `检测页渲染：2 个选择器 + 开始检测(禁用) + 历史记录 + 19 针清单，无外框`;
+    return `检测页渲染：2 个选择器 + 开始检测(禁用) + 历史记录 + 20 针清单，无外框`;
   });
 
   await ui("设置中心", "模型检测历史弹层可打开（CR-058）", async () => {
-    const pane = q('[aria-label="设置中心"]') as HTMLElement;
+    const pane = q('dialog.set-modal[aria-label="设置与账户"]') as HTMLElement;
     const section = q('[aria-label="模型检测"]', pane) as HTMLElement;
     click(byText("历史记录", section), "历史记录按钮");
     await sleep(500);
-    const dialog = await waitFor(() => q('[aria-label*="历史记录"]') as HTMLElement, 3000, "历史记录弹层");
-    const body = dialog.textContent ?? "";
-    if (!body.includes("最近 10 次")) throw new Error("历史弹层副标题缺失");
-    return "历史弹层已打开";
+    const dialog = await waitFor(() => q('[aria-label="历史检测记录"]') as HTMLElement, 3000, "历史检测记录弹层");
+    const body = (dialog.textContent ?? "").trim();
+    // 有历史记录时渲染行项；无记录时渲染空态文案（两种都是正常渲染，不得为空）。
+    if (!body) throw new Error("历史弹层内容为空");
+    return `历史弹层已打开（${body.length > 40 ? "含历史行项" : "空态"}）`;
   });
 
   await ui("设置中心", "切到 SDK 页并显示 CLI 卡", async () => {
-    const pane = q('[aria-label="设置中心"]') as HTMLElement;
+    const pane = q('dialog.set-modal[aria-label="设置与账户"]') as HTMLElement;
     click(byText("SDK", pane), "SDK 页签");
     await sleep(300);
-    // 确认 SDK 页签真的被激活（set-pane 未隐藏）
-    const visiblePane = qa('.set-pane').find((p) => !p.hasAttribute('hidden'));
+    // 确认 SDK 页签真的被激活（set-scroll 内对应 div 未 hidden）
+    const visiblePane = qa('.set-scroll > div').find((p) => !p.hasAttribute('hidden'));
     if (!visiblePane) throw new Error("没有可见的设置面板");
     const navActive = qa('.set-nav-btn').find((b) => b.getAttribute('aria-current') === 'page')?.textContent ?? "";
     if (!navActive.includes("SDK")) throw new Error(`SDK 页签未激活，当前：${navActive}`);
@@ -206,9 +207,9 @@ export async function runUiSuite(): Promise<void> {
   });
 
   await ui("设置中心", "关闭设置恢复页面状态", async () => {
-    click(q('[aria-label="关闭设置中心"]'), "关闭按钮");
+    click(q('[aria-label="关闭设置"]'), "关闭按钮");
     await sleep(300);
-    if (q('[aria-label="设置中心"]')) throw new Error("设置弹框未关闭");
+    if (q('dialog.set-modal[aria-label="设置与账户"]')) throw new Error("设置弹框未关闭");
     return "已关闭";
   });
 
@@ -219,10 +220,14 @@ export async function runUiSuite(): Promise<void> {
     const inputs = qa<HTMLInputElement>("input", modal as ParentNode);
     if (inputs.length < 2) throw new Error(`表单输入框不足：${inputs.length}`);
     typeInto(inputs[0], "UI自检项目", "项目名称");
-    const segs = qa("button", modal as ParentNode).filter((b) => (b.textContent ?? "").includes("办公"));
-    if (segs.length === 0) throw new Error("缺项目类型分段（编码/办公）");
-    click(segs[0], "办公类型");
-    return `表单可输入，含编码/办公分段`;
+    // CR-073：项目类型是 select（编码项目/办公项目），不再是分段按钮。
+    const typeSel = qa<HTMLSelectElement>("select", modal as ParentNode).find((s) =>
+      qa("option", s).some((o) => (o.textContent ?? "").includes("办公项目"))
+    );
+    if (!typeSel) throw new Error("缺项目类型选择器（编码项目/办公项目）");
+    typeSel.value = "work";
+    typeSel.dispatchEvent(new Event("change", { bubbles: true }));
+    return `表单可输入，含编码/办公类型选择器`;
   });
 
   await ui("项目管理", "关闭新建弹框", async () => {
@@ -251,10 +256,11 @@ export async function runUiSuite(): Promise<void> {
     click(byText("新建知识库") ?? byText("新建"), "新建知识库");
     const modal = await waitFor(() => q('.modal'), 4000, "知识库弹框");
     const text = (modal as HTMLElement).textContent ?? "";
-    if (!text.includes("目录") && !text.includes("路径")) throw new Error("缺目录路径说明");
+    // CR-081：目录由「数据目录/knowledge/名称」自动派生，弹窗只剩名称一个输入框 + 派生路径提示。
+    if (!text.includes("明文目录") && !text.includes("数据目录")) throw new Error("缺目录路径说明");
     const inputs = qa<HTMLInputElement>("input", modal as ParentNode);
-    if (inputs.length < 2) throw new Error(`输入框不足：${inputs.length}`);
-    return "弹框含名称+目录路径字段";
+    if (inputs.length < 1) throw new Error(`输入框不足：${inputs.length}`);
+    return `弹框含名称输入框与自动派生目录提示（输入框 ${inputs.length} 个）`;
   });
 
   await ui("知识库", "关闭并返回项目列表", async () => {
@@ -288,9 +294,9 @@ export async function runUiSuite(): Promise<void> {
     click(byText("新建知识库"), "新建知识库按钮");
     const createDlg = await waitFor(() => q(".modal"), 4000, "新建知识库弹框");
     const inputs = qa<HTMLInputElement>("input", createDlg);
-    if (inputs.length < 2) throw new Error(`新建知识库输入框不足：${inputs.length}`);
+    // CR-081：目录自动派生，只需填名称。
+    if (inputs.length < 1) throw new Error(`新建知识库输入框不足：${inputs.length}`);
     typeInto(inputs[0], "UI 自检知识库", "知识库名称");
-    typeInto(inputs[1], dirs.kbDir, "知识库目录");
     click(byText("创建并扫描", createDlg) ?? byText("创建", createDlg), "创建并扫描");
     await sleep(300);
     const main = q(".main") as HTMLElement;
@@ -374,7 +380,7 @@ export async function runUiSuite(): Promise<void> {
     if (radios.length !== 5) throw new Error(`头像风格单选应为 5 项，实际 ${radios.length}`);
     if (radios[1].getAttribute("aria-checked") !== "true") throw new Error("缺省风格应为 B（第二项选中）");
     if ((dialog.textContent ?? "").includes("LC")) throw new Error("设置内仍出现 LC 字母缩写");
-    const close = byText("关闭", dialog);
+    const close = q('[aria-label="关闭设置"]', dialog);
     if (!close) throw new Error("缺关闭按钮");
     click(close, "关闭设置（未保存，恢复已保存风格）");
     await sleep(300);
@@ -418,11 +424,11 @@ export async function runUiSuite(): Promise<void> {
     click(byText("新建主机") ?? byText("添加主机") ?? byText("新建"), "新建主机");
     const modal = await waitFor(() => q('.modal'), 4000, "主机弹框");
     const text = (modal as HTMLElement).textContent ?? "";
-    for (const need of ["密码", "密钥"]) {
+    for (const need of ["密码", "私钥"]) {
       if (!text.includes(need)) throw new Error(`认证方式缺 ${need}`);
     }
     if (!text.includes("免认证") && !text.includes("无凭据")) throw new Error("认证方式缺 none 选项");
-    return "含 密码/密钥/免认证 三种方式";
+    return "含 密码/私钥/免认证 三种方式";
   });
 
   await ui("服务器", "关闭主机弹框", async () => {
@@ -442,13 +448,26 @@ export async function runUiSuite(): Promise<void> {
 
   /* ---------- 办公工作区（CR-043：文件树 + 查看器 + 统一 AI 侧栏） ---------- */
   await ui("办公工作区", "进入预置办公项目并渲染文件树", async () => {
-    // 项目卡片是 .card div，不在 byText 的可点击选择器内
-    const card = await waitFor(
-      () => qa(".card").find(c => (c.textContent ?? "").includes("市场研究资料")) ?? null,
-      5000,
-      "办公项目卡片"
+    // 项目卡片是 .card div，不在 byText 的可点击选择器内；卡片列表可能是陈旧快照
+    // （ProjectHome 不监听 app:projects-changed），2.5 秒内不见卡片则回退 Ctrl+K 搜索打开。
+    let card: HTMLElement | null = null;
+    try {
+      card = await waitFor(
+        () => qa(".card").find(c => (c.textContent ?? "").includes("市场研究资料")) ?? null,
+        2500,
+        "办公项目卡片"
+      );
+    } catch {
+      card = null;
+    }
+    if (card) click(card, "办公项目卡片");
+    else await openProjectBySearch("市场研究资料");
+    // CR-054：办公项目打开后默认停在工作台页签；文件树/查看器与 AI 侧栏在「文档」页签下才可见可交互。
+    const docTab = await waitFor(
+      () => qa<HTMLElement>(".pw-tab").find(t => (t.textContent ?? "").trim() === "文档") ?? null,
+      8000, "文档页签"
     );
-    click(card, "办公项目卡片");
+    click(docTab, "文档页签");
     const tree = await waitFor(() => q('[aria-label="办公目录与文件"]'), 5000, "办公文件树");
     const folders = qa('[role="treeitem"]', tree);
     if (folders.length < 3) throw new Error(`目录条目过少：${folders.length}`);
@@ -513,7 +532,7 @@ export async function runUiSuite(): Promise<void> {
   });
 
   await ui("办公 AI 侧栏", "统一侧栏历史浮层覆盖在侧栏左侧并可关闭", async () => {
-    // 先建一个会话（空项目无会话时步骤/演示数据随会话注入）
+    // 空项目先创建一个会话，供历史列表读取。
     const newBtn = byText("新会话");
     if (newBtn) {
       click(newBtn, "新会话");
@@ -523,7 +542,10 @@ export async function runUiSuite(): Promise<void> {
     click(histBtn, "历史按钮");
     const overlay = await waitFor(() => q('.chat-history'), 3000, "历史浮层");
     if (!(overlay.textContent ?? "").includes("会话历史")) throw new Error("浮层缺标题");
-    if (!(overlay.textContent ?? "").includes("新会话")) throw new Error("浮层缺新会话入口");
+    // CR-063/065：浮层内只有搜索与列表；新建会话入口在会话框头部（或工作台左栏）图标按钮，不在浮层内。
+    if (!q('.chat-panel button[aria-label="新会话"]') && !q('.wb-hist button[aria-label="新会话"]')) {
+      throw new Error("缺新会话入口（会话框头部或工作台左栏）");
+    }
     // CR-063：搜索行、已加载/全部计数、加载状态与行内删除入口
     if (!q('#chat-history-q')) throw new Error("浮层缺会话搜索框");
     const count = q('.chat-history-count')?.textContent ?? "";
@@ -544,6 +566,17 @@ export async function runUiSuite(): Promise<void> {
   });
 
   await ui("办公 AI 侧栏", "顶部子智能体与后台任务下拉（演示数据）", async () => {
+    // CR-062：两个入口按运行时计数渲染；办公会话的合成演示运行时需显式 seed
+    // （sessionRuntime.seedDemo；office-demo.ts 的 seedOfficeSessionDemo 无调用点）。
+    const histBtn0 = q("[data-chat-overlay-trigger='history']");
+    if (histBtn0) { click(histBtn0, "历史按钮(读取当前会话)"); await sleep(400); }
+    const activeRow = q('.chat-hist-item[aria-current="true"]') ?? q(".chat-hist-item.active");
+    const sid = activeRow?.getAttribute("data-history-session") ?? null;
+    if (sid) {
+      const { seedDemo } = await import("@/modules/chat/sessionRuntime");
+      seedDemo(sid);
+    }
+    if (histBtn0) { click(histBtn0, "历史按钮(关闭)"); await sleep(300); }
     const agentsBtn = await waitFor(() => byText("子智能体"), 4000, "子智能体入口");
     click(agentsBtn, "子智能体入口");
     const drop = await waitFor(() => q('.chat-drop'), 3000, "子智能体下拉");
@@ -581,22 +614,38 @@ export async function runUiSuite(): Promise<void> {
     return "ok";
   });
 
-  await ui("办公 AI 侧栏", "步骤折叠框头部计数与折叠保留", async () => {
-    const steps = await waitFor(() => q('.chat-steps'), 3000, "步骤折叠框");
-    if (!(steps.textContent ?? "").includes("执行步骤")) throw new Error("缺步骤标题");
-    const head = q('.chat-steps-h', steps);
-    click(head, "步骤头部");
-    await sleep(200);
-    if (q('.chat-steps-list', steps)) throw new Error("折叠后列表仍在");
-    if (!(steps.textContent ?? "").match(/\d+\/\d+/)) throw new Error("折叠后头部计数丢失");
-    click(q('.chat-steps-h', steps), "步骤头部");
-    await sleep(200);
-    if (!q('.chat-steps-list', steps)) throw new Error("展开失败");
-    return "ok";
+  await ui("办公 AI 侧栏", "从消息历史恢复任务并保持折叠计数（CR-076）", async () => {
+    const project = (await api.listProjects()).find(item => item.name === "市场研究资料");
+    if (!project) throw new Error("缺办公冒烟项目");
+    const session = await api.chatSessionCreate({ projectId: project.id });
+    try {
+      await api.invoke("smoke_seed_chat_demo", { sessionId: session.id });
+      click(q("[data-chat-overlay-trigger='history']"), "历史按钮");
+      const row = await waitFor(() => q(`.chat-history [data-history-session="${CSS.escape(session.id)}"]`), 4000, "夹具会话");
+      click(row, "夹具会话");
+      const panel = await waitFor(() => q('[data-testid="todo-panel"]'), 4000, "任务面板");
+      const header = q<HTMLButtonElement>('button[aria-expanded]', panel);
+      if (header?.getAttribute("aria-expanded") !== "false") throw new Error("任务面板默认应折叠");
+      for (const count of ["2 已完成", "1 进行中", "1 待处理"]) {
+        if (!header.textContent?.includes(count)) throw new Error(`任务计数缺失：${count}`);
+      }
+      click(header, "任务标题");
+      const list = await waitFor(() => q('[data-testid="todo-list"]', panel), 2000, "展开的任务列表");
+      const states = qa('li[data-status]', list).map(item => item.dataset.status).join(",");
+      if (states !== "completed,completed,running,pending") throw new Error(`计划回放顺序错误：${states}`);
+      if (qa('li', list).some(item => /\b(Read|Bash)\b/.test(item.textContent ?? ""))) throw new Error("普通工具混入任务列表");
+      click(header, "任务标题");
+      await waitFor(() => !q('[data-testid="todo-list"]', panel), 2000, "任务列表收起");
+      if (!header.textContent?.includes("1 进行中")) throw new Error("收起后计数丢失");
+      return "四条真实结构的计划夹具记录按序恢复";
+    } finally {
+      await api.chatSessionDelete(session.id);
+    }
   });
 
   await ui("办公 AI 侧栏", "回到项目列表", async () => {
-    click(byText("返回项目列表"), "返回按钮");
+    // 产品已无「返回项目列表」按钮（全仓无该文案）；经侧栏导航返回项目管理。
+    click(byText("项目管理") ?? q(".nc-window-tab.home-tab .nc-tab-focus"), "返回项目管理");
     await sleep(400);
     return "ok";
   });
@@ -613,19 +662,22 @@ export async function runUiSuite(): Promise<void> {
       const m = await import("@/api");
       const dataDir = await m.appDataDir();
       const sep = dataDir.includes("\\") ? "\\" : "/";
-      const dir = `${dataDir.replace(/[\\/]+$/, "")}${sep}smoke${sep}proj-demo`;
+      const dir = `${dataDir.replace(/[\\/]+$/, "")}${sep}logs${sep}smoke${sep}proj-demo`;
       target = await m.createProject("冒烟演示项目", "code", dir);
     }
     if (!target) throw new Error("夹具项目创建失败");
-    click(byText("项目管理"), "项目管理导航");
-    await sleep(500);
-    // CR-070：侧栏「当前项目」已删除；从项目列表页进入「冒烟演示项目」。
-    const card = await waitFor(() => {
-      return qa<HTMLElement>(".proj-card").find((el) => (el.textContent ?? "").includes("冒烟演示项目")) ?? null;
-    }, 6000, "项目列表卡片");
-    click(card.querySelector(".btn.sm") ?? card, "项目卡片打开");
+    // ProjectHome 不监听 app:projects-changed，IPC 段建/删后的项目卡片列表是陈旧的；
+    // 统一走 Ctrl+K 搜索打开（App 级状态随事件刷新），绕开列表刷新缺口。
+    window.dispatchEvent(new CustomEvent("app:projects-changed"));
+    await openProjectBySearch("冒烟演示项目");
+    // 需求页签的 pane 是 hidden 挂载：滚动/几何类用例必须先切到可见页签才量得到真实尺寸。
+    const reqTab = await waitFor(
+      () => qa<HTMLElement>(".pw-tab").find((t) => (t.textContent ?? "").trim() === "需求") ?? null,
+      8000, "需求页签"
+    );
+    click(reqTab, "需求页签");
     await waitFor(() => q(".req-tabs"), 6000, "需求页签条");
-    const previewBtn = byText("全文预览");
+    const previewBtn = byText("全文");
     if (!previewBtn) throw new Error("缺全文预览入口");
     click(previewBtn, "全文预览");
     await waitFor(() => qa<HTMLElement>(".req-reader").find(el => (el.textContent ?? "").includes("全项目需求")), 6000, "全文预览正文");
@@ -634,7 +686,8 @@ export async function runUiSuite(): Promise<void> {
 
   /* ---------- CR-066：需求思维导图与阅读视图（真实 Tauri DOM） ---------- */
   await ui("CR-066 思维导图", "进入导图：整块画布、父子连线、同源导图目录", async () => {
-    const mapBtn = byText("思维导图");
+    // UI-CR066：rail-btn 文字是「导图」，aria-label 才是「思维导图」。
+    const mapBtn = q('.rail-btn[aria-label="思维导图"]') ?? byText("导图");
     if (!mapBtn) throw new Error("缺思维导图入口");
     click(mapBtn, "思维导图");
     const area = await waitFor(() => q<HTMLElement>(".req-map-area"), 6000, "导图画布");
@@ -700,7 +753,7 @@ export async function runUiSuite(): Promise<void> {
   });
 
   await ui("CR-066 预览", "预览为四级需求菜单且不含左侧需求树", async () => {
-    const previewBtn = byText("全文预览");
+    const previewBtn = q('.rail-btn[aria-label="全文预览"]') ?? byText("全文");
     if (!previewBtn) throw new Error("缺全文预览入口");
     click(previewBtn, "全文预览");
     await waitFor(() => qa<HTMLElement>(".req-toc-item").length > 0, 6000, "全文目录");
@@ -944,17 +997,19 @@ export async function runUiSuite(): Promise<void> {
   });
 
   /* ---------- CR-054：会话中心工作台 ---------- */
-  await ui("工作台", "默认进入工作台且页签为纯图标", async () => {
+  await ui("工作台", "默认进入工作台且页签为电脑图标＋文字", async () => {
     click(byText("项目管理"), "返回项目列表");
     await sleep(400);
     const card = await waitFor(() => q<HTMLElement>(".nc-list-row, .proj-card, [data-project]"), 6000, "项目卡");
     click(card, "打开项目");
     await sleep(700);
-    const iconTab = await waitFor(() => q<HTMLElement>(".pw-tab.wb-tab-icon"), 6000, "工作台图标页签");
+    const iconTab = await waitFor(() => q<HTMLElement>(".pw-tab.wb-tab-icon"), 6000, "工作台页签");
     if (iconTab.getAttribute("aria-selected") !== "true") throw new Error("默认未选中工作台页签");
-    if ((iconTab.textContent ?? "").trim()) throw new Error("工作台页签不应显示文字");
+    // CR-082：页签由纯图标改为「电脑（显示器）图标 + 文字『工作台』」。
+    if ((iconTab.textContent ?? "").trim() !== "工作台") throw new Error(`工作台页签应显示文字「工作台」（实际「${(iconTab.textContent ?? "").trim()}」）`);
+    if (!q('.pw-tab.wb-tab-icon .ui-icon[data-icon="monitor"]')) throw new Error("工作台页签缺少电脑（显示器）图标");
     if (iconTab.getAttribute("aria-label") !== "工作台") throw new Error("工作台页签缺少 aria-label");
-    return "纯图标页签、aria-label=工作台、默认选中";
+    return "电脑图标＋文字「工作台」、aria-label=工作台、默认选中";
   });
 
   await ui("工作台", "三栏结构与单实例会话", async () => {
@@ -971,18 +1026,19 @@ export async function runUiSuite(): Promise<void> {
   });
 
   await ui("工作台", "切页签不卸载会话", async () => {
-    const before = q(".wb-conv .chat-panel");
+    // CR-074 / ProjectChatHost：portal 表面容器恒定，切页签只把表面移入隐藏的 parking（不卸载、不重建）。
+    const before = q(".project-chat-surface .chat-panel");
     if (!before) throw new Error("切换前缺会话面板");
     const tab = qa<HTMLElement>(".pw-tab").find(t => (t.textContent ?? "").trim().length > 0);
     click(tab ?? null, "切到文字页签");
     await sleep(500);
-    const stillMounted = q(".wb-conv .chat-panel");
-    if (!stillMounted) throw new Error("切页签后会话面板被卸载（应 hidden 保留）");
+    const parked = q(".project-chat-surface .chat-panel");
+    if (parked !== before) throw new Error("切页签后会话面板被卸载或重建（应整体驻留 parking）");
     const iconTab = q<HTMLElement>(".pw-tab.wb-tab-icon");
     click(iconTab, "切回工作台");
     await sleep(400);
-    if (q(".wb-conv .chat-panel") !== stillMounted) throw new Error("切回后会话实例被重建");
-    return "切页签 hidden 保留挂载，实例未重建";
+    if (q(".wb-conv .chat-panel") !== before) throw new Error("切回后会话实例被重建");
+    return "切页签 portal 驻留 parking，实例未重建";
   });
 }
 

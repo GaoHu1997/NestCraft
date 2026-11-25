@@ -37,6 +37,15 @@
   <link rel="stylesheet" href="cr068.css">
   <link rel="stylesheet" href="cr069.css">
   <link rel="stylesheet" href="cr070.css">
+  <!-- CR-073：项目管理、需求工作区与设计预览界面修正（10 项）。 -->
+  <link rel="stylesheet" href="cr073.css">
+   <link rel="stylesheet" href="cr074.css">
+   <link rel="stylesheet" href="chat-dock.css">
+  <link rel="stylesheet" href="cr075.css">
+  <!-- CR-078：主菜单「工作台」更名「概览」，首页重建为日程 / 用量两 Tab（设计资源）。 -->
+  <link rel="stylesheet" href="cr078.css">
+  <!-- CR-079：会话框顶部运行栏（CLI/大管家、分支、worktree）。 -->
+  <link rel="stylesheet" href="cr079.css">
 </head>
 <body>
   <div class="app" id="app"></div>
@@ -51,6 +60,9 @@
   <script src="screens-home.js"></script>
   <script src="screens-project.js"></script>
   <script src="screens-more.js"></script>
+  <!-- CR-075：服务器列表、主机表单与自动连接工作台（设计资源，覆盖本页服务器屏幕）。 -->
+  <script src="cr075.js"></script>
+  <script src="chat-dock.js"></script>
   <script src="ai.js"></script>
   <script src="office-model.js"></script>
   <script src="office.js"></script>
@@ -58,7 +70,8 @@
   <!-- CR-054：会话中心工作台。必须在 core/screens/office 之后、main 之前加载。 -->
   <script src="workbench.js"></script>
   <script src="cr068.js"></script>
-  <script src="main.js"></script>
+  <script src="cr074.js"></script>
+   <script src="main.js"></script>
   <script src="requirements-workspace.js"></script>
   <!-- CR-066：标准层级思维导图（连线、目录、右侧悬浮详情、节点内新增）。依赖 requirements-workspace 的实体集合接口。 -->
   <script src="requirements-mindmap.js"></script>
@@ -72,8 +85,12 @@
   <script src="tab-overflow.js"></script>
   <script src="cr037.js"></script>
   <script src="cr069.js"></script>
+  <!-- CR-079：会话框顶部运行栏逻辑（依赖 main 的 __actions）。 -->
+  <script src="cr079.js"></script>
   <!-- CR-070：导航精简与图标悬浮层。依赖 core/screens，须在 main.js 之前加载。 -->
   <script src="cr070.js"></script>
+  <!-- CR-078：概览页（日程 / 用量）。覆盖式接管 Screens.home("workbench")，须在 screens-home.js 之后、main.js 之前加载。 -->
+  <script src="cr078.js"></script>
   <!-- CR-026 执行计划桥接（execution-plan-model.js / execution-closure.js / execution-closure.css）
        为并行会话产物，文件原地保留；本版新外壳未挂载，待合并确认后再接入，避免两套派发流程互相覆盖。 -->
 </body>

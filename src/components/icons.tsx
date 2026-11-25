@@ -25,6 +25,8 @@ export const ICON_NAMES = [
   "aiBot",
   // CR-054：工作台页签图标（坐在电脑前的小人）
   "atDesk",
+  // CR-082：工作台页签改用通用电脑（显示器）图标，页签同时显示「工作台」文字
+  "monitor",
   // CR-051 r2/r6：通用图标库（办公／商业／内容／产品／生活）+ 裁剪拖动提示
   "building", "calendar", "clipboard", "presentation", "mail", "idBadge",
   "chartBar", "chartLine", "chartPie", "wallet", "receipt", "cart", "tag", "scale",

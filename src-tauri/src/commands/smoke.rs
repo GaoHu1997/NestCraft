@@ -34,8 +34,7 @@ pub fn smoke_should_run() -> bool {
 
 #[tauri::command]
 pub fn smoke_prepare_fixtures(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
-    use tauri::Manager;
-    let base = app.path().app_data_dir().map_err(|e| e.to_string())?.join("smoke");
+    let base = crate::storage_layout::category("logs")?.join("smoke");
     std::fs::create_dir_all(&base).map_err(|e| e.to_string())?;
 
     // ---------- 项目夹具：docs/Plan 需求树 + docs/UI + docs/DB ----------
@@ -134,10 +133,7 @@ a 追加修改行
 
 #[tauri::command]
 pub fn smoke_report_write(app: tauri::AppHandle, content: String) -> Result<String, String> {
-    use tauri::Manager;
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join("smoke-report.md");
+    let path = crate::storage_layout::category("logs")?.join("smoke-report.md");
     std::fs::write(&path, &content).map_err(|e| e.to_string())?;
     println!("SMOKE-REPORT-BEGIN {}", path.to_string_lossy());
     println!("{}", content);
@@ -148,10 +144,7 @@ pub fn smoke_report_write(app: tauri::AppHandle, content: String) -> Result<Stri
 /// 聚焦套件报告（执行账本 + 双向同步）：单独落盘，不覆盖全量报告。
 #[tauri::command]
 pub fn smoke_report_write_execution(app: tauri::AppHandle, content: String) -> Result<String, String> {
-    use tauri::Manager;
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join("smoke-report-execution.md");
+    let path = crate::storage_layout::category("logs")?.join("smoke-report-execution.md");
     std::fs::write(&path, &content).map_err(|e| e.to_string())?;
     println!("SMOKE-EXEC-REPORT-BEGIN {}", path.to_string_lossy());
     println!("{}", content);
@@ -174,10 +167,8 @@ pub fn smoke_pin_suite_flag() -> bool {
 /// 死锁回归报告落盘（独立文件，不覆盖其它报告）。
 #[tauri::command]
 pub fn smoke_report_write_pin(app: tauri::AppHandle, content: String) -> Result<String, String> {
-    use tauri::Manager;
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join("smoke-report-pin.md");
+    let _ = app;
+    let path = crate::storage_layout::category("logs")?.join("smoke-report-pin.md");
     std::fs::write(&path, &content).map_err(|e| e.to_string())?;
     println!("SMOKE-PIN-REPORT-BEGIN {}", path.to_string_lossy());
     println!("{}", content);
@@ -206,10 +197,7 @@ pub fn smoke_token_suite_flag() -> bool {
 /// grok 真实链路报告落盘（独立文件）。
 #[tauri::command]
 pub fn smoke_report_write_grok(app: tauri::AppHandle, content: String) -> Result<String, String> {
-    use tauri::Manager;
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join("smoke-report-grok.md");
+    let path = crate::storage_layout::category("logs")?.join("smoke-report-grok.md");
     std::fs::write(&path, &content).map_err(|e| e.to_string())?;
     println!("SMOKE-GROK-REPORT-BEGIN {}", path.to_string_lossy());
     println!("{}", content);
@@ -457,9 +445,7 @@ pub(crate) const SMOKE_MODEL_ID: &str = "tierflow";
 /// 不再依赖任何预置行，也不触碰用户自己的供应商数据。
 #[tauri::command]
 pub fn smoke_set_tierflow_key(app: tauri::AppHandle, key: String) -> Result<String, String> {
-    use tauri::Manager;
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let path = dir.join("secrets.json");
+    let path = crate::storage_layout::category("secrets")?.join("secrets.json");
     let mut map: std::collections::BTreeMap<String, String> = std::fs::read_to_string(&path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -522,9 +508,7 @@ pub fn smoke_set_tierflow_key(app: tauri::AppHandle, key: String) -> Result<Stri
 /// 冒烟进度标记：前端每完成一段就写一次，便于定位卡点。
 #[tauri::command]
 pub fn smoke_progress(app: tauri::AppHandle, label: String) -> Result<(), String> {
-    use tauri::Manager;
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let p = dir.join("smoke-progress.txt");
+    let p = crate::storage_layout::category("logs")?.join("smoke-progress.txt");
     use std::io::Write;
     let mut f = std::fs::OpenOptions::new().create(true).append(true).open(p).map_err(|e| e.to_string())?;
     writeln!(f, "{}", label).map_err(|e| e.to_string())?;

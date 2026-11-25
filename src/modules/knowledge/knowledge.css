@@ -9,6 +9,20 @@
 .kb-head p { margin-top: 6px; }
 .kb-page-actions { flex-wrap: wrap; }
 .kb-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+/* CR-072：知识库列表改为纵向单列卡片，对齐 workbench-v4 知识库页。 */
+.kb-cards.kb-list { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.kb-card.kb-card-row { flex-direction: row; align-items: center; gap: 14px; padding: 14px 16px; }
+.kb-card-row .kb-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.kb-card-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.kb-card-title b { font-size: 14px; font-weight: 600; }
+.kb-sub { font-size: 12px; color: var(--muted); }
+.kb-card-row .kb-side { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.kb-count { font-size: 12px; color: var(--ink); font-weight: 550; }
+.kb-side-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+/* 覆盖 .kb-home .kb-card 的纵向规则，确保单列卡片为横向布局 */
+.kb-home .kb-card.kb-card-row { flex-direction: row; align-items: center; gap: 14px; }
+.kb-home .kb-card.kb-card-row .kb-main { flex: 1 1 auto; min-width: 0; }
+.kb-home .kb-card.kb-card-row .kb-side { flex: 0 0 auto; align-items: flex-end; }
 .kb-home .kb-card { display: flex; flex-direction: column; gap: 12px; padding: 16px; min-width: 0; }
 .kb-card h3 { font-size: 14px; font-weight: 600; }
 .kb-icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 10px; color: var(--blue-ink); background: var(--blue-bg); flex: 0 0 auto; }

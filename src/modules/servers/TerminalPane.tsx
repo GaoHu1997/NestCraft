@@ -51,16 +51,30 @@ export function TerminalPane({ hostId, connected = false, visible = true }: { ho
     terminalRef.current = term;
     const fit = new FitAddon();
     term.loadAddon(fit);
-    term.open(container);
+    try {
+      term.open(container);
+    } catch (e) {
+      /* 容器在隐藏或 0 尺寸时无法初始化渲染器：保留可读失败态，不让异常冒泡成全局错误。 */
+      terminalRef.current = null;
+      term.dispose();
+      if (!disposed) setFailMsg(`终端无法初始化：${errText(e)}`);
+      return () => {
+        disposed = true;
+      };
+    }
     const reportError = (e: unknown) => { if (!disposed && activeRef.current) setFailMsg(errText(e)); };
     const input = term.onData((data) => {
       // 未就绪或未激活时不缓存也不发送：终端打开前不执行任何输入。
       if (disposed || !activeRef.current || !readyInner || !termId) return;
       void serverTermInput(hostId, termId, data).catch(reportError);
     });
+    const sized = () => container.clientWidth > 0 && container.clientHeight > 0;
     const doFit = () => {
       fitRaf = 0;
       if (disposed || !activeRef.current) return;
+      /* 隐藏或 0 尺寸容器上 fit 会让 xterm 内部尺寸同步读到未初始化的 renderer（dimensions 未定义），
+         这里直接跳过本次 fit，等下一次有尺寸时再算。 */
+      if (!sized()) return;
       try {
         fit.fit();
         if (termId && term.cols > 0 && term.rows > 0) void serverTermResize(hostId, termId, term.cols, term.rows).catch(reportError);
@@ -77,7 +91,18 @@ export function TerminalPane({ hostId, connected = false, visible = true }: { ho
       if (disposed || !activeRef.current || opening || failed || timedOut) return;
       if (termId) { scheduleFit(); return; }
       opening = true;
-      try { fit.fit(); } catch { /* 使用默认尺寸。 */ }
+      /* open 之后同一帧 fit 会读到尚未初始化的渲染器尺寸（xterm 内部 dimensions 未定义）；
+         放到下一帧再算，失败由 doFit 的尺寸检查兜住。 */
+      if (sized()) {
+        requestAnimationFrame(() => {
+          if (disposed || !activeRef.current) return;
+          try {
+            fit.fit();
+          } catch {
+            /* 使用默认尺寸。 */
+          }
+        });
+      }
       term.write("正在打开终端…\r\n");
       const openPromise = serverTermOpen(hostId, term.cols || 80, term.rows || 24, (data) => {
         // 已有 shell 的输出保留到滚动记录；隐藏时不会向远端发送输入。

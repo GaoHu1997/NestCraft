@@ -1,0 +1,79 @@
+/* UI-CR073-r1：项目管理、需求工作区与设计预览界面修正（增量）。
+   依据 CR-073 / STORY-096，10 项用户反馈：
+   1 图标悬浮层锚定限高（样式主体在 cr070.css，本文件补弹窗内定位）
+   2 编辑项目弹窗名称与图标同行、图标可点改
+   4 移除成员字段
+   5 窗口页签单行省略
+   6 需求页签横贯正文＋目录，目录下移
+   8 需求树/目录开关迁移、底部说明与刷新按钮清理
+   9 设计页 HTML 渲染预览  10 设计左轨精简
+   滚动条不新增常显样式，遵守 UI-SCROLL-001。 */
+
+/* ---------- 2 编辑项目弹窗：名称与图标同行 ---------- */
+.project-name-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.project-name-row .input { flex: 1 1 auto; min-width: 0; }
+.project-name-tile { flex: 0 0 auto; display: inline-flex; line-height: 0; }
+.project-name-tile .proj-icon-tile { width: 36px; height: 36px; }
+.project-name-row .caption { flex: 0 0 auto; white-space: nowrap; }
+@media (max-width: 520px) { .project-name-row .caption { display: none; } }
+
+/* 弹窗内悬浮层：命中层与悬浮层随 dialog 一起在 top layer，避免被 dialog 遮挡。 */
+dialog .icon-pop-mask { z-index: 200; }
+dialog .icon-pop { z-index: 201; }
+
+/* ---------- 5 窗口页签单行省略 ---------- */
+.tabbar .wtab { max-width: 230px; }
+.tabbar .wtab-focus { justify-content: flex-start; overflow: hidden; }
+.tabbar .wtab-focus .ellipsis { flex: 1 1 auto; min-width: 0; }
+.tabbar .wtab .ico { flex: 0 0 auto; }
+.tabbar .w-close { flex: 0 0 auto; }
+
+/* ---------- 6 需求工作区：页签横贯正文＋目录 ---------- */
+/* 结构：rail | tree | req-main{ topbar(页签+工具栏) ; body(正文 + 目录) }。
+   页签条位于 req-main 内，因此只覆盖正文与目录，不覆盖需求树。 */
+.req-workspace > .req-main { flex: 1 1 320px; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.req-main > .req-topbar { flex: 0 0 auto; display: flex; flex-direction: column; border-bottom: 1px solid var(--line-soft); background: var(--surface-2); }
+.req-main > .req-topbar .req-tabs { border-bottom: 0; }
+.req-main > .req-topbar .req-toolbar { background: var(--surface); }
+.req-main > .req-body { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; align-items: stretch; overflow: hidden; }
+.req-body > .req-document-pane { flex: 1 1 320px; min-width: 0; }
+.req-body > .req-map-area { flex: 1 1 320px; min-width: 0; }
+.req-body > .req-toc-pane { flex: 0 0 240px; width: 240px; }
+/* 目录标题行不再与页签同高，整体位于页签区之下。 */
+.req-body > .req-toc-pane > .req-toc-head { height: 36px; flex: 0 0 36px; }
+
+/* ---------- 8 需求树/目录开关迁移与底部清理 ---------- */
+.req-tree-head { gap: 4px; }
+.req-tree-head .head-title { margin-right: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.req-tree-head .icon-btn, .req-toc-head .icon-btn { flex: 0 0 auto; }
+.req-toc-head .head-title { margin-right: auto; }
+/* 面板隐藏后的恢复入口：仅对应面板不可见时出现在工具栏右侧。 */
+.req-topbar .req-pane-restore { display: flex; gap: 4px; }
+.req-topbar .req-pane-restore .btn { font-size: 11px; }
+
+/* ---------- 7 导图：拖拽平移 + 右侧编辑面板 ---------- */
+.req-map-scroll { cursor: grab; touch-action: none; }
+.req-map-scroll.is-panning { cursor: grabbing; }
+.req-map-scroll.is-panning .req-map-node, .req-map-scroll.is-panning .req-map-node * { pointer-events: none; }
+.req-map-detail.req-map-editor { width: 340px; }
+.req-map-editor .req-map-detail-scroll { padding: 0; }
+.req-map-editor-form { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+.req-map-editor-form label { display: block; font-size: 10.5px; color: var(--muted); margin-bottom: 3px; }
+.req-map-editor-form .input, .req-map-editor-form .select, .req-map-editor-form .textarea { width: 100%; font-size: 11.5px; }
+.req-map-editor-form .textarea { resize: vertical; }
+.req-map-editor-form .mono { font: 11px/1.6 var(--mono); }
+.req-map-editor-fields { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 8px; }
+.req-map-editor-note { font-size: 10.5px; color: var(--muted); line-height: 1.6; }
+.req-map-draft { border-style: dashed; border-color: var(--primary); background: var(--primary-soft); }
+.req-map-draft .req-map-node-hit small { color: var(--primary); }
+.req-map-draft-tag { position: absolute; top: -9px; left: 8px; font-size: 9px; padding: 1px 5px; border-radius: 8px; background: var(--primary); color: #fff; }
+
+/* ---------- 9 设计页 HTML 预览 ---------- */
+.design-preview-bar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--line-soft); background: var(--surface-2); font-size: 11px; color: var(--muted); flex: 0 0 auto; }
+.design-preview-bar .btn { font-size: 11px; }
+.design-preview-frame { flex: 1 1 auto; min-height: 0; width: 100%; border: 0; background: #fff; }
+.design-preview-host { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.design-preview-note { padding: 8px 12px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--line-soft); flex: 0 0 auto; }
+
+/* ---------- 10 设计左轨精简 ---------- */
+.design-rail { gap: 4px; }

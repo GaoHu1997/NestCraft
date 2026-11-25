@@ -1,0 +1,85 @@
+/*
+ * UI-CR080-v1：知识库 / 办公项目文件类型彩色图标（B · 淡底描边变体）
+ * 设计稿：docs/UI/file-type-icons/index.html；说明：docs/UI/文档/UI-CR080-知识库文件类型彩色图标.md
+ * 上色靠 span 上继承的 CSS 自定义属性 + 组件内联 style 的 var()，不依赖外部后代选择器。
+ */
+
+/* 类型主色（描边 + 内容符号）与淡底色（纸面），浅色主题 */
+:root {
+  --ftc-folder: #e9a13b;  --ftc-folder-bg: rgba(233, 161, 59, .13);
+  --ftc-md: #0fa98e;      --ftc-md-bg: rgba(15, 169, 142, .12);
+  --ftc-html: #2e9bc6;    --ftc-html-bg: rgba(46, 155, 198, .12);
+  --ftc-text: #6b7a90;    --ftc-text-bg: rgba(107, 122, 144, .12);
+  --ftc-json: #4e65d8;    --ftc-json-bg: rgba(78, 101, 216, .11);
+  --ftc-csv: #8caf2e;     --ftc-csv-bg: rgba(140, 175, 46, .15);
+  --ftc-image: #c75bb5;   --ftc-image-bg: rgba(199, 91, 181, .12);
+  --ftc-pdf: #e24c4b;     --ftc-pdf-bg: rgba(226, 76, 75, .11);
+  --ftc-word: #3b72e8;    --ftc-word-bg: rgba(59, 114, 232, .11);
+  --ftc-excel: #22a05c;   --ftc-excel-bg: rgba(34, 160, 92, .12);
+  --ftc-ppt: #e25c3d;     --ftc-ppt-bg: rgba(226, 92, 61, .12);
+  --ftc-drawio: #8b5cf6;  --ftc-drawio-bg: rgba(139, 92, 246, .12);
+  --ftc-zip: #a8794c;     --ftc-zip-bg: rgba(168, 121, 76, .13);
+  --ftc-unknown: #98a1ae; --ftc-unknown-bg: rgba(152, 161, 174, .15);
+}
+
+/* 深色主题：提高明度、略降饱和 */
+html[data-theme='dark'] {
+  --ftc-folder: #f2b559;  --ftc-folder-bg: rgba(242, 181, 89, .17);
+  --ftc-md: #3bc6aa;      --ftc-md-bg: rgba(59, 198, 170, .30);
+  --ftc-html: #5bb8dc;    --ftc-html-bg: rgba(91, 184, 220, .30);
+  --ftc-text: #9dabbf;    --ftc-text-bg: rgba(157, 171, 191, .30);
+  --ftc-json: #8b9bff;    --ftc-json-bg: rgba(139, 155, 255, .28);
+  --ftc-csv: #aec958;     --ftc-csv-bg: rgba(174, 201, 88, .30);
+  --ftc-image: #e08dd2;   --ftc-image-bg: rgba(224, 141, 210, .30);
+  --ftc-pdf: #ff8584;     --ftc-pdf-bg: rgba(255, 133, 132, .28);
+  --ftc-word: #7fa6ff;    --ftc-word-bg: rgba(127, 166, 255, .28);
+  --ftc-excel: #4fc489;   --ftc-excel-bg: rgba(79, 196, 137, .30);
+  --ftc-ppt: #ff8e70;     --ftc-ppt-bg: rgba(255, 142, 112, .28);
+  --ftc-drawio: #b49cff;  --ftc-drawio-bg: rgba(180, 156, 255, .28);
+  --ftc-zip: #c9a276;     --ftc-zip-bg: rgba(201, 162, 118, .30);
+  --ftc-unknown: #b7c0cb; --ftc-unknown-bg: rgba(183, 192, 203, .32);
+}
+
+/* 容器：固定尺寸，不变形不参与文字省略 */
+.fti {
+  display: inline-block;
+  flex: 0 0 auto;
+  vertical-align: middle;
+  line-height: 0;
+}
+.fti svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
+}
+
+/* B 变体：淡底 + 同色描边 + 同色内容符号 */
+.fti-soft {
+  --ft-fill: var(--ftc-bg);
+  --ft-stroke: var(--ftc);
+  --ft-sw: 1.35px;
+  --ft-glyph: var(--ftc);
+  --ft-fold-op: 0.26;
+  --ft-deep-op: 0.42;
+}
+html[data-theme='dark'] .fti-soft {
+  --ft-fold-op: 0.34;
+  --ft-deep-op: 0.55;
+}
+
+/* 类型令牌绑定：组件只加 k-<kind> 一个类 */
+.k-folder  { --ftc: var(--ftc-folder);  --ftc-bg: var(--ftc-folder-bg); }
+.k-md      { --ftc: var(--ftc-md);      --ftc-bg: var(--ftc-md-bg); }
+.k-html    { --ftc: var(--ftc-html);    --ftc-bg: var(--ftc-html-bg); }
+.k-text    { --ftc: var(--ftc-text);    --ftc-bg: var(--ftc-text-bg); }
+.k-json    { --ftc: var(--ftc-json);    --ftc-bg: var(--ftc-json-bg); }
+.k-csv     { --ftc: var(--ftc-csv);     --ftc-bg: var(--ftc-csv-bg); }
+.k-image   { --ftc: var(--ftc-image);   --ftc-bg: var(--ftc-image-bg); }
+.k-pdf     { --ftc: var(--ftc-pdf);     --ftc-bg: var(--ftc-pdf-bg); }
+.k-word    { --ftc: var(--ftc-word);    --ftc-bg: var(--ftc-word-bg); }
+.k-excel   { --ftc: var(--ftc-excel);   --ftc-bg: var(--ftc-excel-bg); }
+.k-ppt     { --ftc: var(--ftc-ppt);     --ftc-bg: var(--ftc-ppt-bg); }
+.k-drawio  { --ftc: var(--ftc-drawio);  --ftc-bg: var(--ftc-drawio-bg); }
+.k-zip     { --ftc: var(--ftc-zip);     --ftc-bg: var(--ftc-zip-bg); }
+.k-unknown { --ftc: var(--ftc-unknown); --ftc-bg: var(--ftc-unknown-bg); }

@@ -20,6 +20,12 @@ pub mod projects;
 pub(crate) mod model_route;
 pub mod image_gen;
 pub mod providers;
+// CR-078：概览页日程与待办
+pub mod schedule;
+// CR-078：概览页全平台 token 用量聚合
+pub mod usage_stats;
+// CR-078：概览页当前位置天气
+pub mod weather;
 // CR-059：内置思考等级知识库（由 scripts/gen-think-kb.mjs 生成）
 pub mod think_kb;
 pub mod sdk;

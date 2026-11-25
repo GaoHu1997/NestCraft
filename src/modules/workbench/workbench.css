@@ -6,13 +6,14 @@
    若宿主仍是普通块容器，height:100% 保证工作台不被消息内容撑高。 */
 .wb-shell { flex: 1 1 auto; height: 100%; display: flex; min-height: 0; min-width: 0; position: relative; }
 
-/* ---------- 页签：纯图标工作台（与文字页签对齐） ---------- */
+/* ---------- 页签：电脑图标 + 文字「工作台」（CR-082） ---------- */
+/* 页签不再只显示图标：16px 显示器图标与 13px 文字间距 6px，padding 与下划线回到文字页签口径
+   （projects.css 的 .pw-tab 0 14px / 10px 内缩），不再需要最小宽度与光学补偿。 */
 .pw-tab.wb-tab-icon {
   display: inline-flex; align-items: center; justify-content: center;
-  gap: 0; padding: 0 12px; min-width: 44px;
+  gap: 6px;
 }
-.pw-tab.wb-tab-icon .ui-icon { transform: translateY(1px); }
-.pw-tab.wb-tab-icon[aria-selected="true"]::after { left: 10px; right: 10px; }
+.pw-tab.wb-tab-icon .ui-icon { flex: 0 0 auto; display: block; }
 
 /* ---------- 左：会话历史（常驻） ---------- */
 .wb-hist {

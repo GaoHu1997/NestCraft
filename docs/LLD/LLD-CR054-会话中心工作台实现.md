@@ -8,7 +8,7 @@
 
 在正式软件（React + Tauri）中落地：
 
-1. 项目窗口新增「工作台」页签（**纯图标 `atDesk`**），代码与办公两类项目均默认进入；
+1. 项目窗口新增「工作台」页签（**CR-082 起为电脑（显示器）图标 `monitor` + 文字「工作台」**），代码与办公两类项目均默认进入；
 2. 三栏：左历史会话、中当前会话、右只读辅助栏（默认关闭）；
 3. 会话按项目唯一、跨页签共享、切页签不新建不中断；
 4. 右栏由「用户点击会话链接」或「AI 请求」打开；
@@ -78,7 +78,7 @@ export function requestPanel(projectId: string, req: PanelRequest):
 
 ### 3.6 页签与默认页签
 
-- `Workspace.tsx` 的 `pwTabList` 增加 `["workbench", "工作台"]`，渲染为纯图标按钮（`Icon name="atDesk"`，`aria-label`/`title`="工作台"），与文字页签同高、同下划线内缩、图标加 1px 光学补偿；
+- `Workspace.tsx` 的 `pwTabList` 增加 `["workbench", "工作台"]`，**CR-082 起**渲染为「`Icon name="monitor"` 16px + `<span>工作台</span>`」按钮（`aria-label`/`title`="工作台"），`gap:6px`，页签高度与下划线沿用 `.pw-tab` 既有口径（44px／10px 内缩）；
 - 新建项目窗口时默认 `tab="workbench"`；**已有窗口保留用户上次页签**。
 
 ## 4. 影响面
@@ -94,13 +94,15 @@ export function requestPanel(projectId: string, req: PanelRequest):
 | `src/modules/chat/SessionList.tsx` | **新增**：从 `SessionHistory` 提取的列表 |
 | `src/modules/chat/SessionHistory.tsx` | 改为复用 `SessionList` |
 | `src/modules/chat/ChatPanel.tsx` | 增加 `variant` prop |
-| `src/components/icons.tsx` | 新增 `atDesk` |
+| `src/components/icons.tsx` | 新增 `atDesk`（CR-054）；**CR-082** 新增 `monitor` |
+| `src/modules/workbench/workbench.css` | **CR-082**：页签改为图标＋文字，`gap:6px`，去掉最小宽度／光学补偿／下划线覆盖 |
+| `public/ui/icon-sprite.svg` | **CR-082**：新增 `monitor` 符号 |
 | `src/modules/chat/chat.css` | 列表与工作台形态样式 |
 
 ## 5. 验证
 
 - `npm run build`（含 `tsc --noEmit`）；
-- 三栏结构、默认页签、纯图标页签几何对齐；
+- 三栏结构、默认页签、**CR-082：页签为电脑图标＋文字「工作台」**（图标 16px、间距 6px、中心对齐、44px 高、未选中／深色／390 不溢出）；
 - 左栏与历史浮层同一数据源、切页签不新建、`ChatPanel` DOM 计数为 1；
 - CLI/权限/模型点击真实生效；
 - 右栏预览与「在…中打开」回退；

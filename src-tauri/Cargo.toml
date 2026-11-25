@@ -1,6 +1,6 @@
 [package]
 name = "agent-workbench"
-version = "0.0.4"
+version = "0.0.5"
 description = "个人 Agent 工作台"
 authors = ["Agent Workbench"]
 edition = "2021"
@@ -31,6 +31,7 @@ encoding_rs = "0.8"
 ureq = { version = "2", features = ["json"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 sha2 = "0.10"
+flate2 = "1"
 async-trait = "0.1"
 tantivy = "=0.26.0"
 

@@ -476,11 +476,11 @@ async function suite(): Promise<void> {
     });
     const events: api.ProbeProgressEvent[] = [];
     const report = await api.modelProbeRun(pid, "probe-model", (ev) => events.push(ev));
-    expect(report.items.length === 19, `应 19 针，实际 ${report.items.length}`);
+    expect(report.items.length === 20, `应 20 针（CR-058 r5 含 P20），实际 ${report.items.length}`);
     expect(report.items[0].status === "fail", `P1 应 fail：${report.items[0].note}`);
-    expect(report.items.slice(1).every((i) => i.status === "skip"), "P2～P9 应全部 skip");
+    expect(report.items.slice(1).every((i) => i.status === "skip"), "P2～P20 应全部 skip");
     expect(report.verdict === "无法判定", `总评应无法判定：${report.verdict}`);
-    expect(events.filter((e) => e.phase === "settled").length === 19, `应 19 个逐针回执，实际 ${events.filter((e) => e.phase === "settled").length}`);
+    expect(events.filter((e) => e.phase === "settled").length === 20, `应 20 个逐针回执，实际 ${events.filter((e) => e.phase === "settled").length}`);
     await api.providerDelete(pid);
     return `${report.score} 分 · ${events.length} 事件`;
   });
@@ -489,7 +489,7 @@ async function suite(): Promise<void> {
     expect(list.length >= 1 && list.length <= 10, `历史应 1～10 条，实际 ${list.length}`);
     const raw = JSON.stringify(list);
     expect(!raw.includes("sk-probe-8888"), "历史不得包含密钥明文");
-    expect(list[0].items.length === 19, "最新记录应有 19 针");
+    expect(list[0].items.length === 20, "最新记录应有 20 针");
     return `${list.length} 条 · 最新 ${list[0].verdict}`;
   });
   await t("模型", "provider_delete 清理", async () => {
@@ -650,7 +650,8 @@ async function suite(): Promise<void> {
     return `${kind} 保存/回读/恢复 auto 通过`;
   });
   await t("CR-053 Shell", "codex 实验性：可保存偏好（不注入）", async () => {
-    expect(!!realBashPath, "应有 Git Bash 路径");
+    // 环境门控：本机未发现 Git Bash（固定位置与 PATH 兜底均未命中）时跳过，不计失败。
+    if (!realBashPath) return "跳过：本机未发现 Git Bash（启动 shell 的 PATH 不含 Git\\bin 且固定位置无安装）";
     const saved = await api.cliShellSave("codex", "git-bash", realBashPath);
     expect(saved.mode === "git-bash", "codex 应接受保存（实验性只存偏好）");
     const v = await api.cliShellGet("codex");
@@ -836,30 +837,41 @@ async function suite(): Promise<void> {
     return "ok";
   });
 
-    await t("会话", "会话运行时：演示种子/步骤推进/清空已结束（CR-042）", async () => {
-    const { seedDemo, advanceDemoStep, getRuntime, clearEndedBackground, recordToolUse, recordToolResult } =
-      await import("@/modules/chat/sessionRuntime");
+  await t("会话", "真实计划与普通工具隔离（CR-076）", async () => {
+    const { getRuntime, dropRuntime, recordToolUse, recordToolResult } = await import("@/modules/chat/sessionRuntime");
+    const { projectPlan } = await import("@/modules/chat/sessionPlan");
     const s = await api.chatSessionCreate({ projectId });
-    // 合成演示种子（仅演示会话，评审 C 执行条件）
-    seedDemo(s.id);
-    const rt = getRuntime(s.id);
-    expect(rt.subagents.length === 4, "子智能体演示应为 4 条");
-    expect(rt.background.length === 4, "后台任务演示应为 4 条");
-    expect(rt.steps.length === 5 && rt.stepsDemo, "演示步骤应为 5 条");
-    // 推进演示只推进本会话合成步骤（须在真实工具记录之前：recordToolUse 会清除演示步骤）
-    const moved = advanceDemoStep(s.id);
-    expect(moved, "推进演示应移动执行指针");
-    expect(rt.steps.some((x) => x.state === "running"), "推进后仍有执行中步骤");
-    // 真实工具执行记录：toolUse 开步 -> toolResult 落状态（不伪造）
-    recordToolUse(s.id, "T1", "Read");
-    recordToolResult(s.id, "T1", false);
-    // sessionRuntime 以 generation 为前缀（新会话 generation=0 → ST-0-T1）；修正陈旧断言。
-    expect(rt.steps.some((x) => x.id === "ST-0-T1" && x.state === "done"), "真实步骤应完成");
-    // 清空已结束只清展示
-    clearEndedBackground(s.id);
-    expect(getRuntime(s.id).background.every((b) => b.state === "运行中"), "清空后仅剩运行中");
-    await api.chatSessionDelete(s.id);
-    return "ok";
+    try {
+      const plan = getRuntime(s.id).plan;
+      recordToolUse(s.id, "T1", "shell");
+      recordToolResult(s.id, "T1", false);
+      expect(plan.todos.length === 0 && plan.tasks.size === 0, "普通工具不得投影为任务");
+      projectPlan(plan, { type: "planUpdate", items: [{ text: "核对结果", status: "in_progress" }] });
+      expect(plan.todos[0]?.state === "running", "原生计划应保留进行中状态");
+      projectPlan(plan, { type: "planUpdate", items: [] });
+      expect(plan.todos.length === 0, "空计划快照应清空任务列表");
+      return "ok";
+    } finally {
+      dropRuntime(s.id);
+      await api.chatSessionDelete(s.id);
+    }
+  });
+
+  await t("会话", "清空已结束的后台任务（CR-042）", async () => {
+    const { seedDemo, getRuntime, dropRuntime, clearEndedBackground } = await import("@/modules/chat/sessionRuntime");
+    const s = await api.chatSessionCreate({ projectId });
+    try {
+      seedDemo(s.id);
+      const runtime = getRuntime(s.id);
+      expect(runtime.subagents.length === 4, "子智能体演示应为 4 条");
+      expect(runtime.background.length === 4, "后台任务演示应为 4 条");
+      clearEndedBackground(s.id);
+      expect(runtime.background.length > 0 && runtime.background.every(task => task.state === "运行中"), "清空后仅剩运行中");
+      return "ok";
+    } finally {
+      dropRuntime(s.id);
+      await api.chatSessionDelete(s.id);
+    }
   });
 
   /* ---------- CR-037：侧栏原生续接（STORY-032 AC-05/06，mock 全链路） ---------- */
@@ -1294,6 +1306,12 @@ async function suite(): Promise<void> {
   });
   await t("供应商注入", "真实 claude CLI 命中配置的供应商", async () => {
     await api.invoke("smoke_use_real_claude");
+    // 环境门控：本地 mock 网关未启动时跳过而非失败（启动方式见 mockbin/README.md）。
+    try {
+      await api.invoke("smoke_gateway_record", { url: GW + "/__record" });
+    } catch {
+      return "跳过：本地 mock 网关未启动（需先 node mockbin/mock-gateway.mjs 18080）";
+    }
     const s = await api.chatSessionCreate({
       projectId, cliId: "claude", providerId: gwProviderId,
       modelId: "mock-model-anthropic", effort: "off",

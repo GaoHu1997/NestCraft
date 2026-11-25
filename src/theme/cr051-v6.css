@@ -207,19 +207,30 @@ html[data-theme='dark'] .cr51-upload-error { background: #331d1d; color: #ff7b76
 .icon-tile-btn:hover .cr51-tile { outline: 2px solid var(--primary); outline-offset: 1px; }
 .icon-tile-btn:focus-visible { outline: none; box-shadow: var(--ring); }
 
-.icon-pop-mask { position: fixed; inset: 0; z-index: 210; display: grid; place-items: center; background: rgba(17, 24, 39, .28); padding: 20px; }
+/* CR-073：悬浮层锚定触发图标，整体限高 420px（视口不足按 100dvh-80px），
+   位置与最大高度由组件内联计算；遮罩改为透明命中层，不再整屏变暗。 */
+.icon-pop-mask { position: fixed; inset: 0; z-index: 210; background: transparent; }
 .icon-pop {
-  width: 460px; max-width: calc(100vw - 32px); max-height: calc(100dvh - 48px);
+  position: fixed;
   display: flex; flex-direction: column;
   background: var(--surface); color: var(--ink);
   border: 1px solid var(--line); border-radius: 12px;
   box-shadow: var(--shadow-pop, 0 12px 32px rgba(17, 24, 39, .18));
   overflow: hidden;
+  max-height: 420px;
 }
+.icon-pop[data-side="below"] { transform-origin: top left; }
+.icon-pop[data-side="above"] { transform-origin: bottom left; }
+@media (prefers-reduced-motion: no-preference) {
+  .icon-pop { animation: icon-pop-in 120ms ease-out; }
+}
+@keyframes icon-pop-in { from { opacity: 0; transform: scale(.98); } to { opacity: 1; transform: scale(1); } }
 .icon-pop-h { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line-soft); flex: 0 0 auto; min-width: 0; }
 .icon-pop-h b { font-size: 13px; min-width: 0; }
 .icon-pop-h .btn { margin-left: auto; }
 .icon-pop-b { padding: 12px 14px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+/* CR-073 / UI-SCROLL-001：滚动条出现时预留槽宽，避免正文宽度跳动。 */
+.icon-pop-b { scrollbar-gutter: stable; }
 .icon-pop-current { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; min-width: 0; }
 .icon-pop-current .caption { min-width: 0; }
 .icon-pop-sec { font-size: 11px; font-weight: 600; color: var(--ink-2); margin: 2px 0 7px; }
@@ -227,7 +238,10 @@ html[data-theme='dark'] .cr51-upload-error { background: #331d1d; color: #ff7b76
 .icon-pop-swatches { margin: 0 0 12px; flex-wrap: nowrap; }
 .icon-pop-swatches .cr51-swatch { width: 30px; height: 30px; flex: 0 0 auto; }
 .icon-pop-groups { display: grid; gap: 10px; }
-.icon-pop-groups .cr51-picker-group { border: 0; padding: 0; background: transparent; }
+/* CR-073：分组容器自身为单列（组内网格仍多列），否则六组会被排成横向窄列。 */
+.icon-pop-groups .cr51-picker-group { border: 0; padding: 0; background: transparent; min-width: 0; }
+.icon-pop-groups { grid-template-columns: minmax(0, 1fr); }
 .icon-pop-f { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line-soft); background: var(--surface-2, var(--surface)); flex: 0 0 auto; }
 .icon-pop-f .caption { margin-right: auto; min-width: 0; }
-@media (max-width: 520px) { .icon-pop { width: 100%; } }
+/* 窄屏由组件内联给出左右边距，这里不再强制 100% 宽（会覆盖锚定宽度）。 */
+@media (max-width: 520px) { .icon-pop { max-width: calc(100vw - 24px); } }

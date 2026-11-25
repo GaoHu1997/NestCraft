@@ -140,6 +140,7 @@
 - UI 准入：受影响场景为标题栏更新徽标的隐藏／更新／下载中／重启／安装中五态，浅色与深色、1440×900、1100×700 与 390×844；设计资源与版本已在 UI-CR046 与设计资源索引登记，软件侧按同视口、同主题完成设计／软件成对截图。
 - 实现位置（2026-11-20）：后端 `src-tauri/src/updater.rs`、`src-tauri/src/commands/updater.rs`、`src-tauri/src/lib.rs`（模块声明、启动清理、5 个命令注册）、`src-tauri/Cargo.toml`（`sha2 = "0.10"`）；前端 `src/modules/update/UpdateBadge.tsx`、`src/modules/update/update.css`、`src/App.tsx`（通知与头像之间挂载）、`src/api/index.ts`（命令封装）；隔离夹具 `src/smoke/design-preview.ts`（`?update=`／`?theme=`，仅 `?preview=design` 生效）。
 - 本轮验证／验收（2026-11-20）：`cargo test --offline --lib` 59 passed、`cargo check --offline` 与 `npm run build` 通过；**1440×900 五态与深色**软件截图与设计对照一致，**1100／390 软件截图未重拍**（页面在该宽度不进入 idle，疑似并行 CR 的 resize 逻辑，见 REPORT-CR046 §5.5）。真实更新源、下载校验、免安装替换与安装版 `/S` 未验证，故不记 AC 通过、不记用户验收；遗留 Q-046-02（安装版 UAC／目录行为）与 Q-046-03（本轮不新增免安装构建脚本）。2026-11-20 追加：删除顶栏搜索框（保留 Ctrl+K）、更新入口移至主题按钮左侧，设计稿升 UI-CR046-v1.2。
+- BUG-015（2026-11-24，AC-STORY-064-38 落位路径）：用户报免安装版「重启安装」提示「新版程序落位失败，已回滚: 系统无法将文件移到不同的磁盘驱动器。(os error 17)」。根因为暂存包统一放应用数据目录（系统盘）、程序在其它卷，落位 `std::fs::rename` 是跨卷 `MoveFile`，必然失败并回滚。修复：免安装版暂存到程序目录 `.update/`（落位即同卷改名），安装版仍用应用数据目录；启动清理改为按完整文件名匹配删除 `<exe>.old*`（原 `file_stem` 前缀永远不命中，旧程序永久残留），并清理迁移遗留暂存文件与落位后失效的 `staged.json`。验证与未验证项见 [REPORT-CR046 §5.8](../../Test/REPORT-CR046-右上角更新入口验证.md)；该修复要随下一版本发布后才对用户生效，AC-38 端到端升级仍待验证，状态不变。
 
 
 

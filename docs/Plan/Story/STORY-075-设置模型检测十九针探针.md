@@ -3,7 +3,7 @@
 - 类型：用户故事（新能力，含 UI 与后端）
 - 所属 Feature / PRD：[FEAT-014 供应商模型与能力适配](../Feature/FEAT-014-供应商模型与能力适配.md) / [CR-058](../../PRD/CR-058-模型检测十九针探针.md)
 - 来源与确认依据：用户 2026-11-22 指令（见 CR-058 来源），并明确「授权你做完了需求和设计后，直接开发」——需求/设计确认与编码授权同批取得。
-- 负责人 / 优先级 / 状态 / 依赖：主代理 / 高 / **待验收（2026-11-22 技术验证通过；界面走查与真实网关端到端待用户验收）** / 依赖既有供应商配置存储（CR-012、STORY-029）与受管密钥机制。
+- 负责人 / 优先级 / 状态 / 依赖：主代理 / 高 / **待验收（2026-11-25 r5 增量实现完成：P20 行为指纹与归因 + 厂商盲区修补，单测/构建通过；软件界面走查、真实网关端到端与基线校准待用户验收）** / 依赖既有供应商配置存储（CR-012、STORY-029）与受管密钥机制。
 - 目标：作为模型供应商的使用者，我希望在设置中选择已配置的供应商和模型一键执行固定 9 针真实性检测，以便发现中转层掺水（偷换模型、吞指令、裁历史、假流式、冒充旗舰）而不必借助外部工具。
 - 本次包含：设置 → 模型管理页「模型检测」区块（供应商→模型两级选择、开始检测）、逐针进度与结果报告（总分/等级/真伪×渠道）、右上角历史记录弹层（最近 10 条）、后端 9 针探针引擎（OpenAI/Anthropic 双协议）、本地历史表。
 - 不包含：见 CR-058 §2 不做事项。
@@ -26,6 +26,10 @@
 - AC-STORY-075-15（r4）：给定网关在 usage 中虚标输入 Token 1.5 倍以上，当 P17/P18 完成，则按差分基线判不通过；流式与非流式输出 Token 报告不一致时 P18 判警示或红牌。
 - AC-STORY-075-16（r4）：给定 4 路并发同模型请求，当 P14 完成，则全部回显档位一致且无 service_tier=flex 判通过；并发中检出跨档降级判红牌；P19 以重复长前缀探测缓存命中，连续 0% 命中记警示（OpenAI 协议专属，Anthropic 记「不适用」）。
 - AC-STORY-075-12（UI-SCROLL-001）：给定逐针结果列表或历史详情超高，当实际滚动，则滚动条仅在滚动时显示、停止后隐藏；无内容溢出时不出现滚动条。
+- AC-STORY-075-17（r5）：给定任一检测完成，当查看结果页，则逐针列表含 P20「行为指纹与归因」行（第 20 行）；P20 权重为 0——其 fail/warn 不扣分、不触发封顶、不单独改变真伪轴结论；P1 失败时 P20 记「未执行」。
+- AC-STORY-075-18（r5）：给定 P20 执行成功，当查看结果区下方，则显示归因面板：一致性三态（与声称家族一致/不一致/无法判定）+「最像的已知候选」top-3 排名（候选名 + 距离条）；候选仅限内置基线库内模型，库外情形显示「无法判定：与所有已知候选都不像」；面板措辞为概率性提示（「最像的已知候选」），不出现「实锤/确定是」类断言；历史回看时归因面板随该次记录还原。
+- AC-STORY-075-19（r5）：给定 P20 探针请求，当检查其会话构造，则为全新短会话（单条 user 消息、无多轮历史注入），且数字偏好序列题面含当次随机盐值（两次检测题面不同）；身份自述仅作弱信号参与一致性判定，不单独定红牌。
+- AC-STORY-075-20（r5）：给定请求 minimax-m3 回显 abab6.5、grok-4 回显 grok-4-fast、kimi-k3 回显 kimi-k2、doubao-2.1-pro 回显 doubao-2.1-lite 等命名，当 P2 判定，则按新增厂商规则给出降级/匹配结论，不再落入「档位规则未覆盖」兜底；P5 对含 `request-id`/`anthropic-ratelimit-*` 响应头识别为 Anthropic 官方特征；P7 关键词表含 grok/gemini CLI、qwen-code、iflow 等非 OpenAI/Anthropic 套壳词。
 
 ## 方案
 
@@ -44,8 +48,9 @@
 
 ## 实现位置 / 提交或 PR
 
-- 后端：`src-tauri/src/commands/model_probe.rs`（新增，探针引擎 + 厂商档位表 + 评分判决）、`src-tauri/src/db.rs`（`migrate_cr058_model_probe` 迁移）、`src-tauri/src/commands/providers.rs`（`secrets_read` 改 `pub(crate)` 复用）、`src-tauri/src/lib.rs`（命令注册）、`src-tauri/src/smoke`（冒烟用例见 `src/smoke/runner.ts`）
-- 前端：`src/api/index.ts`（ProbeReport/ProbeHistoryItem + modelProbeRun/modelProbeHistoryList）、`src/modules/settings/SettingsModelProbe.tsx`（新增，挂载于设置左栏 probe 页签）、`src/modules/settings/index.tsx`（TABS 注册）、`src/modules/settings/settings.css`（.probe-* 样式）
+- 后端：`src-tauri/src/commands/model_probe.rs`（新增，探针引擎 + 厂商档位表 + 评分判决；r5 增 P20 行为指纹与归因 + `vendor_generation`/`family_of`/`sequence_features`/`attribute_fingerprint`/`probe_fingerprint`）、`src-tauri/src/db.rs`（`migrate_cr058_model_probe` 迁移）、`src-tauri/src/commands/providers.rs`（`secrets_read` 改 `pub(crate)` 复用）、`src-tauri/src/lib.rs`（命令注册）、`src-tauri/src/smoke`（冒烟用例见 `src/smoke/runner.ts`）
+- 前端：`src/api/index.ts`（ProbeReport/ProbeHistoryItem/ProbeAttribution + modelProbeRun/modelProbeHistoryList）、`src/modules/settings/SettingsModelProbe.tsx`（新增，挂载于设置左栏 probe 页签；r5 增 `AttributionPanel`）、`src/modules/settings/index.tsx`（TABS 注册）、`src/modules/settings/settings.css`（.probe-* 与 .probe-attr* 样式）
+- r5 设计资源：`docs/UI/workbench-v4/{screens-more.js,data2.js,cr058.css}`（UI-CR058-v8）；设计断言脚本 `scripts/verify-cr058-r5-design.mjs`
 - 提交：待用户验收后按仓库流程提交（本轮未提交，遵 §7.3）。
 
 ## 验证结果
@@ -79,6 +84,20 @@
 | AC-10（前置校验） | 冒烟套件同上 + 后端代码核对 | 停用/无密钥/无端点/未配置模型 4 项均报错且不产生历史 | 后端 4 项校验已确认在位；冒烟套件未执行 | — |
 | 真实网关 9 针端到端（全部 AC 的真实语义） | 真实供应商密钥手工执行 | 逐针结论符合真实网关行为 | **未验证（需真实密钥，属用户验收范围）** | — |
 
+### r5（CR-058 r5：P20 行为指纹与归因）验证结果
+
+| AC | 验证方式 | 预期 | 实际 | 执行时间 |
+| --- | --- | --- | --- | --- |
+| AC-17（20 针含 P20、权重 0 不计分不封顶不改判） | 单测 `p20_never_affects_score_verdict_or_caps` + `nineteen_probe_weights_sum_to_100` | P20 权重 0；P20 fail/warn 时 score=100、verdict=真实、摘要不含该针 | 通过（`cargo test --lib model_probe`） | 2026-11-25 |
+| AC-18（归因面板：三态 + top-3 + 概率性措辞 + 历史还原） | 设计稿断言 `scripts/verify-cr058-r5-design.mjs` SC-03/04/05；后端 `r5_attribution_three_states_and_top3` | 不一致态 3 候选 distance 升序；一致态首席=声称家族；库外无法判定空候选；措辞含「最像的已知候选」「不构成实锤」；候选名带「未校准基线」 | 设计 26/26 通过；后端单测通过 | 2026-11-25 |
+| AC-19（P20 全新短会话 + 随机盐 + 身份自述仅弱信号） | 代码核对 `probe_fingerprint` + `r5_number_sequence_parse_and_features` | 两条单 user 消息、含 `FP_SALT_` 随机盐；身份自述仅佐证不改红牌 | 通过 | 2026-11-25 |
+| AC-20（P2/P5/P7 厂商盲区修补） | 单测 `r5_vendor_generation_and_tier_rules` / `r5_family_of_maps_vendors` / `r5_anthropic_headers_recognized` / `r5_wrapper_keywords_cover_non_openai_ecosystem` | minimax/grok/kimi/doubao/ernie 代际降级；Anthropic 头识别；非 OpenAI 套壳词覆盖 | 通过 | 2026-11-25 |
+| AC-09（历史含 attribution 往返 + 旧记录 null 兼容） | 单测 `r5_attribution_json_roundtrip_and_legacy_null`；冒烟用例已改 20 针 + `attribution==null`（P1 失败） | resultJson 含 attribution；旧记录读出 null；不泄露密钥 | 单测通过；冒烟套件未执行（需 GUI） | 2026-11-25 |
+| 全量回归 | `cargo test --offline --lib` | 无回归 | **526 通过 / 0 失败 / 8 忽略**（首次因 db::cr078 并行竞态偶发失败，单跑与该模块跑均通过，重跑全量通过；与本特性无关） | 2026-11-25 |
+| 前端类型与构建 | `npm run build`（tsc + vite） | 通过 | 通过（built in 4.44s） | 2026-11-25 |
+| 软件界面走查（归因面板真实渲染、滚动条动态） | 启动正式应用成对截图 | 与设计稿一致 | **未验证（待用户验收）**：本轮未启动 Tauri GUI；设计侧 26/26 已证，软件侧仅构建+组件逻辑 | — |
+| 真实网关 P20 端到端与基线校准 | 真实官方密钥采集 | 三态与候选排名符合真实行为 | **未验证（需真实密钥）**：首版基线 calibrated=false 已如实标注 | — |
+
 ### 变更记录
 
 | 日期 | 变更 | 依据 |
@@ -89,6 +108,7 @@
 | 2026-11-22 | r5：布局重排——结果区置顶（三态含进度条）、19 针列表下移；历史记录由弹窗改右上角悬浮下拉（只列时间+供应商+模型+分数+等级），选中后收起并回填结果区与逐针列表；AC-02/AC-03 措辞同步 | 用户意见 |
 | 2026-11-22 | r6：结果区移到 19 针列表正上方（中间不留供应商选择框）；空闲态改为不留白（待检测目标 + 19 针覆盖 chip + 上次检测摘要） | 用户意见「19针列表的上方放置结果区…还不能空着」 |
 | 2026-11-22 | r7：结果区三态固定高度 108px（待检测/检测中/已检测等高不跳动）；待检测态精简为单行「待检测 + 当前目标」 | 用户意见「高度要一致…待检测也不要把 19探针放上去」 |
+| 2026-11-24 | r5（CR-058 r5）：新增 P20 行为指纹与归因（权重 0 辅助信号）+ 结果页归因面板（一致性三态 + top-3 候选距离条）；P2/P5/P7 厂商盲区修补；新增 AC-17～20；调研依据 RESEARCH-006 | 用户 2026-11-24「可以就这么干，然后在结果页显示一下」（需求确认+编码授权） |
 
 ## 验收结论及依据
 

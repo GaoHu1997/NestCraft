@@ -1,0 +1,145 @@
+/* CR-076 / InputBar 0.2.2-rc.5 surface values; MIT attribution: ./chat-dock.LICENSE.
+   Only composer text, card and existing toolbar chrome are scoped here; controls and scrolling stay native. */
+.chat-composer-wrap .chat-composer {
+  --chat-composer-fill: rgb(255, 255, 255);
+  --chat-composer-stroke: rgba(0, 0, 0, .1);
+  --chat-composer-plus-fill: rgb(245, 246, 247);
+  --chat-composer-plus-ink: rgb(15, 17, 21);
+  --chat-composer-send-fill: rgb(65, 118, 230);
+  --chat-composer-send-hover-fill: rgb(122, 170, 255);
+  --chat-composer-caption-ink: rgb(173, 178, 184);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 8px;
+  container-type: inline-size;
+  border: 0;
+  border-radius: 28px;
+  background: var(--chat-composer-fill);
+  box-shadow: 0 0 0 .5px var(--chat-composer-stroke), 0 4px 16px rgba(0, 0, 0, .03), 0 0 24px rgba(0, 0, 0, .03);
+}
+
+[data-theme='dark'] .chat-composer-wrap .chat-composer {
+  --chat-composer-fill: rgb(44, 44, 46);
+  --chat-composer-stroke: rgba(255, 255, 255, .12);
+  --chat-composer-plus-fill: rgb(53, 54, 56);
+  --chat-composer-plus-ink: rgb(249, 250, 251);
+  --chat-composer-send-fill: rgb(122, 170, 255);
+  --chat-composer-send-hover-fill: rgb(65, 118, 230);
+  --chat-composer-caption-ink: rgb(129, 133, 140);
+}
+
+.chat-composer-wrap .chat-composer:focus-within {
+  box-shadow: 0 0 0 .5px var(--chat-composer-stroke), 0 4px 16px rgba(0, 0, 0, .03), 0 0 24px rgba(0, 0, 0, .03);
+}
+
+@supports (corner-shape: superellipse(1.5)) {
+  .chat-composer-wrap .chat-composer { corner-shape: superellipse(1.5); }
+}
+
+.chat-composer-wrap .chat-composer > .chat-ta {
+  box-sizing: border-box;
+  width: calc(100% - 4px);
+  margin-right: 4px;
+  min-height: 36px;
+  max-height: 336px;
+  padding: 4px 8px 0 14px;
+  font: 14px/24px var(--font);
+  color: var(--chat-composer-plus-ink);
+  caret-color: var(--chat-composer-send-fill);
+}
+
+/* The textarea is also the scrollport: its 4px inset plus 8px padding keeps the text column.
+   Preserve CR-074's existing outline:none; only rebind the focused caret to business blue. */
+.chat-composer-wrap .chat-composer > .chat-ta:focus,
+.chat-composer-wrap .chat-composer > .chat-ta:focus-visible {
+  caret-color: var(--chat-composer-send-fill);
+}
+
+.chat-composer-wrap .chat-composer > .chat-ta::placeholder {
+  color: var(--chat-composer-caption-ink);
+}
+
+.chat-composer-wrap .chat-composer > .chat-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 8px 6px;
+  min-width: 0;
+}
+
+.chat-composer-wrap .chat-composer .chat-controls-leading,
+.chat-composer-wrap .chat-composer .chat-controls-trailing {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.chat-composer-wrap .chat-composer .chat-controls-leading {
+  flex: none;
+}
+
+.chat-composer-wrap .chat-composer .chat-controls-trailing {
+  flex: 0 1 auto;
+  max-width: 100%;
+  margin-left: auto;
+}
+
+.chat-composer-wrap .chat-composer .chat-controls-trailing > .chat-ctl-chip.model {
+  margin: 0;
+  flex: 0 1 290px;
+  max-width: 290px;
+  min-width: 64px;
+}
+
+.chat-composer-wrap .chat-composer .chat-controls-trailing > .chat-send {
+  flex: none;
+  margin-left: 0;
+}
+
+@media (max-width: 560px) {
+  .chat-composer-wrap .chat-composer > .chat-tools,
+  .chat-composer-wrap .chat-composer .chat-controls-leading,
+  .chat-composer-wrap .chat-composer .chat-controls-trailing { gap: 8px; }
+}
+
+/* Query the card, not the row itself, so narrow desktop sidebars also get compact spacing. */
+@container (max-width: 560px) {
+  .chat-composer-wrap .chat-composer > .chat-tools,
+  .chat-composer-wrap .chat-composer .chat-controls-leading,
+  .chat-composer-wrap .chat-composer .chat-controls-trailing { gap: 8px; }
+}
+
+.chat-composer-wrap .chat-tools .chat-ctl-chip.icon-only[data-chat-overlay-trigger='+'] {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 999px;
+  corner-shape: round;
+  background: var(--chat-composer-plus-fill);
+  color: var(--chat-composer-plus-ink);
+}
+
+.chat-composer-wrap .chat-composer .chat-send {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 999px;
+  corner-shape: round;
+  background: var(--chat-composer-send-fill);
+  color: #fff;
+  transform: translateY(-2px);
+}
+
+.chat-composer-wrap .chat-composer .chat-send:hover:not(:disabled) {
+  background: var(--chat-composer-send-hover-fill);
+}
+
+.chat-composer-wrap .chat-composer .chat-send:disabled {
+  background: var(--chat-composer-send-fill);
+  opacity: .4;
+  cursor: default;
+}

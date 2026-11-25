@@ -9,6 +9,7 @@ pub mod commands;
 pub mod db;
 pub mod models;
 pub mod ssh;
+pub mod storage_layout;
 pub mod updater;
 pub mod util;
 
@@ -34,9 +35,16 @@ pub fn run() {
             }
         })
         .setup(|app| {
-            let dir = app.path().app_data_dir()?;
-            std::fs::create_dir_all(&dir)?;
-            commands::fs::document::save::initialize_recovery(dir.join("editor-operations"))
+            let dir = storage_layout::root().map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
+            // 迁移来源按优先级：上次切换前的数据根 > 系统应用数据目录；move_if_absent 幂等不覆盖。
+            if let Some(previous) = storage_layout::previous_root() {
+                if previous != dir { storage_layout::migrate_legacy(&previous, &dir); }
+            }
+            if let Ok(legacy) = app.path().app_data_dir() {
+                storage_layout::migrate_legacy(&legacy, &dir);
+            }
+            for name in storage_layout::CATEGORIES { let _ = std::fs::create_dir_all(dir.join(name)); }
+            commands::fs::document::save::initialize_recovery(dir.join("editor"))
                 .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
             // CR-055 FEAT-007：启动时按保留策略（最近 32 条 / 7 天）静默回收已终态保存的
             // backup/temp/journal。失败不影响启动——材料只是诊断与恢复线索，不参与保存正确性。
@@ -47,11 +55,11 @@ pub fn run() {
             let keep_db = std::env::var("SMOKE_KEEP_DB").map(|v| v == "1").unwrap_or(false);
             let db_file = if smoke { "workbench-smoke.db" } else { "workbench.db" };
             if smoke && !keep_db {
-                let _ = std::fs::remove_file(dir.join(db_file));
-                let _ = std::fs::remove_file(dir.join("workbench-smoke.db-shm"));
-                let _ = std::fs::remove_file(dir.join("workbench-smoke.db-wal"));
+                let _ = std::fs::remove_file(dir.join("db").join(db_file));
+                let _ = std::fs::remove_file(dir.join("db").join("workbench-smoke.db-shm"));
+                let _ = std::fs::remove_file(dir.join("db").join("workbench-smoke.db-wal"));
             }
-            db::init(&dir.join(db_file))?;
+            db::init(&dir.join("db").join(db_file))?;
             // CR-046：清理上次更新留下的旧版程序与未完成下载；保留已就绪的暂存包。
             updater::cleanup(app.handle());
             commands::sdk::seed_sdk_rows_pub()?;
@@ -129,6 +137,8 @@ pub fn run() {
             commands::general::app_data_dir,
             commands::general::get_setting,
             commands::general::set_setting,
+            commands::general::storage_data_dir,
+            commands::general::storage_set_data_dir,
             commands::general::get_theme,
             commands::general::set_theme,
             commands::general::get_avatar_style,
@@ -198,6 +208,17 @@ pub fn run() {
             commands::gitconfig::git_credential_status,
             // 模型供应商
             commands::providers::provider_list,
+            // CR-078：概览页日程 / 待办 / 用量 / 天气
+            commands::schedule::schedule_event_list,
+            commands::schedule::schedule_event_save,
+            commands::schedule::schedule_event_delete,
+            commands::schedule::schedule_todo_list,
+            commands::schedule::schedule_todo_save,
+            commands::schedule::schedule_todo_delete,
+            commands::usage_stats::usage_stats,
+            commands::weather::weather_current,
+            commands::weather::weather_refresh,
+            commands::weather::weather_set_enabled,
             commands::providers::provider_save,
             commands::providers::provider_delete,
             commands::providers::provider_set_disabled,
@@ -259,6 +280,7 @@ pub fn run() {
             commands::chat::chat_session_pin,
             commands::chat::chat_session_fork,
             commands::chat::chat_messages,
+            commands::chat::stats::chat_session_stats,
             commands::chat::chat_send,
             commands::chat::chat_abort,
             commands::chat::chat_status,
@@ -271,6 +293,8 @@ pub fn run() {
             commands::servers::server_delete,
             commands::servers::server_connect,
             commands::servers::server_disconnect,
+            // 测试连接：不保存表单也可验证主机可达并取回系统名
+            commands::servers::server_test_connection,
             commands::servers::server_term_open,
             commands::servers::server_term_input,
             commands::servers::server_term_resize,
@@ -288,9 +312,11 @@ pub fn run() {
             // 知识库
             commands::knowledge::kb_list,
             commands::knowledge::kb_save,
+            commands::knowledge::kb_create_library,
             commands::knowledge::kb_set_icon,
             commands::knowledge::kb_set_icon_color,
             commands::knowledge::kb_set_appearance,
+            commands::knowledge::kb_update_meta,
             commands::knowledge::kb_delete,
             commands::knowledge::kb_scan,
             commands::knowledge::kb_tree,
@@ -299,6 +325,18 @@ pub fn run() {
             commands::knowledge::kb_create_folder,
             commands::knowledge::kb_create_markdown,
             commands::knowledge::kb_save_markdown,
+            commands::knowledge::kb_create_richtext,
+            commands::knowledge::kb_save_richtext,
+            commands::knowledge::kb_rename_doc,
+            commands::knowledge::kb_delete_doc,
+            commands::knowledge::kb_move_doc,
+            commands::knowledge::kb_copy_doc,
+            commands::knowledge::kb_import_docs,
+            commands::knowledge::kb_recycle_doc,
+            commands::knowledge::kb_recycle_list,
+            commands::knowledge::kb_recycle_restore,
+            commands::knowledge::kb_recycle_purge,
+            commands::knowledge::kb_write_media,
             commands::knowledge::kb_upload_files,
             commands::knowledge::kb_file_info,
             commands::knowledge::kb_read_file,

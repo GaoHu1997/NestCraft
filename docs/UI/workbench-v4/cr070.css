@@ -1,7 +1,8 @@
-/* UI-CR070-v1：主界面导航精简与项目/知识库图标悬浮层。
+/* UI-CR070-v1 / UI-CR073-r1：主界面导航精简与项目/知识库图标悬浮层。
    依据 CR-070：侧栏删「当前项目」「快捷入口」；顶栏删右上头像；
    项目/知识库卡片图标与名称并排，点击图标砖弹出悬浮层选择（10 色卡行 + 50 图标网格）。
-   悬浮层滚动遵守 UI-SCROLL-001：本文件不新增常显滚动条样式。 */
+   CR-073：悬浮层由居中大弹窗改为锚定触发图标、限高 420px（视口不足按 100dvh-80px），
+   超高内容在正文区滚动；遮罩改为透明命中层。滚动遵守 UI-SCROLL-001：不新增常显滚动条样式。 */
 
 /* 卡片图标砖：可点击入口，悬停出现轻边框提示可改；名称与图标保持并排。 */
 .icon-tile-btn {
@@ -16,16 +17,14 @@
 .icon-tile-btn:hover .kb-icon { outline: 2px solid var(--primary); outline-offset: 1px; }
 .icon-tile-btn:focus-visible { outline: none; box-shadow: var(--ring); }
 
-/* 悬浮层：固定弹层于 body，参考图形式——顶部对象名 + 组合预览，
-   「选择颜色」一行色卡，「选择图标」网格（6 组分组），底部取消/保存。 */
+/* 悬浮层：锚定触发图标（fixed 定位与限高由 cr070.js 计算），参考图形式——
+   顶部对象名 + 组合预览，「选择颜色」一行色卡，「选择图标」网格（6 组分组），底部取消/保存。 */
 .icon-pop-mask {
   position: fixed; inset: 0; z-index: 70;
-  background: rgba(17, 24, 39, .28);
-  display: grid; place-items: center; padding: 20px;
+  background: transparent;
 }
 .icon-pop {
-  width: 460px; max-width: calc(100vw - 32px);
-  max-height: calc(100dvh - 48px);
+  position: fixed;
   display: flex; flex-direction: column;
   background: var(--surface); color: var(--ink);
   border: 1px solid var(--line); border-radius: 12px;
@@ -46,7 +45,9 @@
 .icon-pop-sec:first-child { margin-top: 0; }
 .icon-pop .swatches { margin: 0 0 12px; flex-wrap: nowrap; }
 .icon-pop .swatch { width: 30px; height: 30px; flex: 0 0 auto; }
-.icon-pop .picker-group { border: 0; padding: 0; background: transparent; }
+/* CR-073：分组容器自身为单列纵向排列（组内网格仍 6 列），否则六组会被排成横向窄列。 */
+.icon-pop .picker { grid-template-columns: minmax(0, 1fr); width: 100%; }
+.icon-pop .picker-group { border: 0; padding: 0; background: transparent; min-width: 0; }
 .icon-pop .picker-group + .picker-group { margin-top: 10px; }
 .icon-pop .picker-group-grid { grid-template-columns: repeat(auto-fill, minmax(56px, 1fr)); }
 .icon-pop-f {
@@ -57,7 +58,16 @@
 }
 .icon-pop-f .caption { margin-right: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* CR-073：锚定方向提示（不影响布局，仅用于动效原点与自检选择器）。 */
+.icon-pop[data-side="below"] { transform-origin: top left; }
+.icon-pop[data-side="above"] { transform-origin: bottom left; }
+.icon-pop[data-side="bottom"] { transform-origin: bottom center; }
+@media (prefers-reduced-motion: no-preference) {
+  .icon-pop { animation: icon-pop-in 120ms ease-out; }
+}
+@keyframes icon-pop-in { from { opacity: 0; transform: scale(.98); } to { opacity: 1; transform: scale(1); } }
+
 @media (max-width: 520px) {
-  .icon-pop { width: 100%; }
+  .icon-pop { left: 12px; right: 12px; width: auto !important; }
 }
 

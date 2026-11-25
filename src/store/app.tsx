@@ -86,6 +86,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const activateWindow = useCallback((key: string) => setActiveKey(key), []);
   const closeWindow = useCallback((key: string) => {
     if (key === "home") return;
+    /* CR-075：关闭服务器工作台页签即断开该主机；切换页签不触发，断开失败不影响界面状态。 */
+    if (key.startsWith("server:")) {
+      const hostId = key.slice("server:".length);
+      if (hostId) void api.serverDisconnect(hostId).catch(() => {});
+    }
     // 关闭可见Tab，保留内存实例；不隐式停止后台或销毁未保存内容。
     setWindows(previous => previous.map(window => window.key === key ? { ...window, open: false } : window));
     setActiveKey(previous => previous === key ? "home" : previous);

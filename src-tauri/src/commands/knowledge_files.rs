@@ -30,6 +30,10 @@ pub(super) fn dir_id(rel: &str) -> String { format!("d{}", fnv_bytes(rel.as_byte
 pub(super) fn markdown(path: &Path) -> bool {
     path.extension().and_then(|s| s.to_str()).map(|s| s.eq_ignore_ascii_case("md") || s.eq_ignore_ascii_case("markdown")).unwrap_or(false)
 }
+/// 富文本对应 zyplayer editorType=1，落成 .html/.htm。SVG 不是富文本。
+pub(super) fn richtext(path: &Path) -> bool {
+    path.extension().and_then(|s| s.to_str()).map(|s| s.eq_ignore_ascii_case("html") || s.eq_ignore_ascii_case("htm")).unwrap_or(false)
+}
 /// CR-030-D1：参与切片的文本格式（read_text 已支持，零新增解析器）。
 /// 其它格式（pdf/office/图片/未知）= metadata_only：文件名/路径可搜，正文不可搜。
 pub(super) fn indexable_text(path: &Path) -> bool {
@@ -464,6 +468,88 @@ pub(super) fn create_markdown(root: &mut SafeRoot, parent: &str, name: &str, con
     write_new(root, &path, content.as_bytes())?;
     Ok(rel)
 }
+pub(super) fn create_richtext(root: &mut SafeRoot, parent: &str, name: &str, content: &str) -> Result<String, String> {
+    let rel = child_uri(parent, name)?;
+    if !richtext(Path::new(name)) { return Err("新建富文本仅允许.html或.htm文件".into()); }
+    if content.len() as u64 > TEXT_LIMIT || content.contains('\0') { return Err("富文本必须是1MiB内的UTF-8文本".into()); }
+    let path = root.parent(parent)?.join(name);
+    write_new(root, &path, content.as_bytes())?;
+    Ok(rel)
+}
+pub(super) fn save_richtext(root: &mut SafeRoot, rel: &str, expected: &str, content: &str) -> Result<String, String> {
+    if !richtext(Path::new(rel)) { return Err("仅允许保存.html或.htm富文本".into()); }
+    if content.len() as u64 > TEXT_LIMIT || content.contains('\0') { return Err("富文本必须是1MiB内的UTF-8文本".into()); }
+    #[cfg(windows)]
+    { save_guarded(root, rel, expected, content, |_,_| {}) }
+    #[cfg(not(windows))]
+    {
+        let _ = (root, rel, expected, content);
+        Err("当前平台尚无排它原子保存守护；未修改原文件，请保留草稿".into())
+    }
+}
+fn node_for(rel: &str, is_dir: bool) -> NoteNode {
+    let title = rel.rsplit('/').next().unwrap_or(rel).to_string();
+    NoteNode { note_id: if is_dir { dir_id(rel) } else { file_id(rel) }, title, relative_uri: rel.into(), is_dir, children: vec![] }
+}
+/// 文件走 file()，目录走 parent()。空路径是库根，不允许改。
+pub(super) fn locate_entry(root: &mut SafeRoot, rel: &str) -> Result<(PathBuf, bool), String> {
+    if relative(rel)?.is_empty() { return Err("不能对知识库根执行此操作".into()); }
+    if let Ok(path) = root.file(rel) { return Ok((path, false)); }
+    Ok((root.parent(rel)?, true))
+}
+pub(super) fn rename_entry(root: &mut SafeRoot, rel: &str, new_name: &str) -> Result<NoteNode, String> {
+    validate_name(new_name)?;
+    let (path, is_dir) = locate_entry(root, rel)?;
+    let parts = relative(rel)?;
+    let parent_rel = parts[..parts.len()-1].join("/");
+    if parts[parts.len()-1] == new_name { return Ok(node_for(rel, is_dir)); }
+    let dest_rel = child_uri(&parent_rel, new_name)?;
+    let dest = root.parent(&parent_rel)?.join(new_name);
+    if fs::symlink_metadata(&dest).is_ok() { return Err("同名目录或文件已存在，不覆盖".into()); }
+    fs::rename(&path, &dest).map_err(|_| "重命名失败，未覆盖已有文件".to_string())?;
+    if !is_dir { root.verify()?; }
+    Ok(node_for(&dest_rel, is_dir))
+}
+fn remove_tree(path: &Path) -> Result<(), String> {
+    let mut children = fs::read_dir(path).map_err(|_| "目录不可读取".to_string())?.collect::<Result<Vec<_>, _>>().map_err(|_| "目录枚举失败".to_string())?;
+    children.sort_by_key(|entry| entry.file_name());
+    for entry in children {
+        let child = entry.path();
+        let meta = fs::symlink_metadata(&child).map_err(|_| "子项状态不可读取".to_string())?;
+        if link(&meta) { return Err("目录内有链接，已停止删除".into()); }
+        if meta.is_dir() { remove_tree(&child)?; }
+        else if meta.is_file() { fs::remove_file(&child).map_err(|_| "删除子文件失败".to_string())?; }
+        else { return Err("目录内有非普通文件，已停止删除".into()); }
+    }
+    fs::remove_dir(path).map_err(|_| "删除目录失败".to_string())
+}
+pub(super) fn delete_entry(root: &mut SafeRoot, rel: &str) -> Result<(), String> {
+    let (path, is_dir) = locate_entry(root, rel)?;
+    if path == root.path || !path.starts_with(&root.path) { return Err("路径越界，未删除".into()); }
+    root.verify()?;
+    if is_dir { remove_tree(&path)?; } else { fs::remove_file(&path).map_err(|_| "删除文件失败".to_string())?; }
+    // 删掉的目录本身已被钉住，不能再按原路径复核；只确认库根还在。
+    let root_meta = fs::symlink_metadata(&root.path).map_err(|_| "知识库根已变化")?;
+    if link(&root_meta) || !root_meta.is_dir() { return Err("知识库根已变化".into()); }
+    if !is_dir { root.verify()?; }
+    Ok(())
+}
+pub(super) fn move_entry(root: &mut SafeRoot, rel: &str, new_parent: &str) -> Result<NoteNode, String> {
+    let (path, is_dir) = locate_entry(root, rel)?;
+    if is_dir && (new_parent == rel || new_parent.starts_with(&format!("{rel}/"))) {
+        return Err("不能把目录移动到自身或子目录".into());
+    }
+    let parts = relative(rel)?;
+    let name = parts[parts.len()-1].to_string();
+    let current_parent = parts[..parts.len()-1].join("/");
+    if current_parent == new_parent { return Ok(node_for(rel, is_dir)); }
+    let dest_rel = child_uri(new_parent, &name)?;
+    let dest = root.parent(new_parent)?.join(&name);
+    if fs::symlink_metadata(&dest).is_ok() { return Err("目标已有同名文件或目录，不覆盖".into()); }
+    fs::rename(&path, &dest).map_err(|_| "移动失败，未覆盖目标".to_string())?;
+    if !is_dir { root.verify()?; }
+    Ok(node_for(&dest_rel, is_dir))
+}
 #[cfg(windows)]
 fn open_exclusive(path: &Path, create: bool) -> Result<File, String> {
     use std::os::windows::fs::OpenOptionsExt;
@@ -549,7 +635,8 @@ fn save_guarded<F: FnMut(SaveStage, &Path)>(root: &mut SafeRoot, rel: &str, expe
     let temp = parent.join(format!("{}{}.tmp", TEMP_PREFIX, uuid::Uuid::new_v4()));
     // Backup is visible as a regular .md recovery file if a competing writer
     // occupies the target and non-overwriting restore cannot run.
-    let backup = parent.join(format!("nestcraft-recovery-{}.md", uuid::Uuid::new_v4()));
+    let ext = path.extension().and_then(|s| s.to_str()).map(|s| s.to_ascii_lowercase()).filter(|s| matches!(s.as_str(), "md" | "markdown" | "html" | "htm")).unwrap_or_else(|| "md".into());
+    let backup = parent.join(format!("nestcraft-recovery-{}.{ext}", uuid::Uuid::new_v4()));
     let mut staged = open_exclusive(&temp, true)?;
     let result = (|| {
         staged.write_all(content.as_bytes()).and_then(|_| staged.sync_all())
@@ -654,6 +741,7 @@ pub(super) fn info(root: &mut SafeRoot, rel: &str, id: &str, title: &str) -> Res
     let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
     let (kind, mime, preview, editable) = match ext.as_str() {
         "md" | "markdown" => ("markdown", "text/markdown", meta.len() <= TEXT_LIMIT, meta.len() <= TEXT_LIMIT),
+        "html" | "htm" => ("html", "text/html", meta.len() <= TEXT_LIMIT, meta.len() <= TEXT_LIMIT),
         "txt" | "text" | "log" => ("text", "text/plain", meta.len() <= TEXT_LIMIT, false),
         "json" => ("text", "application/json", meta.len() <= TEXT_LIMIT, false),
         "csv" => ("text", "text/csv", meta.len() <= TEXT_LIMIT, false),
@@ -662,6 +750,10 @@ pub(super) fn info(root: &mut SafeRoot, rel: &str, id: &str, title: &str) -> Res
         "gif" => ("image", "image/gif", meta.len() <= FILE_LIMIT, false),
         "webp" => ("image", "image/webp", meta.len() <= FILE_LIMIT, false),
         "pdf" => ("pdf", "application/pdf", false, false),
+        "doc" | "dot" | "docx" | "rtf" => ("attachment", "application/msword", false, false),
+        "ppt" | "pps" | "pot" | "pptx" => ("attachment", "application/vnd.ms-powerpoint", false, false),
+        "xls" | "xlsx" => ("attachment", "application/vnd.ms-excel", false, false),
+        "bmp" | "ico" | "tif" | "tiff" | "svg" => ("attachment", "application/octet-stream", false, false),
         _ => ("attachment", "application/octet-stream", false, false),
     };
     root.verify()?;
@@ -687,14 +779,14 @@ pub(super) fn data(root: &mut SafeRoot, rel: &str, id: &str, title: &str) -> Res
     let mut text = None;
     let mut image = None;
     match info.kind.as_str() {
-        "markdown" | "text" => { let (body, token) = read_text(root, rel)?; info.hash = Some(token); text = Some(body); }
+        "markdown" | "text" | "html" => { let (body, token) = read_text(root, rel)?; info.hash = Some(token); text = Some(body); }
         "image" => {
             let bytes = read_bytes(root, rel, FILE_LIMIT)?;
             if !valid_image(&info.mime, &bytes) { return Err("图片签名与类型不符或文件损坏；禁止内嵌，可导出原件".into()); }
             info.hash = Some(hash(&bytes));
             image = Some(base64::engine::general_purpose::STANDARD.encode(bytes));
         }
-        // PDF, Office, HTML/SVG, archives and unknown formats: metadata only, never bytes to a WebView.
+        // PDF、Office、SVG、压缩包和未知格式只给元信息。HTML 富文本在上面作为文档正文返回，界面必须消毒后再显示。
         _ => {}
     }
     Ok(KnowledgeFileData { info, text, base64: image })
@@ -719,14 +811,21 @@ pub struct UploadResult { pub cancelled: bool, pub items: Vec<UploadItem> }
 pub struct ExportResult { pub cancelled: bool, pub exported: bool }
 
 /// Only called with paths returned by our native picker, never exposed as an IPC sourcePath.
+/// 上传按原件流式复制，不设容量上限（本机传输）；格式合法性由读取/索引路径分别把关。
 pub(super) fn upload_one(root: &mut SafeRoot, parent: &str, source: &Path) -> Result<String, String> {
     let source = normal_absolute(source)?;
     let name = source.file_name().and_then(|s| s.to_str()).ok_or("文件名编码无效")?;
+    validate_name(name)?;
     let rel = child_uri(parent, name)?;
-    let mut source_root = SafeRoot::new(source.parent().ok_or("源文件无父目录")?)?;
-    let bytes = read_bytes(&mut source_root, name, FILE_LIMIT)?;
     let dest = root.parent(parent)?.join(name);
-    write_new(root, &dest, &bytes)?;
+    let meta = fs::symlink_metadata(&source).map_err(|_| "源文件不可读取".to_string())?;
+    if link(&meta) || !meta.is_file() { return Err("拒绝链接或非普通文件".into()); }
+    let mut input = open_read(&source)?;
+    let mut output = new_file(&dest)?;
+    let copied = std::io::copy(&mut input, &mut output).and_then(|_| output.sync_all());
+    drop(output);
+    if copied.is_err() { let _ = fs::remove_file(&dest); return Err("上传复制失败".into()); }
+    root.verify()?;
     Ok(rel)
 }
 pub(super) fn export(root: &mut SafeRoot, rel: &str, destination: &Path) -> Result<(), String> {
@@ -744,6 +843,310 @@ pub(super) fn export(root: &mut SafeRoot, rel: &str, destination: &Path) -> Resu
     root.verify()?;
     target.verify()?;
     Ok(())
+}
+
+/// 导入只接受参考项目文件策略登记的后缀：md、zip。其它后缀原句拒绝，不落盘。
+#[derive(Debug, Serialize)]
+pub struct ImportOutcome {
+    pub created: Vec<String>,
+    pub warnings: Vec<String>,
+}
+#[derive(Debug, Serialize)]
+pub struct RecycleItem {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "relativeUri")]
+    pub relative_uri: String,
+    #[serde(rename = "deletedAt")]
+    pub deleted_at: i64,
+    #[serde(rename = "isDir")]
+    pub is_dir: bool,
+}
+
+fn suffix_of(name: &str) -> String {
+    name.rsplit('.').next().unwrap_or("").to_ascii_lowercase()
+}
+fn u16_le(bytes: &[u8]) -> u16 { u16::from_le_bytes([bytes[0], bytes[1]]) }
+fn u32_le(bytes: &[u8]) -> u32 { u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) }
+
+/// 顺序读本地文件头。UTF-8 标志位按标准解码，否则按参考项目的 GBK 解压。
+fn zip_entries(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let mut out = Vec::new();
+    let mut index = 0;
+    while index + 30 <= bytes.len() && &bytes[index..index + 4] == b"PK\x03\x04" {
+        let flags = u16_le(&bytes[index + 6..]);
+        let method = u16_le(&bytes[index + 8..]);
+        let comp_size = u32_le(&bytes[index + 18..]) as usize;
+        let name_len = u16_le(&bytes[index + 26..]) as usize;
+        let extra_len = u16_le(&bytes[index + 28..]) as usize;
+        let name_at = index + 30;
+        let data_at = name_at + name_len + extra_len;
+        let data_end = data_at.checked_add(comp_size).ok_or("ZIP 结构不完整，未导入")?;
+        if name_at + name_len > bytes.len() || data_end > bytes.len() { return Err("ZIP 结构不完整，未导入".into()); }
+        if flags & 0x1 != 0 { return Err("ZIP 已加密，未导入".into()); }
+        if flags & 0x8 != 0 && comp_size == 0 { return Err("ZIP 使用数据描述符且未给出大小，未导入".into()); }
+        let raw_name = &bytes[name_at..name_at + name_len];
+        let name = if flags & 0x800 != 0 {
+            String::from_utf8(raw_name.to_vec()).map_err(|_| "ZIP 文件名不是 UTF-8，未导入".to_string())?
+        } else {
+            encoding_rs::GBK.decode(raw_name).0.into_owned()
+        };
+        let compressed = &bytes[data_at..data_end];
+        let payload = match method {
+            0 => compressed.to_vec(),
+            8 => {
+                let mut decoder = flate2::read::DeflateDecoder::new(compressed);
+                let mut plain = Vec::new();
+                decoder.read_to_end(&mut plain).map_err(|_| "ZIP 解压失败，未导入".to_string())?;
+                plain
+            }
+            other => return Err(format!("暂时不支持的 ZIP 压缩方式：{other}")),
+        };
+        if payload.len() as u64 > 2 * 1024 * 1024 * 1024 { return Err("ZIP 内单个文件过大，未导入".into()); }
+        out.push((name.replace('\\', "/"), payload));
+        if out.len() > ENTRY_LIMIT { return Err("ZIP 条目过多，未导入".into()); }
+        index = data_end;
+    }
+    if out.is_empty() { return Err("ZIP 中没有可导入的文件".into()); }
+    Ok(out)
+}
+
+fn zip_parts(name: &str) -> Result<Vec<String>, String> {
+    let name = name.trim_matches('/');
+    if name.is_empty() { return Ok(vec![]); }
+    if name.contains(':') { return Err("ZIP 含绝对路径，未导入".into()); }
+    let parts: Vec<String> = name.split('/').filter(|part| !part.is_empty()).map(str::to_string).collect();
+    if parts.len() > DEPTH_LIMIT { return Err("ZIP 目录层级超过 32 层，未导入".into()); }
+    for part in &parts {
+        if part == "." || part == ".." { return Err("ZIP 含目录穿越，未导入".into()); }
+        validate_name(part)?;
+    }
+    Ok(parts)
+}
+
+fn ensure_folders(root: &mut SafeRoot, mut parent: String, dirs: &[String]) -> Result<String, String> {
+    for name in dirs {
+        let rel = child_uri(&parent, name)?;
+        let path = root.parent(&parent)?.join(name);
+        if !path.exists() { create_folder(root, &parent, name)?; }
+        else if !path.is_dir() { return Err("同名文件已存在，不能当作文件夹导入".into()); }
+        parent = rel;
+    }
+    Ok(parent)
+}
+
+fn write_bytes(root: &mut SafeRoot, parent: &str, name: &str, bytes: &[u8]) -> Result<String, String> {
+    let rel = child_uri(parent, name)?;
+    let path = root.parent(parent)?.join(name);
+    write_new(root, &path, bytes)?;
+    Ok(rel)
+}
+
+fn import_markdown(root: &mut SafeRoot, parent: &str, file_name: &str, bytes: &[u8]) -> Result<String, String> {
+    if bytes.len() as u64 > TEXT_LIMIT { return Err("Markdown必须是1MiB内的UTF-8文本".into()); }
+    let text = std::str::from_utf8(bytes).map_err(|_| "文件不是有效UTF-8文本；未导入".to_string())?;
+    if text.contains('\0') { return Err("文件含二进制NUL，未导入".into()); }
+    let stem = file_name.rsplit_once('.').map(|(stem, _)| stem).unwrap_or(file_name);
+    let name = if stem.is_empty() { "新建文档.md".to_string() } else { format!("{stem}.md") };
+    let rel = write_bytes(root, parent, &name, text.as_bytes())?;
+    Ok(rel)
+}
+
+pub(super) fn import_file(root: &mut SafeRoot, parent: &str, source: &Path) -> Result<ImportOutcome, String> {
+    let source = normal_absolute(source)?;
+    let file_name = source.file_name().and_then(|s| s.to_str()).ok_or("文件名编码无效")?;
+    validate_name(file_name)?;
+    let suffix = suffix_of(file_name);
+    if suffix == "md" {
+        let mut holder = SafeRoot::new(source.parent().ok_or("源文件无父目录")?)?;
+        let bytes = read_bytes(&mut holder, file_name, TEXT_LIMIT)?;
+        let created = import_markdown(root, parent, file_name, &bytes)?;
+        return Ok(ImportOutcome { created: vec![created], warnings: vec![] });
+    }
+    if suffix != "zip" { return Err(format!("暂时不支持{suffix}格式文件的导入")); }
+    let mut holder = SafeRoot::new(source.parent().ok_or("源文件无父目录")?)?;
+    let bytes = read_bytes(&mut holder, file_name, 2 * 1024 * 1024 * 1024)?;
+    let entries = zip_entries(&bytes)?;
+    let mut created = Vec::new();
+    let mut warnings = Vec::new();
+    for (name, payload) in entries {
+        let parts = zip_parts(&name)?;
+        if parts.is_empty() { continue; }
+        let file = parts.last().unwrap();
+        let folder = ensure_folders(root, parent.to_string(), &parts[..parts.len() - 1])?;
+        let ext = suffix_of(file);
+        if ext == "md" {
+            created.push(import_markdown(root, &folder, file, &payload)?);
+        } else {
+            match write_bytes(root, &folder, file, &payload) {
+                Ok(rel) => created.push(rel),
+                Err(error) => warnings.push(format!("{file}：{error}")),
+            }
+        }
+    }
+    if created.is_empty() {
+        return Err(warnings.pop().unwrap_or_else(|| "ZIP 中没有可导入的 MD 文件".into()));
+    }
+    Ok(ImportOutcome { created, warnings })
+}
+
+fn copy_name(name: &str, index: u32) -> String {
+    let suffix = if index == 1 { " 副本".to_string() } else { format!(" 副本{index}") };
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !ext.is_empty() && !ext.contains(' ') && ext.len() <= 8 => format!("{stem}{suffix}.{ext}"),
+        _ => format!("{name}{suffix}"),
+    }
+}
+
+fn stream_copy(source: &Path, destination: &Path) -> Result<(), String> {
+    let meta = fs::symlink_metadata(source).map_err(|_| "源文件状态不可读取".to_string())?;
+    if link(&meta) { return Err("拒绝复制链接或重解析点".into()); }
+    if meta.is_dir() {
+        fs::create_dir(destination).map_err(|_| "无法创建副本目录".to_string())?;
+        let mut children = fs::read_dir(source).map_err(|_| "目录不可读取".to_string())?.collect::<Result<Vec<_>, _>>().map_err(|_| "目录枚举失败".to_string())?;
+        children.sort_by_key(|entry| entry.file_name());
+        for child in children {
+            let name = child.file_name().to_str().ok_or("文件名编码无效")?.to_string();
+            validate_name(&name)?;
+            stream_copy(&child.path(), &destination.join(name))?;
+        }
+        return Ok(());
+    }
+    if !meta.is_file() { return Err("拒绝复制非普通文件".into()); }
+    let mut input = open_read(source)?;
+    let mut output = new_file(destination)?;
+    let result = std::io::copy(&mut input, &mut output).and_then(|_| output.sync_all()).map_err(|_| "复制定稿失败".to_string());
+    drop(output);
+    if result.is_err() { let _ = fs::remove_file(destination); }
+    result
+}
+
+pub(super) fn copy_entry(root: &mut SafeRoot, rel: &str, new_parent: &str) -> Result<NoteNode, String> {
+    let (path, is_dir) = locate_entry(root, rel)?;
+    let parts = relative(rel)?;
+    let name = parts[parts.len() - 1].to_string();
+    let mut chosen = String::new();
+    for index in 1..51 {
+        let candidate = copy_name(&name, index);
+        let dest = root.parent(new_parent)?.join(&candidate);
+        if !dest.exists() { chosen = candidate; break; }
+    }
+    if chosen.is_empty() { return Err("副本名称已用尽，未覆盖已有文件".into()); }
+    let dest_rel = child_uri(new_parent, &chosen)?;
+    let dest = root.parent(new_parent)?.join(&chosen);
+    stream_copy(&path, &dest)?;
+    if !is_dir { root.verify()?; }
+    Ok(node_for(&dest_rel, is_dir))
+}
+
+fn library_key(id: &str) -> Result<(), String> {
+    if id.is_empty() || id.len() > 80 || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err("知识库标识无效".into());
+    }
+    Ok(())
+}
+fn recycle_dir(store: &Path, library_id: &str) -> Result<PathBuf, String> {
+    library_key(library_id)?;
+    let root = store.join("kb-recycle").join(library_id);
+    fs::create_dir_all(&root).map_err(|_| "无法创建回收站目录".to_string())?;
+    Ok(root)
+}
+fn recycle_now() -> i64 {
+    std::time::SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
+pub(super) fn recycle_put(store: &Path, library_id: &str, root: &mut SafeRoot, rel: &str) -> Result<RecycleItem, String> {
+    let (path, is_dir) = locate_entry(root, rel)?;
+    let name = rel.rsplit('/').next().unwrap_or(rel).to_string();
+    let id = uuid::Uuid::new_v4().to_string();
+    let bucket = recycle_dir(store, library_id)?.join(&id);
+    fs::create_dir(&bucket).map_err(|_| "无法建立回收项".to_string())?;
+    let payload = bucket.join("payload");
+    let moved = fs::rename(&path, &payload).is_ok();
+    if !moved {
+        stream_copy(&path, &payload)?;
+        delete_entry(root, rel)?;
+    }
+    let item = RecycleItem { id: id.clone(), name, relative_uri: rel.to_string(), deleted_at: recycle_now(), is_dir };
+    let meta = serde_json::json!({
+        "id": item.id, "name": item.name, "relativeUri": item.relative_uri,
+        "deletedAt": item.deleted_at, "isDir": item.is_dir,
+    });
+    if fs::write(bucket.join("meta.json"), meta.to_string()).is_err() {
+        let _ = fs::rename(&payload, &path);
+        let _ = fs::remove_dir_all(&bucket);
+        return Err("回收记录写入失败，已尝试放回原处".into());
+    }
+    Ok(item)
+}
+
+pub(super) fn recycle_list(store: &Path, library_id: &str) -> Result<Vec<RecycleItem>, String> {
+    let root = recycle_dir(store, library_id)?;
+    let mut items = Vec::new();
+    for entry in fs::read_dir(&root).map_err(|_| "回收站不可读取".to_string())? {
+        let entry = entry.map_err(|_| "回收站枚举失败".to_string())?;
+        let meta_path = entry.path().join("meta.json");
+        if !meta_path.is_file() { continue; }
+        let text = fs::read_to_string(&meta_path).map_err(|_| "回收记录不可读".to_string())?;
+        let value: serde_json::Value = serde_json::from_str(&text).map_err(|_| "回收记录损坏".to_string())?;
+        items.push(RecycleItem {
+            id: value["id"].as_str().unwrap_or("").to_string(),
+            name: value["name"].as_str().unwrap_or("").to_string(),
+            relative_uri: value["relativeUri"].as_str().unwrap_or("").to_string(),
+            deleted_at: value["deletedAt"].as_i64().unwrap_or(0),
+            is_dir: value["isDir"].as_bool().unwrap_or(false),
+        });
+    }
+    items.sort_by(|a, b| b.deleted_at.cmp(&a.deleted_at).then(b.id.cmp(&a.id)));
+    Ok(items)
+}
+
+pub(super) fn recycle_restore(store: &Path, library_id: &str, root: &mut SafeRoot, recycle_id: &str) -> Result<NoteNode, String> {
+    library_key(library_id)?;
+    if !uuid_like(recycle_id) { return Err("回收项标识无效".into()); }
+    let bucket = recycle_dir(store, library_id)?.join(recycle_id);
+    let text = fs::read_to_string(bucket.join("meta.json")).map_err(|_| "回收项不存在".to_string())?;
+    let value: serde_json::Value = serde_json::from_str(&text).map_err(|_| "回收记录损坏".to_string())?;
+    let rel = value["relativeUri"].as_str().ok_or("回收记录缺少原路径")?;
+    let is_dir = value["isDir"].as_bool().unwrap_or(false);
+    let parts = relative(rel)?;
+    if parts.is_empty() { return Err("不能恢复到知识库根".into()); }
+    let parent = parts[..parts.len() - 1].join("/");
+    ensure_folders(root, String::new(), &parts[..parts.len() - 1].iter().map(|s| (*s).to_string()).collect::<Vec<_>>())?;
+    let dest = root.parent(&parent)?.join(parts[parts.len() - 1]);
+    if dest.exists() { return Err("原位置已有同名文件或目录，未覆盖".into()); }
+    let payload = bucket.join("payload");
+    if fs::rename(&payload, &dest).is_err() {
+        stream_copy(&payload, &dest)?;
+        if is_dir { let _ = fs::remove_dir_all(&payload); } else { let _ = fs::remove_file(&payload); }
+    }
+    let _ = fs::remove_dir_all(&bucket);
+    if !is_dir { root.verify()?; }
+    Ok(node_for(rel, is_dir))
+}
+
+fn uuid_like(value: &str) -> bool {
+    value.len() == 36 && value.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+}
+
+pub(super) fn recycle_purge(store: &Path, library_id: &str, recycle_id: &str) -> Result<(), String> {
+    library_key(library_id)?;
+    if !uuid_like(recycle_id) { return Err("回收项标识无效".into()); }
+    let bucket = recycle_dir(store, library_id)?.join(recycle_id);
+    if !bucket.is_dir() { return Err("回收项不存在".into()); }
+    fs::remove_dir_all(&bucket).map_err(|_| "彻底删除失败".to_string())
+}
+
+const MEDIA_EXT: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "mp4", "webm"];
+pub(super) fn write_media(root: &mut SafeRoot, parent: &str, name: &str, bytes: &[u8]) -> Result<String, String> {
+    validate_name(name)?;
+    let ext = suffix_of(name);
+    if !MEDIA_EXT.contains(&ext.as_str()) { return Err("编辑器只接收图片或视频附件".into()); }
+    if bytes.len() as u64 > FILE_LIMIT { return Err("附件超过 25MiB，未写入".into()); }
+    if bytes.is_empty() { return Err("附件为空，未写入".into()); }
+    let path = root.parent(parent)?.join(name);
+    let final_name = if path.exists() { copy_name(name, 1) } else { name.to_string() };
+    write_bytes(root, parent, &final_name, bytes)
 }
 
 #[cfg(any(windows, test))]

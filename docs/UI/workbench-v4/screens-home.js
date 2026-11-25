@@ -107,29 +107,32 @@
   }
 
   function projectModal(mode, id) {
-    const p = mode === "edit" ? Object.assign({}, projectById(id), store.projectFormDraft || {}) : Object.assign({ id: "", key: "", name: "", kind: "code", owner: D.user.name, desc: "", path: "", members: [] }, store.projectDraft || {});
+    const p = mode === "edit" ? Object.assign({}, projectById(id), store.projectFormDraft || {}) : Object.assign({ id: "", key: "", name: "", kind: "code", owner: D.user.name, desc: "", path: "" }, store.projectDraft || {});
     if (store.projectPathDraft) p.path = store.projectPathDraft;
     store.projectModal = { mode, id };
-    /* CR-070：项目图标改由卡片图标砖悬浮层选择；编辑弹窗不再含图标折叠区，
-       project-save 仍按原样成对回写 icon/iconColor（悬浮层保存后已更新对象）。 */
+    /* CR-073（用户第 2、4 项）：项目名称与图标砖同一行，图标砖可点击直接改；
+       移除「成员」字段（个人本地工具现阶段无联合办公场景）；负责人／描述为可填写字段。
+       CR-070 的「编辑弹窗不含图标折叠区」继续成立：入口是图标砖悬浮层，不是折叠区。 */
+    const tileBtn = mode === "edit"
+      ? `<button type="button" class="icon-tile-btn project-name-tile" data-c070-open="${esc(p.id)}" data-c070-kind="project" title="点击修改图标与颜色" aria-label="点击修改项目图标与颜色">${projTile({ icon: p.icon || null, iconColor: p.iconColor || null, kind: p.kind }, "", "ico-20")}</button>`
+      : `<span class="project-name-tile" title="创建项目后可在卡片上修改图标">${projTile({ icon: p.icon || null, iconColor: p.iconColor || null, kind: p.kind }, "", "ico-20")}</span>`;
     const body = `<div class="form-grid">
-      <div class="form-row"><label>项目名称</label><input class="input" id="pf-name" value="${esc(p.name)}" placeholder="例如：活动签到"></div>
+      <div class="form-row"><label>项目名称</label><div class="project-name-row">${tileBtn}<input class="input" id="pf-name" value="${esc(p.name)}" placeholder="例如：活动签到">${mode === "edit" ? "" : `<span class="caption">创建后可修改图标</span>`}</div></div>
       <div class="form-row two"><div><label>项目标识</label><input class="input" id="pf-key" value="${esc(p.key)}" placeholder="BOOKING"></div><div><label>类型</label><select class="select" id="pf-kind"><option value="code" ${p.kind === "code" ? "selected" : ""}>编码项目</option><option value="work" ${p.kind === "work" ? "selected" : ""}>办公项目</option></select></div></div>
-      <div class="form-row"><label>项目图标</label><div class="row" style="gap:10px">${projTile({ icon: p.icon || null, iconColor: p.iconColor || null, kind: p.kind }, "", "ico-20")}<span class="caption">点击列表卡片上的图标修改样式与配色</span></div></div>
-      <div class="form-row"><label>负责人</label><input class="input" id="pf-owner" value="${esc(p.owner)}"></div>
-      <div class="form-row"><label>项目描述</label><textarea class="textarea" id="pf-desc" rows="3">${esc(p.desc)}</textarea></div>
+      <div class="form-row"><label>负责人</label><input class="input" id="pf-owner" value="${esc(p.owner)}" placeholder="填写负责人"></div>
+      <div class="form-row"><label>项目描述</label><textarea class="textarea" id="pf-desc" rows="3" placeholder="一句话说明项目目标">${esc(p.desc)}</textarea></div>
       <div class="form-row"><label>本地目录</label><div class="input-with-btn"><input class="input" id="pf-path" value="${esc(p.path || "")}" placeholder="尚未选择"><button class="btn" type="button" data-act="dir-pick">${icon("folder", "ico-14")}浏览…</button></div><small>从本机目录树选择，不手工输入路径。</small></div>
-      <div class="form-row"><label>成员</label><input class="input" id="pf-members" value="${esc((p.members || []).join("、"))}" placeholder="用、分隔"></div>
     </div>`;
     openDialog(dlgShell(mode === "edit" ? "编辑项目" : "新建项目", mode === "edit" ? esc(p.id) : "创建后会出现在项目卡片列表中", body,
       `<button class="btn" data-act="close-dialog">取消</button><button class="btn primary" data-act="project-save" data-mode="${mode}" data-id="${esc(p.id)}">${mode === "edit" ? "保存" : "创建项目"}</button>`, "modal-lg"));
   }
 
-  /* CR-070：项目图标/色卡选择移至卡片图标砖悬浮层（cr070.js）。
-     project-save 保留原字段保存行为；icon/iconColor 由悬浮层成对写入，此处不再读草稿。 */
+  /* CR-070：项目图标/色卡选择移至图标砖悬浮层（cr070.js）。
+     CR-073：编辑弹窗内图标砖同样触发该悬浮层；project-save 保留原字段保存行为，
+     icon/iconColor 由悬浮层成对写入，此处不再读图标草稿。 */
   function captureProjectForm() {
     const field = id => document.getElementById(id)?.value;
-    store.projectFormDraft = { name: field('pf-name'), key: field('pf-key'), kind: field('pf-kind'), owner: field('pf-owner'), desc: field('pf-desc'), path: field('pf-path'), members: (field('pf-members') || '').split('、').filter(Boolean) };
+    store.projectFormDraft = { name: field('pf-name'), key: field('pf-key'), kind: field('pf-kind'), owner: field('pf-owner'), desc: field('pf-desc'), path: field('pf-path') };
   }
   document.addEventListener("click", e => {
     if (e.target.closest("[data-act='project-save']")) captureProjectForm();

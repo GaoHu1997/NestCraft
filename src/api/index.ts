@@ -113,6 +113,14 @@ export interface Project {
   iconColor: string | null;
   createdAt: number;
   updatedAt: number;
+  /** CR-072：负责人、描述、标签（空串/空数组=未设置）。 */
+  owner: string;
+  description: string;
+  tags: string[];
+  /** CR-072：派生统计——需求故事完成数/总数、活跃运行数（只读）。 */
+  storyTotal: number;
+  storyDone: number;
+  runningCount: number;
 }
 
 export interface RequirementNode {
@@ -127,20 +135,93 @@ export interface RequirementNode {
 }
 
 export const listProjects = () => invoke<Project[]>("list_projects");
-export const createProject = (name: string, kind: string, rootUri: string) =>
-  invoke<Project>("create_project", { name, kind, rootUri });
+
+/* ===== CR-078：概览页日程 / 待办 / 用量 / 天气 ===== */
+
+export interface ScheduleEvent {
+  id: string;
+  title: string;
+  startDate: string;
+  endDate: string;
+  allDay: boolean;
+  startTime: string;
+  endTime: string;
+  note: string;
+  color: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ScheduleTodo {
+  id: string;
+  date: string;
+  title: string;
+  done: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export const scheduleEventList = (from: string, to: string) =>
+  invoke<ScheduleEvent[]>("schedule_event_list", { from, to });
+export const scheduleEventSave = (event: ScheduleEvent) =>
+  invoke<ScheduleEvent>("schedule_event_save", { event });
+export const scheduleEventDelete = (id: string) => invoke<void>("schedule_event_delete", { id });
+export const scheduleTodoList = (date: string) => invoke<ScheduleTodo[]>("schedule_todo_list", { date });
+export const scheduleTodoSave = (todo: ScheduleTodo) => invoke<ScheduleTodo>("schedule_todo_save", { todo });
+export const scheduleTodoDelete = (id: string) => invoke<void>("schedule_todo_delete", { id });
+
+export interface UsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheTokens: number;
+  requests: number;
+  cacheHitRate: number | null;
+}
+export interface UsageDay { date: string; inputTokens: number; outputTokens: number; cacheTokens: number; requests: number; }
+export interface UsageHourModel { name: string; inputTokens: number; outputTokens: number; cacheTokens: number; requests: number; }
+export interface UsageHour { hour: number; inputTokens: number; outputTokens: number; cacheTokens: number; requests: number; models: UsageHourModel[]; }
+export interface UsageModel {
+  name: string; providerId: string | null; cliId: string | null; source: string;
+  inputTokens: number; outputTokens: number; cacheTokens: number; requests: number; cacheHitRate: number | null;
+}
+export interface UsageProvider {
+  name: string; inputTokens: number; outputTokens: number; cacheTokens: number; requests: number; cacheHitRate: number | null;
+}
+export interface UsageStats {
+  range: string; from: string; to: string; asOf: number;
+  totals: UsageTotals; days: UsageDay[]; hours: UsageHour[];
+  models: UsageModel[]; providers: UsageProvider[]; unknownSources: number;
+}
+export const usageStats = (range: string, from?: string, to?: string) =>
+  invoke<UsageStats>("usage_stats", { range, from: from ?? null, to: to ?? null });
+
+export interface WeatherNow {
+  city: string; temp: number; low: number; high: number; text: string; code: string;
+  updatedAt: number; lat: number; lon: number; cached: boolean; degraded: string | null;
+}
+export type WeatherResult =
+  | { kind: "ok"; weather: WeatherNow }
+  | { kind: "unavailable"; reason: string }
+  | { kind: "disabled" };
+export const weatherCurrent = () => invoke<WeatherResult>("weather_current");
+export const weatherRefresh = () => invoke<WeatherResult>("weather_refresh");
+export const createProject = (name: string, kind: string, rootUri: string, owner?: string, description?: string, tags?: string[]) =>
+  invoke<Project>("create_project", { name, kind, rootUri, owner: owner ?? null, description: description ?? null, tags: tags ?? null });
 export const deleteProject = (id: string) => invoke<void>("delete_project", { id });
 /**
  * CR-051：icon / iconColor 参数缺省（undefined）=保持不变；null=清空回默认；
  * 字符串=50 个内置图标之一 / 10 个色卡之一（非法 id 服务端拒绝）。
  */
-export const updateProject = (id: string, name: string, rootUri?: string, icon?: string | null, iconColor?: string | null) =>
+export const updateProject = (id: string, name: string, rootUri?: string, icon?: string | null, iconColor?: string | null, owner?: string, description?: string, tags?: string[]) =>
   invoke<Project>("update_project", {
     id,
     name,
     rootUri: rootUri ?? null,
     ...(icon === undefined ? {} : { icon: icon === null ? "" : icon }),
     ...(iconColor === undefined ? {} : { iconColor: iconColor === null ? "" : iconColor }),
+    ...(owner === undefined ? {} : { owner }),
+    ...(description === undefined ? {} : { description }),
+    ...(tags === undefined ? {} : { tags }),
   });
 export const pickProjectDirectory = () => invoke<string | null>("pick_project_directory");
 export const readRequirements = (projectId: string) =>
@@ -495,6 +576,18 @@ export interface ProbeItemState {
   ms: number;
   note: string;
 }
+/** CR-058 r5：P20 行为指纹归因（辅助信号，权重 0；概率性提示，不构成实锤）。 */
+export interface ProbeAttributionCandidate {
+  name: string;
+  family: string;
+  distance: number;
+}
+export interface ProbeAttribution {
+  consistency: "match" | "mismatch" | "unknown";
+  claimedFamily: string;
+  candidates: ProbeAttributionCandidate[];
+  note: string;
+}
 export interface ProbeProgressEvent {
   type: "probe";
   index: number;
@@ -520,6 +613,8 @@ export interface ProbeReport {
   summary: string;
   durationMs: number;
   items: ProbeItemState[];
+  /** r5：旧记录/未执行时为 null，前端不渲染归因面板。 */
+  attribution?: ProbeAttribution | null;
 }
 export interface ProbeHistoryItem {
   id: string;
@@ -534,6 +629,7 @@ export interface ProbeHistoryItem {
   summary: string;
   durationMs: number;
   items: ProbeItemState[];
+  attribution?: ProbeAttribution | null;
   createdAt: number;
 }
 export const modelProbeRun = (providerId: string, modelId: string, onEvent: (ev: ProbeProgressEvent) => void) =>
@@ -769,10 +865,14 @@ export interface ChatMessage {
 }
 
 export type ChatEvent =
+  /** FEAT-012：已接纳/已持久化真实平台步骤后通知，只刷新统计，不修改消息。 */
+  | { type: "sessionStats"; sessionId: string }
   | { type: "delta"; delta: string }
   | { type: "thinking"; delta: string }
   | { type: "toolUse"; toolId: string; name: string; inputJson: string }
-  | { type: "toolResult"; toolId: string; content: string; isError: boolean }
+  | { type: "toolUpdate"; toolId: string; content: string }
+  | { type: "planUpdate"; items: { text: string; status: "pending" | "in_progress" | "completed" }[] }
+  | { type: "toolResult"; toolId: string; content: string; isError: boolean; exitCode?: number | null }
   | { type: "approvalRequest"; requestId: string; toolName: string; inputJson: string; risk: string }
   | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens: number }
   | { type: "subagent"; id: string; task: string; status: string; cli?: string | null; model?: string | null; durationMs?: number | null; tokens?: number | null; output?: string | null; parentId?: string | null; taskId?: string | null; content?: string | null; kind?: string | null; toolName?: string | null; isError?: boolean | null }
@@ -802,10 +902,15 @@ export interface AttachmentMeta {
   name: string;
   mime?: string | null;
   byteSize?: number | null;
+  imageBase64?: string | null;
 }
 
 export const chatSessions = (projectId?: string) =>
   invoke<SessionMeta[]>("chat_sessions", { projectId: projectId ?? null });
+
+/** FEAT-012：整会话只读统计；消费端严格校验schema/来源/范围，不依赖消息分页。 */
+export const chatSessionStats = (sessionId: string) =>
+  invoke<unknown>("chat_session_stats", { sessionId });
 
 /** CR-063：会话历史分页结果（游标为 updatedAt + id）。 */
 export interface SessionPage {
@@ -899,6 +1004,12 @@ export interface ServerHost {
   authType: "password" | "key" | "none";
   groupTag: string | null;
   connected: boolean;
+  /** CR-072：最近采样缓存（未连接/未采样为 null）。 */
+  os: string | null;
+  lastSeenAt: number | null;
+  cpuPct: number | null;
+  memPct: number | null;
+  diskPct: number | null;
 }
 
 export interface HostMetrics {
@@ -910,6 +1021,8 @@ export interface HostMetrics {
   memTotalMb: number;
   memUsedMb: number;
   load1: number;
+  diskTotalMb: number;
+  diskUsedMb: number;
 }
 
 export const serverList = () => invoke<ServerHost[]>("server_list");
@@ -923,7 +1036,24 @@ export const serverSave = (draft: {
   secret?: string;
   keyPath?: string;
   groupTag?: string;
+  /** CR-075：测试连接成功时带回的检测系统，用于写入最近采样缓存。 */
+  os?: string;
 }) => invoke<string>("server_save", { draft });
+
+/** CR-075：保存前测试连接（不落库、不改变已连接状态）。 */
+export interface ServerTestResult {
+  os: string;
+  latencyMs: number;
+}
+export const serverTestConnection = (draft: {
+  id?: string;
+  host: string;
+  port: number;
+  username: string;
+  authType: "password" | "key" | "none";
+  secret?: string;
+  keyPath?: string;
+}) => invoke<ServerTestResult>("server_test_connection", { draft });
 export const serverDelete = (id: string) => invoke<void>("server_delete", { id });
 export const serverConnect = (hostId: string) => invoke<void>("server_connect", { hostId });
 export const serverDisconnect = (hostId: string) => invoke<void>("server_disconnect", { hostId });
@@ -989,6 +1119,9 @@ export interface KnowledgeLibrary {
   icon: string | null;
   /** CR-051 r6：背景色卡 id（10 色之一）；null 默认青绿。 */
   iconColor: string | null;
+  /** CR-072：负责人与描述（空串=未设置）。 */
+  owner: string;
+  description: string;
 }
 
 export interface NoteNode {
@@ -1014,7 +1147,7 @@ export interface KnowledgeFileInfo {
   relativeUri: string;
   sizeBytes: number;
   modifiedAt?: number;
-  kind: "markdown" | "text" | "image" | "pdf" | "attachment";
+  kind: "markdown" | "text" | "html" | "image" | "pdf" | "attachment";
   mime: string;
   previewSupported: boolean;
   editable: boolean;
@@ -1050,6 +1183,18 @@ export interface LibraryGrant {
 
 export const kbList = () => invoke<KnowledgeLibrary[]>("kb_list");
 export const kbSave = (name: string, sourceRef: string) => invoke<string>("kb_save", { name, sourceRef });
+export const kbCreateLibrary = (name: string) => invoke<string>("kb_create_library", { name });
+export interface StorageLocation { path: string; defaultPath: string; knowledgeRoot: string; restartRequired: boolean; }
+export const storageDataDir = () => invoke<StorageLocation>("storage_data_dir");
+export const storageSetDataDir = (path: string | null) => invoke<void>("storage_set_data_dir", { path });
+/** CR-072：更新知识库元信息（名称/负责人/描述）；undefined=保持。 */
+export const kbUpdateMeta = (id: string, meta: { name?: string; owner?: string; description?: string }) =>
+  invoke<void>("kb_update_meta", {
+    id,
+    ...(meta.name === undefined ? {} : { name: meta.name }),
+    ...(meta.owner === undefined ? {} : { owner: meta.owner }),
+    ...(meta.description === undefined ? {} : { description: meta.description }),
+  });
 /** CR-051：icon 传 null=清空回来源默认；其余须为共用 50 个内置 id 之一（非法 id 服务端拒绝）。 */
 export const kbSetIcon = (id: string, icon: string | null) => invoke<void>("kb_set_icon", { id, icon });
 
@@ -1093,6 +1238,32 @@ export const kbCreateMarkdown = (id: string, parentRelativeUri: string, name: st
   invoke<NoteContent>("kb_create_markdown", { id, parentRelativeUri, name, content });
 export const kbSaveMarkdown = (id: string, noteId: string, expectedHash: string, content: string) =>
   invoke<NoteContent>("kb_save_markdown", { id, noteId, expectedHash, content });
+/** 富文本对应目录里的 .html/.htm，不写入 AI 索引。 */
+export const kbCreateRichtext = (id: string, parentRelativeUri: string, name: string, content: string) =>
+  invoke<NoteContent>("kb_create_richtext", { id, parentRelativeUri, name, content });
+export const kbSaveRichtext = (id: string, noteId: string, expectedHash: string, content: string) =>
+  invoke<NoteContent>("kb_save_richtext", { id, noteId, expectedHash, content });
+export const kbRenameDoc = (id: string, relativeUri: string, name: string) =>
+  invoke<NoteNode>("kb_rename_doc", { id, relativeUri, name });
+export const kbDeleteDoc = (id: string, relativeUri: string) =>
+  invoke<void>("kb_delete_doc", { id, relativeUri });
+export const kbMoveDoc = (id: string, relativeUri: string, parentRelativeUri: string) =>
+  invoke<NoteNode>("kb_move_doc", { id, relativeUri, parentRelativeUri });
+export const kbCopyDoc = (id: string, relativeUri: string, parentRelativeUri: string) =>
+  invoke<NoteNode>("kb_copy_doc", { id, relativeUri, parentRelativeUri });
+export interface KnowledgeImportOutcome { created: string[]; warnings: string[]; }
+export const kbImportDocs = (id: string, parentRelativeUri: string) =>
+  invoke<KnowledgeImportOutcome>("kb_import_docs", { id, parentRelativeUri });
+export interface KnowledgeRecycleItem { id: string; name: string; relativeUri: string; deletedAt: number; isDir: boolean; }
+export const kbRecycleDoc = (id: string, relativeUri: string) =>
+  invoke<KnowledgeRecycleItem>("kb_recycle_doc", { id, relativeUri });
+export const kbRecycleList = (id: string) => invoke<KnowledgeRecycleItem[]>("kb_recycle_list", { id });
+export const kbRecycleRestore = (id: string, recycleId: string) =>
+  invoke<NoteNode>("kb_recycle_restore", { id, recycleId });
+export const kbRecyclePurge = (id: string, recycleId: string) =>
+  invoke<void>("kb_recycle_purge", { id, recycleId });
+export const kbWriteMedia = (id: string, parentRelativeUri: string, name: string, base64Data: string) =>
+  invoke<string>("kb_write_media", { id, parentRelativeUri, name, base64Data });
 export const kbUploadFiles = (id: string, parentRelativeUri: string) =>
   invoke<KnowledgeUploadResult>("kb_upload_files", { id, parentRelativeUri });
 export type KbTransferPhase = "queued" | "picking" | "copying" | "completed" | "failed" | "cancelled";

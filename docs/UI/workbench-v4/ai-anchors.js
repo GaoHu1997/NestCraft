@@ -11,9 +11,9 @@
   const anchor = kind => {
     const wb = document.querySelector(`.wb-composer [data-wb-anchor="${kind}"]`);
     if (wb && wb.getClientRects().length) return wb;
-    return document.querySelector(`.ai-panel [data-ai-anchor="${kind}"]`);
+    return document.querySelector(`:is(.ai-panel, .wb-conv) [data-ai-anchor="${kind}"]`);
   };
-  const popup = () => document.querySelector(".ai-panel [data-ai-popup]");
+  const popup = () => document.querySelector(":is(.ai-panel, .wb-conv) [data-ai-popup]");
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(v, Math.max(lo, hi)));
   let frame = 0, observer = null, transaction = null;
 
@@ -62,7 +62,7 @@
     if (!ref) return null;
     if (ref.kind) return anchor(ref.kind);
     if (ref.id) return document.getElementById(ref.id);
-    return Array.from(document.querySelectorAll(".ai-panel [data-act]")).find(el =>
+    return Array.from(document.querySelectorAll(":is(.ai-panel, .wb-conv) [data-act]")).find(el =>
       el.dataset.act === ref.act && el.dataset.name === ref.name && el.dataset.id === ref.idValue);
   }
   function focus(el) { if (el && !el.disabled) el.focus({ preventScroll: true }); }
@@ -72,7 +72,7 @@
     // 外点在 main 执行原目标后才清理 DOM，不 preventDefault、不截断外点传播。
     if (!store.aiPop && popup()) {
       popup().remove();
-      document.querySelectorAll(".ai-panel [data-ai-anchor]").forEach(el => el.setAttribute("aria-expanded", "false"));
+      document.querySelectorAll(":is(.ai-panel, .wb-conv) [data-ai-anchor]").forEach(el => el.setAttribute("aria-expanded", "false"));
     }
     if (tx.outside) return;
     if (tx.open && store.aiPop === tx.kind) {
@@ -87,7 +87,7 @@
   document.addEventListener("click", e => {
     const target = e.target instanceof Element ? e.target : null;
     if (!target) return;
-    const panel = target.closest(".ai-panel"), pop = popup(), previous = pop?.dataset.aiPopup;
+    const panel = target.closest(":is(.ai-panel, .wb-conv)"), pop = popup(), previous = pop?.dataset.aiPopup;
     const el = target.closest("[data-act]"), action = el?.dataset.act, kind = kinds[action];
     const close = target.closest("[data-ai-popup-close]");
     if (close && panel) {
@@ -136,11 +136,11 @@
     if (pop && (busy() || store.aiMenu || store.aiTop || store.aiHistory)) {
       store.aiPop = null;
       pop.remove();
-      document.querySelectorAll(".ai-panel [data-ai-anchor]").forEach(el => el.setAttribute("aria-expanded", "false"));
+      document.querySelectorAll(":is(.ai-panel, .wb-conv) [data-ai-anchor]").forEach(el => el.setAttribute("aria-expanded", "false"));
     }
     if (typeof ResizeObserver !== "undefined") {
       observer = new ResizeObserver(schedule);
-      document.querySelectorAll(".ai-panel, .ai-panel [data-ai-anchor], .ai-panel [data-ai-popup], .ai-panel .model-grid").forEach(el => observer.observe(el));
+      document.querySelectorAll(":is(.ai-panel, .wb-conv), :is(.ai-panel, .wb-conv) [data-ai-anchor], :is(.ai-panel, .wb-conv) [data-ai-popup], :is(.ai-panel, .wb-conv) .model-grid").forEach(el => observer.observe(el));
     }
     position();
   };

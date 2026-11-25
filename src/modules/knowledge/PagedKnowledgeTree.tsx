@@ -1,19 +1,29 @@
 import { memo, forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '@/components/icons';
-import { fileTypeGlyph } from '@/components/icon-tiles';
+import { FileTypeIcon, fileKindOf } from '@/components/file-type-icon';
 import * as perf from '@/api/knowledge-performance';
 import type { KnowledgeEntry } from '@/api/knowledge-performance';
 import { DirectoryModel, directoryPathSegments, directoryUriAt, findDirectoryId, resolveTreeLead, type DirectoryRow } from './performanceModel';
 import './knowledge-performance.css';
+import './zy-doc.css';
 
-const ROW = 40;
+const ROW = 35;
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 const terminal = new Set(['completed', 'cancelled', 'failed', 'interrupted']);
 export interface KnowledgeTreeHandle { refresh: (parentUri?: string) => Promise<void>; }
+export type DocCreateKind = "markdown" | "html" | "folder";
 interface Props {
   libraryId: string; visible: boolean; model: DirectoryModel; selected: string | null; disabled?: boolean;
   onEntries: (parentId: string, entries: KnowledgeEntry[], complete: boolean) => void; onOpen: (entry: KnowledgeEntry) => void;
   onFolder: (entry: KnowledgeEntry) => void; onCreateFolder: (uri: string) => void; onCreateDocument: (uri: string) => void;
+  onCreate?: (parentUri: string, kind: DocCreateKind) => void;
+  onRename?: (entry: KnowledgeEntry) => void;
+  onDelete?: (entry: KnowledgeEntry) => void;
+  onMove?: (entry: KnowledgeEntry, parentUri: string) => void;
+  onImport?: (parentUri: string) => void;
+  onUpload?: (parentUri: string) => void;
+  onCopy?: (entry: KnowledgeEntry) => void;
+  onMigrate?: (entry: KnowledgeEntry) => void;
 }
 
 export const PagedKnowledgeTree = memo(forwardRef<KnowledgeTreeHandle, Props>(function PagedKnowledgeTree(props, ref) {
@@ -22,6 +32,7 @@ export const PagedKnowledgeTree = memo(forwardRef<KnowledgeTreeHandle, Props>(fu
   const live = useRef(false), shown = useRef(visible); shown.current = visible;
   const [, setVersion] = useState(0);
   const [top, setTop] = useState(model.scrollTop), [height, setHeight] = useState(400), [focusKey, setFocusKey] = useState('');
+  const [openMenu, setOpenMenu] = useState<{ key: string; kind: "add" | "more" } | null>(null);
   const leadIndex = useRef(0);
   const viewport = useRef<HTMLDivElement>(null);
   const refresh = useCallback(() => { if (live.current) setVersion(v => v + 1); }, []);
@@ -171,6 +182,18 @@ export const PagedKnowledgeTree = memo(forwardRef<KnowledgeTreeHandle, Props>(fu
   };
   const root = model.page('');
   return <div className="kp-tree-panel">
+    <div className="zy-folder-bar">
+      <span className="label">空间目录</span>
+      {!props.disabled && <span className="zy-menu">
+        <button type="button" aria-label="新建" title="新建" onClick={() => setOpenMenu(current => current?.key === "" && current.kind === "add" ? null : { key: "", kind: "add" })}><Icon name="plus" size={14} /></button>
+        {openMenu?.key === "" && openMenu.kind === "add" && <span className="zy-menu-pop" role="menu">
+          <button type="button" onClick={() => { setOpenMenu(null); callbacks.current.onCreate?.("", "html"); }}><Icon name="fileHtml" size={14} style={{ color: "#498ba7" }} /> 新建富文本</button>
+          <button type="button" onClick={() => { setOpenMenu(null); callbacks.current.onCreate?.("", "markdown"); }}><Icon name="fileMarkdown" size={14} style={{ color: "#558ff2" }} /> 新建Markdown</button>
+          <button type="button" onClick={() => { setOpenMenu(null); callbacks.current.onCreate?.("", "folder"); }}><Icon name="folderOpen" size={14} style={{ color: "#ffd149" }} /> 新建文件夹</button>
+          <button type="button" onClick={() => { setOpenMenu(null); callbacks.current.onUpload?.(""); }}><Icon name="upload" size={14} /> 上传</button>
+        </span>}
+      </span>}
+    </div>
     <div className="kp-tree-tools"><span>已加载 {model.entries.size} 项</span><button disabled={props.disabled || root.loading || (!!root.taskId && !terminal.has(root.task?.phase ?? 'queued'))} onClick={() => void refreshTree('')}>刷新目录</button></div>
     <div ref={viewport} className="kp-tree-viewport" role="tree" tabIndex={0} aria-label="知识文件树（按目录分页）" aria-busy={root.loading || root.state === 'pending'}
       aria-activedescendant={lead && rows.slice(start, end).some(r => r.key === lead.key) ? `kp-row-${encodeURIComponent(libraryId)}-${encodeURIComponent(lead.key)}` : undefined}
@@ -202,16 +225,47 @@ export const PagedKnowledgeTree = memo(forwardRef<KnowledgeTreeHandle, Props>(fu
       }}>
       <div className="kp-tree-spacer" style={{ height: rows.length * ROW }}>
         {rows.slice(start, end).map((row, offset) => {
-          const entry = row.entry, glyph = fileTypeGlyph(entry?.relativeUri.split('.').pop() ?? '');
+          const entry = row.entry;
           return <div className={`kp-tree-slot ${focusKey === row.key ? 'keyboard-focus' : ''}`} key={row.key} style={{ top: (start + offset) * ROW, paddingLeft: row.depth * 14 }}>
-            {entry ? <div id={`kp-row-${encodeURIComponent(libraryId)}-${encodeURIComponent(row.key)}`} className={`kp-tree-entry ${props.selected === entry.noteId ? 'selected' : ''}`} role="treeitem" aria-level={row.depth + 1} aria-selected={props.selected === entry.noteId} aria-expanded={entry.isDir ? model.expanded.has(entry.id) : undefined}>
-              <button className="kp-tree-label" tabIndex={-1} title={entry.relativeUri} onClick={() => { reveal(row.key); viewport.current?.focus(); entry.isDir ? toggle(entry) : callbacks.current.onOpen(entry); }}>
-                {entry.isDir && <Icon name={model.expanded.has(entry.id) ? 'chevronDown' : 'chevronRight'} size={11} />}
-                <Icon name={entry.isDir ? (model.expanded.has(entry.id) ? 'folderOpen' : 'folder') : glyph.icon} size={15} />
-                <span>{entry.title}</span>
-              </button>
-              {entry.isDir && <div className="kp-tree-actions"><button disabled={props.disabled} aria-label={`在 ${entry.title} 新建文档`} onClick={() => callbacks.current.onCreateDocument(entry.relativeUri)}><Icon name="filePlus" size={13} /></button><button disabled={props.disabled} aria-label={`在 ${entry.title} 新建文件夹`} onClick={() => callbacks.current.onCreateFolder(entry.relativeUri)}><Icon name="folderPlus" size={13} /></button></div>}
-            </div> : row.kind === 'more' ? <button id={`kp-row-${encodeURIComponent(libraryId)}-${encodeURIComponent(row.key)}`} role="treeitem" tabIndex={-1} className="kp-more" onClick={() => { reveal(row.key); viewport.current?.focus(); void load(row.parentId, true); }}>加载此目录下一页</button> : renderStatus(row)}
+            {entry ? (() => {
+              const createParent = entry.isDir ? entry.relativeUri : entry.relativeUri.includes("/") ? entry.relativeUri.slice(0, entry.relativeUri.lastIndexOf("/")) : "";
+              return <div id={`kp-row-${encodeURIComponent(libraryId)}-${encodeURIComponent(row.key)}`} className={`kp-tree-entry ${props.selected === entry.noteId ? "selected" : ""}`} role="treeitem" aria-level={row.depth + 1} aria-selected={props.selected === entry.noteId} aria-expanded={entry.isDir ? model.expanded.has(entry.id) : undefined}
+                draggable={!props.disabled} onDragStart={event => { event.dataTransfer.setData("application/x-zy-doc", entry.relativeUri); event.dataTransfer.effectAllowed = "move"; }}
+                onDragOver={event => { if (entry.isDir) { event.preventDefault(); event.currentTarget.classList.add("zy-drop-target"); } }}
+                onDragLeave={event => event.currentTarget.classList.remove("zy-drop-target")}
+                onDrop={event => { event.preventDefault(); event.currentTarget.classList.remove("zy-drop-target"); const from = event.dataTransfer.getData("application/x-zy-doc"); const source = [...model.entries.values()].find(item => item.relativeUri === from); if (entry.isDir && source && source.relativeUri !== entry.relativeUri) callbacks.current.onMove?.(source, entry.relativeUri); }}>
+                <button className="kp-tree-label" tabIndex={-1} title={entry.relativeUri} onClick={() => { reveal(row.key); viewport.current?.focus(); entry.isDir ? toggle(entry) : callbacks.current.onOpen(entry); }}>
+                  {entry.isDir && <Icon name={model.expanded.has(entry.id) ? "chevronDown" : "chevronRight"} size={11} />}
+                  <FileTypeIcon className="zy-doc-icon" kind={entry.isDir ? "folder" : fileKindOf(entry.relativeUri)} size={15} />
+                  <span>{entry.title}</span>
+                </button>
+                {!props.disabled && <div className="zy-page-action" onClick={event => event.stopPropagation()}>
+                  <span className="zy-menu">
+                    <button type="button" aria-label="新建" title="新建" onClick={() => setOpenMenu(current => current?.key === row.key && current.kind === "add" ? null : { key: row.key, kind: "add" })}><Icon name="plus" size={14} /></button>
+                    {openMenu?.key === row.key && openMenu.kind === "add" && <span className="zy-menu-pop" role="menu">
+                      <button type="button" onClick={() => { setOpenMenu(null); callbacks.current.onCreate?.(createParent, "html"); }}><Icon name="fileHtml" size={14} style={{ color: "#498ba7" }} /> 新建富文本</button>
+                      <button type="button" onClick={() => { setOpenMenu(null); callbacks.current.onCreate?.(createParent, "markdown"); }}><Icon name="fileMarkdown" size={14} style={{ color: "#558ff2" }} /> 新建Markdown</button>
+                      <button type="button" onClick={() => { setOpenMenu(null); callbacks.current.onCreate?.(createParent, "folder"); }}><Icon name="folderOpen" size={14} style={{ color: "#ffd149" }} /> 新建文件夹</button>
+                      <button type="button" onClick={() => { setOpenMenu(null); callbacks.current.onUpload?.(createParent); }}><Icon name="upload" size={14} /> 上传</button>
+                    </span>}
+                  </span>
+                  <span className="zy-menu">
+                    <button type="button" aria-label="更多" title="更多" onClick={() => setOpenMenu(current => current?.key === row.key && current.kind === "more" ? null : { key: row.key, kind: "more" })}><Icon name="more" size={14} /></button>
+                    {openMenu?.key === row.key && openMenu.kind === "more" && <span className="zy-menu-pop zy-more-pop" role="menu">
+                      <button type="button" onClick={() => { setOpenMenu(null); callbacks.current.onRename?.(entry); }}><Icon name="edit" size={13} /> 重命名</button>
+                      <span className="zy-submenu">
+                        <button type="button"><Icon name="branch" size={13} /> 移动文档</button>
+                        <span className="zy-submenu-pop">
+                          <button type="button" onClick={() => { setOpenMenu(null); callbacks.current.onCopy?.(entry); }}><Icon name="copy" size={13} /> 复制文档</button>
+                          <button type="button" onClick={() => { setOpenMenu(null); callbacks.current.onMigrate?.(entry); }}><Icon name="arrowRight" size={13} /> 迁移文档</button>
+                        </span>
+                      </span>
+                      <button type="button" className="danger" onClick={() => { setOpenMenu(null); callbacks.current.onDelete?.(entry); }}><Icon name="trash" size={13} /> 删除</button>
+                    </span>}
+                  </span>
+                </div>}
+              </div>;
+            })() : row.kind === "more" ? <button id={`kp-row-${encodeURIComponent(libraryId)}-${encodeURIComponent(row.key)}`} role="treeitem" tabIndex={-1} className="kp-more" onClick={() => { reveal(row.key); viewport.current?.focus(); void load(row.parentId, true); }}>加载此目录下一页</button> : renderStatus(row)}
           </div>;
         })}
       </div>

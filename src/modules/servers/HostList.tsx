@@ -1,10 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
-import { serverList, serverConnect, serverDisconnect, serverDelete, type ServerHost } from "@/api";
+import { serverList, serverDelete, serverDisconnect, type ServerHost } from "@/api";
+import { Icon } from "@/components/icons";
 import { useToast, Empty, Confirm } from "@/components/ui";
 import { useApp } from "@/store/app";
 import { HostForm, errText } from "./HostForm";
+import { hostAddress, lastSeenText, osLabel, osLogoSrc, pctText } from "./hostVisual";
 
-/** 服务器列表页（CR-007/CR-014 AC-02：单列横向卡片，在全局导航内原地切换） */
+/**
+ * 服务器列表（CR-075）：主机对象卡片 + 最近采样。
+ *
+ * 不提供连接/断开按钮：列表只表达主机是什么、最近采样到什么；
+ * 连接由进入工作台自动发起、关闭工作台页签自动断开，失败在工作台里重试。
+ * 图标由连接后检测到的系统决定（官方标识，不可配置）。
+ */
 
 export function HostList() {
   const toast = useToast();
@@ -15,7 +23,6 @@ export function HostList() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<ServerHost | null>(null);
   const [delTarget, setDelTarget] = useState<ServerHost | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -31,31 +38,17 @@ export function HostList() {
     void reload();
   }, [reload]);
 
-  const toggleConnect = async (h: ServerHost) => {
-    if (busyId) return;
-    setBusyId(h.id);
-    try {
-      if (h.connected) {
-        await serverDisconnect(h.id);
-        toast(`已断开 ${h.name}`);
-      } else {
-        await serverConnect(h.id);
-        toast(`已连接 ${h.name}`);
-      }
-      await reload();
-    } catch (e) {
-      // 连接失败不改授权语义：toast 说明原因，保留重试入口
-      toast(`${h.connected ? "断开" : "连接"}失败：${errText(e)}`, "err");
-    } finally {
-      setBusyId(null);
-    }
-  };
-
   const confirmDelete = async () => {
     const h = delTarget;
     if (!h) return;
     setDelTarget(null);
     try {
+      // 关闭页签会自动断开；这里兜底工作台仍打开的情况，避免"先断开再删除"的提示。
+      try {
+        await serverDisconnect(h.id);
+      } catch {
+        /* 未连接或断开失败都不阻断删除 */
+      }
       await serverDelete(h.id);
       toast(`已删除 ${h.name}`);
       await reload();
@@ -64,84 +57,140 @@ export function HostList() {
     }
   };
 
+  const openForm = (host: ServerHost | null) => {
+    setEditing(host);
+    setFormOpen(true);
+  };
+
+  const openHost = (h: ServerHost) => openObject({ page: "server", hostId: h.id });
+
   return (
     <div className="srv-page">
       <div className="srv-head">
-        <div>
-          <h2>服务器管理</h2>
-          <div className="srv-sub">连接、终端与巡检在同一工作台；高风险命令逐次审批。</div>
+        <h2>服务器管理</h2>
+        <div className="srv-head-acts">
+          {hosts && hosts.length > 0 && <span className="srv-count">{hosts.length} 台</span>}
+          <button className="btn primary" onClick={() => openForm(null)}>
+            <Icon name="plus" size={14} />
+            添加主机
+          </button>
         </div>
-        <button
-          className="btn primary"
-          onClick={() => {
-            setEditing(null);
-            setFormOpen(true);
-          }}
-        >
-          新建主机
-        </button>
       </div>
 
-      {hosts === null && !loadErr && <div className="mon-loading">加载中…</div>}
-      {loadErr && (
-        <Empty title="主机列表读取失败" desc={loadErr} action={<button className="btn" onClick={() => void reload()}>重试</button>} />
+      {hosts === null && !loadErr && (
+        <div className="srv-cards" aria-busy="true" aria-label="主机列表加载中">
+          {[0, 1, 2].map((index) => (
+            <div className="srv-skel" key={index} />
+          ))}
+        </div>
       )}
-      {hosts !== null && hosts.length === 0 && (
+
+      {loadErr && (
         <Empty
-          title="还没有主机"
-          desc="添加一台 SSH 主机后可在此连接并进入工作台"
+          title="服务器列表读取失败"
+          desc={loadErr}
           action={
-            <button
-              className="btn primary"
-              onClick={() => {
-                setEditing(null);
-                setFormOpen(true);
-              }}
-            >
-              新建主机
+            <button className="btn" onClick={() => void reload()}>
+              重试
             </button>
           }
         />
       )}
 
-      <div className="srv-grid">
-      {!loadErr && hosts?.map((h) => (
-        <div className={`host-card ${h.connected ? "" : "offline"}`} key={h.id}>
-          <div className="host-main">
-            <div className="host-name-row">
-              <button className="host-open" onClick={() => openObject({ page: "server", hostId: h.id })}>{h.name}</button>
-              <span className={h.connected ? "tag good" : "tag"}>{h.connected ? "已连接" : "未连接"}</span>
-            </div>
-            <div className="host-addr-row"><span className="mono">{h.host}:{h.port}</span><span>用户 {h.username}</span></div>
-          </div>
-          <div className="srv-stats" aria-label="主机指标未知，列表接口未提供">
-            {["CPU", "内存", "磁盘"].map((label) => <div key={label}><b>未知</b><span>{label}</span></div>)}
-          </div>
-          <div className="host-info"><span>{h.groupTag || "未分组"} · {h.authType === "key" ? "密钥" : h.authType === "none" ? "免认证" : "密码"}</span><span>系统未知</span></div>
-          <div className="host-actions">
-            <button className="btn sm" disabled={busyId !== null} onClick={() => void toggleConnect(h)}>
-              {busyId === h.id ? (h.connected ? "断开中…" : "连接中…") : h.connected ? "断开" : "连接"}
+      {hosts !== null && hosts.length === 0 && !loadErr && (
+        <Empty
+          title="还没有服务器"
+          action={
+            <button className="btn primary" onClick={() => openForm(null)}>
+              <Icon name="plus" size={14} />
+              添加主机
             </button>
-            <button className="btn sm" onClick={() => openObject({ page: "server", hostId: h.id })}>
-              进入工作台
-            </button>
-            <button
-              className="btn ghost sm"
-              onClick={() => {
-                setEditing(h);
-                setFormOpen(true);
-              }}
-            >
-              编辑
-            </button>
-            <button className="btn danger sm" onClick={() => setDelTarget(h)}>
-              删除
-            </button>
-          </div>
+          }
+        />
+      )}
+
+      {hosts !== null && hosts.length > 0 && (
+        <div className="srv-cards">
+          {hosts.map((h) => {
+            const logo = osLogoSrc(h.os);
+            const address = hostAddress(h);
+            return (
+              <article
+                className="srv-card"
+                key={h.id}
+                role="button"
+                tabIndex={0}
+                aria-label={`进入 ${h.name} 工作台`}
+                onClick={() => openHost(h)}
+                onKeyDown={(event) => {
+                  if (event.target !== event.currentTarget) return;
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    openHost(h);
+                  }
+                }}
+              >
+                <div className="srv-card-top">
+                  <span className={`srv-os${logo ? "" : " unknown"}`} title={osLabel(h.os)}>
+                    {logo ? <img src={logo} alt={`${osLabel(h.os)} 标识`} /> : <Icon name="server" size={18} />}
+                  </span>
+                  <div className="srv-card-id">
+                    <div className="srv-card-name">
+                      <b>{h.name}</b>
+                      {h.groupTag && <span className="tag">{h.groupTag}</span>}
+                    </div>
+                    <div className="srv-card-addr mono">{address}</div>
+                  </div>
+                  <div className="srv-card-acts">
+                    <button
+                      className="icon-btn"
+                      title="编辑"
+                      aria-label={`编辑 ${h.name}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openForm(h);
+                      }}
+                    >
+                      <Icon name="pen" size={14} />
+                    </button>
+                    <button
+                      className="icon-btn"
+                      title="删除"
+                      aria-label={`删除 ${h.name}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setDelTarget(h);
+                      }}
+                    >
+                      <Icon name="trash" size={14} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="srv-card-stats" aria-label="主机指标">
+                  <div>
+                    <span>CPU</span>
+                    <b>{pctText(h.cpuPct)}</b>
+                  </div>
+                  <div>
+                    <span>内存</span>
+                    <b>{pctText(h.memPct)}</b>
+                  </div>
+                  <div>
+                    <span>磁盘</span>
+                    <b>{pctText(h.diskPct)}</b>
+                  </div>
+                </div>
+
+                <div className="srv-card-foot">
+                  <span>{h.os || "系统未知"}</span>
+                  <span>{lastSeenText(h.lastSeenAt)}</span>
+                </div>
+              </article>
+            );
+          })}
         </div>
-      ))}
-      </div>
-      <div className="srv-page-foot"><span>列表接口未提供资源指标，不自动采样远端主机。</span><span>{hosts ? `${hosts.length} 台 · ${hosts.filter((h) => h.connected).length} 已连接` : "统计未知"}</span></div>
+      )}
 
       {formOpen && (
         <HostForm
@@ -155,13 +204,15 @@ export function HostList() {
       )}
 
       {delTarget && (
-        <div className="srv-dialog srv-confirm"><Confirm
-          title="删除主机"
-          message={`确定删除主机「${delTarget.name}」（${delTarget.host}:${delTarget.port}）吗？\n删除后该主机的凭据与配置不可恢复。`}
-          danger
-          onOk={() => void confirmDelete()}
-          onCancel={() => setDelTarget(null)}
-        /></div>
+        <div className="srv-dialog srv-confirm">
+          <Confirm
+            title="删除主机"
+            message={`确定删除主机「${delTarget.name}」吗？删除后凭据与配置不可恢复。`}
+            danger
+            onOk={() => void confirmDelete()}
+            onCancel={() => setDelTarget(null)}
+          />
+        </div>
       )}
     </div>
   );

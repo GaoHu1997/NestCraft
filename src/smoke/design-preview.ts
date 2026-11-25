@@ -145,10 +145,10 @@ function createFixture() {
   const uid = (prefix: string) => `${prefix}-${String(++seq).padStart(5, "0")}`;
   const now = () => STAMP + seq * 1000;
   const projects: Project[] = [
-    { id: "PRJ-1042", name: "预约服务", kind: "code", rootUri: "/demo/booking-service", icon: null, iconColor: null, createdAt: STAMP - 23 * 86400000, updatedAt: STAMP },
-    { id: "PRJ-1031", name: "运维控制台", kind: "code", rootUri: "/demo/ops-console", icon: null, iconColor: null, createdAt: STAMP - 18 * 86400000, updatedAt: STAMP - 1000 },
-    { id: "PRJ-1018", name: "市场研究资料", kind: "work", rootUri: "/demo/research-booking", icon: null, iconColor: null, createdAt: STAMP - 14 * 86400000, updatedAt: STAMP - 2000 },
-    { id: "PRJ-1009", name: "品牌与官网", kind: "work", rootUri: "/demo/nestcraft-site", icon: null, iconColor: null, createdAt: STAMP - 11 * 86400000, updatedAt: STAMP - 3000 },
+    { id: "PRJ-1042", name: "预约服务", kind: "code", rootUri: "/demo/booking-service", icon: null, iconColor: null, createdAt: STAMP - 23 * 86400000, updatedAt: STAMP, owner: "林澈", description: "社区活动预约：时段容量、幂等下单、取消回补与交付追溯。", tags: ["核心", "进行中"], storyTotal: 11, storyDone: 3, runningCount: 5 },
+    { id: "PRJ-1031", name: "运维控制台", kind: "code", rootUri: "/demo/ops-console", icon: null, iconColor: null, createdAt: STAMP - 18 * 86400000, updatedAt: STAMP - 1000, owner: "周野", description: "多主机连接、巡检任务与受限命令执行，含高风险审批。", tags: ["基础设施"], storyTotal: 4, storyDone: 2, runningCount: 1 },
+    { id: "PRJ-1018", name: "市场研究资料", kind: "work", rootUri: "/demo/research-booking", icon: null, iconColor: null, createdAt: STAMP - 14 * 86400000, updatedAt: STAMP - 2000, owner: "陈雨", description: "活动预约场景的竞品调研、访谈纪要与结论沉淀。", tags: ["研究"], storyTotal: 3, storyDone: 1, runningCount: 0 },
+    { id: "PRJ-1009", name: "品牌与官网", kind: "work", rootUri: "/demo/nestcraft-site", icon: null, iconColor: null, createdAt: STAMP - 11 * 86400000, updatedAt: STAMP - 3000, owner: "陈雨", description: "命名、图形标志、官网信息架构与发布物料。", tags: ["品牌"], storyTotal: 2, storyDone: 2, runningCount: 0 },
   ];
   const projectById = (id: string) => lookup(projects, id, p => p.id, "项目");
   const projectByRoot = (root: unknown) => lookup(projects, absolute(root), p => p.rootUri, "项目根");
@@ -223,9 +223,9 @@ function createFixture() {
   ];
 
   const libraries: KnowledgeLibrary[] = [
-    { id: "KB-01", name: "研发手册", sourceKind: "directory", sourceRef: "/demo/knowledge/dev", enabled: true, noteCount: 0, revision: 1, icon: null, iconColor: null },
-    { id: "KB-02", name: "竞品与用户研究", sourceKind: "directory", sourceRef: "/demo/knowledge/research", enabled: true, noteCount: 0, revision: 1, icon: null, iconColor: null },
-    { id: "KB-03", name: "运维手册", sourceKind: "directory", sourceRef: "/demo/knowledge/ops", enabled: true, noteCount: 0, revision: 1, icon: null, iconColor: null },
+    { id: "KB-01", name: "研发手册", sourceKind: "directory", sourceRef: "/demo/knowledge/dev", enabled: true, noteCount: 0, revision: 1, icon: null, iconColor: null, owner: "林澈", description: "研发流程、规范与模板合集。" },
+    { id: "KB-02", name: "竞品与用户研究", sourceKind: "directory", sourceRef: "/demo/knowledge/research", enabled: true, noteCount: 0, revision: 1, icon: null, iconColor: null, owner: "陈雨", description: "竞品分析与用户研究资料。" },
+    { id: "KB-03", name: "运维手册", sourceKind: "directory", sourceRef: "/demo/knowledge/ops", enabled: true, noteCount: 0, revision: 1, icon: null, iconColor: null, owner: "周野", description: "运维操作与应急预案。" },
   ];
   const library = (id: string) => lookup(libraries, id, l => l.id, "知识库");
   // CR-051：头像风格偏好（隔离内存演示，缺省 a）。
@@ -609,9 +609,9 @@ let avatarImage: { path: string; hash: string } | null = null;
   }
 
   const hosts: ServerHost[] = [
-    { id: "SRV-01", name: "预约服务 · 测试", host: "192.0.2.24", port: 22, username: "ops", authType: "key", groupTag: "测试", connected: false },
-    { id: "SRV-02", name: "构建机 · CI", host: "203.0.113.51", port: 22, username: "ci", authType: "key", groupTag: "CI", connected: false },
-    { id: "SRV-03", name: "归档 · 开发", host: "198.51.100.28", port: 22, username: "ops", authType: "none", groupTag: "开发", connected: false },
+    { id: "SRV-01", name: "预约服务 · 测试", host: "192.0.2.24", port: 22, username: "ops", authType: "key", groupTag: "测试", connected: false, os: "Ubuntu 24.04 LTS（合成）", lastSeenAt: STAMP - 600000, cpuPct: 24, memPct: 38.7, diskPct: 50 },
+    { id: "SRV-02", name: "构建机 · CI", host: "203.0.113.51", port: 22, username: "ci", authType: "key", groupTag: "CI", connected: false, os: "Debian 12（合成）", lastSeenAt: STAMP - 1200000, cpuPct: 58.75, memPct: 38.8, diskPct: 42 },
+    { id: "SRV-03", name: "归档 · 开发", host: "198.51.100.28", port: 22, username: "ops", authType: "none", groupTag: "开发", connected: false, os: null, lastSeenAt: null, cpuPct: null, memPct: null, diskPct: null },
   ];
   const host = (id: string) => lookup(hosts, id, h => h.id, "主机");
   const hostDisks = new Map<string, Disk>();
@@ -626,9 +626,9 @@ let avatarImage: { path: string; hash: string } | null = null;
     return within(`/demo/servers/${h.id}`, raw.startsWith("/demo/") ? raw : raw.replace(/^\/+/, ""), true);
   }
   const metrics: Record<string, HostMetrics> = {
-    "SRV-01": { hostname: "DEMO-booking-test", os: "Ubuntu 24.04 LTS（合成）", uptime: "12 天 6 小时（仿真）", cpuCores: [16, 24, 32, 24], cpuAvg: 24, memTotalMb: 8192, memUsedMb: 3174, load1: 0.36 },
-    "SRV-02": { hostname: "DEMO-build-ci", os: "Debian 12（合成）", uptime: "3 天 2 小时（仿真）", cpuCores: [62, 58, 44, 71], cpuAvg: 58.75, memTotalMb: 32768, memUsedMb: 12698, load1: 3.12 },
-    "SRV-03": { hostname: "DEMO-archive", os: "Ubuntu 22.04（合成）", uptime: "未知（未实测）", cpuCores: [], cpuAvg: 0, memTotalMb: 0, memUsedMb: 0, load1: 0 },
+    "SRV-01": { hostname: "DEMO-booking-test", os: "Ubuntu 24.04 LTS（合成）", uptime: "12 天 6 小时（仿真）", cpuCores: [16, 24, 32, 24], cpuAvg: 24, memTotalMb: 8192, memUsedMb: 3174, load1: 0.36, diskTotalMb: 102400, diskUsedMb: 51200 },
+    "SRV-02": { hostname: "DEMO-build-ci", os: "Debian 12（合成）", uptime: "3 天 2 小时（仿真）", cpuCores: [62, 58, 44, 71], cpuAvg: 58.75, memTotalMb: 32768, memUsedMb: 12698, load1: 3.12, diskTotalMb: 204800, diskUsedMb: 86016 },
+    "SRV-03": { hostname: "DEMO-archive", os: "Ubuntu 22.04（合成）", uptime: "未知（未实测）", cpuCores: [], cpuAvg: 0, memTotalMb: 0, memUsedMb: 0, load1: 0, diskTotalMb: 0, diskUsedMb: 0 },
   };
   const terminals = new Map<string, { hostId: string; channel: ReturnType<typeof channelWriter> }>();
   const approvals = new Map<string, { hostId: string; expires: number }>();
@@ -646,6 +646,13 @@ let avatarImage: { path: string; hash: string } | null = null;
     const toolId = `${s.id}:tool:read`;
     append(s, "system", `${LABEL}。所有人员、会话、工具、统计与文件均为测试仿真，不是实际执行记录。`);
     append(s, "user", p.kind === "work" ? `整理${p.name}当前资料，给出简报与下一步核对事项。` : `先核对${p.name}当前需求与容量边界，不重复已验证的演示项。`, null, refs);
+    if (i !== 1) append(s, "system", "", { kind: "planUpdate", items: i === 0 ? [
+      { text: "核对会话目标与授权范围", status: "completed" },
+      { text: "读取当前需求与相关测试证据", status: "completed" },
+      { text: "核对容量边界与失败分支", status: "in_progress" },
+      { text: "验证回归用例", status: "pending" },
+      { text: "汇总交付证据与验收说明", status: "pending" },
+    ] : Array.from({ length: 12 }, (_, index) => ({ text: `复核分支 ${index + 1} 的合成证据与来源边界`, status: "pending" })) });
     append(s, "tool_use", "DEMO fs.read", { toolId, input: JSON.stringify({ path: `${p.rootUri}/${file}`, simulated: true }) });
     append(s, "tool_result", `${LABEL}\n\n${body.slice(0, 650)}`, { toolId, isError: false });
     const summary = p.kind === "work" ? p.id === "PRJ-1018" ? activitySummary : brandSummary : "容量扣减失败应返回 SLOT_FULL，重复取消只回补一次。";
@@ -724,9 +731,13 @@ let avatarImage: { path: string; hash: string } | null = null;
     validateSession(s);
     if (s.cliId && (sdk(s.cliId).installState !== "installed" || !sdk(s.cliId).enabled)) fail("SDK 未安装或已禁用（合成状态）");
     if (s.providerId && !candidates().some(m => m.providerId === s.providerId && m.modelId === s.modelId)) fail("供应商或模型当前不可用（合成状态）");
-    const content = text(payload.content, "content", false, 20000), refs = array(payload.refs, "refs", 30).map(r => copy(object(r))) as unknown as ContextRef[];
-    const attachments = array(payload.attachments, "attachments", 10);
-    for (const item of attachments) { const att = object(item); name(att.name); integer(att.byteSize, 0, 0, 20_000_000); }
+    const attachments = array(payload.attachments, "attachments", 10).map(item => {
+      const att = object(item);
+      name(att.name);
+      integer(att.byteSize, 0, 0, 20_000_000);
+      return copy(att);
+    });
+    const content = text(payload.content, "content", attachments.length > 0, 20000), refs = array(payload.refs, "refs", 30).map(r => copy(object(r))) as unknown as ContextRef[];
     const p = s.projectId ? projectById(s.projectId) : null;
     const excerpts: string[] = [];
     for (const ref of refs) {
@@ -754,7 +765,7 @@ let avatarImage: { path: string; hash: string } | null = null;
       } // command 只保留引用，不执行任意文本，也不联网。
     }
     const ch = channelWriter(a.channel), turn = { aborted: false }; turns.set(s.id, turn);
-    append(s, "user", content, { attachments: attachments.map(v => ({ name: object(v).name })), simulated: true }, refs);
+    append(s, "user", content, { attachments, simulated: true }, refs);
     const toolId = uid(`${s.id}:demo-tool`), toolName = "DEMO inspect-memory", input = JSON.stringify({ projectId: s.projectId, refs: refs.map(r => r.objectId), simulated: true });
     const result = `${LABEL}\n${excerpts.length ? excerpts.map(body => body.slice(0, 180)).join("\n\n") : "已核对当前会话的合成作用域。没有读取外部文件。"}`;
     const thinking = "先核对本项目同源数据与授权，再整理可审阅内容。模型并未执行。";
@@ -788,9 +799,11 @@ let avatarImage: { path: string; hash: string } | null = null;
 
   const handlers: Record<string, Handler> = Object.create(null) as Record<string, Handler>;
   function on(command: string, handler: Handler): void { handlers[command] = handler; }
+  /** CR-075：让"正在连接/测试中"这类中间态在隔离预览里可观察（真实后端本身有网络耗时）。 */
+  const briefPause = (ms = 360) => new Promise<void>(resolve => setTimeout(resolve, ms));
   on("ping", () => "pong");
-  on("app_data_dir", () => "/demo/app-data");
-  on("app_data_ensure_dir", a => { const rel = str(a, "rel"); if (rel.startsWith("/") || /^[a-z]:/i.test(rel)) fail("目录参数必须为相对演示路径"); return absolute(`/demo/app-data/${rel}`); });
+  on("app_data_dir", () => "/demo/data");
+  on("app_data_ensure_dir", a => { const rel = str(a, "rel"); if (rel.startsWith("/") || /^[a-z]:/i.test(rel)) fail("目录参数必须为相对演示路径"); return absolute(`/demo/data/office/${rel}`); });
   on("get_setting", a => settings.get(str(a, "key")) ?? null);
   on("set_setting", a => { const key = text(a.key, "key", false, 200); if (a.value === null) settings.delete(key); else settings.set(key, safeSetting(key, str(a, "value", true))); return null; });
   on("get_theme", () => new URLSearchParams(window.location.search).get("theme") === "dark" ? "dark" : (settings.get("theme") ?? "light"));
@@ -816,7 +829,7 @@ let avatarImage: { path: string; hash: string } | null = null;
     total: 100,
     speed: 0,
     message: previewUpdatePhase === "ready" ? "更新已下载并通过校验，重启后安装" : "",
-    staged_file: previewUpdatePhase === "ready" || previewUpdatePhase === "applying" ? "/demo/app-data/update/update-staged.exe" : null,
+    staged_file: previewUpdatePhase === "ready" || previewUpdatePhase === "applying" ? "/demo/.update/update-staged.exe" : null,
     kind: "portable",
     version: previewUpdatePhase === "available" ? null : previewUpdateVersion,
   });
@@ -834,7 +847,7 @@ let avatarImage: { path: string; hash: string } | null = null;
     }
     previewUpdatePhase = "ready";
     previewUpdateProgress = 100;
-    return "/demo/app-data/update/update-staged.exe";
+    return "/demo/.update/update-staged.exe";
   });
   on("update_apply", async () => {
     previewUpdatePhase = "applying";
@@ -844,6 +857,134 @@ let avatarImage: { path: string; hash: string } | null = null;
   on("smoke_should_run", () => false); // 绝不触发真实 smoke runner。
   on("smoke_report_write", a => { text(a.content, "诊断正文"); return null; }); // 不落盘，不记录正文。
   on("list_projects", () => copy(projects));
+
+  /* CR-078：概览页日程 / 待办 / 用量 / 天气的隔离预览夹具。
+     合成数据、不联网、不落盘；天气固定返回正常态，便于视觉对照（真实实现需定位 + Open-Meteo）。 */
+  const ovPad = (n: number) => String(n).padStart(2, "0");
+  const ovDay = (offset: number): string => {
+    const d = new Date();
+    d.setDate(d.getDate() + offset);
+    return `${d.getFullYear()}-${ovPad(d.getMonth() + 1)}-${ovPad(d.getDate())}`;
+  };
+  const ovEvents: Record<string, unknown>[] = [
+    { id: "ov-e1", title: "客户需求评审", startDate: ovDay(0), endDate: ovDay(0), allDay: false, startTime: "10:00", endTime: "11:30", note: "3F 会议室 B", color: "blue", createdAt: 1, updatedAt: 1 },
+    { id: "ov-e2", title: "午间散步", startDate: ovDay(0), endDate: ovDay(0), allDay: false, startTime: "12:30", endTime: "13:00", note: "", color: "green", createdAt: 1, updatedAt: 1 },
+    { id: "ov-e3", title: "小红书文案初稿", startDate: ovDay(0), endDate: ovDay(0), allDay: false, startTime: "19:00", endTime: "20:00", note: "", color: "violet", createdAt: 1, updatedAt: 1 },
+    { id: "ov-e4", title: "年度体检安排 · 体检与取证报告", startDate: ovDay(2), endDate: ovDay(6), allDay: true, startTime: "", endTime: "", note: "跨天夹具", color: "green", createdAt: 1, updatedAt: 1 },
+    { id: "ov-e5", title: "出差 · 杭州分公司", startDate: ovDay(-1), endDate: ovDay(2), allDay: true, startTime: "", endTime: "", note: "跨月/跨天", color: "violet", createdAt: 1, updatedAt: 1 },
+  ];
+  const ovTodos: Record<string, unknown>[] = [
+    { id: "ov-t1", date: ovDay(0), title: "回复客户需求澄清邮件", done: false, createdAt: 1, updatedAt: 1 },
+    { id: "ov-t2", date: ovDay(0), title: "整理评审会议纪要", done: true, createdAt: 1, updatedAt: 1 },
+  ];
+  on("schedule_event_list", a => {
+    const from = str(a, "from");
+    const to = str(a, "to");
+    return copy(ovEvents.filter(e => String(e.startDate) <= to && String(e.endDate) >= from));
+  });
+  on("schedule_event_save", a => {
+    const raw = (a.event ?? {}) as Record<string, unknown>;
+    const title = text(raw.title, "标题", true, 80);
+    const startDate = str(raw, "startDate");
+    const endDate = str(raw, "endDate");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) fail("日期格式无效");
+    if (endDate < startDate) fail("结束日期不能早于开始日期");
+    const saved = { ...raw, title, updatedAt: Date.now() } as Record<string, unknown>;
+    const i = ovEvents.findIndex(e => e.id === saved.id);
+    if (i >= 0) ovEvents[i] = saved; else ovEvents.push({ ...saved, id: saved.id || `ov-e${++seq}`, createdAt: Date.now() });
+    return copy(saved);
+  });
+  on("schedule_event_delete", a => {
+    const id = str(a, "id");
+    const i = ovEvents.findIndex(e => e.id === id);
+    if (i < 0) fail("日程不存在或已删除");
+    ovEvents.splice(i, 1);
+    return null;
+  });
+  on("schedule_todo_list", a => { const date = str(a, "date"); return copy(ovTodos.filter(t => t.date === date)); });
+  on("schedule_todo_save", a => {
+    const raw = (a.todo ?? {}) as Record<string, unknown>;
+    const title = text(raw.title, "待办内容", true, 80);
+    const saved = { ...raw, title, updatedAt: Date.now() } as Record<string, unknown>;
+    const i = ovTodos.findIndex(t => t.id === saved.id);
+    if (i >= 0) ovTodos[i] = saved; else ovTodos.push({ ...saved, id: saved.id || `ov-t${++seq}`, createdAt: Date.now() });
+    return copy(saved);
+  });
+  on("schedule_todo_delete", a => {
+    const id = str(a, "id");
+    const i = ovTodos.findIndex(t => t.id === id);
+    if (i < 0) fail("待办不存在或已删除");
+    ovTodos.splice(i, 1);
+    return null;
+  });
+  on("usage_stats", a => {
+    const range = str(a, "range");
+    if (!["today", "3d", "7d", "1m", "3m", "custom"].includes(range)) fail("周期无效");
+    const rangeDays = range === "today" ? 1 : range === "3d" ? 3 : range === "7d" ? 7 : range === "1m" ? 30 : range === "3m" ? 90 : 14;
+    /* 日粒度固定覆盖活跃热力图的 28 周长周期窗口（与后端 usage_stats 的 HEAT_DAYS 一致），
+       汇总、小时、模型仍只按所选周期累计——所以选「今日」时热力图也不会缩成一列。 */
+    const heatDays = 28 * 7;
+    const dayRows = Array.from({ length: heatDays }, (_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - (heatDays - 1 - i));
+      const dow = d.getDay();
+      const k = (dow === 0 || dow === 6 ? 0.3 : 1) * (1 + Math.abs(Math.sin(i * 1.3 + 0.7)) * 4);
+      return {
+        date: `${d.getFullYear()}-${ovPad(d.getMonth() + 1)}-${ovPad(d.getDate())}`,
+        inputTokens: Math.round(900_000 * k), outputTokens: Math.round(30_000 * k),
+        cacheTokens: Math.round(760_000 * k), requests: Math.round(14 * k),
+      };
+    });
+    const rangeRows = dayRows.slice(-rangeDays);
+    // 每小时按显示名称聚合的模型明细：趋势图按模型堆叠，悬停详情据此列举。
+    // 命中率按小时起伏（与设计稿夹具同一公式），否则命中率折线是一条直线，看不出趋势。
+    const hitOf = (h: number) => 0.55 + 0.42 * Math.abs(Math.sin(h * 0.9 + 0.6));
+    const hourModels = (h: number, w: number) => {
+      const base = [
+        { name: "deepseek-v4.1-flash-1017", share: 0.44 },
+        { name: "gpt-6.1-sol-free", share: 0.31 },
+        { name: "grok-4.7", share: 0.17 },
+        { name: "gpt-6.2-sol", share: 0.08 },
+      ];
+      return base.map((m) => {
+        const total = Math.round(120_000 * w * m.share);
+        const cache = Math.round(total * hitOf(h));
+        return { name: m.name, inputTokens: total - cache, outputTokens: Math.round(total * 0.12), cacheTokens: cache, requests: Math.round(3 * w * m.share) };
+      });
+    };
+    const hours = Array.from({ length: 24 }, (_, h) => {
+      const w = h >= 9 && h <= 12 ? 1 : h >= 14 && h <= 18 ? 1.1 : h >= 19 && h <= 23 ? 0.8 : 0.1;
+      const input = Math.round(120_000 * w);
+      return { hour: h, inputTokens: Math.round(input * (1 - hitOf(h))), outputTokens: Math.round(4_000 * w), cacheTokens: Math.round(input * hitOf(h)), requests: Math.round(3 * w), models: hourModels(h, w) };
+    });
+    const sum = (xs: object[], key: string) => xs.reduce((n, x) => n + Number((x as Record<string, unknown>)[key] ?? 0), 0);
+    const inputTokens = sum(rangeRows, "inputTokens"), outputTokens = sum(rangeRows, "outputTokens"), cacheTokens = sum(rangeRows, "cacheTokens"), requests = sum(rangeRows, "requests");
+    const hit = (i: number, c: number) => (i + c > 0 ? Math.round((c / (i + c)) * 1000) / 10 : null);
+    return {
+      range, from: rangeRows[0].date, to: rangeRows[rangeRows.length - 1].date, asOf: Date.now(),
+      totals: { inputTokens, outputTokens, cacheTokens, requests, cacheHitRate: hit(inputTokens, cacheTokens) },
+      days: dayRows, hours,
+      models: [
+        { name: "deepseek-v4.1-flash-1017", providerId: "prov-1", cliId: "claude", source: "cli", inputTokens: 1_980_000, outputTokens: 60_000, cacheTokens: 1_880_000, requests: 120, cacheHitRate: 97.8 },
+        { name: "gpt-6.1-sol-free", providerId: "prov-2", cliId: "codex", source: "cli", inputTokens: 1_520_000, outputTokens: 50_000, cacheTokens: 1_410_000, requests: 96, cacheHitRate: 93.1 },
+        { name: "grok-4.7", providerId: "prov-3", cliId: "grok", source: "cli", inputTokens: 830_000, outputTokens: 30_000, cacheTokens: 790_000, requests: 64, cacheHitRate: 95.7 },
+        { name: "gpt-6.2-sol", providerId: "prov-2", cliId: null, source: "platform", inputTokens: 610_000, outputTokens: 40_000, cacheTokens: 400_000, requests: 41, cacheHitRate: 65.5 },
+      ],
+      providers: [
+        { name: "MagpieGateway", inputTokens: 1_990_000, outputTokens: 60_000, cacheTokens: 1_880_000, requests: 120, cacheHitRate: 94.1 },
+        { name: "基准云动", inputTokens: 1_520_000, outputTokens: 50_000, cacheTokens: 1_410_000, requests: 96, cacheHitRate: 97.7 },
+        { name: "基准巴巴", inputTokens: 830_000, outputTokens: 30_000, cacheTokens: 790_000, requests: 64, cacheHitRate: 81.8 },
+      ],
+      unknownSources: 0,
+    };
+  });
+  const ovWeather = {
+    kind: "ok",
+    weather: { city: "武汉 · 江岸", temp: 8, low: 5, high: 12, text: "晴", code: "sunny", updatedAt: Date.now(), lat: 30.6, lon: 114.3, cached: false, degraded: null },
+  };
+  on("weather_current", () => copy(ovWeather));
+  on("weather_refresh", () => copy(ovWeather));
+  on("weather_set_enabled", a => { settings.set("weather.enabled", a.enabled === false ? "false" : "true"); return null; });
   on("pick_project_directory", () => `/demo/new-project-${++seq}`);
   function validProjectRoot(raw: unknown, except?: Project): string {
     const root = absolute(raw);
@@ -853,13 +994,16 @@ let avatarImage: { path: string; hash: string } | null = null;
   }
   on("create_project", a => {
     const n = name(a.name); unique(projects, n, p => p.name); const kind = str(a, "kind"); if (kind !== "code" && kind !== "work") fail("未知项目类型");
-    const p: Project = { id: uid("PRJ-DEMO"), name: n, kind, rootUri: validProjectRoot(a.rootUri), icon: null, iconColor: null, createdAt: now(), updatedAt: now() };
+    const p: Project = { id: uid("PRJ-DEMO"), name: n, kind, rootUri: validProjectRoot(a.rootUri), icon: null, iconColor: null, createdAt: now(), updatedAt: now(), owner: a.owner == null ? "" : str(a, "owner", true), description: a.description == null ? "" : str(a, "description", true), tags: [], storyTotal: 0, storyDone: 0, runningCount: 0 };
     projects.push(p); grants.set(p.id, new Set()); seedProject(p); seedGit(p); return copy(p);
   });
   on("update_project", a => {
     const p = projectById(str(a, "id")), n = name(a.name); unique(projects, n, x => x.name, p);
     const oldRoot = p.rootUri, nextRoot = a.rootUri == null ? oldRoot : validProjectRoot(a.rootUri, p);
     p.name = n; p.rootUri = nextRoot; p.updatedAt = now();
+    if (a.owner !== undefined) p.owner = a.owner == null ? "" : str(a, "owner", true);
+    if (a.description !== undefined) p.description = a.description == null ? "" : str(a, "description", true);
+    if (a.tags !== undefined) p.tags = Array.isArray(a.tags) ? a.tags.map(String) : [];
     // CR-051：icon / iconColor 缺省=保持；null=清空回默认；字符串须命中 50 图标 / 10 色卡白名单。
     if (a.iconColor !== undefined) {
       const color = a.iconColor == null || a.iconColor === "" ? null : String(a.iconColor);
@@ -1227,6 +1371,15 @@ let avatarImage: { path: string; hash: string } | null = null;
   });
   on("chat_session_create", a => copy(newSession(a)));
   on("chat_session_get", a => copy(session(str(a, "id"))));
+  // FEAT-012：统计快照 mock，仅为设计预览呈现“图2”已知态与未知态；真实环境由后端 chat_session_stats 返回真实闭合统计。
+  on("chat_session_stats", a => {
+    const s = session(str(a, "sessionId"));
+    const hasAssistant = (messages.get(s.id) ?? []).some(m => m.role === "assistant");
+    const base = { schema: "dsh.session-stats.snapshot.v1", rule: "dsh", sessionId: s.id } as const;
+    if (!hasAssistant) return { ...base, source: "unknown", scope: "unknown", complete: false, rounds: null, steps: null, observedTurns: 0, unobservedTurns: 0, modelMs: null, ttftMs: null, tps: null };
+    // 合成演示数值（1 轮 17 步 · 22 tok/s），非真实计量，不代表真实账单或模型能力。
+    return { ...base, source: "platform", scope: "session", complete: true, rounds: 1, steps: 17, observedTurns: 1, unobservedTurns: 0, modelMs: 772000, ttftMs: 7900, tps: 22 };
+  });
   on("chat_session_update", a => {
     const s = session(str(a, "id")); if (turns.has(s.id) && ["cliId", "providerId", "modelId", "effort"].some(k => k in a)) fail("合成发送中不能修改执行配置");
     const next = copy(s);
@@ -1244,11 +1397,19 @@ let avatarImage: { path: string; hash: string } | null = null;
   on("chat_approve_tool", () => fail("没有真实工具审批；预置工具结果与发送均为内存仿真"));
 
   on("kb_list", () => copy(libraries));
+  on("kb_create_library", a => {
+    const n = name(a.name); unique(libraries, n, l => l.name);
+    const root = `/demo/knowledge/${n}`;
+    if (libraries.some(l => l.sourceRef === root || l.sourceRef.startsWith(`${root}/`) || root.startsWith(`${l.sourceRef}/`))) fail("知识库源不能重叠");
+    const id = uid("KB"); libraries.push({ id, name: n, sourceKind: "directory", sourceRef: root, enabled: true, noteCount: 0, revision: 1, icon: null, iconColor: null, owner: "", description: "" }); notes.set(id, []); assets.set(id, []); knowledgeDirs.set(id, new Set([""])); return id;
+  });
+  on("storage_data_dir", () => ({ path: "/demo/data", defaultPath: "/demo/data", knowledgeRoot: "/demo/data/knowledge", restartRequired: false }));
+  on("storage_set_data_dir", () => null);
   on("kb_save", a => {
     const n = name(a.name); unique(libraries, n, l => l.name); const root = absolute(a.sourceRef);
     if (!root.startsWith("/demo/knowledge/")) fail("知识源必须位于 /demo/knowledge/...，不读取磁盘");
     if (libraries.some(l => l.sourceRef === root || l.sourceRef.startsWith(`${root}/`) || root.startsWith(`${l.sourceRef}/`))) fail("知识库源不能重叠");
-    const id = uid("KB"); libraries.push({ id, name: n, sourceKind: "directory", sourceRef: root, enabled: true, noteCount: 0, revision: 1, icon: null, iconColor: null }); notes.set(id, []); assets.set(id, []); knowledgeDirs.set(id, new Set([""])); return id;
+    const id = uid("KB"); libraries.push({ id, name: n, sourceKind: "directory", sourceRef: root, enabled: true, noteCount: 0, revision: 1, icon: null, iconColor: null, owner: a.owner == null ? "" : str(a, "owner", true), description: a.description == null ? "" : str(a, "description", true) }); notes.set(id, []); assets.set(id, []); knowledgeDirs.set(id, new Set([""])); return id;
   });
   on("kb_delete", a => { const l = library(str(a, "id")); libraries.splice(libraries.indexOf(l), 1); notes.delete(l.id); assets.delete(l.id); knowledgeDirs.delete(l.id); for (const set of grants.values()) set.delete(l.id); return null; });
   // CR-051：库图标（与项目共用 50 个白名单）、色卡（10 色）与头像风格（a–e）。
@@ -1281,6 +1442,7 @@ let avatarImage: { path: string; hash: string } | null = null;
   on("clear_avatar_image", () => { avatarImage = null; return null; });
   on("save_avatar", a => { const value=String(a.style); if(!["a","b","c","d","e"].includes(value)) fail("头像风格无效"); const data=String(a.dataUrl ?? ""); avatarImage=data ? {path:data,hash:String(data.length)} : null; avatarStyle=value; return avatarImage ?? {path:null,hash:null}; });
   on("kb_set_appearance", a => { const l=library(str(a,"id")); const icon=a.icon==null||a.icon===""?null:String(a.icon); const color=a.iconColor==null||a.iconColor===""?null:String(a.iconColor); if(icon&&!KB_ICON_IDS.includes(icon)) fail("非法图标"); if(color&&!ICON_COLORS.some(c=>c.id===color)) fail("非法色卡"); l.icon=icon;l.iconColor=color;return null; });
+  on("kb_update_meta", a => { const l=library(str(a,"id")); if(a.name!==undefined){const n=name(a.name); unique(libraries,n,x=>x.name,l); l.name=n;} if(a.owner!==undefined) l.owner=a.owner==null?"":str(a,"owner",true); if(a.description!==undefined) l.description=a.description==null?"":str(a,"description",true); return null; });
   on("get_avatar_style", () => avatarStyle);
   on("set_avatar_style", a => {
     const value = String(a.style);
@@ -1313,6 +1475,32 @@ let avatarImage: { path: string; hash: string } | null = null;
     existing.title = markdownTitle(existing.relativeUri.split("/").pop()!, content); refreshKnowledge(l);
     return copy(existing); // 同步 compare-and-swap，在 await 前结束，两个同基线保存只有首个通过。
   });
+  const recycle = new Map<string, { id: string; libraryId: string; name: string; relativeUri: string; deletedAt: number; isDir: boolean }>();
+  on("kb_copy_doc", a => {
+    const l = enabledLibrary(str(a, "id"));
+    const source = [...(notes.get(l.id) ?? [])].find(item => item.relativeUri === str(a, "relativeUri"));
+    if (!source) fail("预览只复制已载入的 Markdown；其它原件不在内存夹具中");
+    const parent = str(a, "parentRelativeUri");
+    const name = source.relativeUri.split("/").pop()!.replace(/(\.[^.]+)?$/, " 副本$1");
+    const rel = parent ? `${parent}/${name}` : name;
+    const created: NoteContent = { noteId: uid("KD"), title: source.title + " 副本", relativeUri: rel, content: source.content, hash: source.hash };
+    notes.get(l.id)!.push(created); refreshKnowledge(l);
+    return { noteId: created.noteId, title: name, relativeUri: rel, isDir: false, children: [] } satisfies NoteNode;
+  });
+  on("kb_import_docs", a => { enabledLibrary(str(a, "id")); knowledgeParent(enabledLibrary(str(a, "id")), a.parentRelativeUri); return { created: [], warnings: ["已取消导入，没有写入文件"] }; });
+  on("kb_recycle_list", a => [...recycle.values()].filter(item => item.libraryId === str(a, "id")).map(item => ({ id: item.id, name: item.name, relativeUri: item.relativeUri, deletedAt: item.deletedAt, isDir: item.isDir })));
+  on("kb_recycle_doc", a => {
+    const l = enabledLibrary(str(a, "id")), rel = str(a, "relativeUri");
+    const list = notes.get(l.id) ?? [];
+    const index = list.findIndex(item => item.relativeUri === rel);
+    if (index >= 0) list.splice(index, 1);
+    const item = { id: uid("RC"), libraryId: l.id, name: rel.split("/").pop() || rel, relativeUri: rel, deletedAt: Date.now(), isDir: false };
+    recycle.set(item.id, item); refreshKnowledge(l);
+    return { id: item.id, name: item.name, relativeUri: item.relativeUri, deletedAt: item.deletedAt, isDir: item.isDir };
+  });
+  on("kb_recycle_restore", a => { const item = recycle.get(str(a, "recycleId")); if (!item) fail("回收项不存在"); recycle.delete(item.id); return { noteId: uid("KD"), title: item.name, relativeUri: item.relativeUri, isDir: item.isDir, children: [] } satisfies NoteNode; });
+  on("kb_recycle_purge", a => { recycle.delete(str(a, "recycleId")); return null; });
+  on("kb_write_media", a => { const parent = str(a, "parentRelativeUri"); const name = knowledgeName(a.name); return parent ? `${parent}/${name}` : name; });
   on("kb_upload_files", a => {
     const l = enabledLibrary(str(a, "id")); knowledgeParent(l, a.parentRelativeUri);
     // 安全确定性取消：不打开本机 picker，也不接受 sourcePath、File、URL 或额外字节。
@@ -1435,15 +1623,41 @@ let avatarImage: { path: string; hash: string } | null = null;
     const address = str(d, "host"); if (!/^(192\.0\.2|198\.51\.100|203\.0\.113)\.(\d{1,3})$/.test(address) && !/^[a-z0-9.-]+\.invalid$/i.test(address)) fail("主机只能使用文档 IP 或 *.invalid；不保存真实主机凭据");
     if (/^\d/.test(address) && Number(address.split(".").pop()) > 255) fail("文档 IP 无效");
     const authType = str(d, "authType"); if (!["key", "password", "none"].includes(authType)) fail("未知认证方式");
-    const h: ServerHost = { id: old?.id ?? uid("SRV"), name: n, host: address, port: integer(d.port, 22, 1, 65535), username: name(d.username, true), authType: authType as ServerHost["authType"], groupTag: d.groupTag == null ? null : str(d, "groupTag", true), connected: false };
+    const h: ServerHost = { id: old?.id ?? uid("SRV"), name: n, host: address, port: integer(d.port, 22, 1, 65535), username: name(d.username, true), authType: authType as ServerHost["authType"], groupTag: d.groupTag == null ? null : str(d, "groupTag", true), connected: false, os: d.os == null ? old?.os ?? null : str(d, "os", true), lastSeenAt: old?.lastSeenAt ?? null, cpuPct: old?.cpuPct ?? null, memPct: old?.memPct ?? null, diskPct: old?.diskPct ?? null };
     if (old) { if (old.connected) fail("先断开内存主机再修改"); hosts[hosts.indexOf(old)] = h; } else { hosts.push(h); hostDisks.set(h.id, disk()); }
     // secret/keyPath 从不读取、不存储、不返回。
     return h.id;
   });
   on("server_delete", a => { const h = host(str(a, "id")); if (h.connected) fail("先断开合成连接再删除"); hosts.splice(hosts.indexOf(h), 1); hostDisks.delete(h.id); return null; });
-  on("server_connect", a => { host(str(a, "hostId")).connected = true; return null; }); // 仅内存布尔状态，不发 SSH。
+  on("server_connect", async a => {
+    const h = host(str(a, "hostId"));
+    await briefPause();
+    // CR-075：离线主机在隔离预览里保持"连接失败"，方便核对失败态与重试，不伪造已连接。
+    if (/^198\.51\.100\./.test(h.host)) fail("连接超时");
+    h.connected = true;
+    return null;
+  }); // 仅内存布尔状态，不发 SSH。
+  /* CR-075：保存前测试连接。只作用于内存夹具，不落库、不改连接状态、不发 SSH。 */
+  on("server_test_connection", async a => {
+    const d = object(a.draft);
+    const address = str(d, "host");
+    if (!/^(192\.0\.2|198\.51\.100|203\.0\.113)\.(\d{1,3})$/.test(address) && !/^[a-z0-9.-]+\.invalid$/i.test(address)) {
+      fail("主机只能使用文档 IP 或 *.invalid；测试连接不连真实主机");
+    }
+    const authType = str(d, "authType");
+    if (!["key", "password", "none"].includes(authType)) fail("未知认证方式");
+    const savedId = d.id == null ? null : str(d, "id");
+    const saved = savedId == null ? null : hosts.find(item => item.id === savedId) ?? null;
+    if (authType === "password" && d.secret == null && saved == null) fail("请填写密码");
+    if (authType === "key" && d.keyPath == null && saved == null) fail("请填写私钥路径");
+    await briefPause();
+    // 不可达主机：与列表/工作台失败态一致，不伪造成功。
+    if (/^198\.51\.100\./.test(address)) fail("连接超时");
+    const os = saved?.os ?? (/^203\.0\.113\./.test(address) ? "Debian 12（合成）" : "Ubuntu 24.04 LTS（合成）");
+    return { os, latencyMs: 46 };
+  });
   on("server_disconnect", a => { const h = host(str(a, "hostId")); h.connected = false; for (const [id, term] of terminals) if (term.hostId === h.id) { term.channel.emit({ type: "exit", message: LABEL }); term.channel.close(); terminals.delete(id); } return null; });
-  on("server_metrics", a => { const h = host(str(a, "hostId")); return copy(metrics[h.id] ?? { hostname: "DEMO-new-host", os: "未知（合成）", uptime: "未知", cpuCores: [], cpuAvg: 0, memTotalMb: 0, memUsedMb: 0, load1: 0 }); });
+  on("server_metrics", a => { const h = host(str(a, "hostId")); const m = copy(metrics[h.id] ?? { hostname: "DEMO-new-host", os: "未知（合成）", uptime: "未知", cpuCores: [], cpuAvg: 0, memTotalMb: 0, memUsedMb: 0, load1: 0, diskTotalMb: 0, diskUsedMb: 0 }); h.os = m.os; h.lastSeenAt = STAMP; h.cpuPct = m.cpuAvg; h.memPct = m.memTotalMb > 0 ? Math.round(m.memUsedMb / m.memTotalMb * 10000) / 100 : null; h.diskPct = m.diskTotalMb > 0 ? Math.round(m.diskUsedMb / m.diskTotalMb * 10000) / 100 : null; return m; });
   on("server_tree", a => { const h = host(str(a, "hostId")); return listing(hostDisks.get(h.id)!, `/demo/servers/${h.id}`, hostPath(h, a.path)); });
   on("server_read_file", a => { const h = host(str(a, "hostId")); return read(hostDisks.get(h.id)!, hostPath(h, a.path)); });
   on("server_term_open", a => { const h = host(str(a, "hostId")); if (!h.connected) fail("先启用内存合成连接"); integer(a.cols, 80, 1, 500); integer(a.rows, 24, 1, 300); if (terminals.size >= 8) fail("最多 8 个内存终端"); const channel = channelWriter(a.channel), id = uid("TERM"); terminals.set(id, { hostId: h.id, channel }); channel.emit({ type: "data", data: `\r\n${LABEL}\r\n输入只回显，不运行任何命令。\r\nDEMO> ` }); return id; });

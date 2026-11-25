@@ -15,9 +15,11 @@ import { OfficeViewer } from "@/modules/office/OfficeViewer";
 import { locateFile as officeLocateFile } from "@/modules/office/office-model";
 import { ensureOfficeProjectSample, OfficeArtifacts } from "@/modules/office";
 import { ProjectHome } from "./ProjectHome";
+import type { ChatController } from "@/modules/chat/ChatPanel";
 import { Workbench, emptyAuxState } from "@/modules/workbench/Workbench";
 import type { AuxTarget, WorkbenchAuxState } from "@/modules/workbench/Workbench";
 import { RequirementsReading } from "./RequirementsReading";
+import { blankNodeForm, frontMatter, patchFrontMatter, stripFrontMatter, acSection, writeAcSection, NodeFields, KIND_DIR, type NodeForm } from "./requirementForm";
 import { flattenRequirements, mergeRequirementSources, normalizedSource } from "./requirementSources";
 import { PaneToggle, ResizeHandle, usePaneWidth } from "@/components/pane-resize";
 import { TabMoreDropdown, TabMoreIcon, useTabOverflow } from "@/components/tab-overflow";
@@ -26,7 +28,7 @@ import "@/modules/office/office.css";
 
 type Tab = "workbench" | "requirements" | "design" | "tasks" | "code";
 
-export function ProjectWorkspace(props: { projectId: string; tab: Tab; visible?: boolean }) {
+export function ProjectWorkspace(props: { projectId: string; tab: Tab; visible?: boolean; chatController?: ChatController | null; chatSlotRef?: (slot: HTMLDivElement | null) => void }) {
   const { go, route, aiVisible, setAiVisible } = useApp();
   const toast = useToast();
   const [project, setProject] = useState<api.Project | null>(null);
@@ -59,7 +61,8 @@ export function ProjectWorkspace(props: { projectId: string; tab: Tab; visible?:
   useEffect(() => { void reload(); }, [reload]);
   const changeTab = (next: Tab) => { setTab(next); go({ page: "project", projectId: props.projectId, tab: next }); };
   // CR-052 / UI-TAB-001：项目页签溢出统一走共享「更多」下拉；右侧 AI 入口固定不受收缩影响。
-  /* CR-054：代码与办公两类项目都在最前加入「工作台」，纯图标、不显示文字。 */
+  /* CR-054：代码与办公两类项目都在最前加入「工作台」。
+     CR-082：页签形态由纯图标改为「电脑（显示器）图标 + 文字『工作台』」。 */
   const pwTabList: [Tab, string][] = project?.kind === "code"
     ? [["workbench", "工作台"], ["requirements", "需求"], ["design", "设计"], ["tasks", "任务"], ["code", "编码"]]
     : [["workbench", "工作台"], ["code", "文档"], ["design", "成果"]];
@@ -70,6 +73,8 @@ export function ProjectWorkspace(props: { projectId: string; tab: Tab; visible?:
   useEffect(() => {
     if (!project) return;
     return onLocate(d => {
+      // FEAT-021：可见工作台由Workbench进辅助栏，不触发本区页签切换。
+      if (active && tab === "workbench") return;
       if (d.kind === "file") {
         if ((d.projectId && d.projectId !== project.id) || (d.rootUri && normalizePath(d.rootUri) !== normalizePath(project.rootUri))) return;
         if (!d.projectId && !d.rootUri) return;
@@ -83,7 +88,7 @@ export function ProjectWorkspace(props: { projectId: string; tab: Tab; visible?:
         setTab("code");
       }
     });
-  }, [project, active]);
+  }, [project, active, tab]);
 
   if (loading) return <div className="pagebody"><Empty title="加载项目…" /></div>;
   if (!project) return <div className="pagebody"><Empty title="项目不存在或已删除" /></div>;
@@ -92,7 +97,7 @@ export function ProjectWorkspace(props: { projectId: string; tab: Tab; visible?:
       <div ref={pwTabsOverflow.hostRef} className="tab-overflow-host">
         {pwTabList.map(([key, label]) => (
           key === "workbench"
-            ? <button key={key} className="pw-tab wb-tab-icon" role="tab" aria-selected={tab === key} aria-label={label} title={label} onClick={() => changeTab(key as Tab)}><Icon name="atDesk" size={18} /></button>
+            ? <button key={key} className="pw-tab wb-tab-icon" role="tab" aria-selected={tab === key} aria-label={label} title={label} onClick={() => changeTab(key as Tab)}><Icon name="monitor" size={16} /><span>{label}</span></button>
             : <button key={key} className="pw-tab" role="tab" aria-selected={tab === key} onClick={() => changeTab(key as Tab)}>{label}</button>
         ))}
         <button {...pwTabsOverflow.moreProps}><TabMoreIcon /></button>
@@ -112,6 +117,8 @@ export function ProjectWorkspace(props: { projectId: string; tab: Tab; visible?:
           aux={auxState}
           onAuxChange={setAuxState}
           onOpenInTab={openInTab}
+          controller={props.chatController ?? null}
+          chatSlotRef={props.chatSlotRef}
         />
       </section>
       {project.kind === "code" ? <>
@@ -174,9 +181,20 @@ function RequirementsPane(props: { project: api.Project; focusEntityId?: string 
   }, [project.id, project.rootUri]);
   useEffect(() => { void reload(); return () => { request.current++; }; }, [reload]);
   const sources = useMemo(() => mergeRequirementSources(project.id, project.rootUri, tree, manifest), [project.id, project.rootUri, tree, manifest]);
+  /* UI-CR073：导图右侧面板的就地编辑与新建（不再弹窗），与弹窗共用同一套表单与写回规则。 */
+  const [panelEdit, setPanelEdit] = useState<RequirementNode | null>(null);
+  const [panelCreate, setPanelCreate] = useState<{ parent: RequirementNode | null; kind: RequirementNode["kind"] } | null>(null);
+  const closePanel = useCallback(() => { setPanelEdit(null); setPanelCreate(null); }, []);
   return <>
     <RequirementsReading key={JSON.stringify([project.id, project.rootUri])} project={project} sources={sources} loading={loading} errors={errors} warnings={manifest?.warnings ?? []} complete={manifest !== null} revision={revision}
-      focusEntityId={props.focusEntityId} onFocusDone={props.onFocusDone} onReload={() => void reload()} onNew={() => addChild(null)} onAddChild={addChild} onEdit={setEditTarget} onDelete={setDelTarget} onDispatch={setDispatchTarget} onOpenModel={props.onOpenModel} />
+      focusEntityId={props.focusEntityId} onFocusDone={props.onFocusDone} onReload={() => void reload()} onNew={() => addChild(null)} onAddChild={addChild} onEdit={setEditTarget} onDelete={setDelTarget} onDispatch={setDispatchTarget} onOpenModel={props.onOpenModel}
+      panelEdit={panelEdit}
+      panelEditForm={panelEdit ? <NodeEditorPanel project={project} node={panelEdit} onClose={closePanel} onSaved={() => { closePanel(); void reload(); }} /> : null}
+      panelCreate={panelCreate}
+      panelCreateForm={panelCreate ? <NodeEditorPanel project={project} parent={panelCreate.parent} kind={panelCreate.kind} tree={tree} onClose={closePanel} onSaved={() => { closePanel(); void reload(); }} /> : null}
+      onPanelEdit={node => { setPanelCreate(null); setPanelEdit(node); }}
+      onPanelCreate={(parent, kind) => { setPanelEdit(null); setPanelCreate({ parent, kind }); }}
+    />
     {editTarget && <DocEditModal project={project} node={editTarget} onClose={() => setEditTarget(null)} onSaved={() => { setEditTarget(null); void reload(); }} />}
     {createOpen && <CreateNodeModal project={project} parent={createParent} tree={tree} onClose={() => setCreateOpen(false)} onCreated={() => { setCreateOpen(false); void reload(); }} />}
     {delTarget && <DeleteNodeModal project={project} node={delTarget} onClose={() => setDelTarget(null)} onDeleted={() => { setDelTarget(null); void reload(); }} />}
@@ -251,14 +269,6 @@ function TreeLine(props: {
   </div>;
 }
 
-function stripFrontMatter(md: string): string {
-  if (md.startsWith("---")) {
-    const end = md.indexOf("---", 3);
-    if (end >= 0) return md.slice(end + 3).trimStart();
-  }
-  return md;
-}
-
 function DeleteNodeModal({ project, node, onClose }: { project: api.Project; node: RequirementNode; onClose: () => void; onDeleted: () => void }) {
   const reason = node.children.length ? `存在 ${node.children.length} 个直接子项，必须先处理子项，不能级联删除。` : "任务／设计引用关系尚不能完整核验，暂不允许删除文档。";
   return <Modal title="删除需求" onClose={onClose} width={460} heightRatio={0.3} footer={<><button className="btn" onClick={onClose}>取消</button><button className="btn danger" disabled>删除</button></>}>
@@ -287,43 +297,6 @@ function DispatchModal({ project, tree, node, onClose }: { project: api.Project;
     {stories.map(n => <div key={n.entityId} className="dispatch-item"><span className="req-id">{n.entityId}</span><span className="grow">{n.title}</span>{statusTag(n.status)}</div>)}
     {!stories.length && <Empty title="范围内没有 Story" />}
   </Modal>;
-}
-
-interface NodeForm { title: string; status: string; owner: string; summary: string; estimate: string; acs: string; body: string }
-const NODE_STATUSES = ["待澄清", "待确认", "已就绪", "设计中", "开发中", "验证中", "待验收", "已完成", "阻塞", "取消"];
-const blankNodeForm = (): NodeForm => ({ title: "", status: "待澄清", owner: "", summary: "", estimate: "", acs: "", body: "" });
-function frontMatter(text: string): Record<string, string> {
-  const block = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text)?.[1] ?? "";
-  return Object.fromEntries(block.split(/\r?\n/).map(line => /^([^:]+):\s*(.*)$/.exec(line)).filter((m): m is RegExpExecArray => !!m).map(m => [m[1].trim(), m[2].trim().replace(/^"|"$/g, "")]));
-}
-function patchFrontMatter(text: string, fields: Record<string, string>): string {
-  const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
-  const lines = match ? match[1].split(/\r?\n/) : [];
-  for (const [key, value] of Object.entries(fields)) {
-    const i = lines.findIndex(line => line.startsWith(`${key}:`));
-    const line = `${key}: ${value.replace(/[\r\n]/g, " ")}`;
-    if (i < 0) lines.push(line); else lines[i] = line;
-  }
-  return `---\n${lines.join("\n")}\n---\n\n${match ? text.slice(match[0].length).trimStart() : text.trimStart()}`;
-}
-function acSection(body: string): string { return /(?:^|\n)##\s+验收标准[^\n]*\n([\s\S]*?)(?=\n##\s|$)/.exec(body)?.[1].trim() ?? ""; }
-function writeAcSection(body: string, acs: string): string {
-  const section = /(?:^|\n)##\s+验收标准[^\n]*\n[\s\S]*?(?=\n##\s|$)/;
-  if (section.test(body)) return body.replace(section, `\n## 验收标准\n\n${acs.trim()}\n`);
-  return acs.trim() ? `${body.trimEnd()}\n\n## 验收标准\n\n${acs.trim()}\n` : body;
-}
-function NodeFields({ kind, form, setForm, parent, disabled }: { kind: RequirementNode["kind"]; form: NodeForm; setForm: (f: NodeForm) => void; parent: string; disabled: boolean }) {
-  const field = (key: keyof NodeForm, value: string) => setForm({ ...form, [key]: value });
-  return <div className="project-form-grid">
-    <div className="form-two"><Field label="类型"><input className="input" value={{ epic: "史诗 Epic", feature: "特性 Feature", story: "用户故事 Story", bug: "缺陷 Bug", vision: "愿景 Vision" }[kind]} readOnly /></Field>
-      <Field label="状态"><select className="input" value={form.status} disabled={disabled} onChange={e => field("status", e.target.value)}>{[...new Set([...NODE_STATUSES, form.status])].map(s => <option key={s}>{s}</option>)}</select></Field></div>
-    <Field label="标题"><input className="input" value={form.title} disabled={disabled} onChange={e => field("title", e.target.value)} /></Field>
-    <Field label="摘要"><textarea className="textarea" rows={2} value={form.summary} disabled={disabled} onChange={e => field("summary", e.target.value)} /></Field>
-    <div className="form-two"><Field label="负责人"><input className="input" value={form.owner} disabled={disabled} onChange={e => field("owner", e.target.value)} /></Field><Field label="工作量"><input className="input" value={form.estimate} disabled={disabled} placeholder="例如：2 人日" onChange={e => field("estimate", e.target.value)} /></Field></div>
-    {(kind === "story" || kind === "bug") && <Field label="可观察验收（每行一条，保留已有 AC 编号）"><textarea className="textarea mono" rows={4} value={form.acs} disabled={disabled} onChange={e => field("acs", e.target.value)} /></Field>}
-    <Field label="所属"><input className="input" value={parent} readOnly /></Field>
-    <Field label="正文（Markdown）" hint="保留未涉及的章节、历史记录和 AC 编号。"><textarea className="textarea mono" rows={8} value={form.body} disabled={disabled} onChange={e => field("body", e.target.value)} /></Field>
-  </div>;
 }
 
 function DocEditModal(props: { project: api.Project; node: RequirementNode; onClose: () => void; onSaved: () => void }) {
@@ -362,7 +335,6 @@ function DocEditModal(props: { project: api.Project; node: RequirementNode; onCl
   </Modal>;
 }
 
-const KIND_DIR: Record<string, string> = { epic: "Epic", feature: "Feature", story: "Story", bug: "Story" };
 
 function CreateNodeModal(props: { project: api.Project; parent: RequirementNode | null; tree: RequirementNode[]; onClose: () => void; onCreated: () => void }) {
   const toast = useToast();
@@ -396,12 +368,102 @@ function CreateNodeModal(props: { project: api.Project; parent: RequirementNode 
   </Modal>;
 }
 
+
+/** UI-CR073：导图右侧就地编辑／新建面板。
+ *  与 DocEditModal、CreateNodeModal 共用 NodeFields 与 front matter 规则；
+ *  不弹窗、不切换阅读方式，保存后由外层重新扫描需求源。 */
+function NodeEditorPanel(props: {
+  project: api.Project;
+  node?: RequirementNode;
+  parent?: RequirementNode | null;
+  kind?: RequirementNode["kind"];
+  tree?: RequirementNode[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const toast = useToast();
+  const editing = Boolean(props.node);
+  const parent = props.parent ?? null;
+  const kind: RequirementNode["kind"] = props.node?.kind ?? props.kind ?? (parent === null ? "epic" : parent.kind === "epic" ? "feature" : "story");
+  const [text, setText] = useState<string | null>(editing ? null : "");
+  const [form, setForm] = useState<NodeForm>(blankNodeForm);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!props.node) return;
+    let alive = true;
+    api.fsReadFile(props.project.rootUri, props.node.sourceUri).then(md => {
+      if (!alive) return;
+      setText(md);
+      const fm = frontMatter(md), body = stripFrontMatter(md);
+      setForm({ title: fm.title ?? props.node!.title, status: fm.status ?? props.node!.status ?? "待澄清", owner: fm.owner ?? "", summary: fm.summary ?? "", estimate: fm.estimate ?? "", acs: acSection(body), body });
+    }).catch(e => { if (alive) setError(String(e)); });
+    return () => { alive = false; };
+  }, [props.node, props.project.rootUri]);
+
+  const save = async () => {
+    if (busy) return;
+    if (!form.title.trim()) return toast("标题不能为空", "warn");
+    setBusy(true);
+    try {
+      if (props.node && props.node.sourceUri) {
+        if (text === null) return;
+        const latest = await api.fsReadFile(props.project.rootUri, props.node.sourceUri);
+        if (latest !== text) return toast("磁盘文档已变化，请关闭面板重新载入后合并；当前草稿保留。", "warn");
+        let body = form.body;
+        if ((kind === "story" || kind === "bug") && form.acs !== acSection(stripFrontMatter(text))) body = writeAcSection(body, form.acs);
+        const originalFm = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.exec(text)?.[0] ?? "";
+        const content = patchFrontMatter(originalFm + body, { title: form.title.trim(), status: form.status, owner: form.owner, summary: form.summary, estimate: form.estimate });
+        await api.fsWriteFile(props.project.rootUri, props.node.sourceUri, content);
+        toast("已保存");
+      } else {
+        const prefix = kind === "epic" ? "EPIC" : kind === "feature" ? "FEAT" : "STORY";
+        const dir = `docs/Plan/${KIND_DIR[kind]}`;
+        const siblings = await api.fsListDir(props.project.rootUri, dir);
+        const ids = [...collectIds(await api.readRequirements(props.project.id)), ...siblings.map(f => f.name.split(/[-：]/).slice(0, 2).join("-"))];
+        const max = ids.filter(id => id.startsWith(`${prefix}-`)).reduce((m, id) => Math.max(m, Number(/(\d+)$/.exec(id)?.[1] ?? 0)), 0);
+        const entityId = `${prefix}-${String(max + 1).padStart(3, "0")}`;
+        const file = `${dir}/${entityId}.md`;
+        if (siblings.some(f => f.name === `${entityId}.md`)) return toast("编号已被占用，请重试", "warn");
+        const header = `# ${entityId}：${form.title.trim()}\n\n`;
+        const acs = form.acs.split(/\r?\n/).filter(line => line.trim()).map((line, i) => /AC-/.test(line) ? line : `- AC-${entityId}-${String(i + 1).padStart(2, "0")}：${line}`).join("\n");
+        const body = kind === "story" ? writeAcSection(header + form.body, acs) : header + form.body;
+        const content = patchFrontMatter(body, { id: entityId, type: kind, ...(parent ? { parent: parent.entityId } : {}), status: form.status, owner: form.owner, title: form.title.trim(), summary: form.summary, estimate: form.estimate });
+        await api.fsWriteFile(props.project.rootUri, file, content);
+        toast(`已创建 ${entityId}`);
+      }
+      props.onSaved();
+    } catch (e) {
+      toast(`保存失败：${String(e)}${editing ? "" : `；请确认 docs/Plan/${KIND_DIR[kind]} 目录已存在。`}`, "err");
+    } finally { setBusy(false); }
+  };
+
+  const title = editing ? `编辑 ${props.node!.entityId}` : parent ? `在 ${parent.entityId} 下新建${kind === "feature" ? "特性" : "用户故事"}` : "新建史诗";
+  return <aside className="req-map-detail req-map-editor" role="dialog" aria-label={title} data-panel-kind={kind} data-panel-mode={editing ? "edit" : "create"}>
+    <header className="req-map-detail-head">
+      <span className={`req-kind ${kind}`}>{kind === "epic" ? "Epic" : kind === "feature" ? "Feature" : kind === "bug" ? "Bug" : "Story"}</span>
+      <b>{editing ? props.node!.entityId : "新建"}</b>
+      <span className="caption">{editing ? "编辑" : "未保存"}</span>
+      <button className="icon-btn" aria-label="关闭面板" disabled={busy} onClick={props.onClose}><Icon name="x" size={14} /></button>
+    </header>
+    <div className="req-map-detail-scroll">
+      {error ? <Empty title="读取文档失败" desc={error} />
+        : editing && text === null ? <Empty title="加载中…" />
+          : <NodeFields kind={kind} form={form} setForm={setForm} parent={parent ? `${parent.entityId} · ${parent.title}` : props.node?.parentId ?? props.project.name} disabled={busy} />}
+    </div>
+    <footer className="req-map-detail-foot">
+      <button className="btn sm primary" disabled={busy || (editing && text === null)} onClick={save}>{busy ? "保存中…" : editing ? "保存" : "创建"}</button>
+      <button className="btn sm" disabled={busy} onClick={props.onClose}>取消</button>
+    </footer>
+  </aside>;
+}
+
 function collectIds(nodes: RequirementNode[]): string[] {
   const out: string[] = [];
   const walk = (ns: RequirementNode[]) => {
     for (const n of ns) {
-      out.push(n.entityId);
-      walk(n.children);
+      out.push(n.entityId);      walk(n.children);
     }
   };
   walk(nodes);
@@ -433,6 +495,8 @@ function DesignPane({ project, focus }: { project: api.Project; focus?: { sectio
   const rootRef = useRef<HTMLDivElement>(null);
   const tocPane = usePaneWidth(`project:${project.id}`, "design-toc", { default: 240, min: 160, max: 360, side: "right", containerRef: rootRef, reserve: 56, minCenter: 320, overlayInset: 56 });
   const [busy, setBusy] = useState(false);
+  /* UI-CR073：HTML 设计文件的预览／源码切换（预览为默认）。 */
+  const [sourceView, setSourceView] = useState(false);
   const docRef = useRef<HTMLDivElement>(null);
   const reload = useCallback(async () => {
     setLoading(true); setError(null);
@@ -462,6 +526,8 @@ function DesignPane({ project, focus }: { project: api.Project; focus?: { sectio
   }, [current, project.rootUri, drafts]);
   const body = stripFrontMatter(draft?.text ?? "");
   const markdown = !!current && /\.(md|markdown)$/i.test(current);
+  /* UI-CR073：HTML 设计文件走沙箱页面预览（不是源码）。 */
+  const htmlPreview = !!current && /\.html?$/i.test(current);
   useEffect(() => {
     let alive = true;
     if (!markdown || !draft) { setHtml(""); return; }
@@ -488,10 +554,9 @@ function DesignPane({ project, focus }: { project: api.Project; focus?: { sectio
     const a = document.createElement("a"); a.href = url; a.download = current.split(/[\\/]/).pop() ?? "document.md"; a.click(); URL.revokeObjectURL(url);
   };
   return <div ref={rootRef} className="design-shell">
+    {/* UI-CR073（用户第 10 项）：左轨只保留四个分区入口；「关联需求」「目录」移出。 */}
     <nav className="design-rail" aria-label="设计资料">
       {DESIGN_SECTIONS.map(item => <button key={item.key} className={`rail-btn ${section === item.key ? "active" : ""}`} aria-label={item.title} aria-pressed={section === item.key} title={item.title} onClick={() => setSection(item.key)}><WorkspaceIcon name={item.icon} /></button>)}
-      <div className="rail-sep" /><button className="rail-btn" aria-label="关联需求" title="关联需求" onClick={() => tocPane.setVisible(true)}><WorkspaceIcon name="link" /></button>
-      <PaneToggle pane={tocPane} label="目录" className="rail-btn"><WorkspaceIcon name="panel" /></PaneToggle>
     </nav>
     <section className="design-main">
       <div className="design-topbar">
@@ -499,14 +564,28 @@ function DesignPane({ project, focus }: { project: api.Project; focus?: { sectio
           {!shown.length && <option value="">docs/{section}/</option>}{shown.map(f => <option key={f.path} value={f.path}>{projectRelativePath(project.rootUri, f.path)}</option>)}
         </select>
         <span className="spacer" />
-        <button className="btn sm" disabled={!draft || busy} onClick={() => patch({ editing: !draft?.editing })}>{draft?.editing ? "预览" : "编辑"}</button>
+        {/* UI-CR073：目录显隐移到顶部文档操作区（原先在左轨）。 */}
+        <PaneToggle pane={tocPane} label="目录" className="btn sm"><Icon name="panelRight" size={14} />目录</PaneToggle>
+        <button className="btn sm" disabled={!draft || busy || htmlPreview} onClick={() => patch({ editing: !draft?.editing })}>{draft?.editing ? "预览" : "编辑"}</button>
         <button className="btn sm" disabled={!draft} onClick={exportDoc}>导出</button>
       </div>
-      {loading ? <Empty title="读取设计资料…" /> : error ? <Empty title="读取目录失败" desc={error} action={<button className="btn sm" onClick={() => void reload()}>重试</button>} /> : !current ? <Empty title="暂无设计文档" desc={`项目 docs/${section}/ 目录下没有可列出的文件。不会载入示例或生成虚构版本。`} /> : readError ? <Empty title="无法读取此文档" desc={readError} /> : reading || !draft ? <Empty title="读取文档…" /> : draft.editing ? (
+      {loading ? <Empty title="读取设计资料…" /> : error ? <Empty title="读取目录失败" desc={error} action={<button className="btn sm" onClick={() => void reload()}>重试</button>} /> : !current ? <Empty title="暂无设计文档" desc={`项目 docs/${section}/ 目录下没有可列出的文件。不会载入示例或生成虚构版本。`} /> : readError ? <Empty title="无法读取此文档" desc={readError} /> : reading || !draft ? <Empty title="读取文档…" /> : htmlPreview ? (
+        /* UI-CR073（用户第 9 项）：.html 设计文件渲染页面预览（沙箱 iframe），不再默认显示源码。 */
+        <div className="design-preview-host">
+          <div className="design-preview-bar">
+            <span>页面预览（沙箱渲染，只读）</span><span className="spacer" />
+            <button className="btn sm" onClick={() => setSourceView(prev => !prev)}>{sourceView ? "预览" : "源码"}</button>
+          </div>
+          {sourceView
+            ? <pre className="design-source mono" style={{ flex: "1 1 auto", overflow: "auto", margin: 0, padding: 16 }}>{draft.text}</pre>
+            : <iframe className="design-preview-frame" title={`设计页面预览：${projectRelativePath(project.rootUri, current)}`} sandbox="" referrerPolicy="no-referrer" srcDoc={draft.text} />}
+          <div className="design-preview-note">预览不执行脚本、不加载外部资源；相对路径的资源不会显示。</div>
+        </div>
+      ) : draft.editing ? (
         <div className="design-edit"><textarea className="textarea mono" spellCheck={false} value={draft.text} disabled={busy} onChange={e => patch({ text: e.target.value })} />
           <div className="row"><button className="btn primary sm" disabled={busy} onClick={save}>{busy ? "保存中…" : "保存"}</button><button className="btn sm" disabled={busy} onClick={() => patch({ text: draft.saved, editing: false })}>取消</button><span className="small muted">{draft.text === draft.saved ? "无未保存修改" : "未保存草稿"}</span></div>
         </div>
-      ) : markdown ? <div ref={docRef} className="design-doc kb-content" dangerouslySetInnerHTML={{ __html: html }} /> : <div className="design-doc"><div className="small muted">源码阅读；HTML 不执行脚本。交互 UI 预览尚未接入。</div><pre className="design-source mono">{draft.text}</pre></div>}
+      ) : markdown ? <div ref={docRef} className="design-doc kb-content" dangerouslySetInnerHTML={{ __html: html }} /> : <div className="design-doc"><div className="small muted">源码阅读；不执行脚本、不加载外部资源。</div><pre className="design-source mono">{draft.text}</pre></div>}
     </section>
     <aside {...tocPane.paneProps} className={`design-toc ${tocPane.paneProps.className}`}>
       <ResizeHandle pane={tocPane} label="设计目录" />

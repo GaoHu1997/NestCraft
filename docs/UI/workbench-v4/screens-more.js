@@ -130,7 +130,7 @@
     </div>`;
   }
   function setSub(tab) {
-    return { general: "用户信息、代码样式与服务器默认值。", models: "供应商、密钥、端点与模型配置。", probe: "固定 9 针黑盒探针，检测模型是否被中转掺水。", cli: "CLI 管理与 SDK 管理。", skills: "技能是过程性指令；启用不等于授权执行。", mcp: "MCP 服务器发现工具与资源。", tools: "内置工具与风险等级。" }[tab] || "";
+    return { general: "数据存储、用户信息、代码样式与服务器默认值。", models: "供应商、密钥、端点与模型配置。", probe: "固定 19+1 针黑盒探针，检测中转掺水；P20 行为指纹给出「最像的已知候选」归因提示。", cli: "CLI 管理与 SDK 管理。", skills: "技能是过程性指令；启用不等于授权执行。", mcp: "MCP 服务器发现工具与资源。", tools: "内置工具与风险等级。" }[tab] || "";
   }
 
   function setContent(tab) {
@@ -140,7 +140,10 @@
       const avatarRadio = `<div class="avatar-radio-row" role="radiogroup" aria-label="头像风格">
         ${["a", "b", "c", "d", "e"].map(s => `<button class="avatar-radio" type="button" role="radio" aria-checked="${current === s}" data-act="avatar-style-pick" data-id="${s}">${avatarHtml("sm", "")}<b>${esc((UI.AVATAR_LABELS[s] || s).replace(/^[a-e] /, ""))}</b></button>`).join("")}
       </div>`;
-      return `<div class="set-section"><h3>用户基本信息</h3>
+      return `<div class="set-section"><h3>数据存储</h3>
+        <div class="set-field"><div class="f-label"><b>数据存储位置</b><span>默认安装目录下的 data；本项目数据都在这里按类分开：db 数据库与会话、chat 会话文件、knowledge 知识库、skills 技能、mcp、secrets 密钥、avatar、logs、editor、git、recycle、index、examples。改位置需重启生效，重启时旧数据迁入新位置，不覆盖同名文件</span></div><div class="f-control row"><input class="input mono" id="gen-data-dir" value="${esc(g.dataDir || "安装目录/data")}" aria-label="数据存储位置"><button class="btn" data-act="pick-data-dir">选择目录</button></div></div>
+        <div class="set-field"><div class="f-label"><b>知识库目录</b><span>选定位置下 knowledge/库名；可直接把文件拷进该文件夹，刷新目录后进入索引</span></div><div class="f-control"><span class="caption mono">${esc((g.dataDir || "安装目录/data"))}/knowledge</span></div></div></div>
+      <div class="set-section"><h3>用户基本信息</h3>
         <div class="set-field"><div class="f-label"><b>显示名称</b><span>用于会话与操作记录</span></div><div class="f-control"><input class="input" id="gen-name" value="${esc(g.profile.name)}"></div></div>
         <div class="set-field"><div class="f-label"><b>邮箱</b><span>仅占位，不发送邮件</span></div><div class="f-control"><input class="input" id="gen-email" value="${esc(g.profile.email)}"></div></div>
         <div class="set-field"><div class="f-label"><b>角色</b><span>显示在工作台</span></div><div class="f-control"><input class="input" id="gen-role" value="${esc(g.profile.role)}"></div></div>
@@ -659,9 +662,9 @@
     openSubDialog(dlgShell("生图配置", "多模型有序尝试 · 失败自动顺延 · 作为 tool 提供给 AI", body, `<button class="btn" data-act="close-sub">取消</button><button class="btn primary" data-act="imagegen-save">保存</button>`, "modal-md"));
   }
 
-  /* ================= CR-058：模型检测九针探针（设置 → 模型管理，供应商列表下方独立区块）。
+  /* ================= CR-058：模型检测探针（设置 → 左栏「模型检测」独立页签）。
      设计稿演示：不发起任何真实网络请求；逐针状态与结论来自 D.settings.probeFixtures 夹具。
-     固定 9 针、无探针选择入口；历史记录入口在区块右上角，保留最近 10 条。 ================= */
+     固定 19+1 针（r5 新增 P20 行为指纹与归因，权重 0 辅助信号）、无探针选择入口；历史记录入口在区块右上角，保留最近 10 条。 ================= */
   const PROBE_ITEMS = [
     ["P1", "连通与鉴权握手"], ["P2", "模型回显与跨档偷换"], ["P3", "响应 Schema 与 ID 规范"],
     ["P4", "SSE 真流式与假首字"], ["P5", "网关响应头指纹"], ["P6", "System 金丝雀服从"],
@@ -669,7 +672,7 @@
     ["P10", "Max Tokens 硬截断"], ["P11", "原生工具调用验真"], ["P12", "Strict JSON Schema"],
     ["P13", "动态逻辑与防背题"], ["P14", "并发混池快照"], ["P15", "识图多模态验真"],
     ["P16", "Responses 协议探测"], ["P17", "输入 Token 对账"], ["P18", "流式输出对账"],
-    ["P19", "长前缀缓存命中"]
+    ["P19", "长前缀缓存命中"], ["P20", "行为指纹与归因"]
   ];
   const PROBE_STATUS_LABEL = { pass: "通过", warn: "警示", fail: "不通过", skip: "未执行", na: "不适用", pending: "等待", running: "执行中" };
 
@@ -702,6 +705,37 @@
     return `<div class="probe-row"><span class="p-code mono">${code}</span><span class="probe-dot ${dot}" role="img" aria-label="${label}"></span><span class="p-name">${name}${note ? `<span class="p-note mono">${esc(note)}</span>` : ""}</span><span class="p-ms">${ms}</span></div>`;
   }
 
+  /* r5：P20 归因面板（结果区下方、逐针列表上方）。一致性三态 + top-3「最像的已知候选」距离条。
+     概率性提示：措辞固定为「最像的已知候选」，不出现实锤断言；库外情形显示无法判定。 */
+  function probeAttributionPanel(attr) {
+    if (!attr) return "";
+    const CONSISTENCY = {
+      match: { label: "与声称家族一致", tone: "green" },
+      mismatch: { label: "与声称家族不一致", tone: "amber" },
+      unknown: { label: "无法判定", tone: "gray" }
+    };
+    const c = CONSISTENCY[attr.consistency] || CONSISTENCY.unknown;
+    const maxD = Math.max(0.001, ...(attr.candidates || []).map(x => x.distance));
+    const rows = (attr.candidates || []).length
+      ? attr.candidates.map((x, i) => `<div class="probe-attr-cand" role="listitem">
+          <span class="a-rank mono">#${i + 1}</span>
+          <span class="a-name mono">${esc(x.name)}</span>
+          <span class="a-bar" aria-hidden="true"><span class="a-bar-fill${i === 0 ? " top" : ""}" style="width:${Math.round((1 - x.distance / maxD) * 100)}%"></span></span>
+          <span class="a-dist mono">d=${x.distance.toFixed(2)}</span>
+        </div>`).join("")
+      : `<p class="caption probe-attr-empty">与所有已知候选都不像（基线库外）；无法判定，不指认。</p>`;
+    return `<div class="probe-attr" aria-label="行为指纹归因">
+      <div class="probe-attr-head">
+        <span class="probe-attr-title">行为指纹归因</span>
+        <span class="tag ${c.tone}">${c.label}</span>
+        <span class="caption probe-attr-claimed">声称家族 · <span class="mono">${esc(attr.claimedFamily || "未知")}</span></span>
+        <span class="caption probe-attr-hint">最像的已知候选 · 概率性提示，不构成实锤</span>
+      </div>
+      <div class="probe-attr-list" role="list">${rows}</div>
+      ${attr.note ? `<p class="caption probe-attr-note">${esc(attr.note)}</p>` : ""}
+    </div>`;
+  }
+
   function probeSection() {
     const st = probeState();
     const providers = D.settings.providers.filter(p => p.enabled);
@@ -711,7 +745,7 @@
     const running = st.phase === "running";
     const done = st.probes.length;
     const pct = Math.round((done / PROBE_ITEMS.length) * 100);
-    const rows = `<div class="probe-rows" role="list" aria-label="十九针探针结果">${PROBE_ITEMS.map((_, i) => probeRow(i, st.probes[i], st)).join("")}</div>`;
+    const rows = `<div class="probe-rows" role="list" aria-label="二十针探针结果">${PROBE_ITEMS.map((_, i) => probeRow(i, st.probes[i], st)).join("")}</div>`;
     // 结果区：空闲 / 进行中（进度）/ 完成
     let resultBlock;
     if (running) {
@@ -772,6 +806,7 @@
         <span class="caption probe-run-hint">端点与密钥自动取自已保存配置，无需填写；历史保留最近 10 次。</span>
       </div>
       ${resultBlock}
+      ${!running && st.result ? probeAttributionPanel(st.result.attribution) : ""}
       ${rows}
     </div>`;
   }
@@ -804,9 +839,9 @@
       if (st.phase !== "running") return;
       st.done++;
       st.probes = fixture.probes.slice(0, st.done);
-      if (st.done >= 19) {
+      if (st.done >= PROBE_ITEMS.length) {
         st.phase = "done";
-        st.result = { score: fixture.score, grade: fixture.grade, verdict: fixture.verdict, channel: fixture.channel, summary: fixture.summary, duration: fixture.duration, modelId: model.id, modelName: model.name, providerName: provider.name };
+        st.result = { score: fixture.score, grade: fixture.grade, verdict: fixture.verdict, channel: fixture.channel, summary: fixture.summary, duration: fixture.duration, attribution: fixture.attribution || null, modelId: model.id, modelName: model.name, providerName: provider.name };
         st.histOpen = null;
       }
       refreshSettings();
@@ -822,7 +857,7 @@
     refreshSettings();
   }
 
-  // 选中历史：收起下拉，结果区与 19 针列表切到该次结果。
+  // 选中历史：收起下拉，结果区、归因面板与 20 针列表切到该次结果。
   function probePickHistory(id) {
     const st = probeState();
     const h = (D.settings.probeHistory || []).find(x => x.id === id);
@@ -832,7 +867,7 @@
     st.phase = "history";
     st.done = h.probes.length;
     st.probes = h.probes.slice();
-    st.result = { score: h.score, grade: h.grade, verdict: h.verdict, channel: h.channel, summary: h.summary, duration: h.duration, modelId: h.modelId, modelName: h.modelId, providerName: h.providerName };
+    st.result = { score: h.score, grade: h.grade, verdict: h.verdict, channel: h.channel, summary: h.summary, duration: h.duration, attribution: h.attribution || null, modelId: h.modelId, modelName: h.modelId, providerName: h.providerName };
     refreshSettings();
   }
 

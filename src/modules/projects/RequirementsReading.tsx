@@ -12,14 +12,26 @@ interface ReadState { state: "loading" | "ready" | "error"; text?: string; html?
 type Mode = "document" | "preview" | "map";
 /** UI-CR066：Vision 与下方 Epic／Feature／Story 同名同级，统一使用英文层级名。 */
 const kindNames = { vision: "Vision", epic: "Epic", feature: "Feature", story: "Story", bug: "Bug", file: "文件" };
+/** UI-CR073：导图新增下级的一级子类型（与 requirementMindmap 的 MINDMAP_CHILD_KIND 一致）。 */
+const MINDMAP_CHILD: Record<string, "epic" | "feature" | "story"> = { vision: "epic", epic: "feature", feature: "story" };
+const mindmapChildKind = (kind: string): api.RequirementNode["kind"] => MINDMAP_CHILD[kind] ?? "story";
 
-export function RequirementsReading({ project, sources, loading, errors, warnings, complete, revision, focusEntityId, onFocusDone, onReload, onNew, onEdit, onDelete, onAddChild, onDispatch, onOpenModel }: {
+export function RequirementsReading({ project, sources, loading, errors, warnings, complete, revision, focusEntityId, onFocusDone, onReload, onNew, onEdit, onDelete, onAddChild, onDispatch, onOpenModel,
+  panelEdit, panelEditForm, panelCreate, panelCreateForm, onPanelEdit, onPanelCreate }: {
   project: api.Project; sources: ReadingSource[]; loading: boolean; errors: string[]; warnings: string[]; complete: boolean; revision: number;
   focusEntityId?: string | null; onFocusDone?: () => void; onReload: () => void; onNew: () => void;
   onEdit: (node: api.RequirementNode) => void; onDelete: (node: api.RequirementNode) => void;
   onAddChild: (node: api.RequirementNode) => void; onDispatch: (node: api.RequirementNode) => void;
   /** UI-CR066 r2：打开数据库／领域设计模型文档（跳到「设计 → 数据库」）。 */
   onOpenModel?: (model: DesignModel) => void;
+  /** UI-CR073：导图右侧就地编辑面板（编辑态）。 */
+  panelEdit?: api.RequirementNode | null;
+  panelEditForm?: React.ReactNode;
+  /** UI-CR073：导图右侧就地新建面板（新建态，画布显示占位节点）。 */
+  panelCreate?: { parent: api.RequirementNode | null; kind: api.RequirementNode["kind"] } | null;
+  panelCreateForm?: React.ReactNode;
+  onPanelEdit?: (node: api.RequirementNode) => void;
+  onPanelCreate?: (parent: api.RequirementNode | null, kind: api.RequirementNode["kind"]) => void;
 }) {
   const scope = useId().replace(/:/g, "");
   const rootRef = useRef<HTMLDivElement>(null), readerRef = useRef<HTMLElement>(null);
@@ -231,85 +243,107 @@ export function RequirementsReading({ project, sources, loading, errors, warning
     reader.scrollTop += target.getBoundingClientRect().top - reader.getBoundingClientRect().top - 16;
     scrolls.current.set(readerKey, reader.scrollTop);
   };
-  return <div ref={rootRef} className="req-workspace" data-ui-version="UI-CR066-v1" data-mode={mode}>
+  /* UI-CR073（用户第 6、8 项）：页签条与工具栏上移到 .req-main 顶部，横贯「正文＋目录」，
+     不覆盖需求树；需求树/目录开关从左侧轨道移到各自标题行；面板隐藏后工具栏给出恢复入口；
+     两处底部说明与树底部刷新按钮删除，刷新移到「+」左侧。 */
+  const treeToggle = <PaneToggle pane={treePane} label="需求树" controls={`${scope}-tree`} className="icon-btn" aria-label="隐藏需求树" title="隐藏需求树"><Icon name="panelLeft" size={14} /></PaneToggle>;
+  const tocToggle = <PaneToggle pane={tocPane} label="章节目录" controls={`${scope}-toc`} className="icon-btn" aria-label="隐藏目录" title="隐藏目录"><Icon name="panelRight" size={14} /></PaneToggle>;
+  const restoreRest = <>
+    {showTree && !treePane.visible && <button className="btn sm" aria-label="显示需求树" title="显示需求树" onClick={() => treePane.setVisible(true)}><Icon name="panelLeft" size={14} />需求树</button>}
+    {!isMap && !tocPane.visible && <button className="btn sm" aria-label="显示目录" title="显示目录" onClick={() => tocPane.setVisible(true)}><Icon name="panelRight" size={14} />目录</button>}
+  </>;
+  const tabsBar = <div ref={reqTabsOverflow.barRef} className="req-tabs" role="tablist" aria-label="内部需求文档Tab">{tabs.map(key => { const source = byKey.get(key); if (!source) return null; return <div key={key} className={`req-tab ${active === key ? "on" : ""}`}><button role="tab" aria-selected={active === key} title={source.title} onClick={() => open(source)}><em className="req-tab-key">{source.kind === "vision" ? "Vision" : source.entityId ?? "文件"}</em><span className="req-tab-title">{source.title}</span></button><button className="req-tab-close" aria-label={`关闭${source.title}`} onClick={() => close(key)}><Icon name="x" size={14} /></button></div>; })}
+    <button {...reqTabsOverflow.moreProps}><TabMoreIcon /></button>
+  </div>;
+  return <div ref={rootRef} className="req-workspace" data-ui-version="UI-CR073-r1" data-mode={mode}>
     <nav className="req-rail" aria-label="需求工作区">
       {([["document", "fileText", "文档", "需求文档"], ["preview", "eye", "全文", "全文预览"], ["map", "workflow", "导图", "思维导图"]] as const).map(([value, icon, label, title]) => <button key={value} className={`rail-btn ${mode === value ? "on" : ""}`} aria-label={title} aria-pressed={mode === value} title={title} onClick={() => switchMode(value)}><Icon name={icon} size={18} /><span>{label}</span></button>)}
-      <div className="rail-sep" />{showTree && <PaneToggle pane={treePane} label="需求树" controls={`${scope}-tree`} className="rail-btn" aria-label="切换需求树"><Icon name="panelLeft" size={18} /><span>需求树</span></PaneToggle>}
-      {!isMap && <PaneToggle pane={tocPane} label="章节目录" controls={`${scope}-toc`} className="rail-btn" aria-label="切换章节目录"><Icon name="panelRight" size={18} /><span>目录</span></PaneToggle>}
     </nav>
     {showTree && <aside {...treePane.paneProps} id={`${scope}-tree`} className={`req-tree-pane ${treePane.paneProps.className}`}>
-      <div className="req-tree-head"><b>需求文档</b><button className="icon-btn" aria-label="新增Epic" title="新增Epic" onClick={onNew}><Icon name="plus" size={14} /></button></div>
+      <div className="req-tree-head">
+        <b className="head-title">需求文档</b>
+        <button className="icon-btn" aria-label="刷新需求源" title="刷新需求源" disabled={loading} onClick={onReload}><Icon name="refresh" size={14} /></button>
+        <button className="icon-btn" aria-label="新增Epic" title="新增Epic" onClick={onNew}><Icon name="plus" size={14} /></button>
+        {treeToggle}
+      </div>
       <label className="req-search"><Icon name="search" size={14} /><input className="input" aria-label="搜索需求" placeholder="搜索编号、标题" value={query} onChange={event => setQuery(event.target.value)} /></label>
       <div className="req-tree-scroll" role="tree" aria-label="需求树">{visibleRows.map(({ source, depth }) => <div key={source.key} className={`req-tree-row ${active === source.key ? "on" : ""}`} style={{ "--req-depth": matching ? 0 : depth } as React.CSSProperties} role="treeitem" aria-selected={active === source.key} aria-expanded={children.has(source.key) ? !collapsed.has(source.key) : undefined}>
         {children.has(source.key) ? <button className="req-tree-caret" aria-label={`${collapsed.has(source.key) ? "展开" : "折叠"}${source.title}`} onClick={() => toggle(source.key, setCollapsed)}><Icon name={collapsed.has(source.key) ? "chevronRight" : "chevronDown"} size={14} /></button> : <span className="req-tree-caret" />}
         <button className="req-tree-open" onClick={() => open(source)} title={`${source.entityId ?? "文件"} ${source.title}`}><span className={`req-kind ${source.kind}`}>{kindNames[source.kind]}</span><span className="ellipsis">{source.title}</span><small>{source.entityId ?? source.sourceUri}</small></button>
         {source.node && <button className="req-row-more" aria-label={`更多操作 ${source.entityId}`} aria-haspopup="menu" aria-expanded={menu?.source.key === source.key} onClick={event => { const r = event.currentTarget.getBoundingClientRect(); menuTrigger.current = event.currentTarget; setMenu(menu?.source.key === source.key ? null : { source, left: Math.max(8, Math.min(r.right - 184, window.innerWidth - 192)), top: Math.max(8, Math.min(r.bottom + 4, window.innerHeight - 196)) }); }}><Icon name="more" size={14} /></button>}
       </div>)}{loading && <Empty title="读取需求源…" />}{!loading && !visibleRows.length && <Empty title={matching ? "没有匹配的需求" : "暂无需求文档"} desc="搜索与折叠不会限制全文预览。" />}</div>
-      <div className="req-tree-foot">{sources.length} 个项目源文档{!complete && " · 清单未完整读取"}<br />搜索与折叠不影响全文预览<button className="btn sm" disabled={loading} onClick={onReload}>刷新</button></div>
       <ResizeHandle pane={treePane} label="需求树" controls={`${scope}-tree`} />
     </aside>}
-    {isMap && <RequirementMindmapPane sources={sources} models={models} vision={vision} zoom={zoom} collapsed={mapCollapsed} selectedId={mapSelected}
-      header={<>
-        <div ref={reqTabsOverflow.barRef} className="req-tabs" role="tablist" aria-label="内部需求文档Tab">{tabs.map(key => { const source = byKey.get(key); if (!source) return null; return <div key={key} className={`req-tab ${active === key ? "on" : ""}`}><button role="tab" aria-selected={active === key} title={source.title} onClick={() => open(source)}><em className="req-tab-key">{source.kind === "vision" ? "Vision" : source.entityId ?? "文件"}</em><span className="req-tab-title">{source.title}</span></button><button className="req-tab-close" aria-label={`关闭${source.title}`} onClick={() => close(key)}><Icon name="x" size={14} /></button></div>; })}
-          <button {...reqTabsOverflow.moreProps}><TabMoreIcon /></button>
+    <div className="req-main">
+      <div className="req-topbar">
+        {tabsBar}
+        {reqTabsOverflow.dropdownOpen && <TabMoreDropdown anchorRef={reqTabsOverflow.moreRef} items={reqTabItems} onPick={key => { const source = byKey.get(key); if (source) open(source); }} onClose={reqTabsOverflow.closeDropdown} />}
+        <div className="req-toolbar">
+          {isMap ? <span className="req-toolbar-caption">思维导图：Vision → Epic → Feature → Story</span> : isPreview ? <span className="req-toolbar-caption">全项目需求全文</span> : null}
+          <span className="spacer" />
+          {(showTree && !treePane.visible) || (!isMap && !tocPane.visible) ? <span className="req-pane-restore">{restoreRest}</span> : null}
+          {current?.node && <><button className="btn sm" onClick={() => onEdit(current.node!)}><Icon name="edit" size={14} />编辑</button>{current.kind !== "vision" && <button className="btn sm" onClick={() => onDispatch(current.node!)}><Icon name="play" size={14} />派发预检</button>}</>}
         </div>
-        <div className="req-toolbar"><span className="req-toolbar-caption">思维导图：Vision → Epic → Feature → Story</span><span className="spacer" />{current?.node && <><button className="btn sm" onClick={() => onEdit(current.node!)}><Icon name="edit" size={14} />编辑</button>{current.kind !== "vision" && <button className="btn sm" onClick={() => onDispatch(current.node!)}><Icon name="play" size={14} />派发预检</button>}</>}</div>
-      </>}
-      onZoom={setZoom}
-      onToggleFold={id => { if (id === "__all__") { setMapCollapsed(new Set()); return; } toggle(id, setMapCollapsed); }}
-      onSelect={setMapSelected}
-      onCloseDetail={() => setMapSelected(null)}
-      onAddChild={source => { if (source.node) onAddChild(source.node); }}
-      onOpenDoc={source => open(source)}
-      onOpenModel={model => onOpenModel?.(model)}
-      onFit={ratio => { if (ratio === 1) { setZoom(1); setMapCollapsed(new Set()); } else { setZoom(ratio); } }}
-    />}
-    <section className="req-document-pane" hidden={isMap}>
-      <div ref={reqTabsOverflow.barRef} className="req-tabs" role="tablist" aria-label="内部需求文档Tab">{tabs.map(key => { const source = byKey.get(key); if (!source) return null; return <div key={key} className={`req-tab ${active === key ? "on" : ""}`}><button role="tab" aria-selected={active === key} title={source.title} onClick={() => open(source)}><em className="req-tab-key">{source.kind === "vision" ? "Vision" : source.entityId ?? "文件"}</em><span className="req-tab-title">{source.title}</span></button><button className="req-tab-close" aria-label={`关闭${source.title}`} onClick={() => close(key)}><Icon name="x" size={14} /></button></div>; })}
-        <button {...reqTabsOverflow.moreProps}><TabMoreIcon /></button>
       </div>
-      {reqTabsOverflow.dropdownOpen && <TabMoreDropdown anchorRef={reqTabsOverflow.moreRef} items={reqTabItems} onPick={key => { const source = byKey.get(key); if (source) open(source); }} onClose={reqTabsOverflow.closeDropdown} />}
-      <div className="req-toolbar">{isPreview ? <span className="req-toolbar-caption">全项目需求全文</span> : null}<span className="spacer" />{current?.node && <><button className="btn sm" onClick={() => onEdit(current.node!)}><Icon name="edit" size={14} />编辑</button>{current.kind !== "vision" && <button className="btn sm" onClick={() => onDispatch(current.node!)}><Icon name="play" size={14} />派发预检</button>}</>}</div>
-      {errors.length > 0 && <div className="req-source-error" role="alert">{errors.map(error => <p key={error}>{error}</p>)}<button className="btn sm" disabled={loading} onClick={onReload}>重试源清单</button></div>}
-      <article ref={readerRef} className="req-reader kb-content" aria-label={isPreview ? "全部需求全文" : "当前需求详情"} onScroll={event => { if (canCapture()) scrolls.current.set(readerKey, event.currentTarget.scrollTop); }}>
-        {isPreview ? <><header className="req-preview-intro"><h1 id={`${scope}-preview`}>全项目需求 · 全文预览</h1><p>{sources.length} 个项目源文档，包含递归清单全部正文；不按搜索、折叠或派发资格过滤。{models.length > 0 && `另有 ${models.length} 个数据库／领域设计模型。`}{!complete && "源清单读取未完成，当前不能证明全文完整。"}</p>{warnings.map(warning => <p className="req-source-warning" key={warning}>{warning}</p>)}</header>{!vision && !loading && <div className="req-source-warning">项目没有可识别的真实愿景源；未合成愿景正文。</div>}{rows.map(row => document(row.source))}{models.length > 0 && <section className="req-entity req-model-entity" id={`${scope}-models`}>
-          <h2 id={`${scope}-models-title`}>数据库／领域设计模型</h2>
-          <p className="req-source">模型是项目级独立分支，与 Vision／Epic／Feature／Story 是关联关系，不是 Story 的第二父项。</p>
-          {models.map(model => <div key={model.id} className="req-model-item">
-            <div className="req-entity-meta"><span>模型</span><span>{model.id}</span></div>
-            <h3>{model.title}</h3>
-            <p className="req-source">项目源文件：{model.relPath}</p>
-            <button className="btn sm" onClick={() => onOpenModel?.(model)}><Icon name="database" size={14} />打开模型文档</button>
-          </div>)}
-        </section>}</>
-          : current ? document(current) : <Empty title={loading ? "读取需求源…" : "愿景源未提供"} desc={loading ? undefined : "项目没有可识别的真实愿景文件。请选择已有文档；不会把项目名称或合成目标当作愿景事实。"} action={!loading ? <button className="btn sm" onClick={onReload}>刷新源清单</button> : undefined} />}
-      </article>
-    </section>
-    {!isMap && <aside {...tocPane.paneProps} id={`${scope}-toc`} className={`req-toc-pane ${tocPane.paneProps.className}`}>
-      <ResizeHandle pane={tocPane} label="章节目录" controls={`${scope}-toc`} />
-      <div className="req-toc-head"><b>{isPreview ? "全文目录" : "本页目录"}</b><span>{isPreview ? previewOutline.length : toc.length}</span></div>
-      <div className="req-toc-list">
-        {isPreview ? previewOutlineVisible.map(item => {
-          const shut = tocCollapsed.has(item.id);
-          return <div key={item.id} className="req-toc-item" style={{ "--toc-level": item.depth + 1 } as React.CSSProperties}>
-            {item.hasKids ? <button className="req-toc-caret" aria-expanded={!shut} aria-label={`${shut ? "展开" : "折叠"}${item.title}`} onClick={() => toggleToc(item.id)}><Icon name={shut ? "chevronRight" : "chevronDown"} size={14} /></button> : <span className="req-toc-caret" />}
-            <button className="req-toc-link" onClick={() => jumpToEntity(item)} title={item.title}>
-              <span className={`req-kind ${item.kind}`}>{item.kind === "model" ? "模型" : kindNames[item.kind as keyof typeof kindNames] ?? item.kind}</span>
-              <span className="ellipsis">{item.title}</span>
-            </button>
-          </div>;
-        }) : tocVisible.map(heading => {
-          const shut = tocCollapsed.has(heading.id), foldable = tocHasKids(heading);
-          return <div key={heading.id} className="req-toc-item" style={{ "--toc-level": heading.level } as React.CSSProperties}>
-            {foldable ? <button className="req-toc-caret" aria-expanded={!shut} aria-label={`${shut ? "展开" : "折叠"}${heading.text}`} onClick={() => toggleToc(heading.id)}><Icon name={shut ? "chevronRight" : "chevronDown"} size={14} /></button> : <span className="req-toc-caret" />}
-            <button className="req-toc-link" onClick={() => jumpToHeading(heading.id)}>{heading.text}</button>
-          </div>;
-        })}
-        {!isPreview && !toc.length && <p className="muted small">无章节</p>}
-        {isPreview && !previewOutline.length && <p className="muted small">暂无需求条目</p>}
+      <div className="req-body">
+        {isMap
+          ? <RequirementMindmapPane sources={sources} models={models} vision={vision} zoom={zoom} collapsed={mapCollapsed} selectedId={mapSelected}
+              onZoom={setZoom}
+              onToggleFold={id => { if (id === "__all__") { setMapCollapsed(new Set()); return; } toggle(id, setMapCollapsed); }}
+              onSelect={setMapSelected}
+              onCloseDetail={() => setMapSelected(null)}
+              onAddChild={source => { if (source.node) onPanelCreate ? onPanelCreate(source.node, mindmapChildKind(source.kind)) : onAddChild(source.node); }}
+              onOpenDoc={source => open(source)}
+              onOpenModel={model => onOpenModel?.(model)}
+              onFit={ratio => { if (ratio === 1) { setZoom(1); setMapCollapsed(new Set()); } else { setZoom(ratio); } }}
+              onEditNode={source => { if (source.node) onPanelEdit ? onPanelEdit(source.node) : onEdit(source.node); }}
+              onReload={onReload}
+              creating={panelCreate ? { parentId: panelCreate.parent?.entityId ?? (vision?.entityId ?? vision?.key ?? ""), kind: panelCreate.kind, title: "" } : null}
+              createPanel={panelCreateForm}
+              editPanel={panelEdit && panelEditForm ? panelEditForm : null}
+            />
+          : <section className="req-document-pane" aria-label={isPreview ? "全部需求全文" : "当前需求详情"}>
+              {errors.length > 0 && <div className="req-source-error" role="alert">{errors.map(error => <p key={error}>{error}</p>)}<button className="btn sm" disabled={loading} onClick={onReload}>重试源清单</button></div>}
+              <article ref={readerRef} className="req-reader kb-content" aria-label={isPreview ? "全部需求全文" : "当前需求详情"} onScroll={event => { if (canCapture()) scrolls.current.set(readerKey, event.currentTarget.scrollTop); }}>
+                {isPreview ? <><header className="req-preview-intro"><h1 id={`${scope}-preview`}>全项目需求 · 全文预览</h1><p>{sources.length} 个项目源文档，包含递归清单全部正文；不按搜索、折叠或派发资格过滤。{models.length > 0 && `另有 ${models.length} 个数据库／领域设计模型。`}{!complete && "源清单读取未完成，当前不能证明全文完整。"}</p>{warnings.map(warning => <p className="req-source-warning" key={warning}>{warning}</p>)}</header>{!vision && !loading && <div className="req-source-warning">项目没有可识别的真实愿景源；未合成愿景正文。</div>}{rows.map(row => document(row.source))}{models.length > 0 && <section className="req-entity req-model-entity" id={`${scope}-models`}>
+                  <h2 id={`${scope}-models-title`}>数据库／领域设计模型</h2>
+                  <p className="req-source">模型是项目级独立分支，与 Vision／Epic／Feature／Story 是关联关系，不是 Story 的第二父项。</p>
+                  {models.map(model => <div key={model.id} className="req-model-item">
+                    <div className="req-entity-meta"><span>模型</span><span>{model.id}</span></div>
+                    <h3>{model.title}</h3>
+                    <p className="req-source">项目源文件：{model.relPath}</p>
+                    <button className="btn sm" onClick={() => onOpenModel?.(model)}><Icon name="database" size={14} />打开模型文档</button>
+                  </div>)}
+                </section>}</>
+                  : current ? document(current) : <Empty title={loading ? "读取需求源…" : "愿景源未提供"} desc={loading ? undefined : "项目没有可识别的真实愿景文件。请选择已有文档；不会把项目名称或合成目标当作愿景事实。"} action={!loading ? <button className="btn sm" onClick={onReload}>刷新源清单</button> : undefined} />}
+              </article>
+            </section>}
+        {!isMap && <aside {...tocPane.paneProps} id={`${scope}-toc`} className={`req-toc-pane ${tocPane.paneProps.className}`}>
+          <ResizeHandle pane={tocPane} label="章节目录" controls={`${scope}-toc`} />
+          <div className="req-toc-head"><b className="head-title">{isPreview ? "全文目录" : "本页目录"}</b><span>{isPreview ? previewOutline.length : toc.length}</span>{tocToggle}</div>
+          <div className="req-toc-list">
+            {isPreview ? previewOutlineVisible.map(item => {
+              const shut = tocCollapsed.has(item.id);
+              return <div key={item.id} className="req-toc-item" style={{ "--toc-level": item.depth + 1 } as React.CSSProperties}>
+                {item.hasKids ? <button className="req-toc-caret" aria-expanded={!shut} aria-label={`${shut ? "展开" : "折叠"}${item.title}`} onClick={() => toggleToc(item.id)}><Icon name={shut ? "chevronRight" : "chevronDown"} size={14} /></button> : <span className="req-toc-caret" />}
+                <button className="req-toc-link" onClick={() => jumpToEntity(item)} title={item.title}>
+                  <span className={`req-kind ${item.kind}`}>{item.kind === "model" ? "模型" : kindNames[item.kind as keyof typeof kindNames] ?? item.kind}</span>
+                  <span className="ellipsis">{item.title}</span>
+                </button>
+              </div>;
+            }) : tocVisible.map(heading => {
+              const shut = tocCollapsed.has(heading.id), foldable = tocHasKids(heading);
+              return <div key={heading.id} className="req-toc-item" style={{ "--toc-level": heading.level } as React.CSSProperties}>
+                {foldable ? <button className="req-toc-caret" aria-expanded={!shut} aria-label={`${shut ? "展开" : "折叠"}${heading.text}`} onClick={() => toggleToc(heading.id)}><Icon name={shut ? "chevronRight" : "chevronDown"} size={14} /></button> : <span className="req-toc-caret" />}
+                <button className="req-toc-link" onClick={() => jumpToHeading(heading.id)}>{heading.text}</button>
+              </div>;
+            })}
+            {!isPreview && !toc.length && <p className="muted small">无章节</p>}
+            {isPreview && !previewOutline.length && <p className="muted small">暂无需求条目</p>}
+          </div>
+        </aside>}
       </div>
-      <div className="req-tree-foot">{isPreview ? "Vision → Epic → Feature → Story 四级" : "目录可折叠子章节"}<br />项目文件为正文权威</div>
-    </aside>}
+    </div>
     {menu && <div ref={menuRef} className="req-menu" role="menu" style={{ left: menu.left, top: menu.top }}>{["epic", "feature"].includes(menu.source.kind) && <button role="menuitem" onClick={() => menuAction(onAddChild)}><Icon name="plus" size={14} />{menu.source.kind === "epic" ? "新增特性" : "新增用户故事"}</button>}<button role="menuitem" onClick={() => menuAction(onEdit)}>编辑</button><button role="menuitem" disabled={menu.source.kind === "vision"} onClick={() => menuAction(onDispatch)}>派发预检</button><div className="menu-sep" /><button role="menuitem" className="danger" disabled={menu.source.kind === "vision"} onClick={() => menuAction(onDelete)}>删除</button></div>}
   </div>;
 }

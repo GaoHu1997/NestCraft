@@ -4,7 +4,6 @@
 //! （ADR-001 / DB-FEAT-001 一致性要求）。
 
 use crate::models::FileNode;
-use tauri::Manager;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -268,15 +267,13 @@ fn parse_directory_choice(bytes: &[u8]) -> Result<Option<String>, String> {
     }
 }
 
-/// 在应用数据目录下确保子目录存在并返回规范绝对路径。
-/// 仅限 app_data 之内（拒绝 traversal），用于办公演示项目的容器目录（CR-043 / AC-STORY-065-10）；
+/// 在统一数据根下确保子目录存在并返回规范绝对路径。
+/// 仅限数据根之内（拒绝 traversal），用于办公演示项目的容器目录（CR-043 / AC-STORY-065-10）；
 /// 树内容一律不落盘，此命令只创建空容器。
 #[tauri::command]
-pub fn app_data_ensure_dir(app: tauri::AppHandle, rel: String) -> Result<String, String> {
-    let base = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("应用数据目录不可用：{}", e))?;
+pub fn app_data_ensure_dir(_app: tauri::AppHandle, rel: String) -> Result<String, String> {
+    let base = crate::storage_layout::category("office")
+        .map_err(|e| format!("数据目录不可用：{}", e))?;
     let rel_trim = rel.trim().trim_start_matches(['/', '\\']).to_string();
     if rel_trim.is_empty() {
         return Err("子目录不能为空".into());

@@ -5,7 +5,7 @@ use crate::db;
 use crate::models::{now_ms, new_id, KnowledgeHit, KnowledgeLibrary, LibraryGrant, NoteContent, NoteNode};
 use rusqlite::{Connection, OptionalExtension};
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[path = "knowledge_files.rs"]
 mod files;
@@ -17,7 +17,7 @@ mod verified;
 pub mod snapshot;
 #[path = "kb_transfers.rs"]
 pub mod transfers;
-pub use files::{ExportResult, KnowledgeFileData, KnowledgeFileInfo, UploadItem, UploadResult};
+pub use files::{ExportResult, ImportOutcome, KnowledgeFileData, KnowledgeFileInfo, RecycleItem, UploadItem, UploadResult};
 
 fn enabled_root(conn: &Connection, id: &str) -> Result<files::SafeRoot, String> {
     let source: String = conn.query_row(
@@ -234,14 +234,62 @@ pub fn kb_list() -> Result<Vec<KnowledgeLibrary>, String> {
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
     let mut stmt = conn.prepare(
-        "SELECT l.id,l.name,l.sourceKind,l.sourceRef,l.enabled,l.revision,l.icon,l.iconColor,
+        "SELECT l.id,l.name,l.sourceKind,l.sourceRef,l.enabled,l.revision,l.icon,l.iconColor,l.owner,l.description,
         (SELECT COUNT(*) FROM knowledge_note_index n WHERE n.libraryId=l.id)
         FROM knowledge_library l ORDER BY l.createdAt",
     ).map_err(|e| e.to_string())?;
     let rows = stmt.query_map([], |r| Ok(KnowledgeLibrary { id:r.get(0)?,name:r.get(1)?,source_kind:r.get(2)?,source_ref:r.get(3)?,
-        enabled:r.get::<_,i64>(4)? != 0,revision:r.get(5)?,icon:r.get(6)?,icon_color:r.get(7)?,note_count:r.get(8)? }))
+        enabled:r.get::<_,i64>(4)? != 0,revision:r.get(5)?,icon:r.get(6)?,icon_color:r.get(7)?,owner:r.get(8)?,description:r.get(9)?,note_count:r.get(10)? }))
         .map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string());
     rows
+}
+
+/// CR-072：更新知识库的可编辑元信息（名称/负责人/描述）；None=保持不变。
+#[tauri::command]
+fn provision_library_dir(knowledge_root: &Path, name: &str) -> Result<PathBuf, String> {
+    let name = name.trim();
+    if name.is_empty() { return Err("知识库名称不能为空".into()); }
+    files::validate_name(name)?;
+    std::fs::create_dir_all(knowledge_root).map_err(|_| "无法创建知识库根目录".to_string())?;
+    let dir = knowledge_root.join(name);
+    if dir.exists() { return Err("同名知识库目录已存在，未覆盖".into()); }
+    std::fs::create_dir(&dir).map_err(|_| "无法创建知识库目录".to_string())?;
+    Ok(dir)
+}
+#[tauri::command]
+pub fn kb_update_meta(id: String, name: Option<String>, owner: Option<String>, description: Option<String>) -> Result<(), String> {
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    if let Some(n) = name {
+        let n = n.trim();
+        if n.is_empty() { return Err("知识库名称不能为空".into()); }
+        let source: String = conn.query_row("SELECT sourceRef FROM knowledge_library WHERE id=?1", [&id], |row| row.get(0)).map_err(|_| "知识库不存在".to_string())?;
+        let knowledge = crate::commands::general::knowledge_root(conn)?;
+        let source_path = PathBuf::from(&source);
+        if source_path.parent() == Some(knowledge.as_path()) && source_path.file_name().and_then(|item| item.to_str()) != Some(n) {
+            files::validate_name(n)?;
+            let dest = knowledge.join(n);
+            if dest.exists() { return Err("同名知识库目录已存在，未改名".into()); }
+            std::fs::rename(&source_path, &dest).map_err(|_| "无法按新名称移动知识库目录，未改名".to_string())?;
+            conn.execute("UPDATE knowledge_library SET sourceRef=?2 WHERE id=?1", rusqlite::params![id, dest.to_string_lossy().as_ref()]).map_err(|e| e.to_string())?;
+        }
+        conn.execute("UPDATE knowledge_library SET name=?2 WHERE id=?1", rusqlite::params![id, n]).map_err(|e| e.to_string())?;
+    }
+    if let Some(o) = owner {
+        conn.execute("UPDATE knowledge_library SET owner=?2 WHERE id=?1", rusqlite::params![id, o.trim()]).map_err(|e| e.to_string())?;
+    }
+    if let Some(d) = description {
+        conn.execute("UPDATE knowledge_library SET description=?2 WHERE id=?1", rusqlite::params![id, d]).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+#[tauri::command]
+pub fn kb_create_library(name: String) -> Result<String, String> {
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    let root = crate::commands::general::knowledge_root(conn)?;
+    let dir = provision_library_dir(&root, name.trim())?;
+    kb_save_inner(name.trim(), &dir.to_string_lossy())
 }
 #[tauri::command]
 pub fn kb_save(app: tauri::AppHandle, name: String, source_ref: String) -> Result<String, String> {
@@ -406,6 +454,128 @@ pub fn kb_save_markdown(id: String, note_id: String, expected_hash: String, cont
     files::save_markdown(&mut root,&rel,&expected_hash,&content)?;
     Ok(saved_note(conn,&id,&rel,content,Some(&note_id)))
 }
+fn rich_note(rel: &str, content: String, hash: String) -> NoteContent {
+    NoteContent { note_id: files::file_id(rel), title: filename(rel), relative_uri: rel.into(), hash: Some(hash), content, index_error: None }
+}
+/// 富文本只落盘，不调用索引发布。AI 网关仍只读 Markdown。
+#[tauri::command]
+pub fn kb_create_richtext(id: String, parent_relative_uri: String, name: String, content: String) -> Result<NoteContent, String> {
+    let _mutation = files::MUTATION.lock().map_err(|_| "知识操作锁不可用")?;
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    let rel = files::create_richtext(&mut enabled_root(conn,&id)?,&parent_relative_uri,&name,&content)?;
+    Ok(rich_note(&rel, content.clone(), files::hash(content.as_bytes())))
+}
+#[tauri::command]
+pub fn kb_save_richtext(id: String, note_id: String, expected_hash: String, content: String) -> Result<NoteContent, String> {
+    let _mutation = files::MUTATION.lock().map_err(|_| "知识操作锁不可用")?;
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    let mut root = enabled_root(conn,&id)?;
+    let (rel,_) = resolve(conn,&mut root,&id,&note_id)?;
+    let hash = files::save_richtext(&mut root,&rel,&expected_hash,&content)?;
+    Ok(rich_note(&rel, content, hash))
+}
+#[tauri::command]
+pub fn kb_rename_doc(id: String, relative_uri: String, name: String) -> Result<NoteNode, String> {
+    let _mutation = files::MUTATION.lock().map_err(|_| "知识操作锁不可用")?;
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    files::rename_entry(&mut enabled_root(conn,&id)?,&relative_uri,&name)
+}
+#[tauri::command]
+pub fn kb_delete_doc(id: String, relative_uri: String) -> Result<(), String> {
+    let _mutation = files::MUTATION.lock().map_err(|_| "知识操作锁不可用")?;
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    files::delete_entry(&mut enabled_root(conn,&id)?,&relative_uri)
+}
+#[tauri::command]
+pub fn kb_move_doc(id: String, relative_uri: String, parent_relative_uri: String) -> Result<NoteNode, String> {
+    let _mutation = files::MUTATION.lock().map_err(|_| "知识操作锁不可用")?;
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    files::move_entry(&mut enabled_root(conn,&id)?,&relative_uri,&parent_relative_uri)
+}
+fn recycle_store(conn: &Connection) -> Result<PathBuf, String> {
+    let dir = crate::commands::general::resolve_data_dir(conn)?.join("recycle");
+    std::fs::create_dir_all(&dir).map_err(|_| "无法创建回收站目录".to_string())?;
+    Ok(dir)
+}
+fn note_imported(conn: &Connection, id: &str, rel: &str) {
+    if !files::markdown(Path::new(rel)) { return; }
+    let mut root = match enabled_root(conn, id) { Ok(root) => root, Err(_) => return };
+    let Ok((content, _)) = files::read_text(&mut root, rel) else { return; };
+    let _ = saved_note(conn, id, rel, content, None);
+}
+#[tauri::command]
+pub async fn kb_import_docs(id: String, parent_relative_uri: String) -> Result<ImportOutcome, String> {
+    let mut initial = {
+        let guard = db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        enabled_root(conn, &id)?
+    };
+    initial.parent(&parent_relative_uri)?;
+    let paths = files::picker(false).await?;
+    let Some(paths) = paths else { return Ok(ImportOutcome { created: vec![], warnings: vec!["已取消导入，没有写入文件".into()] }); };
+    if paths.len() != 1 { return Err("一次只能导入一个 MD 或 ZIP 文件".into()); }
+    let _mutation = files::MUTATION.lock().map_err(|_| "知识操作锁不可用")?;
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    initial.verify()?;
+    if initial.path != enabled_root(conn, &id)?.path { return Err("选择期间知识库根发生变化，未导入".into()); }
+    let outcome = files::import_file(&mut enabled_root(conn, &id)?, &parent_relative_uri, &paths[0])?;
+    for rel in &outcome.created { note_imported(conn, &id, rel); }
+    Ok(outcome)
+}
+#[tauri::command]
+pub fn kb_copy_doc(id: String, relative_uri: String, parent_relative_uri: String) -> Result<NoteNode, String> {
+    let _mutation = files::MUTATION.lock().map_err(|_| "知识操作锁不可用")?;
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    let node = files::copy_entry(&mut enabled_root(conn, &id)?, &relative_uri, &parent_relative_uri)?;
+    note_imported(conn, &id, &node.relative_uri);
+    Ok(node)
+}
+#[tauri::command]
+pub fn kb_recycle_doc(app: tauri::AppHandle, id: String, relative_uri: String) -> Result<RecycleItem, String> {
+    let _mutation = files::MUTATION.lock().map_err(|_| "知识操作锁不可用")?;
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    let item = files::recycle_put(&recycle_store(conn)?, &id, &mut enabled_root(conn, &id)?, &relative_uri)?;
+    scan_notes(conn, &id, &mut enabled_root(conn, &id)?)?;
+    Ok(item)
+}
+#[tauri::command]
+pub fn kb_recycle_list(_app: tauri::AppHandle, id: String) -> Result<Vec<RecycleItem>, String> {
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    files::recycle_list(&recycle_store(conn)?, &id)
+}
+#[tauri::command]
+pub fn kb_recycle_restore(app: tauri::AppHandle, id: String, recycle_id: String) -> Result<NoteNode, String> {
+    let _mutation = files::MUTATION.lock().map_err(|_| "知识操作锁不可用")?;
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    let node = files::recycle_restore(&recycle_store(conn)?, &id, &mut enabled_root(conn, &id)?, &recycle_id)?;
+    scan_notes(conn, &id, &mut enabled_root(conn, &id)?)?;
+    Ok(node)
+}
+#[tauri::command]
+pub fn kb_recycle_purge(_app: tauri::AppHandle, id: String, recycle_id: String) -> Result<(), String> {
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    files::recycle_purge(&recycle_store(conn)?, &id, &recycle_id)
+}
+#[tauri::command]
+pub fn kb_write_media(id: String, parent_relative_uri: String, name: String, base64_data: String) -> Result<String, String> {
+    let _mutation = files::MUTATION.lock().map_err(|_| "知识操作锁不可用")?;
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, base64_data.trim())
+        .map_err(|_| "附件内容不是有效 Base64".to_string())?;
+    files::write_media(&mut enabled_root(conn, &id)?, &parent_relative_uri, &name, &bytes)
+}
 #[tauri::command]
 pub async fn kb_file_info(id: String, note_id: String) -> Result<KnowledgeFileInfo, String> {
     performance::blocking(move |conn| {
@@ -435,15 +605,25 @@ fn upload_selected(conn: &Connection, id: &str, parent: &str, paths: Option<Vec<
     for source in paths {
         let name = source.file_name().unwrap_or_default().to_string_lossy().to_string();
         let mut item = UploadItem { name,success:false,note_id:None,relative_uri:None,error:None,index_error:None };
-        match files::upload_one(&mut root,parent,&source) {
+        let suffix = item.name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+        let placed = if suffix == "zip" {
+            files::import_file(&mut root, parent, &source).map(|outcome| outcome.created)
+        } else {
+            // MD 与其它文件一律按原件复制；有效文本再发布索引，无效编码保留原件。
+            files::upload_one(&mut root, parent, &source).map(|rel| vec![rel])
+        };
+        match placed {
             Err(error) => item.error = Some(error),
-            Ok(rel) => {
-                item.success = true;
-                item.note_id = Some(files::file_id(&rel));
-                item.relative_uri = Some(rel.clone());
-                // CR-030-D1：文本格式（md/markdown/txt/log/text/json/csv）同路径发布切片；
-                // 其它格式仍只复制原件，扫描时落 metadata 索引（文件名/路径可搜）。
-                if files::markdown(Path::new(&rel)) || files::indexable_text(Path::new(&rel)) {
+            Ok(rels) => {
+                item.success = !rels.is_empty();
+                if let Some(rel) = rels.first() {
+                    item.note_id = Some(files::file_id(rel));
+                    item.relative_uri = Some(rel.clone());
+                }
+                if rels.is_empty() { item.error = Some("没有写入文件".into()); }
+                // 文本格式沿用既有上传后的索引发布；Office、PDF、图片只保留原件。
+                for rel in rels {
+                    if !(files::markdown(Path::new(&rel)) || files::indexable_text(Path::new(&rel))) { continue; }
                     match files::read_text(&mut root,&rel) {
                         Ok((content,_)) => match publish_note(conn,id,&rel,&content) {
                             Ok(note_id) => item.note_id = Some(note_id),
@@ -825,6 +1005,116 @@ mod tests {
         assert_eq!(fs::read(f.path.join(rel)).unwrap(),b"# child");
     }
     #[test]
+    fn knowledge_doc_ops_match_folder_markdown_and_richtext() {
+        let f = Fixture::new();
+        let mut root = f.root();
+        let folder = files::create_folder(&mut root, "", "目录").unwrap();
+        let md = files::create_richtext(&mut root, "目录", "新建文档.html", "<p>正文</p>").unwrap();
+        assert_eq!(md, "目录/新建文档.html");
+        assert!(files::create_markdown(&mut root, "目录", "新建文档.md", "# 标题").is_ok());
+        assert!(files::create_richtext(&mut root, "", "bad.md", "<p>x</p>").is_err());
+        let renamed = files::rename_entry(&mut root, "目录/新建文档.html", "改名.html").unwrap();
+        assert_eq!(renamed.relative_uri, "目录/改名.html");
+        assert!(f.path.join("目录/改名.html").is_file());
+        let moved = files::move_entry(&mut root, "目录/新建文档.md", "").unwrap();
+        assert_eq!(moved.relative_uri, "新建文档.md");
+        assert!(files::move_entry(&mut root, "目录", "目录").is_err() || files::move_entry(&mut root, &folder.relative_uri, &format!("{}/子", folder.relative_uri)).is_err());
+        files::create_folder(&mut root, "目录", "子").unwrap();
+        assert!(files::move_entry(&mut root, "目录", "目录/子").unwrap_err().contains("自身"));
+        files::delete_entry(&mut root, "目录/改名.html").unwrap();
+        assert!(!f.path.join("目录/改名.html").exists());
+        files::delete_entry(&mut root, "目录").unwrap();
+        assert!(!f.path.join("目录").exists());
+        assert!(f.path.join("新建文档.md").is_file());
+        let mut root = f.root();
+        let copied = files::copy_entry(&mut root, "新建文档.md", "").unwrap();
+        assert!(copied.relative_uri.contains("副本"));
+        assert!(f.path.join(&copied.relative_uri).is_file());
+        let store = f.path.join("recycle-store");
+        fs::create_dir(&store).unwrap();
+        let parked = files::recycle_put(&store, "kb", &mut root, "新建文档.md").unwrap();
+        assert!(!f.path.join("新建文档.md").exists());
+        assert_eq!(files::recycle_list(&store, "kb").unwrap().len(), 1);
+        let restored = files::recycle_restore(&store, "kb", &mut root, &parked.id).unwrap();
+        assert_eq!(restored.relative_uri, "新建文档.md");
+        assert!(f.path.join("新建文档.md").is_file());
+        let outside = store.join("外来.md");
+        fs::write(&outside, "# 导入").unwrap();
+        let imported = files::import_file(&mut root, "", &outside).unwrap();
+        assert_eq!(imported.created, vec!["外来.md".to_string()]);
+        let rejected = store.join("笔记.txt");
+        fs::write(&rejected, "no").unwrap();
+        assert!(files::import_file(&mut root, "", &rejected).unwrap_err().contains("暂时不支持txt格式文件的导入"));
+        assert!(read_note(&f.conn, "kb", &files::file_id("新建文档.md")).is_ok());
+        fs::write(f.path.join("page.html"), "<p>x</p>").unwrap();
+        assert!(read_note(&f.conn, "kb", &files::file_id("page.html")).is_err());
+        let zip_path = store.join("资料.zip");
+        fs::write(&zip_path, stored_zip(&[
+            ("说明.md", "# 导入".as_bytes()),
+            ("目录/内.md", b"# inner"),
+            ("目录/图.png", b"PNG"),
+            ("跳过.txt", b"no"),
+        ])).unwrap();
+        let mut root = f.root();
+        let zipped = files::import_file(&mut root, "", &zip_path).unwrap();
+        assert!(zipped.created.iter().any(|rel| rel == "说明.md"));
+        assert!(zipped.created.iter().any(|rel| rel == "目录/内.md"));
+        assert!(zipped.created.iter().any(|rel| rel == "目录/图.png"));
+        assert!(zipped.created.iter().any(|rel| rel == "跳过.txt"));
+        assert_eq!(fs::read(f.path.join("说明.md")).unwrap(), "# 导入".as_bytes());
+    }
+    fn stored_zip(files: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut local = Vec::new();
+        let mut central = Vec::new();
+        for (name, data) in files {
+            let name = name.as_bytes();
+            let offset = local.len() as u32;
+            local.extend_from_slice(&0x04034b50u32.to_le_bytes());
+            local.extend_from_slice(&20u16.to_le_bytes());
+            local.extend_from_slice(&0x0800u16.to_le_bytes());
+            local.extend_from_slice(&0u16.to_le_bytes());
+            local.extend_from_slice(&0u16.to_le_bytes());
+            local.extend_from_slice(&0u16.to_le_bytes());
+            local.extend_from_slice(&0u32.to_le_bytes());
+            local.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            local.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            local.extend_from_slice(&(name.len() as u16).to_le_bytes());
+            local.extend_from_slice(&0u16.to_le_bytes());
+            local.extend_from_slice(name);
+            local.extend_from_slice(data);
+            central.extend_from_slice(&0x02014b50u32.to_le_bytes());
+            central.extend_from_slice(&20u16.to_le_bytes());
+            central.extend_from_slice(&20u16.to_le_bytes());
+            central.extend_from_slice(&0x0800u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u32.to_le_bytes());
+            central.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            central.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            central.extend_from_slice(&(name.len() as u16).to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u32.to_le_bytes());
+            central.extend_from_slice(&offset.to_le_bytes());
+            central.extend_from_slice(name);
+        }
+        let mut out = local;
+        let central_at = out.len() as u32;
+        out.extend_from_slice(&central);
+        out.extend_from_slice(&0x06054b50u32.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&(files.len() as u16).to_le_bytes());
+        out.extend_from_slice(&(files.len() as u16).to_le_bytes());
+        out.extend_from_slice(&(central.len() as u32).to_le_bytes());
+        out.extend_from_slice(&central_at.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out
+    }
+    #[test]
     fn knowledge_empty_deep_directories_and_binary_tree_are_real() {
         let f = Fixture::new();
         fs::create_dir_all(f.path.join("a/b/c/d/e")).unwrap();
@@ -896,10 +1186,12 @@ mod tests {
         assert!(!collision.items[0].success && collision.items[0].error.as_ref().unwrap().contains("同名"));
         assert_eq!(fs::read(f.path.join("raw.bin")).unwrap(),bytes);
         assert!(upload_selected(&f.conn,"kb","",Some(vec![source.path.join("raw.bin");21])).is_err());
+        // 本机传输不设容量门槛：上传按原件流式复制，超过只读文本上限的文件照样落盘。
         let big = fs::File::create(source.path.join("big.bin")).unwrap();
-        big.set_len(files::FILE_LIMIT+1).unwrap(); drop(big);
+        big.set_len(files::TEXT_LIMIT+1).unwrap(); drop(big);
         let result = upload_selected(&f.conn,"kb","",Some(vec![source.path.join("big.bin")])).unwrap();
-        assert!(!result.items[0].success && !f.path.join("big.bin").exists());
+        assert!(result.items[0].success);
+        assert_eq!(fs::metadata(f.path.join("big.bin")).unwrap().len(), files::TEXT_LIMIT+1);
         assert!(files::create_markdown(&mut f.root(),"","huge.md",&"x".repeat(files::TEXT_LIMIT as usize+1)).is_err());
         let text = fs::File::create(f.path.join("huge.txt")).unwrap(); text.set_len(files::TEXT_LIMIT+1).unwrap(); drop(text);
         assert!(files::read_text(&mut f.root(),"huge.txt").is_err());
@@ -916,10 +1208,15 @@ mod tests {
         let png = base64::Engine::decode(&base64::engine::general_purpose::STANDARD,"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jPrsAAAAASUVORK5CYII=").unwrap();
         fs::write(f.path.join("safe.png"),&png).unwrap();
         assert!(files::data(&mut f.root(),"safe.png","png","png").unwrap().base64.is_some());
-        for filename in ["original.pdf","macro.docm","book.xlsx","page.html","vector.svg","bundle.zip"] {
+        fs::write(f.path.join("page.html"), "<p>rich</p>").unwrap();
+        let html = files::data(&mut f.root(),"page.html","id","page.html").unwrap();
+        assert_eq!(html.info.kind, "html");
+        assert!(html.info.preview_supported && html.info.editable);
+        assert_eq!(html.text.as_deref(), Some("<p>rich</p>"));
+        for filename in ["original.pdf","macro.docm","book.xlsx","vector.svg","bundle.zip"] {
             fs::write(f.path.join(filename),b"original bytes").unwrap();
             let data = files::data(&mut f.root(),filename,"id",filename).unwrap();
-            assert!(!data.info.preview_supported && !data.info.editable);
+            assert!(!data.info.preview_supported && !data.info.editable, "{filename}");
             assert!(data.text.is_none() && data.base64.is_none());
         }
     }

@@ -1,7 +1,13 @@
-.chat-working { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; color: var(--muted); font-size: 11.5px; }
-.chat-working-logo { position: relative; width: 44px; height: 44px; display: inline-grid; place-items: center; flex: 0 0 auto; }
-.chat-working-canvas { display: block; width: 44px; height: 44px; }
-.chat-working-fallback { width: 22px; height: 22px; object-fit: contain; opacity: .9; }
+/* UI-CR074-v1 / WP-074-F010：工作标识与文字同高，不扩展公共会话布局。 */
+.chat-working { display: inline-flex; align-items: center; gap: 6px; min-height: 20px; color: var(--muted); font-size: 11.5px; }
+.chat-working-logo { position: relative; width: 14px; height: 14px; display: inline-grid; place-items: center; flex: 0 0 auto; }
+.chat-working-canvas { display: block; grid-area: 1 / 1; width: 14px; height: 14px; }
+.chat-working-fallback { grid-area: 1 / 1; width: 14px; height: 14px; object-fit: contain; opacity: .9; }
 .chat-working-label { color: var(--ink-2, var(--ink)); font-weight: 550; letter-spacing: .01em; }
 .chat-working-duration { color: var(--muted-2, var(--muted)); font-variant-numeric: tabular-nums; }
 @media (prefers-reduced-motion: reduce) { .chat-working-canvas { opacity: .95; } }
+
+/* 只覆盖会话textarea内层焦点框；高特异度不依赖CSS导入顺序。
+   UI-SCROLL-001沿用原生overflow与700ms共享机制，不改宽度、选区或其他按钮focus。 */
+.chat-composer textarea.chat-ta:focus,
+.chat-composer textarea.chat-ta:focus-visible { outline: none; box-shadow: none; caret-color: var(--primary, var(--accent)); }

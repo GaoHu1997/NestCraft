@@ -104,7 +104,9 @@ https://github.com/GaoHu1997/NestCraft/releases/latest/download/nestcraft-win64.
 
 - 使用 `ureq::AgentBuilder`，连接超时 10s、单次读超时 30s；在 `tauri::async_runtime::spawn_blocking` 中执行，避免阻塞 UI 线程。
 - 下载候选按 §2.2.1 展开：主地址若为 GitHub 直链，先直连、再逐个加速镜像，最后追加清单声明的 `mirrors`；去重后逐个尝试，任一成功即用。单个候选失败（含大小或哈希不符）立即删除 `.part` 并切下一个。
-- 暂存目录 `<app_data>/update/`；临时文件 `update.part`，落位名 `update-staged.exe`（两形态共用，内容由清单决定）。
+- 暂存目录按形态分化：免安装版 `<exe_dir>/.update/`，与 exe 同卷；安装版 `<app_data>/update/`（安装包只被启动、不移动文件）。临时文件 `update.part`，落位名 `update-staged.exe`（两形态共用，内容由清单决定）。
+- **暂存必须与 exe 同卷**：Windows 的 `MoveFile` 不支持跨卷，旧实现把暂存包统一放 `%APPDATA%`（系统盘），程序装在 D 盘等其它卷时落位必然返回 `ERROR_NOT_SAME_DEVICE`（`os error 17`）并回滚（BUG-015）。免安装版因此把暂存目录放在程序目录下，落位退化为同卷改名，不再依赖复制大文件。
+- 暂存目录须可写：免安装版在程序目录不可写时于创建暂存目录阶段返回明确错误，不下载完成才失败。
 - 分块 64 KiB 写入，累计 `done`、按 1 秒窗口计算 `speed`；每块后更新全局进度并 `emit("update-progress", ...)`；前端同时以 700ms 轮询 `update_status` 兜底。
 - 下载完成：若清单 `size>0` 且实际大小不等 → 失败；计算 SHA-256，不匹配 → 删除 `.part`、失败；匹配 → `rename` 为 `update-staged.exe`，状态 `ready`，写入 `staged.json`（版本、sha256、形态）供重启后恢复。
 - 同一时刻只允许一个下载（`AtomicBool`）；重复触发返回「已有下载任务进行中」。
@@ -116,9 +118,9 @@ https://github.com/GaoHu1997/NestCraft/releases/latest/download/nestcraft-win64.
 
 1. 安装前重新校验 `update-staged.exe` 的 SHA-256。
 2. 当前 exe 改名为 `<name>.exe.old`（已存在则 `.old-2`…`.old-9`，再冲突用随机后缀）；改名失败按 100/200/400/800/1500ms 退避重试。
-3. `update-staged.exe` 改名为当前 exe；失败则把旧版改回原名并返回错误。
+3. 把 `<exe_dir>/.update/update-staged.exe` 改名为当前 exe：暂存与 exe 同卷，是纯改名而非跨卷移动；失败则把旧版改回原名并返回错误。
 4. 以分离进程启动新 exe（Windows：`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`），设置 `NESTCRAFT_UPDATED=1`。
-5. `app.exit(0)`。新版本启动时清理 `*.old`、`.part`、`staged.json`。
+5. `app.exit(0)`。新版本启动时清理 `<exe>.old`／`.old-N`、`.part`，以及暂存包已落位后失效的 `staged.json`；仍有效的暂存包保留。同时清理迁移前遗留在应用数据目录的暂存文件。
 
 **安装版**
 
@@ -127,7 +129,7 @@ https://github.com/GaoHu1997/NestCraft/releases/latest/download/nestcraft-win64.
 3. 启动成功后 `app.exit(0)`；由安装包替换文件、更新卸载登记并启动新版本。
 4. 启动失败：保留安装包与 `ready` 状态，提示用户可重试或手动运行安装包。
 
-**共同约束**：失败不删除暂存包；不修改用户项目、知识、会话与数据库；不自动重试安装。
+**共同约束**：失败不删除暂存包；不修改用户项目、知识、会话与数据库；不自动重试安装；启动清理只删旧版备份（`<exe>.old*`）与失效暂存状态，不删仍有效的暂存包。
 
 ### 2.7 命令契约
 
@@ -153,8 +155,8 @@ https://github.com/GaoHu1997/NestCraft/releases/latest/download/nestcraft-win64.
 
 ## 3. 数据、权限、安全与兼容
 
-- **数据**：不新建数据库表、不迁移、不改现有 schema；只写 `<app_data>/update/` 下的暂存包、`staged.json` 与 `feed.json`（可选）。DB 不适用，理由：更新状态是瞬时本机安装状态，不参与业务数据与多设备同步。
-- **权限**：只读网络与自身安装目录；不在应用内提权；安装版由安装包自行处理 UAC；免安装版仅在 exe 目录可写时允许落位，不可写时返回错误。
+- **数据**：不新建数据库表、不迁移、不改现有 schema；只写暂存目录（免安装版 `<exe_dir>/.update/`、安装版 `<app_data>/update/`）下的暂存包、`staged.json` 与 `feed.json`（可选）。DB 不适用，理由：更新状态是瞬时本机安装状态，不参与业务数据与多设备同步。
+- **权限**：只读网络与自身安装目录；不在应用内提权；安装版由安装包自行处理 UAC；免安装版要求 exe 所在目录可写，不可写时在创建暂存目录阶段返回明确错误（提示移动到可写位置），不会下载完成才失败。
 - **安全**：只允许 `http(s)`；SHA-256 必填并在下载后、安装前各校验一次；固定落盘路径；不执行未校验文件；失败清理临时文件；不记录凭据。
 - **兼容**：Windows 10/11 x64；`http(s)` 代理沿用系统环境变量（ureq 读取 `HTTPS_PROXY`／`ALL_PROXY`／`HTTP_PROXY`，专用变量 `NESTCRAFT_UPDATE_PROXY` 优先）；无更新源或离线时静默；版本号取 `CARGO_PKG_VERSION`，与 `tauri.conf.json`／`package.json` 保持一致由发布流程保证。GitHub 直连不可达时按 §2.2.1 切加速镜像。
 - **并发**：下载单飞；apply 期间忽略重复点击；检查与下载互不覆盖状态。
@@ -202,3 +204,5 @@ https://github.com/GaoHu1997/NestCraft/releases/latest/download/nestcraft-win64.
 | 2026-11-23 | 0.0.3 CI 失败与修复：首次 CI（run 45117893409）在 Rust unit tests 失败，`commands::ai_tools::tests::kb_tools_roundtrip` 报「知识库路径已变化或存在链接」。根因为 GitHub Windows runner 的 `%TEMP%` 是 8.3 短名（`RUNNER~1`／`D:\a\_temp`），`SafeRoot` 将 canonicalize 展开后的长名与原短名判为不一致。产品侧 `SafeRoot` 校验未放宽；按项目既有做法（`knowledge.rs` 两处夹具）改为测试夹具直接基于规范化后的临时目录，修复提交 e5babfb，重跑 CI（run 45122366819）success。本地 `cargo test --lib` 348 通过 / 0 失败 | CI run 45117893409 job 日志与本地 8.3 短名复现（`SHORTN~1` ≠ 长名）；用户要求「需要通过 ci」 |
 | 2026-11-24 | 0.0.4 发布启动：版本统一为 0.0.4（package.json、tauri.conf.json、Cargo.toml、两份 lock 同步）；0.0.3 之后 CR-068~CR-071 批量成果（平台主代理运行时、平台会话分层上下文与安全原文找回、主界面导航精简与图标悬浮层、会话可用性修复等）随 main 已有提交一并发布，并推送 v0.0.4 标签触发 CI 与 release-windows 流水线，仍只发布 Windows x64 免安装 exe | 用户 2026-11-24 指令「版本号 +1，发布到 github，需要通过 ci，并触发构建免安装 exe」；发布前本地验证 npm run build 与 cargo test --lib（500 通过）均绿 |
 | 2026-11-24 | 0.0.4 发布验证：CI（run 45320690852）与发布构建（run 45320796182）均 success；Release `v0.0.4` 含 exe／zip／`.sha256`／`nestcraft-win64.json` 四资产，`releases/latest` 指向 v0.0.4；清单、`.sha256` 文件、单文件 exe 与 zip 内 `NestCraft.exe` 四方 SHA-256 一致（4cd2e9f7…2b78f30，33,778,688 字节），单文件 exe 与 zip 内 exe 二进制完全相同，VersionInfo 产品版本 0.0.4（产品名「栖造」），zip 含 `NestCraft.exe`、`portable.marker`、`README.txt`。GUI 启动验证未执行（无人值守），列为待用户验收项 | 用户 2026-11-24 指令；Actions run 结论与 Release 资产逐项核对 |
+| 2026-11-25 | 0.0.5 发布启动：版本统一为 0.0.5（package.json、tauri.conf.json、Cargo.toml、两份 lock 同步）；0.0.4 之后 CR-072~CR-082 批量成果（三页管理数据接入 CR-072、项目管理与需求工作区修正 CR-073、AI 侧栏与工作台修复 CR-074、服务器列表与主机表单重构 CR-075、会话输入/答复/任务与目标 CR-076、知识库文档操作 CR-077、概览页日程与用量 CR-078、会话框顶部运行栏 CR-079 设计、知识库文件类型彩色图标 CR-080、本地数据统一存储 CR-081、工作台页签图标与文字 CR-082）随 main 一并发布，并推送 v0.0.5 标签触发 CI 与 release-windows 流水线，仍只发布 Windows x64 免安装 exe | 用户 2026-11-25 指令「版本号 +1，推动到 github，需要触发构建免安装 exe」；发布前本地验证 npm run build（tsc + vite build）exit 0、cargo check --all-targets exit 0、cargo test --lib 536 通过 / 0 失败 / 8 忽略、npm ci --dry-run exit 0 均绿 |
+| 2026-11-24 | BUG-015 修复：免安装版「重启安装」报「新版程序落位失败，已回滚: 系统无法将文件移到不同的磁盘驱动器。(os error 17)」。根因是暂存包统一放 `<app_data>/update/`（系统盘），程序装在 D 盘等其它卷时，落位的 `std::fs::rename` 是跨卷 `MoveFile`，必然失败并回滚。改为免安装版暂存到 `<exe_dir>/.update/`，落位成为同卷改名；安装版仍用应用数据目录（只启动安装包）。启动清理改为按完整文件名匹配 `<exe>.old`／`.old-N` 删除旧版（原 `file_stem` 拼前缀永远不命中，旧程序永久残留），并清理迁移前遗留在应用数据目录的暂存文件与落位后失效的 `staged.json`。新增 `staging_dir`／`is_old_backup`／`replace_executable` 及 4 个单测 | 用户 2026-11-24 报错截图，指令「改成存放到程序所在位置，同时需要清理上一个版本的旧文件」；验证见 [REPORT-CR046 §5.8](../Test/REPORT-CR046-右上角更新入口验证.md) |

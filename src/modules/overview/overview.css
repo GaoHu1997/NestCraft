@@ -1,0 +1,272 @@
+/* CR-078 / UI-CR078-v3：概览页（日程 / 用量）。从设计稿 cr078.css 迁移，前缀 ov-。
+   滚动遵守 UI-SCROLL-001：不新增常显滚动条样式（共享 src/components/scrollbar.ts 覆盖）。 */
+
+/* ---------- 页签 ---------- */
+.ov-tabs { display: flex; align-items: center; gap: 2px; margin: -6px 0 16px; border-bottom: 1px solid var(--line); }
+.ov-tab { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; margin-bottom: -1px; border-bottom: 2px solid transparent; color: var(--ink-2); font-size: 13px; font-weight: 500; }
+.ov-tab:hover { color: var(--ink); }
+.ov-tab.active { color: var(--primary-strong); border-bottom-color: var(--primary); font-weight: 600; }
+
+/* ---------- 日程两栏 ---------- */
+.ov-schedule { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: stretch; }
+.ov-cal-card { overflow: hidden; }
+.ov-cal-h { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 50px; padding: 0 14px; border-bottom: 1px solid var(--line-soft); }
+.ov-cal-h .row { gap: 2px; }
+.ov-cal-title { font-size: 16px; font-weight: 650; margin: 0 10px; min-width: 104px; text-align: center; font-variant-numeric: tabular-nums; }
+.ov-cal-h .btn.sm { margin-left: 10px; }
+
+/* 月历：外层 8 列（周号 + 7 天）；每个周行为独立子 grid，条带层绝对定位叠在底部。 */
+.ov-cal-grid { display: grid; grid-template-columns: 36px repeat(7, minmax(0, 1fr)); }
+.ov-cal-wh { padding: 8px 6px; font-size: 12px; font-weight: 600; color: var(--muted); text-align: center; border-bottom: 1px solid var(--line-soft); }
+.ov-cal-wh.weekend { color: var(--danger); }
+.ov-cal-row { grid-column: 1 / -1; display: grid; grid-template-columns: 36px repeat(7, minmax(0, 1fr)); grid-template-rows: 92px; position: relative; }
+.ov-cal-wk { grid-row: 1; display: flex; align-items: flex-start; justify-content: center; padding-top: 10px; font-size: 11px; color: var(--muted-2); border-right: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); font-variant-numeric: tabular-nums; }
+.ov-cell { position: relative; grid-row: 1; padding: 6px 6px 4px; border-right: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); cursor: pointer; outline: none; }
+.ov-cell:last-of-type { border-right: 0; }
+.ov-cell:hover { background: var(--surface-2); }
+.ov-cell:focus-visible { box-shadow: inset 0 0 0 2px var(--primary-line); }
+.ov-cell.selected { background: var(--primary-soft); }
+.ov-cell.out .ov-dnum, .ov-cell.out .ov-lunar { color: var(--muted-2); }
+.ov-cell.weekend .ov-dnum { color: var(--danger); }
+.ov-cell.today .ov-dnum { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin: -2px 0 0 -3px; border-radius: 50%; background: var(--primary); color: #fff; }
+.ov-cell-top { display: flex; align-items: center; gap: 4px; }
+.ov-dnum { font-size: 15px; font-weight: 650; line-height: 22px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.ov-lunar { font-size: 11px; color: var(--muted); margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 64%; }
+.ov-lunar.is-legal { color: var(--danger); font-weight: 600; }
+.ov-lunar.is-tradition { color: var(--danger); }
+.ov-lunar.is-term { color: var(--success); font-weight: 600; }
+.ov-off { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 3px; margin-left: 2px; border-radius: 3px; font-size: 10px; font-weight: 600; line-height: 1; color: #fff; background: var(--danger); }
+.ov-cell-add { position: absolute; top: 5px; right: 5px; width: 20px; height: 20px; display: none; align-items: center; justify-content: center; border-radius: 5px; background: var(--surface); color: var(--primary); box-shadow: 0 0 0 1px var(--line); }
+.ov-cell:hover .ov-cell-add, .ov-cell-add:focus-visible { display: inline-flex; }
+
+/* 条带层：绝对定位叠在单元格底部，7 等分与单元格列对齐。 */
+.ov-week-lanes { position: absolute; left: 36px; right: 0; bottom: 4px; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); grid-auto-rows: 20px; gap: 2px 0; align-content: end; padding: 0 3px; pointer-events: none; }
+.ov-band { display: block; grid-column: calc(var(--from) + 1) / span var(--span); grid-row: calc(var(--lane) + 1); height: 20px; padding: 0 6px; border-radius: 4px; font-size: 11px; line-height: 20px; font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: auto; cursor: default; }
+.ov-band.head { border-top-left-radius: 10px; border-bottom-left-radius: 10px; }
+.ov-band.tail { border-top-right-radius: 10px; border-bottom-right-radius: 10px; }
+.ov-band.c-blue { background: var(--primary-soft); color: var(--primary-strong); }
+.ov-band.c-green { background: var(--success-soft); color: var(--success); }
+.ov-band.c-amber { background: var(--warning-soft); color: var(--warning); }
+.ov-band.c-violet { background: var(--violet-soft); color: var(--violet); }
+.ov-band.c-rose { background: var(--danger-soft); color: var(--danger); }
+.ov-week-more { position: absolute; right: 10px; bottom: 52px; font-size: 10px; color: var(--muted); cursor: pointer; pointer-events: auto; }
+.ov-week-more:hover { color: var(--primary); }
+
+/* ---------- 详情栏（与月历等高同顶；顶部天气条） ---------- */
+.ov-day { overflow: hidden; display: flex; flex-direction: column; align-self: stretch; min-height: 0; }
+.ov-day-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px; background: var(--primary-soft); border-bottom: 1px solid var(--line-soft); }
+.ov-weather { gap: 12px; min-height: 84px; box-sizing: border-box; }
+.ov-wx-ico { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 12px; background: var(--surface); color: var(--primary-strong); box-shadow: var(--shadow-card); }
+.ov-wx-ico.is-muted { color: var(--muted); }
+.ov-wx-main { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.ov-wx-main b { font-size: 24px; font-weight: 650; line-height: 1; color: var(--primary-strong); font-variant-numeric: tabular-nums; }
+.ov-wx-main b.is-dash { color: var(--muted-2); }
+.ov-wx-text { font-size: 13px; font-weight: 600; color: var(--ink); }
+.ov-wx-text.is-muted { color: var(--muted); font-weight: 500; }
+.ov-wx-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ov-wx-meta { line-height: 18px; justify-content: center; }
+.ov-wx-loc { display: inline-flex; align-items: center; gap: 4px; height: 18px; color: var(--ink-2); font-weight: 500; }
+.ov-wx-loc .ui-icon { width: 12px; height: 12px; }
+.ov-wx-note { color: var(--muted); }
+.ov-wx-retry { margin-left: 4px; padding: 0 6px; height: 18px; line-height: 16px; vertical-align: middle; border-radius: 4px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--primary-strong); font-size: 11px; }
+.ov-wx-retry:hover { border-color: var(--primary); }
+html[data-theme="dark"] .ov-wx-ico { background: var(--surface-2); }
+
+.ov-day-b { padding: 14px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; min-height: 0; flex: 1 1 auto; }
+.ov-day-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ov-day-title h3 { font-size: 14px; font-weight: 650; }
+.ov-almanac { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); }
+.ov-alm-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; }
+.ov-alm-row > span { color: var(--muted); }
+.ov-alm-row > b { font-weight: 550; color: var(--ink); display: inline-flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.ov-fest { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.ov-fest.is-legal, .ov-fest.is-tradition { background: var(--danger-soft); color: var(--danger); }
+.ov-fest.is-term { background: var(--success-soft); color: var(--success); }
+.ov-alm-yj { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px; padding-top: 8px; border-top: 1px dashed var(--line); }
+.ov-alm-yj > div { display: flex; gap: 6px; font-size: 12px; line-height: 1.5; }
+.ov-alm-yj span { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; font-size: 11px; font-weight: 600; }
+.ov-alm-yj > div:first-child span { background: var(--success-soft); color: var(--success); }
+.ov-alm-yj > div:last-child span { background: var(--danger-soft); color: var(--danger); }
+.ov-alm-yj p { color: var(--ink-2); }
+
+/* 详情栏「日程 / 待办」页签 */
+.ov-day-tabs { display: flex; align-items: center; gap: 2px; margin: 2px 0 8px; border-bottom: 1px solid var(--line); flex: 0 0 auto; }
+.ov-day-tab { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 8px; margin-bottom: -1px; border-bottom: 2px solid transparent; color: var(--ink-2); font-size: 12.5px; font-weight: 500; }
+.ov-day-tab span { font-size: 11px; color: var(--muted); }
+.ov-day-tab:hover { color: var(--ink); }
+.ov-day-tab.active { color: var(--primary-strong); border-bottom-color: var(--primary); font-weight: 600; }
+.ov-day-add { margin-left: auto; }
+.ov-day-panel { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.ov-day-list { display: grid; gap: 4px; }
+.ov-ev { display: flex; align-items: flex-start; gap: 8px; padding: 7px 8px; border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--line-soft); }
+.ov-ev-dot { flex: 0 0 auto; width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; }
+.ov-ev.c-blue .ov-ev-dot { background: var(--primary-strong); }
+.ov-ev.c-green .ov-ev-dot { background: var(--success); }
+.ov-ev.c-amber .ov-ev-dot { background: var(--warning); }
+.ov-ev.c-violet .ov-ev-dot { background: var(--violet); }
+.ov-ev.c-rose .ov-ev-dot { background: var(--danger); }
+.ov-ev-main { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
+.ov-ev-main b { font-size: 12.5px; font-weight: 550; }
+.ov-ev-main small { font-size: 11px; color: var(--muted); }
+.ov-ev-del { flex: 0 0 auto; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; border-radius: 5px; color: var(--muted); opacity: 0; }
+.ov-ev:hover .ov-ev-del, .ov-ev-del:focus-visible { opacity: 1; }
+.ov-ev-del:hover { background: var(--danger-soft); color: var(--danger); }
+.ov-todo { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--r-sm); font-size: 12.5px; cursor: pointer; }
+.ov-todo:hover { background: var(--surface-2); }
+.ov-todo input { accent-color: var(--primary); }
+.ov-todo.done span { color: var(--muted); text-decoration: line-through; }
+.ov-todo-new { display: flex; gap: 6px; }
+.ov-todo-new .input { height: 30px; font-size: 12.5px; }
+.ov-todo-new .btn { flex: 0 0 auto; }
+
+/* ---------- 新建日程弹窗 ---------- */
+.ov-form-mask { position: fixed; inset: 0; z-index: 80; background: rgba(17, 24, 39, .42); display: grid; place-items: center; }
+.ov-form { width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 64px); display: flex; flex-direction: column; }
+.ov-form-b { padding: 18px 20px; display: grid; gap: 14px; overflow-y: auto; }
+.ov-f-row { display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: center; gap: 12px; }
+.ov-f-row > span { font-size: 12.5px; color: var(--ink-2); }
+.ov-f-row .row { gap: 8px; }
+.ov-f-row .input[type="date"], .ov-f-row .input[type="time"] { width: auto; }
+.ov-radio { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; cursor: pointer; }
+.ov-radio input { accent-color: var(--primary); }
+.ov-time { width: 104px; }
+.ov-swatches { display: flex; gap: 8px; }
+.ov-sw { position: relative; display: inline-flex; cursor: pointer; }
+.ov-sw input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.ov-sw i { display: block; width: 22px; height: 22px; border-radius: 6px; background: var(--primary-strong); border: 2px solid transparent; }
+.ov-sw.c-green i { background: var(--success); }
+.ov-sw.c-amber i { background: var(--warning); }
+.ov-sw.c-violet i { background: var(--violet); }
+.ov-sw.c-rose i { background: var(--danger); }
+.ov-sw input:checked + i { border-color: var(--surface); box-shadow: 0 0 0 2px var(--primary); }
+.ov-sw input:focus-visible + i { box-shadow: 0 0 0 2px var(--primary); }
+.ov-form-err { margin: 0; font-size: 12px; color: var(--danger); }
+
+/* ---------- 用量 ---------- */
+.ov-usage { display: grid; gap: 16px; }
+.ov-usage-h { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.ov-seg { display: inline-flex; padding: 3px; background: var(--surface-3); border-radius: var(--r-md); }
+.ov-seg button { height: 28px; padding: 0 12px; border-radius: 6px; font-size: 12.5px; color: var(--ink-2); }
+.ov-seg button:hover { color: var(--ink); }
+.ov-seg button.active { background: var(--surface); color: var(--primary-strong); font-weight: 600; box-shadow: var(--shadow-card); }
+.ov-custom .input { width: 150px; }
+.ov-kpis { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+.ov-kpi { padding: 12px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); border-left: 3px solid var(--c, var(--primary)); min-width: 0; }
+.ov-kpi.blue { --c: var(--primary-strong); --t: var(--primary-soft); --f: var(--primary-strong); }
+.ov-kpi.green { --c: var(--success); --t: var(--success-soft); --f: var(--success); }
+.ov-kpi.amber { --c: var(--warning); --t: var(--warning-soft); --f: var(--warning); }
+.ov-kpi.violet { --c: var(--violet); --t: var(--violet-soft); --f: var(--violet); }
+.ov-kpi.teal { --c: var(--teal); --t: var(--teal-soft); --f: var(--teal); }
+.ov-kpi.rose { --c: var(--danger); --t: var(--danger-soft); --f: var(--danger); }
+.ov-kpi .k { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-2); }
+.ov-kpi-ic { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; background: var(--t); color: var(--f); }
+.ov-kpi .v { margin-top: 8px; font-size: 22px; font-weight: 650; line-height: 1.1; font-variant-numeric: tabular-nums; color: var(--ink); }
+.ov-kpi .s { margin-top: 4px; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ov-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: stretch; }
+.ov-panel { min-width: 0; display: flex; flex-direction: column; }
+/* 同一行的面板等高：卡片体吸收余高，内容垂直居中，避免一侧短一截、底部不齐。 */
+.ov-panel > .card-b { flex: 1 1 auto; }
+.ov-legend { display: inline-flex; align-items: center; gap: 10px; font-size: 11px; color: var(--muted); flex-wrap: nowrap; overflow: hidden; min-width: 0; }
+.ov-legend > span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; max-width: 78px; overflow: hidden; text-overflow: ellipsis; }
+.ov-legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; flex: 0 0 auto; }
+.ov-legend .line { margin-left: 8px; padding-left: 8px; border-left: 1px solid var(--line); color: var(--violet); }
+.ov-legend .line::before { content: ""; display: inline-block; width: 16px; height: 2px; margin-right: 5px; background: var(--violet); vertical-align: middle; }
+
+/* 热力图：完整矩阵，空位白框。 */
+.ov-heat-wrap { padding: 14px 16px 16px; display: flex; align-items: center; }
+.ov-heat { width: 100%; display: grid; gap: 4px; }
+.ov-heat-months { display: grid; gap: 3px; padding-left: 40px; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.ov-heat-body { display: grid; grid-template-columns: 40px 1fr; gap: 4px 6px; align-items: stretch; }
+.ov-heat-days { display: grid; grid-template-rows: repeat(7, auto); gap: 3px; font-size: 10px; color: var(--muted); align-items: center; }
+.ov-heat-grid { display: grid; grid-template-rows: repeat(7, auto); gap: 3px; }
+.ov-heat-grid i { display: block; aspect-ratio: 1; min-width: 0; border-radius: 3px; background: var(--surface-3); }
+.ov-heat-grid i.is-blank { background: var(--surface); border: 1px solid var(--line-soft); box-sizing: border-box; }
+.ov-heat-grid i.l1 { background: #c9e9f7; }
+.ov-heat-grid i.l2 { background: #8ed3ea; }
+.ov-heat-grid i.l3 { background: #3fb2d6; }
+.ov-heat-grid i.l4 { background: #0f9f8f; }
+html[data-theme="dark"] .ov-heat-grid i.is-blank { background: var(--surface-2); }
+html[data-theme="dark"] .ov-heat-grid i.l1 { background: #1e4a52; }
+html[data-theme="dark"] .ov-heat-grid i.l2 { background: #1f6a72; }
+html[data-theme="dark"] .ov-heat-grid i.l3 { background: #238a8f; }
+html[data-theme="dark"] .ov-heat-grid i.l4 { background: #4fd1c5; }
+.ov-legend i.l0 { background: var(--surface-3); }
+.ov-legend i.l1 { background: #c9e9f7; }
+.ov-legend i.l2 { background: #8ed3ea; }
+.ov-legend i.l3 { background: #3fb2d6; }
+.ov-legend i.l4 { background: #0f9f8f; }
+html[data-theme="dark"] .ov-legend i.l1 { background: #1e4a52; }
+html[data-theme="dark"] .ov-legend i.l2 { background: #1f6a72; }
+html[data-theme="dark"] .ov-legend i.l3 { background: #238a8f; }
+html[data-theme="dark"] .ov-legend i.l4 { background: #4fd1c5; }
+
+/* 小时趋势 */
+.ov-chart { position: relative; display: grid; grid-template-columns: 44px 1fr; grid-template-rows: 1fr 22px; gap: 4px 8px; height: 260px; padding: 14px 16px 12px; }
+.ov-chart-y { display: flex; flex-direction: column; justify-content: space-between; font-size: 10px; color: var(--muted); text-align: right; grid-column: 1; grid-row: 1; }
+.ov-chart-y.right { grid-column: 3; }
+.ov-chart-plot { position: relative; grid-column: 2; grid-row: 1; min-width: 0; }
+.ov-gridlines { position: absolute; inset: 0; pointer-events: none; }
+.ov-gridlines i { position: absolute; left: 0; right: 0; height: 1px; background: var(--line-soft); }
+.ov-bars { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(24, 1fr); align-items: end; gap: 3px; }
+.ov-bar { position: relative; display: flex; flex-direction: column-reverse; justify-content: flex-start; height: 100%; }
+/* 堆叠顺序：DOM 首个子块在最下（最大模型），末尾在最上；只给首尾两端切圆角。 */
+.ov-bar i { display: block; width: 100%; }
+.ov-bar i:first-child { border-radius: 0 0 2px 2px; }
+.ov-bar i:last-child { border-radius: 2px 2px 0 0; }
+.ov-line { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.ov-line polyline { fill: none; stroke: var(--violet); stroke-width: 2.2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.ov-chart-x { grid-column: 2; grid-row: 2; position: relative; font-size: 10px; color: var(--muted); }
+.ov-chart-x span { position: absolute; transform: translateX(-50%); }
+.ov-chart-x span:first-child { transform: none; }
+.ov-chart-x span:last-child { transform: translateX(-100%); }
+
+/* 排行 */
+.ov-rank { display: grid; gap: 2px; padding: 6px 8px 10px; margin: 0; list-style: none; }
+.ov-rank-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 10px; border-radius: var(--r-md); }
+.ov-rank-row:hover { background: var(--surface-2); }
+.ov-rank-n { flex: 0 0 auto; width: 18px; font-size: 12px; font-weight: 650; color: var(--muted); text-align: center; padding-top: 3px; }
+.ov-rank-row .cli-logo { flex: 0 0 auto; margin-top: 1px; display: inline-flex; }
+.ov-src { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; color: var(--violet); }
+.ov-prov-dot { flex: 0 0 auto; width: 12px; height: 12px; margin-top: 4px; border-radius: 3px; }
+.ov-rank-main { flex: 1 1 auto; min-width: 0; display: grid; gap: 5px; }
+.ov-rank-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.ov-rank-top b { font-size: 13px; font-weight: 550; }
+.ov-rank-v { font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ov-rank-bar { height: 4px; border-radius: 2px; background: var(--line-soft); overflow: hidden; }
+.ov-rank-bar i { display: block; height: 100%; border-radius: 2px; }
+
+/* 趋势图悬停浮层：列出该小时各模型用量与缓存命中率。 */
+.ov-tip { position: absolute; top: 4px; transform: translateX(-50%); z-index: 6; min-width: 186px; padding: 8px 10px; border-radius: var(--r-md); background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-pop); font-size: 12px; color: var(--ink); pointer-events: none; }
+.ov-tip-h { font-weight: 600; margin-bottom: 4px; }
+.ov-tip-total { color: var(--ink-2); padding-bottom: 4px; margin-bottom: 4px; border-bottom: 1px solid var(--line-soft); }
+.ov-tip-row { display: flex; align-items: center; gap: 7px; line-height: 15px; font-size: 11px; }
+.ov-tip-row i { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 2px; }
+.ov-tip-row b { font-weight: 500; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px; }
+.ov-tip-row span { color: var(--muted); font-variant-numeric: tabular-nums; }
+.ov-tip-hit { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--line-soft); color: var(--violet); }
+.ov-tip-rest b { color: var(--muted); font-weight: 400; }
+.ov-rank-sub { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--muted); }
+.ov-rank-sub .tag { height: 18px; padding: 0 5px; font-size: 10px; }
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 1180px) {
+  .ov-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 960px) {
+  .ov-schedule { grid-template-columns: minmax(0, 1fr); }
+  .ov-day { max-height: none; }
+  .ov-two { grid-template-columns: minmax(0, 1fr); }
+  .ov-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 520px) {
+  .ov-cal-wk, .ov-cal-wh:first-child { display: none; }
+  .ov-cal-grid { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+  .ov-cal-row { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+  .ov-week-lanes { left: 0; bottom: 3px; grid-auto-rows: 14px; }
+  .ov-band { height: 14px; line-height: 14px; font-size: 9px; padding: 0 3px; }
+  .ov-cell { padding: 4px 3px; }
+  .ov-lunar { display: none; }
+  .ov-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ov-usage-h { flex-direction: column; align-items: stretch; }
+  .ov-seg { flex-wrap: wrap; }
+}

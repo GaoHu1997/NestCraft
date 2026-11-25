@@ -2,18 +2,21 @@ import { Icon, CliLogo } from "@/components/icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as api from "@/api";
 import type { AttachmentMeta, ChatEvent, ContextRef, ModelCandidate, SdkState, SessionBinding, SessionMeta } from "@/api";
-import { Confirm, useToast } from "@/components/ui";
+import { Confirm, Modal, useToast } from "@/components/ui";
 import { MessageList, fromChatMessage, mkMsg } from "./MessageList";
 import type { OfficeFileRef, UiMessage } from "./MessageList";
-import { Composer, migrateComposerDraft, clearComposerDraft } from "./Composer";
+import { Composer, migrateComposerDraft, clearComposerDraft, restoreComposerDraft } from "./Composer";
 import { SessionHistory, HistoryIcon } from "./SessionHistory";
 import type { HistoryLoading } from "./SessionHistory";
 import { SubagentPanel } from "./SubagentPanel";
 import { ModelPicker, effectiveEfforts, permissionSupported } from "./ModelPicker";
 import { StatsBar } from "./StatsBar";
-import { StepsBox } from "./StepsBox";
+import { projectSessionStats, parseSessionStatsSnapshot } from "./sessionStats";
+import type { PersistentSessionStats } from "./sessionStats";
+import { GoalBar, TodoPanel } from "./ChatDock";
+import { emptyPlan, projectPlan } from "./sessionPlan";
 import { ChatOverlayProvider, useChatOverlay } from "./overlay";
-import { addUsage, finishOnce, getRuntime, hydrateUsage, isCurrentTurn, markFirstDelta, markStreamStart, outputTps, recordToolResult, recordToolUse, rebuildStepsFromPairs, clearEndedBackground, dropRuntime, setStatus, setGoal, updateGoalState, addSessionTask, upsertSubagent, hasBlockingChildren, settleSubagents } from "./sessionRuntime";
+import { addUsage, finishOnce, getRuntime, hydrateUsage, isCurrentTurn, markFirstDelta, markStreamStart, outputTps, recordToolResult, recordToolUse, rebuildStepsFromPairs, clearEndedBackground, dropRuntime, setStatus, setGoal, updateGoalState, upsertSubagent, hasBlockingChildren, settleSubagents } from "./sessionRuntime";
 import { officeFileContentText } from "@/modules/office/office-model";
 import { requestPanel } from "./panelRequest";
 import type { PanelKind, PanelRequest } from "./panelRequest";
@@ -110,7 +113,10 @@ interface Turn {
   sid: string;
   generation: number;
   request: PendingSend;
-  buffer: { text: string; thinking: string };
+  buffer: { kind: "text" | "thinking"; text: string } | null;
+  streamTail: { kind: "text" | "thinking"; id: string } | null;
+  streamRows: number;
+  firstRow: number;
   /** CR-056：思考阶段计时（首段 thinking → 首段正文），用于折叠态显示"思考 持续 N 秒"。 */
   thinkStarted: number | null;
   thinkMs: number | null;
@@ -215,6 +221,8 @@ function Panel(props: PanelProps) {
   // CR-069：新会话运行通道草稿；创建会话后以 meta.runner 为准。默认 cli（与后端一致）。
   const [runnerDraft, setRunnerDraft] = useState<"cli" | "platform">("cli");
   const [msgs, setMsgs] = useState<UiMessage[]>([]);
+  const [statsSnapshot, setStatsSnapshot] = useState<PersistentSessionStats | null>(null);
+  const statsReq = useRef(0);
   const [draft, setDraft] = useState("");
   const [runningIds, setRunningIds] = useState<string[]>([]);
   const [cliCands, setCliCands] = useState<SdkState[]>([]);
@@ -245,10 +253,26 @@ function Panel(props: PanelProps) {
   const createPromise = useRef<Promise<SessionMeta> | null>(null);
   const loadSerial = useRef(0);
   const messageCache = useRef(new Map<string, UiMessage[]>());
+  const composerFocusAfterClear = useRef<{ sid: string; scope: string } | null>(null);
   scopeRef.current = scope;
   visibleRef.current = props.visible !== false;
   curRef.current = cur;
   const viewing = (sid: string, targetScope = scope) => mounted.current && scopeRef.current === targetScope && currentIdRef.current === sid;
+  const refreshSessionStats = async (sid: string, targetScope = scopeRef.current) => {
+    const request = ++statsReq.current;
+    try {
+      const value = await api.chatSessionStats(sid);
+      if (request === statsReq.current && viewing(sid, targetScope)) setStatsSnapshot(parseSessionStatsSnapshot(value, sid));
+    } catch {
+      if (request === statsReq.current && viewing(sid, targetScope)) setStatsSnapshot(null);
+    }
+  };
+  useEffect(() => {
+    ++statsReq.current;
+    setStatsSnapshot(null);
+    if (cur?.id) void refreshSessionStats(cur.id, scope);
+    return () => { ++statsReq.current; };
+  }, [cur?.id, scope]);
   const curRt = cur ? getRuntime(cur.id) : null;
   const running = !!cur && runningIds.includes(cur.id);
   // J08：working 绑定本轮发送代次；本轮已结算即收起，不等待后端彻底静止或 assistant 消息创建。
@@ -260,6 +284,14 @@ function Panel(props: PanelProps) {
     (binding?.state === "blocked" && binding.reasonCode !== "REF_NOT_READY") ||
     binding?.state === "freshPending";
   const executionLocked = running || (cur ? hasBlockingChildren(cur.id) : false);
+
+  // 清除会卸载 GoalBar 与 Confirm；等弹窗清理后仅恢复原会话的输入焦点。
+  useEffect(() => {
+    const request = composerFocusAfterClear.current;
+    composerFocusAfterClear.current = null;
+    if (!request || !visibleRef.current || !viewing(request.sid, request.scope)) return;
+    overlay.scopeRef.current?.querySelector<HTMLTextAreaElement>("textarea.chat-ta")?.focus({ preventScroll: true });
+  });
 
   /** AC-06：fresh 重建确认 → CAS 清空旧引用 + 断点卡；失败（已有新轮）提示刷新。 */
   const confirmFresh = async (info: SessionBinding) => {
@@ -273,8 +305,10 @@ function Panel(props: PanelProps) {
       if (viewing(sid)) {
         curRef.current = { ...curRef.current!, ...meta };
         setCur(curRef.current);
-        const ui = (await api.chatMessages(sid)).map(fromChatMessage);
-        syncMessages(sid, ui); setMsgs(ui);
+        const token = loadSerial.current;
+        const gen = getRuntime(sid).generation;
+        const snapshot = await api.chatMessages(sid);
+        if (viewing(sid) && token === loadSerial.current && getRuntime(sid).generation === gen && !getRuntime(sid).active) setMsgs(syncMessages(sid, snapshot));
       }
     } catch (e) { toast(String(e), "err"); }
   };
@@ -327,12 +361,27 @@ function Panel(props: PanelProps) {
     currentIdRef.current = meta?.id ?? null; curRef.current = meta;
     setCur(meta); setDraft(value); draftRef.current = value;
     setQueued(meta ? queues.current.get(meta.id)?.length ?? 0 : 0);
-    setBgOpenId(null); setFreshConfirm(null); setCliSwitchTarget(null); overlay.close(false);
+    setBgOpenId(null); setFreshConfirm(null); setCliSwitchTarget(null); setGoalDraft(null); overlay.close(false);
   };
   const filterSessions = (ss: SessionMeta[], project = props.projectId, server = props.serverId) => ss.filter(s =>
     project ? s.projectId === project && (!server || s.serverId === server) : server ? s.serverId === server : !s.projectId && !s.serverId
   );
-  const syncMessages = (sid: string, ms: UiMessage[]) => {
+  const syncMessages = (sid: string, snapshot: api.ChatMessage[]) => {
+    const plan = emptyPlan();
+    const ms: UiMessage[] = [];
+    for (const row of snapshot) {
+      const m = fromChatMessage(row);
+      if (m.role === "system" && m.kind === "planUpdate") {
+        try { projectPlan(plan, { type: "planUpdate", items: JSON.parse(row.metaJson ?? "{}").items }); } catch { /* 无效快照不覆盖已有清单 */ }
+        continue;
+      }
+      if (m.role === "user") projectPlan(plan, { type: "turn" });
+      if (m.role === "tool_use" && m.toolId) projectPlan(plan, { type: "toolUse", toolId: m.toolId, name: m.toolName, inputJson: m.inputJson });
+      if (m.role === "tool_result" && m.toolId) projectPlan(plan, { type: "toolResult", toolId: m.toolId, content: m.content, isError: m.isError });
+      ms.push(m);
+    }
+    projectPlan(plan, { type: "turn" });
+    getRuntime(sid).plan = plan;
     messageCache.current.set(sid, ms);
     const pairs: { toolId: string; name: string; isError: boolean; completed: boolean }[] = [];
     for (const m of ms) {
@@ -356,6 +405,8 @@ function Panel(props: PanelProps) {
       // CR-068 J10：历史恢复的当前窗口取最近一条带 usage 的消息；0/未上报保持未知，不填 0。
       lastUsage && lastUsage.input > 0 ? lastUsage.input : null,
     );
+    bumpRt();
+    return ms;
   };
   const markRead = async (meta: SessionMeta, targetScope = scope) => {
     if (!meta.unread || !visibleRef.current || !viewing(meta.id, targetScope)) return;
@@ -379,7 +430,7 @@ function Panel(props: PanelProps) {
       if (!viewing(meta.id, targetScope) || token !== loadSerial.current || getRuntime(meta.id).generation !== gen) return;
       const local = turns.current.get(meta.id);
       if (local && !local.finished) setMsgs(local.msgs);
-      else { const ui = ms.map(fromChatMessage); syncMessages(meta.id, ui); setMsgs(ui); }
+      else setMsgs(syncMessages(meta.id, ms));
       if (await api.chatStatus(meta.id)) setRunningIds(prev => prev.includes(meta.id) ? prev : [...prev, meta.id]);
       else if (viewing(meta.id, targetScope)) setRunningIds(prev => prev.filter(id => id !== meta.id));
       await markRead(meta, targetScope); bumpRt();
@@ -389,7 +440,6 @@ function Panel(props: PanelProps) {
     if (createPromise.current) return createPromise.current;
     const targetScope = scope;
     const previous = curRef.current;
-    const pendingDraft = !previous && preserveNewDraft ? draftRef.current : "";
     const args: Parameters<typeof api.chatSessionCreate>[0] = {
       ...(props.projectId ? { projectId: props.projectId } : {}), ...(props.serverId ? { serverId: props.serverId } : {}),
       ...(previous?.cliId ? { cliId: previous.cliId } : cliCands[0] ? { cliId: cliCands[0].id } : {}),
@@ -404,8 +454,12 @@ function Panel(props: PanelProps) {
       if (mounted.current && scopeRef.current === targetScope) {
         ++loadSerial.current;
         insertSessionRow(meta);
+        let pendingDraft = "";
         if (!previous && preserveNewDraft) {
-          migrateComposerDraft(`${targetScope}:new`, `${targetScope}:${meta.id}`);
+          const newDraftKey = `${targetScope}:new`;
+          pendingDraft = drafts.get(newDraftKey) ?? "";
+          migrateComposerDraft(newDraftKey, `${targetScope}:${meta.id}`);
+          drafts.delete(newDraftKey);
           drafts.set(`${targetScope}:${meta.id}`, pendingDraft);
           void persistDraft(meta.id, pendingDraft);
         }
@@ -417,12 +471,26 @@ function Panel(props: PanelProps) {
     void work.finally(() => { if (createPromise.current === work) createPromise.current = null; }).catch(() => {});
     return work;
   };
+  const [goalDraft, setGoalDraft] = useState<string | null>(null);
+  const createGoal = async (text: string) => {
+    const objective = text.trim();
+    if (!objective) return;
+    try {
+      const meta = curRef.current ?? await createSession(true, props.featureTarget?.featureId);
+      setGoal(meta.id, objective);
+      if (viewing(meta.id)) { setGoalDraft(null); bumpRt(); }
+    } catch (error) {
+      if (mounted.current && scopeRef.current === scope) setGoalDraft(objective);
+      toast(String(error), "err");
+    }
+  };
   const newSession = () => { void createSession(false, props.featureTarget?.featureId).catch(e => toast(String(e), "err")); };
   const deleteSession = async (id: string) => {
     try { await api.chatSessionDelete(id); }
     catch (e) { toast(String(e), "err"); return; }
     turns.current.delete(id); queues.current.delete(id); messageCache.current.delete(id); dropRuntime(id);
     drafts.delete(`${scope}:${id}`);
+    clearComposerDraft(`${scope}:${id}`);
     const wasListed = sessions.some(s => s.id === id);
     const rest = sessions.filter(s => s.id !== id);
     setSessions(rest); setRunningIds(prev => prev.filter(x => x !== id));
@@ -562,31 +630,41 @@ function Panel(props: PanelProps) {
     } catch (e) { toast(String(e), "err"); }
   };
 
-  /* CR-054：把会话数据与操作发布给工作台左栏。工作台与 AI 侧栏共用本实例，
-     两处看到的是同一份 sessions / currentId / runningIds，不另建数据源。 */
+  /* FEAT-021 / CR-074：只有列表快照改变才发布，父布局重绘不产生发布环；
+     动作身份稳定，但调用始终读取本次render的闭包（包含最新scope/featureTarget）。 */
   const onControllerRef = useRef(props.onController);
   onControllerRef.current = props.onController;
-  useEffect(() => {
-    const publish = onControllerRef.current;
-    if (!publish) return;
-    const controller: ChatController = {
-      sessions, currentId: cur?.id ?? null, runningIds,
-      total: sessionsPage.total, hasMore: sessionsPage.hasMore,
-      loading: sessionsPage.loading, error: sessionsPage.error, keyword: sessionsPage.keyword,
-      openSession: meta => { void openSession(meta); },
-      newSession,
-      loadMore: () => { void loadMoreSessions(); },
-      search: keyword => searchSessions(keyword),
-      showAll: showAllSessions,
-      retry: retrySessions,
-      remove: id => { void deleteSession(id); },
-      copyId: meta => { void copySessionId(meta); },
-      fork: meta => { void forkSession(meta); },
-      pin: meta => { void pinSession(meta); },
-      rename: (meta, title) => { void renameSession(meta, title); },
-    };
-    publish(controller);
-  });
+  type ControllerActions = Pick<ChatController, "openSession" | "newSession" | "loadMore" | "search" | "showAll" | "retry" | "remove" | "copyId" | "fork" | "pin" | "rename">;
+  const latestActions: ControllerActions = {
+    openSession: meta => { void openSession(meta); }, newSession,
+    loadMore: () => { void loadMoreSessions(); }, search: searchSessions,
+    showAll: showAllSessions, retry: retrySessions,
+    remove: id => { void deleteSession(id); }, copyId: meta => { void copySessionId(meta); },
+    fork: meta => { void forkSession(meta); }, pin: meta => { void pinSession(meta); },
+    rename: (meta, title) => { void renameSession(meta, title); },
+  };
+  const controllerActionsRef = useRef(latestActions);
+  controllerActionsRef.current = latestActions;
+  const stableActions = useMemo<ControllerActions>(() => ({
+    openSession: meta => controllerActionsRef.current.openSession(meta),
+    newSession: () => controllerActionsRef.current.newSession(),
+    loadMore: () => controllerActionsRef.current.loadMore(),
+    search: keyword => controllerActionsRef.current.search(keyword),
+    showAll: () => controllerActionsRef.current.showAll(),
+    retry: () => controllerActionsRef.current.retry(),
+    remove: id => controllerActionsRef.current.remove(id),
+    copyId: meta => controllerActionsRef.current.copyId(meta),
+    fork: meta => controllerActionsRef.current.fork(meta),
+    pin: meta => controllerActionsRef.current.pin(meta),
+    rename: (meta, title) => controllerActionsRef.current.rename(meta, title),
+  }), []);
+  const controller = useMemo<ChatController>(() => ({
+    sessions, currentId: cur?.id ?? null, runningIds,
+    total: sessionsPage.total, hasMore: sessionsPage.hasMore,
+    loading: sessionsPage.loading, error: sessionsPage.error, keyword: sessionsPage.keyword,
+    ...stableActions,
+  }), [sessions, cur?.id, runningIds, sessionsPage, stableActions]);
+  useEffect(() => { onControllerRef.current?.(controller); }, [controller, props.onController]);
   useEffect(() => () => onControllerRef.current?.(null), []);
 
   useEffect(() => {
@@ -652,17 +730,23 @@ function Panel(props: PanelProps) {
   };
   const flush = (turn: Turn) => {
     if (turn.timer !== null) { window.clearTimeout(turn.timer); turn.timer = null; }
-    const b = turn.buffer;
-    if (!b.text && !b.thinking) return;
+    const chunk = turn.buffer;
+    turn.buffer = null;
+    if (!chunk?.text) return;
     markFirstDelta(turn.sid);
-    if (b.thinking && turn.thinkStarted === null) turn.thinkStarted = Date.now();
-    if (b.text && turn.thinkMs === null && turn.thinkStarted !== null) turn.thinkMs = Date.now() - turn.thinkStarted;
-    const id = `stream-${turn.sid}-${turn.generation}`;
-    let message = turn.msgs.find(m => m.id === id);
-    if (!message) { message = mkMsg({ id, role: "assistant", streaming: true, model: turn.request.model, createdAt: Date.now() }); turn.msgs.push(message); }
-    message.content += b.text; message.thinking = (message.thinking ?? "") + b.thinking;
-    if (turn.thinkMs !== null) message.thinkingMs = turn.thinkMs;
-    turn.buffer = { text: "", thinking: "" }; publish(turn);
+    const tail = turn.msgs[turn.msgs.length - 1];
+    const thinking = chunk.kind === "thinking";
+    if (turn.streamTail?.kind === chunk.kind && tail?.id === turn.streamTail.id) {
+      turn.msgs[turn.msgs.length - 1] = thinking
+        ? { ...tail, thinking: (tail.thinking ?? "") + chunk.text, thinkingMs: turn.thinkMs }
+        : { ...tail, content: tail.content + chunk.text };
+    } else {
+      const id = `stream-${turn.sid}-${turn.generation}-${turn.streamRows++}`;
+      turn.streamTail = { kind: chunk.kind, id };
+      turn.msgs.push(mkMsg({ id, role: "assistant", streaming: true, model: turn.request.model,
+        ...(thinking ? { thinking: chunk.text, thinkingMs: turn.thinkMs } : { content: chunk.text }), createdAt: Date.now() }));
+    }
+    publish(turn);
   };
   const waitSettled = async (sid: string) => {
     for (let i = 0; i < 60; i++) {
@@ -674,6 +758,7 @@ function Panel(props: PanelProps) {
   const restoreQueued = (request: PendingSend, message: string) => {
     const key = `${request.scope}:${request.sid}`;
     const value = [drafts.get(key), request.text].filter(Boolean).join("\n");
+    restoreComposerDraft(key, request.refs, request.atts);
     drafts.set(key, value); void persistDraft(request.sid, value);
     if (viewing(request.sid, request.scope)) { onDraftChange(value); toast(message, "err"); }
   };
@@ -691,19 +776,26 @@ function Panel(props: PanelProps) {
     const failedTool = getRuntime(turn.sid).steps.some(s => s.state === "failed");
     if (!finishOnce(turn.sid, turn.generation, error || stopped || failedTool ? "failed" : "success")) return;
     turn.finished = true;
+    projectPlan(getRuntime(turn.sid).plan, { type: "turn" });
     if (turn.thinkMs === null && turn.thinkStarted !== null) turn.thinkMs = Date.now() - turn.thinkStarted;
-    turn.msgs = turn.msgs.map(m => (m.role === "assistant" && m.thinkingMs == null && turn.thinkMs !== null ? { ...m, streaming: false, thinkingMs: turn.thinkMs } : { ...m, streaming: false }));
+    turn.msgs = turn.msgs.map((m, i) => i < turn.firstRow ? m : {
+      ...m,
+      streaming: false,
+      ...(m.thinking && m.thinkingMs == null ? { thinkingMs: turn.thinkMs } : {}),
+    });
     // CR-062：本轮结束仍未收到子智能体终态时标“待确认/已停止”，不替它宣布成功。
     if (settleSubagents(turn.sid, stopped)) bumpRt();
     if (error || stopped) turn.msgs.push(mkMsg({ id: `error-${turn.sid}-${turn.generation}`, role: "error", content: error ?? "已停止本次生成", isError: true, createdAt: Date.now() }));
     publish(turn); bumpRt();
     try {
       await waitSettled(turn.sid); // done可能早于后端移除RUNNING；绝不能抢跑下一轮
+      // 完成/失败/停止均只刷新独立统计，保护原正文、error卡及队列处理。
+      void refreshSessionStats(turn.sid, turn.request.scope);
       if (getRuntime(turn.sid).generation !== turn.generation) return;
       if (!error && !stopped) {
         const ms = await api.chatMessages(turn.sid);
         if (getRuntime(turn.sid).generation !== turn.generation) return;
-        const ui = ms.map(fromChatMessage); syncMessages(turn.sid, ui);
+        const ui = syncMessages(turn.sid, ms);
         if (viewing(turn.sid, turn.request.scope)) setMsgs(ui);
       }
       const meta = await api.chatSessionGet(turn.sid);
@@ -730,20 +822,40 @@ function Panel(props: PanelProps) {
   const dispatch = async (request: PendingSend): Promise<boolean> => {
     await waitSettled(request.sid);
     const generation = markStreamStart(request.sid);
-    const turn: Turn = { sid: request.sid, generation, request, buffer: { text: "", thinking: "" }, thinkStarted: null, thinkMs: null, msgs: [...(messageCache.current.get(request.sid) ?? [])], finished: false, accepted: false, timer: null };
+    const { plan } = getRuntime(request.sid);
+    projectPlan(plan, { type: "turn" });
+    const msgs = [...(messageCache.current.get(request.sid) ?? [])];
+    const turn: Turn = { sid: request.sid, generation, request, buffer: null, streamTail: null, streamRows: 0,
+      firstRow: msgs.length, thinkStarted: null, thinkMs: null, msgs, finished: false, accepted: false, timer: null };
     turns.current.set(request.sid, turn);
     const uid = `user-${request.sid}-${generation}`;
     turn.msgs.push(mkMsg({ id: uid, role: "user", content: request.text, refs: request.refs, attachments: request.atts, createdAt: Date.now() }));
     publish(turn); setRunningIds(prev => prev.includes(request.sid) ? prev : [...prev, request.sid]); bumpRt();
     const onEvent = (ev: ChatEvent) => {
+      // 停止会先结束本地turn；后端闭合/持久通知仍须刷新，不回放正文。
+      if (ev.type === "sessionStats" && ev.sessionId === request.sid) {
+        void refreshSessionStats(request.sid, request.scope); return;
+      }
       if (turn.finished || !isCurrentTurn(request.sid, generation)) return;
       switch (ev.type) {
-        case "delta": case "thinking":
-          if (ev.type === "delta") turn.buffer.text += ev.delta; else turn.buffer.thinking += ev.delta;
-          if (turn.timer === null) turn.timer = window.setTimeout(() => { turn.timer = null; if (!turn.finished) flush(turn); }, 50);
+        case "delta": case "thinking": {
+          if (!ev.delta) break;
+          const kind = ev.type === "thinking" ? "thinking" : "text";
+          if (kind === "thinking" && turn.thinkStarted === null) turn.thinkStarted = Date.now();
+          if (kind === "text" && turn.thinkMs === null && turn.thinkStarted !== null) turn.thinkMs = Date.now() - turn.thinkStarted;
+          if (turn.buffer?.kind !== kind) flush(turn);
+          if (turn.buffer) turn.buffer.text += ev.delta;
+          else turn.buffer = { kind, text: ev.delta };
+          if (turn.timer === null) turn.timer = window.setTimeout(() => {
+            turn.timer = null;
+            if (!turn.finished && isCurrentTurn(turn.sid, turn.generation)) flush(turn);
+          }, 50);
           break;
-        case "toolUse":
+        }
+        case "toolUse": {
+          if (turn.msgs.some(m => m.id === `tu-${generation}-${ev.toolId}`)) break;
           flush(turn); recordToolUse(request.sid, ev.toolId, ev.name);
+          projectPlan(plan, ev);
           // CR-054 / STORY-073：AI 通过 workbench.open_panel 真实请求打开右栏。
           // 是否真正打开、用户关闭后是否重开、跨项目拒绝都交给 panelRequest 规则；
           // 不在这里写文件或扩授权。
@@ -757,14 +869,34 @@ function Panel(props: PanelProps) {
               }
             }
           }
-          if (!turn.msgs.some(m => m.id === `tu-${generation}-${ev.toolId}`)) turn.msgs.push(mkMsg({ id: `tu-${generation}-${ev.toolId}`, role: "tool_use", toolId: ev.toolId, toolName: ev.name, inputJson: ev.inputJson, streaming: true, createdAt: Date.now() }));
+          turn.msgs.push(mkMsg({ id: `tu-${generation}-${ev.toolId}`, role: "tool_use", toolId: ev.toolId, toolName: ev.name, inputJson: ev.inputJson, streaming: true, createdAt: Date.now() }));
           publish(turn); bumpRt(); break;
-        case "toolResult":
-          flush(turn); recordToolResult(request.sid, ev.toolId, ev.isError);
-          if (!turn.msgs.some(m => m.id === `tr-${generation}-${ev.toolId}`)) turn.msgs.push(mkMsg({ id: `tr-${generation}-${ev.toolId}`, role: "tool_result", content: ev.content, toolId: ev.toolId, isError: ev.isError, createdAt: Date.now() }));
+        }
+        case "toolUpdate": {
+          const at = turn.msgs.findIndex(m => m.id === `tu-${generation}-${ev.toolId}`);
+          if (at >= 0) {
+            turn.msgs[at] = { ...turn.msgs[at], toolOutput: ev.content };
+            publish(turn);
+          }
+          break;
+        }
+        case "planUpdate":
+          flush(turn);
+          turn.streamTail = null;
+          projectPlan(plan, ev);
+          bumpRt(); break;
+        case "toolResult": {
+          flush(turn);
+          const resultId = `tr-${generation}-${ev.toolId}`;
+          if (turn.msgs.some(m => m.id === resultId)) break;
+          recordToolResult(request.sid, ev.toolId, ev.isError);
+          projectPlan(plan, ev);
+          turn.msgs.push(mkMsg({ id: resultId, role: "tool_result", content: ev.content, toolId: ev.toolId, isError: ev.isError, exitCode: ev.exitCode, createdAt: Date.now() }));
           publish(turn); bumpRt(); break;
+        }
         case "usage": addUsage(request.sid, ev.inputTokens, ev.outputTokens, ev.cacheReadTokens, String(generation)); bumpRt(); break;
         case "subagent": {
+          flush(turn);
           const row = upsertSubagent(request.sid, ev);
           // 子智能体没有自带 CLI 上报时沿用本轮 CLI，避免显示成"未知"。
           const agentCli = row.cli ?? request.cliId ?? null;
@@ -781,9 +913,11 @@ function Panel(props: PanelProps) {
           publish(turn); bumpRt(); break;
         }
         case "approvalRequest":
+          flush(turn);
           setStatus(request.sid, "pending");
           turn.msgs.push(mkMsg({ id: `approval-${ev.requestId}`, role: "system", content: `待处理：${ev.toolName}。当前非交互CLI适配器未提供可用的人工审批流程，未自动放行。` })); publish(turn); bumpRt(); break;
         case "retrying":
+          flush(turn);
           turn.msgs.push(mkMsg({ id: `retry-${request.sid}-${generation}-${ev.attempt}`, role: "system", kind: "retrying", content: `供应商暂时不可用（${ev.reason}），${ev.delayMs}ms 后重试（${ev.attempt}/${ev.maxAttempts}）`, createdAt: Date.now() }));
           publish(turn); bumpRt(); break;
         case "error": void finalize(turn, ev.message); break;
@@ -846,19 +980,12 @@ function Panel(props: PanelProps) {
   };
 
   const startSend = async (text: string, refs: ContextRef[], atts: AttachmentMeta[]): Promise<boolean> => {
-    if (!text.trim() || sendLock.current || cfgLock.current) return false;
+    if ((!text.trim() && !atts.length) || sendLock.current || cfgLock.current) return false;
     sendLock.current = true;
     const targetScope = scope;
     const originalDraft = draftRef.current;
     try {
-      let meta = curRef.current;
-      if (!meta) {
-        const unsent = draftRef.current;
-        meta = await createSession(true, props.featureTarget?.featureId);
-        drafts.set(`${targetScope}:${meta.id}`, unsent);
-        migrateComposerDraft(`${targetScope}:new`, `${targetScope}:${meta.id}`);
-        if (viewing(meta.id, targetScope)) onDraftChange(unsent);
-      }
+      const meta = curRef.current ?? await createSession(true, props.featureTarget?.featureId);
       if (scopeRef.current !== targetScope) return false;
       // CR-069：平台会话不依赖 CLI；校验平台模型（provider+model 在候选内）。
       const sessionRunner = meta.runner ?? "cli";
@@ -888,12 +1015,13 @@ function Panel(props: PanelProps) {
       const request: PendingSend = { sid: meta.id, text, refs: enriched.map(r => ({ ...r })), atts: atts.map(a => ({ ...a })), model: meta.modelId, cliId: meta.cliId ?? null, permissionId: permissionBySession[meta.id] ?? "default", scope: targetScope };
       const active = turns.current.get(meta.id);
       const acceptDraft = () => {
-        // 请求等待期间用户新写的文本/附件不能被完成回调清掉。
-        if (drafts.get(`${targetScope}:${meta!.id}`) !== originalDraft) return;
-        clearComposerDraft(`${targetScope}:${meta!.id}`);
-        drafts.set(`${targetScope}:${meta!.id}`, "");
-        if (viewing(meta!.id, targetScope)) onDraftChange("");
-        else void persistDraft(meta!.id, "");
+        const key = `${targetScope}:${meta.id}`;
+        // 未编辑过的会话可能尚未写入 drafts。与会话加载使用同一个草稿初值。
+        if ((drafts.get(key) ?? meta.draft ?? "") !== originalDraft) return;
+        clearComposerDraft(key, { refs, atts });
+        drafts.set(key, "");
+        if (viewing(meta.id, targetScope)) onDraftChange("");
+        else void persistDraft(meta.id, "");
       };
       if ((active && !active.finished) || await api.chatStatus(meta.id)) {
         if (sendMode === "queue") {
@@ -941,8 +1069,13 @@ function Panel(props: PanelProps) {
           if (busy || !mounted.current) return;
           setRunningIds(prev => prev.filter(x => x !== sid));
           if (viewing(sid)) {
-            const ms = (await api.chatMessages(sid)).map(fromChatMessage);
-            if (!getRuntime(sid).active && viewing(sid)) { syncMessages(sid, ms); setMsgs(ms); updateSessionRow(await api.chatSessionGet(sid)); }
+            const token = loadSerial.current;
+            const gen = getRuntime(sid).generation;
+            const ms = await api.chatMessages(sid);
+            if (!getRuntime(sid).active && gen === getRuntime(sid).generation && token === loadSerial.current && viewing(sid)) {
+              setMsgs(syncMessages(sid, ms));
+              updateSessionRow(await api.chatSessionGet(sid));
+            }
           }
         }).catch(() => {});
       }
@@ -992,19 +1125,23 @@ function Panel(props: PanelProps) {
 
   const statsData = useMemo(() => {
     const model = models.find(m => m.providerId === cur?.providerId && m.modelId === cur?.modelId);
+    // DSH turns 只由权威 closed step 投影；当前消息未保留该元信息时为未知。
+    const persisted = statsSnapshot?.sessionId === cur?.id ? statsSnapshot : null;
+    const closedStats = persisted ?? projectSessionStats(msgs, { sessionId: cur?.id });
     return {
-      rounds: msgs.filter(m => m.role === "user").length, msgs: msgs.length,
-      modelMs: curRt?.timingKnown ? curRt.modelMs : null, toolMs: curRt?.timingKnown ? curRt.toolMs : null,
-      ttftMs: curRt?.ttftMs ?? null,
+      rounds: closedStats.rounds, steps: closedStats.steps, statsSource: closedStats.source, msgs: msgs.length,
+      modelMs: persisted?.modelMs ?? null, toolMs: curRt?.timingKnown ? curRt.toolMs : null,
+      ttftMs: persisted?.ttftMs ?? null,
+      timingSource: persisted ? "平台逐生成步骤测量；模型用时仅完整覆盖才累计，TTFT/TPS取最近闭合步骤" : "权威生成计时未上报",
       // CR-068 J10：TPS 只在「本轮输出 tokens + 生成窗口」都已知时给值，否则保持未知。
-      tps: curRt ? outputTps(curRt) : null,
+      tps: persisted?.tps ?? null,
       tokensIn: curRt?.usageKnown ? curRt.tokensIn : null, tokensOut: curRt?.usageKnown ? curRt.tokensOut : null,
       cacheRead: curRt?.cacheKnown ? curRt.cacheRead : null,
       // 上下文是最近一次请求上报的当前窗口占用，不是累计 tokens；上限只认模型声明的 contextWindow。
       contextUsed: curRt?.lastPromptTokens ?? null,
       contextLimit: model?.contextWindow ?? null,
     };
-  }, [msgs, cur?.id, cur?.providerId, cur?.modelId, models, curRt?.tokensIn, curRt?.tokensOut, curRt?.cacheRead, curRt?.timingKnown, curRt?.ttftMs, curRt?.lastPromptTokens, curRt?.lastOutTokens, curRt?.lastGenMs]);
+  }, [msgs, statsSnapshot, cur?.id, cur?.providerId, cur?.modelId, models, curRt?.tokensIn, curRt?.tokensOut, curRt?.cacheRead, curRt?.timingKnown, curRt?.ttftMs, curRt?.lastPromptTokens, curRt?.lastOutTokens, curRt?.lastGenMs]);
   const agentRows = curRt?.subagents ?? [], bgRows = curRt?.background ?? [];
   const agentCount = agentRows.length, bgCount = bgRows.length;
   // CR-068 J12：只有真正需要用户处理（重建/另建）的绑定状态才显示标签与横幅；
@@ -1047,7 +1184,7 @@ function Panel(props: PanelProps) {
       onRename={(s, title) => void renameSession(s, title)}
       onClose={() => overlay.close(true)}
     />}
-    <MessageList msgs={msgs} projectId={props.projectId} rootUri={props.rootUri} officeFiles={props.officeFiles} visible={props.visible} working={working} onOpenAgent={id => { if (cur) props.onOpenAgent?.(cur.id, id); }} stepsSlot={<>{queued > 0 && <div className="chat-queued">已排队 {queued} 条，当前静止后发送</div>}{curRt && curRt.steps.length > 0 && <StepsBox steps={curRt.steps} demo={curRt.stepsDemo} preview={Boolean((window as unknown as { __DESIGN_PREVIEW__?: boolean }).__DESIGN_PREVIEW__)} open={curRt.stepsOpen} sid={cur!.id} onToggle={() => { curRt.stepsOpen = !curRt.stepsOpen; bumpRt(); }} bump={bumpRt} />}</>} />
+    <MessageList msgs={msgs} projectId={props.projectId} rootUri={props.rootUri} officeFiles={props.officeFiles} visible={props.visible} working={working} onOpenAgent={id => { if (cur) props.onOpenAgent?.(cur.id, id); }} stepsSlot={queued > 0 ? <div className="chat-queued">已排队 {queued} 条，当前静止后发送</div> : undefined} />
     {bindingBlocks && binding && <div className="chat-block-banner" role="alert" aria-label="绑定阻塞横幅">
       <span className="chat-block-ico" aria-hidden>!</span>
       <div className="chat-block-main">
@@ -1062,7 +1199,19 @@ function Panel(props: PanelProps) {
       </div>
     </div>}
     <div className="chat-composer-wrap">
-      <Composer scopeKey={`${scope}:${cur?.id ?? "new"}`} rootUri={props.rootUri} projectId={props.projectId} office={props.office} officeFiles={props.officeFiles} sessions={sessions} serverId={props.serverId} value={draft} streaming={running} disabled={composerLocked} goal={curRt?.goal ?? null} tasks={curRt?.tasks ?? []} onCreateGoal={text => { if (cur) { setGoal(cur.id, text); bumpRt(); } }} onGoalStateChange={state => { if (cur) { updateGoalState(cur.id, state); bumpRt(); } }} onCreateTask={taskName => { if (cur) { addSessionTask(cur.id, taskName); bumpRt(); } }} onChange={onDraftChange} onSend={startSend} onStop={stopSend} controls={<ModelPicker cliId={cur?.cliId ?? null} providerId={cur?.providerId ?? null} modelId={cur?.modelId ?? null} effort={cur?.effort ?? null} cliCandidates={cliCands} models={models} permissionId={(cur?.id && permissionBySession[cur.id] as any) || "default"} locked={executionLocked || cfgBusy} onChange={applyCfg} runner={cur?.runner ?? runnerDraft} platformAvailable={models.length > 0} onRunnerChange={next => { void switchRunner(next); }} />} onSessionSearch={async (q: string) => (await api.chatSessionsPage({ ...(props.projectId ? { projectId: props.projectId } : {}), ...(props.serverId ? { serverId: props.serverId } : {}), ...(q.trim() ? { keyword: q.trim() } : {}), limit: 20 })).items} />
+      {cur && curRt && <>
+        <TodoPanel items={[...curRt.plan.tasks.values(), ...curRt.plan.todos]} expanded={curRt.todoExpanded} onToggle={() => { curRt.todoExpanded = !curRt.todoExpanded; bumpRt(); }} />
+        {curRt.goal && curRt.goal.state !== "cancelled" && curRt.goal.state !== "complete" && <GoalBar key={curRt.goal.id} goal={curRt.goal} disarmed={!curRt.goalArmed} onEdit={text => { setGoal(cur.id, text); bumpRt(); }} onStateChange={state => { updateGoalState(cur.id, state); bumpRt(); }} onCleared={() => { composerFocusAfterClear.current = { sid: cur.id, scope }; }} />}
+      </>}
+      <Composer scopeKey={`${scope}:${cur?.id ?? "new"}`} rootUri={props.rootUri} projectId={props.projectId} office={props.office} officeFiles={props.officeFiles} sessions={sessions} serverId={props.serverId} value={draft} streaming={running} disabled={composerLocked} runner={cur?.runner ?? runnerDraft} cliId={cur ? cur.cliId : cliCands[0]?.id ?? null} onCreateGoal={text => { void createGoal(text); }} onOpenGoal={() => setGoalDraft("")} onChange={onDraftChange} onSend={startSend} onStop={stopSend} renderControls={({ add, send }) => <ModelPicker addControl={add} sendControl={send} cliId={cur?.cliId ?? null} providerId={cur?.providerId ?? null} modelId={cur?.modelId ?? null} effort={cur?.effort ?? null} cliCandidates={cliCands} models={models} permissionId={(cur?.id && permissionBySession[cur.id] as any) || "default"} locked={executionLocked || cfgBusy} onChange={applyCfg} runner={cur?.runner ?? runnerDraft} platformAvailable={models.length > 0} onRunnerChange={next => { void switchRunner(next); }} />} onSessionSearch={async (q: string) => (await api.chatSessionsPage({ ...(props.projectId ? { projectId: props.projectId } : {}), ...(props.serverId ? { serverId: props.serverId } : {}), ...(q.trim() ? { keyword: q.trim() } : {}), limit: 20 })).items} />
+      {goalDraft !== null && <Modal title="创建目标" onClose={() => setGoalDraft(null)} footer={<>
+        <button type="button" className="btn" onClick={() => setGoalDraft(null)}>取消</button>
+        <button type="submit" form="chat-goal-create" className="btn primary" disabled={!goalDraft.trim()}>创建目标</button>
+      </>}>
+        <form id="chat-goal-create" className="chat-goal-create" onSubmit={e => { e.preventDefault(); void createGoal(goalDraft); }}>
+          <textarea aria-label="目标内容" ref={element => element?.setAttribute("autofocus", "")} rows={3} value={goalDraft} onChange={e => setGoalDraft(e.target.value)} />
+        </form>
+      </Modal>}
       {freshConfirm && cur && <Confirm
         title="无法续接原线程，是否重建上下文？"
         message={`本轮开始前检测到原生引用不可用。重建后将开启全新上下文；历史消息保留可见，不再自动送给模型。\n\n原因：${reasonLabel(freshConfirm.reasonCode)}\n引用指纹：${freshConfirm.refFingerprint ?? "—"} · 绑定版本：#${freshConfirm.expectedRevision}`}

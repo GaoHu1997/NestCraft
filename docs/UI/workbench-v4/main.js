@@ -213,20 +213,22 @@
     "project-edit": el => { store.projectFormDraft = null; store.projectIconExpanded = false; store.projectIconDraft = null; store.projectColorDraft = null; store.projectPathDraft = ""; S().projectModal("edit", el.dataset.id); },
     "project-save": el => {
       const mode = el.dataset.mode;
+      /* CR-073：成员字段移除，保存不再读写 members。 */
       const data = {
         name: val("pf-name").trim(), key: (val("pf-key").trim() || "NEW").toUpperCase(), kind: val("pf-kind"),
-        owner: val("pf-owner").trim() || D.user.name, desc: val("pf-desc").trim(),
-        path: store.projectPathDraft || val("pf-path").trim(), members: val("pf-members").split(/[、,，\s]+/).filter(Boolean)
+        owner: val("pf-owner").trim(), desc: val("pf-desc").trim(),
+        path: store.projectPathDraft || val("pf-path").trim()
       };
       if (!data.name) { toast("请填写项目名称"); return; }
       if (mode === "edit") {
         const p = projById(el.dataset.id);
-        Object.assign(p, data, { ownerInitials: data.owner.slice(0, 1).toUpperCase(), updated: "刚刚" });
+        Object.assign(p, data, { ownerInitials: (data.owner || "—").slice(0, 1).toUpperCase(), updated: "刚刚" });
+        /* CR-073：编辑弹窗保存后，把表单里的名称/负责人/描述同步到卡片与侧栏。 */
         toast("项目已保存");
       } else {
         const id = "PRJ-" + (1000 + D.projects.length + 1);
         D.projects.push({
-          id, ...data, ownerInitials: data.owner.slice(0, 1).toUpperCase(), tone: data.kind === "code" ? "blue" : "amber",
+          id, ...data, ownerInitials: (data.owner || "—").slice(0, 1).toUpperCase(), tone: data.kind === "code" ? "blue" : "amber",
           stories: 0, done: 0, running: 0, updated: "刚刚", tags: ["新建"], branch: data.kind === "code" ? "main" : "", repo: data.path, createdAt: "今天"
         });
         toast("已创建项目：" + data.name);
@@ -234,7 +236,7 @@
       closeDialog(); render();
     },
     "open-project": el => { closeDialog(); openWindow("project", el.dataset.id, projById(el.dataset.id).name); },
-    "dir-pick": () => { store.projectDraft = { name: val("pf-name"), key: val("pf-key"), kind: val("pf-kind"), owner: val("pf-owner"), desc: val("pf-desc"), members: val("pf-members") }; store.dirReturn = store.projectModal; S().dirPicker(); },
+    "dir-pick": () => { store.projectDraft = { name: val("pf-name"), key: val("pf-key"), kind: val("pf-kind"), owner: val("pf-owner"), desc: val("pf-desc") }; store.dirReturn = store.projectModal; S().dirPicker(); },
     "dir-choose": el => { store.dirPick = el.dataset.path; document.getElementById("dir-current").textContent = el.dataset.path; document.querySelectorAll(".dir-row").forEach(r => r.classList.toggle("on", r === el)); },
     "dir-confirm": () => {
       if (!store.dirPick) { toast("请先选择一个文件夹"); return; }
@@ -321,9 +323,22 @@
       else { toast("没有可派发的 Story"); render(); }
     },
     "tree-search": () => {},
+    /* UI-CR073（用户第 8 项）：刷新移到需求树标题行「+」左侧；只重扫演示源，不改选中页签。 */
+    "req-reload": el => {
+      if (el.dataset.busy === "1") return;
+      el.dataset.busy = "1";
+      el.setAttribute("aria-busy", "true");
+      window.RequirementsWorkspace.capture();
+      toast("已重新扫描需求源（设计仿真）");
+      setTimeout(() => { render(); }, 260);
+    },
 
     /* ---------- 设计 ---------- */
     "design-tab": el => { store.designTab = el.dataset.tab; store.designEdit = false; render(); },
+    /* UI-CR073：UI 分区内切换说明文档与可预览的 HTML 原型。 */
+    "design-ui-doc": el => { store.designUiDoc = el.value; render(); },
+    /* UI-CR073：HTML 设计稿的「预览 / 源码」切换；预览为默认。 */
+    "design-view": el => { store.designViewMode = el.dataset.view === "source" ? "source" : "preview"; render(); },
     "design-edit": () => { store.designEdit = !store.designEdit; render(); },
     "design-save": () => { const v = val("design-editor"); const key = store.designTab; if (D.design[key]) { D.design[key].body = v; D.design[key].updated = "刚刚"; } store.designEdit = false; store.designDraft = null; toast("设计草稿已保存"); render(); },
     "design-toc": () => { store.designToc = !store.designToc; render(); },
@@ -456,12 +471,19 @@
       g.code.tabSize = parseInt(val("gen-tab"), 10) || g.code.tabSize;
       g.server.port = parseInt(val("gen-port"), 10) || g.server.port;
       g.server.defaultUser = val("gen-user") || g.server.defaultUser;
+      g.dataDir = val("gen-data-dir") || g.dataDir;
       D.user.name = g.profile.name;
       D.user.email = g.profile.email;
       D.user.role = g.profile.role;
-      toast("设置已保存");
+      toast("设置已保存；数据存储位置重启后迁移并生效");
       UI.closeDialog(); openSettings("general");
       render();
+    },
+    "pick-data-dir": () => {
+      // 设计稿只演示交互：不读真实磁盘，选中后写入示例路径并提示重启语义。
+      D.settings.general.dataDir = "D:\\NestCraft-data";
+      UI.closeDialog(); openSettings("general");
+      toast("演示：已选择目录；重启后迁移并生效");
     },
     "set-code-theme": el => { D.settings.general.code.theme = el.dataset.theme; UI.closeDialog(); openSettings("general"); },
     "set-send-mode": el => { D.settings.general.sendMode = el.dataset.mode; UI.closeDialog(); openSettings("general"); },
@@ -825,17 +847,18 @@
     "ai-agent-back": () => { store.aiAgent = null; render(); },
     "ai-new": () => AIPanel.newSession(),
     "ai-switch": el => AIPanel.switchSession(el.dataset.id),
-    "ai-menu-open": el => { store.aiMenu = "add"; store.aiMenuTab = el.dataset.tab || "add"; store.aiMenuQuery = ""; render(); setTimeout(() => { const q = document.getElementById("ai-menu-q"); if (q) q.focus(); }, 20); },
-    "ai-menu-tab": el => { store.aiMenuTab = el.dataset.tab; store.aiMenu = "add"; render(); },
+    "ai-menu-open": () => { store.aiMenuTab = "add"; AIPanel.openMenu(store.aiMenu === "add" ? null : "add"); },
+    "ai-menu-tab": el => { store.aiMenuTab = el.dataset.tab; render(); },
     "ai-menu-q": () => {},
     "ai-pick": el => {
-      const kind = el.dataset.kind;
-      if (kind === "file") { store.aiMenu = null; openFilePicker(); }
-      else if (kind === "goal") { store.aiMenu = null; goalDialog(); }
-      else if (kind === "plan") { store.aiMenu = null; store.aiPermission = "规划模式"; toast("已进入规划模式：只读工具生成计划"); render(); }
-      else { store.aiMenu = null; feedbackDialog(); }
+      if (el.dataset.kind === "file") AIPanel.openMenu("at");
+      if (el.dataset.kind === "command") AIPanel.openMenu("slash");
+      if (el.dataset.kind === "image" && AIPanel.canAttachImages()) { AIPanel.openMenu(null); document.getElementById("ai-image-input")?.click(); }
     },
-    "ai-insert": el => AIPanel.insert(el.dataset.text),
+    "ai-insert": el => AIPanel.insert(el.dataset.text, el.dataset.ref ? { key: el.dataset.ref, label: el.dataset.label } : null),
+    "ai-image-remove": el => AIPanel.removeImage(Number(el.dataset.index)),
+    "ai-image-view": el => AIPanel.imageView(el),
+    "ai-ref-remove": el => AIPanel.removeRef(Number(el.dataset.index)),
     "ai-permission": () => { store.aiPop = store.aiPop === "perm" ? null : "perm"; store.aiMenu = null; render(); },
     "ai-perm-set": el => { store.aiPermission = el.dataset.name; store.aiPop = null; toast("权限模式：" + el.dataset.name); render(); },
     "ai-cli": () => { store.aiPop = store.aiPop === "cli" ? null : "cli"; store.aiMenu = null; render(); },
@@ -844,11 +867,27 @@
     "ai-model-provider": el => { const cat = D.ai.modelCatalog; cat.current.provider = el.dataset.name; const list = AIPanel.visibleModels(cat.providers.find(p => p.name === el.dataset.name)); if (list.length) cat.current.model = list[0].name; if (!AIPanel.currentModel().thinking) cat.current.level = "—"; else if (!cat.levels.includes(cat.current.level)) cat.current.level = "High"; store.aiModelQuery = ""; render(); },
     "ai-model-set": el => { const cat = D.ai.modelCatalog; cat.current.model = el.dataset.name; const m = AIPanel.currentModel(); if (m.thinking) { if (!cat.levels.includes(cat.current.level)) cat.current.level = "High"; } else cat.current.level = "—"; render(); },
     "ai-level": el => { D.ai.modelCatalog.current.level = D.ai.modelCatalog.levels[Number(el.value)]; render(); },
-    "ai-step-advance": () => AIPanel.advanceStep(),
-    "ai-steps-toggle": () => { store.aiStepsOpen = !store.aiStepsOpen; render(); },
+    "ai-task-toggle": () => { ChatDock.toggle(AIPanel.activeSession()); render(); },
+    "ai-goal-edit": () => ChatDock.edit(),
+    "ai-goal-apply": () => ChatDock.finish(true),
+    "ai-goal-cancel": () => ChatDock.finish(false),
+    "ai-goal-toggle": () => { const s = AIPanel.activeSession(); s.goalPaused = !s.goalPaused; render(); },
+    "ai-goal-clear": () => {
+      if (window.confirm("清除当前会话的目标？")) {
+        const s = AIPanel.activeSession();
+        s.goal = "";
+        s.goalPaused = false;
+        render();
+        document.getElementById("ai-input")?.focus({ preventScroll: true });
+      }
+    },
     "ai-send": () => AIPanel.send(),
     "ai-approve": el => AIPanel.approve(Number(el.dataset.idx), true),
-    "ai-copy": el => { const m = store.aiMessages[Number(el.dataset.idx)]; const w = navigator.clipboard; if (w && m) w.writeText(m.text).then(() => toast("已复制这条回复"), () => toast("复制失败", "alert")); else toast("当前环境不支持复制", "alert"); },
+    "ai-copy": el => {
+      const text = AIPanel.finalText(store.aiMessages[Number(el.dataset.idx)]);
+      if (navigator.clipboard && text) navigator.clipboard.writeText(text).then(() => toast("已复制这条回复"), () => toast("复制失败", "alert"));
+      else toast("当前环境不支持复制", "alert");
+    },
     "ai-deny": el => AIPanel.approve(Number(el.dataset.idx), false),
     "ai-show-cmd": () => openDialog(dlgShell("待审批命令", "逐次确认，不记忆放行", `<pre class="mono" style="padding:12px;background:var(--surface-2);border:1px solid var(--line);border-radius:6px">pnpm vitest run tests/capacity-rollback.spec.ts\n\n工作目录：D:/work/booking-service\n风险：写入测试文件\n超时：120s</pre>`, `<button class="btn" data-act="close-dialog">关闭</button>`, "modal-sm")),
     "ai-stat": el => { store.aiPop = store.aiPop === el.dataset.stat ? null : el.dataset.stat; store.aiMenu = null; store.aiTop = null; render(); },
@@ -1184,14 +1223,15 @@
   document.addEventListener("click", e => {
     if (document.body.classList.contains("nav-open") && !e.target.closest(".sidebar") && !e.target.closest(".topbar")) document.body.classList.remove("nav-open");
     const hadMenu = Boolean(store.reqMenu || store.aiPop || store.aiMenu || store.aiTop || store.aiHistory);
+    if (e.target.closest("#ai-history-q, #ai-input, #ai-model-q") && !e.target.closest("[data-act]")) return;
     if (store.reqMenu && !e.target.closest("#req-menu") && !e.target.closest("[data-act=req-menu]")) store.reqMenu = null;
-    if ((store.aiPop || store.aiMenu) && !e.target.closest(".ai-panel")) { store.aiPop = null; store.aiMenu = null; }
+    if ((store.aiPop || store.aiMenu) && !e.target.closest(".ai-panel, .wb-conv")) { store.aiPop = null; store.aiMenu = null; }
     if (store.aiTop && !e.target.closest(".ai-drop-wrap")) store.aiTop = null;
     if (store.aiHistory && !e.target.closest(".ai-history") && !e.target.closest("[data-act=ai-history]")) { store.aiHistory = false; store.aiHistLimit = 20; store.aiHistQuery = ""; store.aiHistFocus = false; store.aiHistMenu = null; }
     // CR-064：点击菜单外部关闭「…」菜单
     if (store.aiHistMenu && !e.target.closest(".ai-hist-menu-wrap")) store.aiHistMenu = null;
     const el = e.target.closest("[data-act]");
-    if (!el) { if (hadMenu) render(); return; }
+    if (!el) { if (hadMenu && !e.target.closest("#ai-menu")) render(); return; }
     const fn = actions[el.dataset.act];
     if (!fn) { if (hadMenu) render(); return; }
     if (el.tagName === "A") e.preventDefault();
@@ -1199,27 +1239,7 @@
     if (hadMenu) render();
   });
 
-  /* CR-063：会话历史搜索输入（250ms 防抖；IME 组合期间不重绘，避免打断输入）。 */
-  let histQueryTimer = null, histComposing = false;
-  const scheduleHistQuery = delay => {
-    clearTimeout(histQueryTimer);
-    histQueryTimer = setTimeout(() => { store.aiHistLimit = 20; render(); }, delay);
-  };
-  document.addEventListener("compositionstart", e => { if (e.target && e.target.id === "ai-history-q") histComposing = true; }, true);
-  document.addEventListener("compositionend", e => {
-    if (!e.target || e.target.id !== "ai-history-q") return;
-    histComposing = false;
-    store.aiHistQuery = e.target.value;
-    scheduleHistQuery(250);
-  }, true);
-  document.addEventListener("input", e => {
-    // CR-064：原位重命名输入，不触发重绘（保留输入焦点与光标）
-    if (e.target && e.target.id === "ai-hist-rename-input") { store.aiHistEditValue = e.target.value; return; }
-    if (!e.target || e.target.id !== "ai-history-q" || histComposing) return;
-    store.aiHistQuery = e.target.value;
-    store.aiHistFocus = true;
-    scheduleHistQuery(250);
-  }, true);
+  // CR-074：共享历史搜索由 cr074.js 局部更新，保留原始输入、IME与选区。
 
   /* CR-064：原位重命名——Enter 保存、Escape 取消、失焦保存 */
   document.addEventListener("focusout", e => {
@@ -1249,18 +1269,29 @@
     parent.setAttribute("aria-label", parent.title);
     const status = parent.querySelector(".sr-only"); if (status) status.textContent = "官方品牌资产已加载";
   }, true);
+  const composingChatInputs = new WeakSet();
+  const isChatInput = target => ["ai-input", "ai-goal-draft", "ai-menu-q"].includes(target?.id);
+  const chatComposing = (target, event) => composingChatInputs.has(target) || event?.isComposing || event?.keyCode === 229;
+  document.addEventListener("compositionstart", e => { if (isChatInput(e.target)) composingChatInputs.add(e.target); });
   document.addEventListener("input", e => {
+    if (e.target.id === "ai-goal-draft") {
+      ChatDock.input(AIPanel.activeSession(), e.target.value);
+      return;
+    }
     const el = e.target;
     if (el.id === "proj-search") { store.projQuery = el.value; render(); }
     else if (el.id === "tree-search") { store.treeQuery = el.value; render(); }
     else if (el.id === "kb-search") { store.kbQuery = el.value; render(); }
-    else if (el.id === "ai-input") {
-      store.aiInput = el.value; store.aiStick = true;
-      const m = /(?:^|\s)([@/])([^\s@/]*)$/.exec(el.value);
-      if (m) { store.aiMenu = m[1] === "@" ? "at" : "slash"; store.aiMenuQuery = m[2]; render(); setTimeout(() => { const q = document.getElementById("ai-menu-q"); if (q) q.focus(); }, 10); }
-      else if (store.aiMenu === "at" || store.aiMenu === "slash") { store.aiMenu = null; render(); }
+    else if (el.id === "ai-input") AIPanel.inputChanged(el, chatComposing(el, e));
+    else if (el.id === "ai-menu-q") {
+      const selection = [el.selectionStart, el.selectionEnd, el.selectionDirection];
+      store.aiMenuQuery = el.value;
+      if (chatComposing(el, e)) return;
+      render();
+      const input = document.getElementById("ai-menu-q");
+      input?.focus({ preventScroll: true });
+      input?.setSelectionRange(...selection);
     }
-    else if (el.id === "ai-menu-q") { store.aiMenuQuery = el.value; render(); }
     else if (el.id === "ai-model-q") { store.aiModelQuery = el.value; render(); setTimeout(() => { const q = document.getElementById("ai-model-q"); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }, 0); }
     else if (el.id === "git-message") { store.gitMessage = el.value; render(); }
     else if (el.id === "git-branch-q") { store.gitBranchQuery = el.value; render(); }
@@ -1269,6 +1300,36 @@
     else if (el.id === "design-editor") { store.designDraft = el.value; }
     else if (el.id === "term-input") { store.termInput = el.value; }
     else if (el.id === "global-q") renderSearch(el.value);
+  });
+
+  document.addEventListener("compositionend", e => {
+    if (!isChatInput(e.target)) return;
+    composingChatInputs.delete(e.target);
+    if (e.target.id === "ai-input") AIPanel.inputChanged(e.target);
+    else if (e.target.id === "ai-menu-q") e.target.dispatchEvent(new InputEvent("input", { bubbles: true }));
+  });
+  document.addEventListener("keyup", e => { if (e.target.id === "ai-input" && !chatComposing(e.target, e) && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) AIPanel.inputChanged(e.target); });
+  document.addEventListener("change", e => {
+    if (e.target.id !== "ai-image-input") return;
+    const files = Array.from(e.target.files);
+    e.target.value = "";
+    void AIPanel.addImages(files);
+  });
+  document.addEventListener("paste", e => {
+    if (e.target.id !== "ai-input" || e.clipboardData.getData("text/plain")) return;
+    const files = Array.from(e.clipboardData.files).filter(file => file.type.startsWith("image/"));
+    if (!files.length) return;
+    e.preventDefault();
+    if (AIPanel.canAttachImages()) void AIPanel.addImages(files);
+    else toast("当前通道暂不支持图片，请切换到 Codex", "alert");
+  });
+  document.addEventListener("dragover", e => {
+    if (e.target.closest(".ai-composer") && AIPanel.canAttachImages() && e.dataTransfer.types.includes("Files")) e.preventDefault();
+  });
+  document.addEventListener("drop", e => {
+    if (!e.target.closest(".ai-composer") || !e.dataTransfer.files.length) return;
+    e.preventDefault();
+    void AIPanel.addImages(Array.from(e.dataTransfer.files));
   });
 
   document.addEventListener("submit", e => {
@@ -1282,6 +1343,15 @@
   });
 
   document.addEventListener("keydown", e => {
+    if (isChatInput(e.target) && chatComposing(e.target, e)) { e.stopPropagation(); return; }
+    if (e.target.id === "ai-goal-draft") {
+      if (e.isComposing) return;
+      if (e.key === "Escape" || (e.key === "Enter" && !e.shiftKey)) {
+        e.preventDefault();
+        ChatDock.finish(e.key === "Enter");
+        return;
+      }
+    }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openSearch(); return; }
     // CR-064：原位重命名时 Enter 保存、Escape 取消，优先于浮层关闭
     if (store.aiHistEditId) {
@@ -1297,8 +1367,22 @@
       if (store.aiMenu || store.aiPop || store.aiTop || store.aiHistory) { store.aiMenu = null; store.aiPop = null; store.aiTop = null; store.aiHistory = false; store.aiHistMenu = null; render(); return; }
       UI.closeTopDialog();
     }
-    if (e.target && e.target.id === "ai-input" && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); AIPanel.send(); }
-    if (e.target && e.target.id === "ai-menu-q" && e.key === "Enter") { e.preventDefault(); const first = document.querySelector("#ai-menu .menu-item"); if (first) first.click(); }
+    const input = e.target.id === "ai-input";
+    const search = e.target.id === "ai-menu-q";
+    const row = e.target.closest("#ai-menu .chat-ref-row");
+    if ((input || search || row) && !e.isComposing) {
+      const options = [...document.querySelectorAll("#ai-menu .chat-ref-row:not(:disabled)")].filter(option => option.getClientRects().length && !option.closest("details:not([open])"));
+      if (options.length && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        const direction = e.key === "ArrowDown" ? 1 : -1;
+        const index = row ? (options.indexOf(row) + direction + options.length) % options.length : direction === 1 ? 0 : options.length - 1;
+        e.preventDefault();
+        options[index].focus();
+      } else if ((input || search) && e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        if (options.length) options[0].click();
+        else if (input) AIPanel.send();
+      }
+    }
   });
 
   document.addEventListener("click", e => { if (e.target.id === "dialog" || e.target.id === "dialog2") UI.closeTopDialog(); });

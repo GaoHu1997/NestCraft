@@ -1,7 +1,6 @@
 import { Icon } from "@/components/icons";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import type * as api from "@/api";
-import { ChatPanel } from "@/modules/chat/ChatPanel";
 import type { ChatController } from "@/modules/chat/ChatPanel";
 import { SessionHistoryList } from "@/modules/chat/SessionList";
 import { ResizeHandle, usePaneWidth } from "@/components/pane-resize";
@@ -17,7 +16,7 @@ import "./workbench.css";
  *
  * 结构：左历史会话 / 中当前会话 / 右只读辅助栏（默认关闭）。
  * 关键约束：
- * - 会话按项目唯一：本组件是该项目唯一的 ChatPanel 宿主，左侧栏直接读它的 ChatController，
+ * - 会话按项目唯一：ProjectWindow持有唯一ChatPanel；本组件仅提供布局槽并读公共ChatController，
  *   不建第二份会话数据，也不挂第二个实例（否则会双订阅 chat:event）；
  * - 切页签不新建、不中断：组件随项目窗口 hidden 保留挂载；
  * - 右栏只读：不写文件、不扩授权，只呈现预览与“在对应页签打开”的回退。
@@ -41,6 +40,9 @@ interface WorkbenchProps {
   onAuxChange: (next: WorkbenchAuxState) => void;
   /** 在对应页签打开（显式回退）。 */
   onOpenInTab: (target: AuxTarget) => void;
+  /** FEAT-021：ProjectWindow唯一会话的列表快照，不建立本地会话状态。 */
+  controller?: ChatController | null;
+  chatSlotRef?: (slot: HTMLDivElement | null) => void;
 }
 
 export interface WorkbenchAuxState {
@@ -53,19 +55,11 @@ export interface WorkbenchAuxState {
 
 export const emptyAuxState = (): WorkbenchAuxState => ({ open: false, tabs: [], active: null, requestedByAi: false });
 
-export function Workbench({ project, active, aux, onAuxChange, onOpenInTab }: WorkbenchProps) {
-  const controllerRef = useRef<ChatController | null>(null);
-  const [controller, setController] = useState<ChatController | null>(null);
+export function Workbench({ project, active, aux, onAuxChange, onOpenInTab, controller = null, chatSlotRef }: WorkbenchProps) {
   const shellRef = useRef<HTMLDivElement | null>(null);
 
   const hist = usePaneWidth(`project:${project.id}`, "wb-hist", { default: 288, min: 220, max: 420, side: "left", containerRef: shellRef, minCenter: 360, disabled: !active });
   const side = usePaneWidth(`project:${project.id}`, "wb-aux", { default: 360, min: 280, max: 520, side: "right", containerRef: shellRef, minCenter: 360, disabled: !active || !aux.open });
-
-  /* CR-054：接收 ChatPanel 的会话数据；同一实例，不复制。 */
-  const handleController = useCallback((next: ChatController | null) => {
-    controllerRef.current = next;
-    setController(next);
-  }, []);
 
   const pushAux = useCallback((targets: AuxTarget[], requestedByAi = false) => {
     const merged = [...aux.tabs];
@@ -134,15 +128,7 @@ export function Workbench({ project, active, aux, onAuxChange, onOpenInTab }: Wo
 
       {/* 中：当前会话。全项目唯一的 ChatPanel 实例。 */}
       <section className="wb-conv" aria-label="当前会话">
-        <ChatPanel
-          projectId={project.id}
-          rootUri={project.rootUri}
-          office={project.kind === "work"}
-          visible={active}
-          variant="workbench"
-          onController={handleController}
-          className="wb-chat-panel"
-        />
+        <div ref={chatSlotRef} className="project-chat-slot" data-project-chat-slot="workbench" />
       </section>
 
       {/* 右：只读辅助栏 */}

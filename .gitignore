@@ -35,3 +35,7 @@ mockbin/*.cmd
 .DS_Store
 Thumbs.db
 *.log
+
+# 包管理器唯一事实来源为 npm（package-lock.json）；本机 pnpm 试验锁文件不入库
+pnpm-lock.yaml
+pnpm-workspace.yaml

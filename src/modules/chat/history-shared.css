@@ -1,0 +1,9 @@
+/* WP-074-F011 / UI-CR074-v1。仅公共历史组件；滚动外观继承 UI-SCROLL-001。 */
+.chat-history.resizable-pane { position: absolute; }
+@media (max-width: 960px) { .chat-history.resizable-pane { position: fixed; } }
+.chat-history .history-shared-list { overscroll-behavior: contain; }
+.chat-history .chat-hist-menu-wrap:has(.chat-hist-menu) .chat-hist-more-btn { visibility: visible; }
+/* 常驻/浮层选中只高亮，不额外增加框或改变行宽。 */
+.chat-history .chat-hist-item.active { border: 0; box-shadow: none; }
+/* 触控没有hover，也要能访问已有行操作；不改变滚动条显隐规则。 */
+@media (hover: none) { .chat-history .chat-hist-more-btn { visibility: visible; } }

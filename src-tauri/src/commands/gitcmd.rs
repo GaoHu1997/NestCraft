@@ -6,7 +6,6 @@
 use crate::models::{BranchEntry, CommitEntry, CommitFileEntry, GitChange, GitStatus};
 use std::io::Write;
 use std::path::Path;
-use tauri::Manager;
 use tokio::process::Command;
 
 async fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
@@ -491,9 +490,8 @@ async fn network_prefix(
 
 /// 受管 git-credentials 文件路径。
 fn managed_store_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    Ok(dir.join("git-credentials"))
+    let _ = app;
+    Ok(crate::storage_layout::category("git")?.join("git-credentials"))
 }
 
 /// 写入（或替换）该主机的凭据行：同一主机只保留一条，0600 与原子替换。

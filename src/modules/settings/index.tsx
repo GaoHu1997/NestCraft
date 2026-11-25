@@ -16,7 +16,7 @@ import "./settings.css";
 const TABS = [
   { id: "general", label: "通用", icon: "settings", sub: "用户信息、代码样式与服务器默认值。" },
   { id: "models", label: "模型管理", icon: "cpu", sub: "供应商、密钥、端点与模型配置。" },
-  { id: "probe", label: "模型检测", icon: "shield", sub: "固定 19 针黑盒探针，检测模型是否被中转掺水。" },
+  { id: "probe", label: "模型检测", icon: "shield", sub: "固定 20 针黑盒探针，检测模型是否被中转掺水。" },
   { id: "sdk", label: "SDK 与 CLI", icon: "terminal", sub: "CLI 管理与 SDK 管理。" },
   { id: "skill", label: "能力 · Skill", icon: "layers", sub: "技能是过程性指令；启用不等于授权执行。" },
   { id: "mcp", label: "能力 · MCP", icon: "box", sub: "MCP 服务器发现工具与资源。" },

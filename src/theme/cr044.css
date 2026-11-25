@@ -17,8 +17,12 @@
 .nc-window-tab { height: 39px; margin: 0; padding: 0; border: 0; border-right: 1px solid var(--line); border-radius: 0; display: flex; gap: 0; max-width: 230px; }
 .nc-window-tab.active { background: var(--surface); color: var(--primary); box-shadow: inset 0 -2px var(--primary); }
 .nc-window-tab.home-tab { min-width: 88px; position: sticky; left: 0; z-index: 2; }
-.nc-window-tab .nc-tab-focus { display: flex; flex: 1; align-items: center; justify-content: center; gap: 6px; min-width: 0; height: 100%; padding: 0 12px; }
-.nc-window-tab .nc-tab-close { width: 28px; height: 28px; padding: 0; margin: auto 4px auto 0; display: grid; place-items: center; border-radius: 4px; color: var(--muted); }
+/* CR-073：页签标题单行省略——起点对齐（居中会在省略时左右跳动），
+   标题 flex 收缩并以 … 截断，图标与关闭按钮不参与压缩，页签高度不变。 */
+.nc-window-tab .nc-tab-focus { display: flex; flex: 1; align-items: center; justify-content: flex-start; gap: 6px; min-width: 0; height: 100%; padding: 0 12px; overflow: hidden; }
+.nc-window-tab .nc-tab-focus > .ico { flex: 0 0 auto; }
+.nc-window-tab .nc-tab-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nc-window-tab .nc-tab-close { width: 28px; height: 28px; padding: 0; margin: auto 4px auto 0; display: grid; place-items: center; border-radius: 4px; color: var(--muted); flex: 0 0 28px; }
 .nc-window-tab .nc-tab-close:hover { background: var(--danger-soft); color: var(--danger); }
 .nc-app .btn { min-height: 32px; gap: 6px; }
 .nc-app .btn.sm { min-height: 28px; }

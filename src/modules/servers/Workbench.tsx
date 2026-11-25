@@ -1,16 +1,19 @@
 import { Icon } from "@/components/icons";
 import { usePaneWidth, ResizeHandle, PaneToggle } from "@/components/pane-resize";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { serverList, serverConnect, serverTree, serverReadFile, serverExec, serverExecApproved, serverExecReject, type FileNode, type ServerHost, type ExecResult } from "@/api";
+import { serverList, serverConnect, serverDisconnect, serverMetrics, serverTree, serverReadFile, serverExec, serverExecApproved, serverExecReject, type FileNode, type ServerHost, type ExecResult } from "@/api";
 import { useToast, Empty, Modal, Confirm } from "@/components/ui";
 import { useApp } from "@/store/app";
 import { errText } from "./HostForm";
+import { hostAddress, osLabel, osLogoSrc } from "./hostVisual";
 import { TerminalPane } from "./TerminalPane";
 import { MonitorPane } from "./MonitorPane";
 
 /**
- * 服务器工作台（UI-CR036-v4）：左文件树 248px / 中终端与受控命令 / 右监控 300px。
- * 未连接主机在终端区显示引导文案与 [连接] 按钮，不自动连接真实主机。
+ * 服务器工作台（CR-075）：左文件树 / 中终端 / 右监控。
+ *
+ * 打开即自动连接（不再有"连接/断开"按钮），关闭工作台页签由外层自动断开；
+ * 失败只提供"重试"，不伪造已连接，也不显示旧主机的陈旧数据。
  */
 
 const ROOT_PATH = "/";
@@ -200,7 +203,7 @@ function FileTree({ hostId, connected, visible }: { hostId: string; connected: b
       </div>
       <div className="ft-body">
         {!active ? (
-          <div className="ft-hint">主机未连接，连接后可浏览远端文件</div>
+          <div className="ft-hint">等待连接</div>
         ) : rootLoading ? (
           <div className="ft-hint">读取目录中…</div>
         ) : rootErr ? (
@@ -285,16 +288,18 @@ export function ControlledCommandPanel({ hostId, connected, visible }: { hostId:
 /* ---------------- 工作台 ---------------- */
 
 export function Workbench({ hostId, visible = true }: { hostId: string; visible?: boolean }) {
-  const toast = useToast();
   const { go } = useApp();
   const [host, setHost] = useState<ServerHost | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
-  const [connecting, setConnecting] = useState(false);
+  const [connPhase, setConnPhase] = useState<"idle" | "connecting" | "fail">("idle");
+  const [connError, setConnError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
   const loadSeq = useRef(0);
   const connectBusy = useRef(false);
+  /** 每次进入本次工作台只自动试连一次；失败后等用户点"重试"，避免反复重连。 */
+  const autoTried = useRef(false);
   const layoutRef = useRef<HTMLDivElement>(null);
   const files = usePaneWidth(`server:${hostId}`, "files", { default: 248, min: 180, max: 480, side: "left", containerRef: layoutRef, minCenter: 320, disabled: !visible });
   const monitor = usePaneWidth(`server:${hostId}`, "monitor", { default: 300, min: 220, max: 440, side: "right", containerRef: layoutRef, reserve: files.overlay ? 0 : files.width, minCenter: 320, disabled: !visible });
@@ -315,25 +320,55 @@ export function Workbench({ hostId, visible = true }: { hostId: string; visible?
     }
   }, [hostId]);
 
-  useEffect(() => {
-    if (visible) void reload();
-    return () => { loadSeq.current += 1; };
-  }, [reload, visible]);
-
-  const connect = async () => {
+  const connect = useCallback(async () => {
     if (connectBusy.current || !visibleRef.current) return;
     connectBusy.current = true;
-    setConnecting(true);
+    setConnPhase("connecting");
+    setConnError(null);
     try {
       await serverConnect(hostId);
-      toast("连接成功");
+      // 工作台已被关掉：不留常驻连接（关闭页签即断开）。
+      if (!visibleRef.current) {
+        void serverDisconnect(hostId);
+        return;
+      }
+      // 连接成功后采样一次，列表"上次采样"随之更新；采样失败不影响连接。
+      try {
+        await serverMetrics(hostId);
+      } catch {
+        /* 采样失败忽略 */
+      }
       await reload();
+      setConnPhase("idle");
     } catch (e) {
-      toast(`连接失败：${errText(e)}`, "err");
+      if (visibleRef.current) {
+        setConnPhase("fail");
+        setConnError(errText(e));
+      }
     } finally {
       connectBusy.current = false;
-      setConnecting(false);
     }
+  }, [hostId, reload]);
+
+  useEffect(() => {
+    if (!visible) return;
+    autoTried.current = false;
+    void reload();
+    return () => {
+      loadSeq.current += 1;
+    };
+  }, [reload, visible]);
+
+  // 打开工作台自动连接：只在本次进入且当前确实未连接时发起一次。
+  useEffect(() => {
+    if (!visible || !host || host.connected || autoTried.current) return;
+    autoTried.current = true;
+    void connect();
+  }, [visible, host, connect]);
+
+  const retry = () => {
+    autoTried.current = true;
+    void connect();
   };
 
   if (loadErr) {
@@ -367,43 +402,71 @@ export function Workbench({ hostId, visible = true }: { hostId: string; visible?
   }
 
   const connected = host.connected;
+  const connecting = !connected && connPhase !== "fail";
+  const failed = !connected && connPhase === "fail";
+  const logo = osLogoSrc(host.os);
+  const address = hostAddress(host);
 
   return (
-    <div className="wb-root pane-container" ref={layoutRef} style={{ gridTemplateColumns: `${files.overlay ? 0 : files.width}px minmax(0,1fr) ${monitor.overlay ? 0 : monitor.width}px` }}>
-      <aside {...files.paneProps} className={`${files.paneProps.className} wb-file-pane`} style={files.style}>
-        <FileTree hostId={hostId} connected={connected} visible={visible && files.visible} />
-        <ResizeHandle pane={files} label="服务器文件" />
-      </aside>
+    <div className="srv-wb">
+      <header className="srv-wb-head">
+        <span className={`srv-wb-os${logo ? "" : " unknown"}`} title={osLabel(host.os)}>
+          {logo ? <img src={logo} alt={`${osLabel(host.os)} 标识`} /> : <Icon name="server" size={16} />}
+        </span>
+        <b>{host.name}</b>
+        <span className="mono srv-wb-addr">{address}</span>
+        <span className="spacer" />
+        <span className={`srv-wb-conn${connected ? " ok" : failed ? " fail" : " connecting"}`}>
+          {!connected && <span className="srv-spin" aria-hidden />}
+          {connected ? `已连接 · ${host.os || "系统未知"}` : failed ? "连接失败" : "正在连接"}
+        </span>
+      </header>
 
-      <div className="wb-center">
-        <div className="wb-term-strip">
-          <span className={`dot ${connected ? "good" : "neutral"}`} aria-hidden />
-          <span className="host-name">{host.name}</span>
-          <span className="mono muted small">{host.host}:{host.port}</span>
-          <span className="spacer" />
-          <span className={connected ? "tag good" : "tag"}>{connected ? "已连接" : "未连接"}</span>
+      <div className="wb-root pane-container" ref={layoutRef} style={{ gridTemplateColumns: `${files.overlay ? 0 : files.width}px minmax(0,1fr) ${monitor.overlay ? 0 : monitor.width}px` }}>
+        <aside {...files.paneProps} className={`${files.paneProps.className} wb-file-pane`} style={files.style}>
+          <FileTree hostId={hostId} connected={connected} visible={visible && files.visible} />
+          <ResizeHandle pane={files} label="服务器文件" />
+        </aside>
+
+        <div className="wb-center">
+          <div className="wb-term-strip">
+            <span className={`dot ${connected ? "good" : "neutral"}`} aria-hidden />
+            <span className="host-name">shell 1</span>
+            <span className="spacer" />
+            <span className="mono muted small">{address}</span>
+          </div>
+          {connected ? (
+            <div className="wb-term-body">
+              <TerminalPane hostId={hostId} connected={connected} visible={visible} />
+            </div>
+          ) : (
+            <div className="srv-conn-state">
+              {failed ? (
+                <>
+                  <b>连接失败</b>
+                  <span className="srv-conn-sub">{connError || "无法建立连接"}</span>
+                  <button className="btn sm" onClick={retry}>
+                    重试
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="srv-spin lg" aria-hidden />
+                  <b>正在连接</b>
+                  <span className="srv-conn-sub">{address}</span>
+                </>
+              )}
+            </div>
+          )}
+          <ControlledCommandPanel key={hostId} hostId={hostId} connected={connected} visible={visible} />
         </div>
-        {connected ? (
-          <div className="wb-term-body">
-            <TerminalPane hostId={hostId} connected={connected} visible={visible} />
-          </div>
-        ) : (
-          <div className="wb-guide">
-            <div className="big">主机尚未连接</div>
-            <div>连接 {host.host}:{host.port} 后可使用终端、文件浏览与实时监控</div>
-            <button className="btn primary" disabled={connecting} onClick={() => void connect()}>
-              {connecting ? "连接中…" : "连接"}
-            </button>
-          </div>
-        )}
-        <ControlledCommandPanel key={hostId} hostId={hostId} connected={connected} visible={visible} />
-      </div>
 
-      <aside {...monitor.paneProps} className={`${monitor.paneProps.className} wb-monitor-pane`} style={monitor.style}>
-        <MonitorPane hostId={hostId} hostName={host.name} address={`${host.host}:${host.port}`} connected={connected} visible={visible && monitor.visible} />
-        <ResizeHandle pane={monitor} label="服务器监控" />
-      </aside>
-      <div className="pane-controls"><PaneToggle pane={files} label="服务器文件" /><PaneToggle pane={monitor} label="服务器监控" /></div>
+        <aside {...monitor.paneProps} className={`${monitor.paneProps.className} wb-monitor-pane`} style={monitor.style}>
+          <MonitorPane hostId={hostId} hostName={host.name} address={`${host.host}:${host.port}`} connected={connected} visible={visible && monitor.visible} />
+          <ResizeHandle pane={monitor} label="服务器监控" />
+        </aside>
+        <div className="pane-controls"><PaneToggle pane={files} label="服务器文件" /><PaneToggle pane={monitor} label="服务器监控" /></div>
+      </div>
     </div>
   );
 }

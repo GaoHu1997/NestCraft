@@ -289,6 +289,26 @@ export function draftReleaseConfirmed(snapshot: { title: string; body: string },
 /** R03: merge one loaded page and drop known entries that are no longer reachable. */
 export interface KnownNodeLike { noteId: string; relativeUri: string; }
 export interface KnownNodeMeta { parentUri?: string; external?: boolean; }
+/**
+ * Directory pages are keyed by the paging id (`kbf…`). Known files and the open-file
+ * path are keyed by the stable noteId (`n…`). Passing `entries.keys()` makes every
+ * visible file look unreachable and the reader reports it missing.
+ */
+export function reachableNoteIds(entries: Iterable<{ noteId: string }>): Set<string> {
+  const ids = new Set<string>();
+  for (const entry of entries) if (entry.noteId) ids.add(entry.noteId);
+  return ids;
+}
+export type UnlistedSelectionAction = 'load' | 'resolve' | 'missing';
+/**
+ * A stable ID absent from the pages loaded so far is not proof the file is gone.
+ * Nested files stay unresolved until the backend confirms KB_FILE_MISSING.
+ */
+export function unlistedSelectionAction(input: { listed: boolean; backendConfirmedMissing: boolean }): UnlistedSelectionAction {
+  if (input.listed) return 'load';
+  if (input.backendConfirmedMissing) return 'missing';
+  return 'resolve';
+}
 export function reconcileKnownEntries<T extends KnownNodeLike>(
   known: Map<string, T & KnownNodeMeta>,
   update: { parentUri: string; entries: T[]; complete: boolean },

@@ -73,3 +73,21 @@
 .probe-hist-row .h-score { font-family: var(--mono); text-align: right; font-weight: 600; }
 .probe-hist-row .h-arrow { color: var(--muted-2); text-align: right; }
 .probe-hist-detail { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 10px; }
+
+/* r5：P20 行为指纹归因面板（结果区下方、逐针列表上方；仅完成/历史回看态显示）。
+   概率性提示视觉：中性面板 + 距离条，不使用红牌实锤色；首席候选条用主色，其余弱化。 */
+.probe-attr { margin-top: 10px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--surface-2); padding: 10px 14px; }
+.probe-attr-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.probe-attr-title { font-size: 12.5px; font-weight: 600; }
+.probe-attr-claimed { color: var(--muted); }
+.probe-attr-hint { margin-left: auto; color: var(--muted-2); font-size: 11px; }
+.probe-attr-list { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.probe-attr-cand { display: grid; grid-template-columns: 26px minmax(0, 1.2fr) minmax(60px, 1fr) 56px; align-items: center; gap: 10px; font-size: 12px; }
+.probe-attr-cand .a-rank { color: var(--muted-2); font-size: 11px; }
+.probe-attr-cand .a-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+.probe-attr-cand .a-bar { height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
+.probe-attr-cand .a-bar-fill { display: block; height: 100%; background: var(--line-strong); border-radius: 3px; }
+.probe-attr-cand .a-bar-fill.top { background: var(--primary); }
+.probe-attr-cand .a-dist { text-align: right; color: var(--muted-2); font-size: 11px; }
+.probe-attr-empty { margin: 4px 0 0; }
+.probe-attr-note { margin: 8px 0 0; color: var(--muted-2); font-size: 11px; }

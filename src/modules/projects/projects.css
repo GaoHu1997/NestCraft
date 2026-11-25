@@ -23,6 +23,28 @@
 .input-with-btn { display: flex; gap: 8px; }
 .input-with-btn .input { flex: 1; min-width: 0; }
 
+/* CR-073：编辑项目弹窗——名称与图标砖同一行，图标砖可点击改图标。 */
+.project-name-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.project-name-row .input { flex: 1 1 auto; min-width: 0; }
+.project-name-row .caption { flex: 0 0 auto; white-space: nowrap; }
+.project-name-tile { flex: 0 0 auto; display: inline-flex; border: 0; padding: 0; background: none; line-height: 0; border-radius: 10px; }
+button.project-name-tile { cursor: pointer; }
+button.project-name-tile:hover .cr51-tile { outline: 2px solid var(--primary); outline-offset: 1px; }
+button.project-name-tile:focus-visible { outline: none; box-shadow: var(--ring); }
+@media (max-width: 520px) { .project-name-row .caption { display: none; } }
+
+/* CR-072：项目卡片——描述回退、进度条、负责人、页脚统计（对齐 workbench-v4 项目页）。 */
+.proj-card-desc.none { font-family: var(--mono); font-size: 11px; }
+.proj-progress { display: flex; align-items: center; gap: 8px; }
+.proj-bar { flex: 1; height: 6px; border-radius: 4px; background: var(--surface-3, #eef1f5); overflow: hidden; }
+.proj-bar > i { display: block; height: 100%; background: var(--primary, #3b6cf6); border-radius: 4px; }
+.proj-progress .num { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.proj-owner { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.proj-owner .av { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 9px; font-weight: 700; background: var(--primary-soft, #e8eefc); color: var(--primary, #3b6cf6); flex: 0 0 auto; }
+.proj-card-f { justify-content: space-between; }
+.proj-card-f > span { flex: 0 1 auto; }
+.project-page-foot { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 11px; margin-top: 18px; }
+
 .pw-shell { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 /* CR-052：项目页签条不出现横向滚动条；溢出由共享 tab-overflow「更多」下拉承接（.tab-overflow-host 宿主）。 */
 .pw-top { display: flex; align-items: center; gap: 2px; height: 44px; padding: 0 16px; background: var(--paper); border-bottom: 1px solid var(--line); flex: 0 0 44px; overflow: hidden; }
@@ -41,6 +63,21 @@
 .pw-pane[hidden], .code-git-panel[hidden] { display: none; }
 
 .req-workspace { display: flex; position: relative; height: 100%; min-height: 0; min-width: 0; overflow: hidden; background: var(--paper); container-type: inline-size; }
+/* UI-CR073：req-main 承载「页签+工具栏（跨正文与目录）」与「正文+目录」两段，
+   因此页签条只覆盖正文与目录两列，不覆盖左侧需求树。 */
+.req-main { flex: 1 1 320px; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.req-topbar { flex: 0 0 auto; display: flex; flex-direction: column; border-bottom: 1px solid var(--line-soft); background: var(--panel-2); }
+.req-topbar .req-tabs { border-bottom: 0; }
+.req-topbar .req-toolbar { background: var(--paper); }
+.req-pane-restore { display: inline-flex; gap: 4px; }
+.req-body { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; align-items: stretch; overflow: hidden; }
+.req-body > .req-document-pane { flex: 1 1 320px; min-width: 0; }
+.req-body > .req-map-area { flex: 1 1 320px; min-width: 0; }
+.req-body > .req-toc-pane, .req-body > .req-map-outline-pane { flex: 0 0 auto; }
+/* 目录标题行在页签区之下，不再与页签同高。 */
+.req-body > .req-toc-pane > .req-toc-head { height: 36px; flex: 0 0 36px; }
+.req-tree-head .head-title, .req-toc-head .head-title { margin-right: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.req-tree-head .icon-btn, .req-toc-head .icon-btn { flex: 0 0 auto; }
 .req-rail { width: 56px; flex: 0 0 56px; padding: 8px; display: flex; flex-direction: column; align-items: center; gap: 6px; background: var(--panel-2); border-right: 1px solid var(--line-soft); }
 .req-workspace .rail-btn { width: 40px; height: 44px; min-height: 40px; padding: 4px 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 3px; border: 0; border-radius: 5px; color: var(--muted); font-size: 10px; }
 .req-workspace .rail-btn.on { background: var(--soft); color: var(--accent); }
@@ -154,6 +191,21 @@
 .req-map-outline-pane { flex: 0 0 280px; width: 280px; min-width: 0; display: flex; flex-direction: column; border-right: 1px solid var(--line-soft); background: var(--paper); overflow: hidden; }
 .req-map-outline .req-tree-row { min-height: 30px; }
 .req-map-help { flex: 0 0 auto; padding: 5px 10px; color: var(--muted); font-size: 10px; border-top: 1px solid var(--line-soft); }
+/* UI-CR073：画布拖拽平移与右侧编辑面板。 */
+.req-map-scroll { cursor: grab; touch-action: none; }
+.req-map-scroll.is-panning { cursor: grabbing; }
+.req-map-scroll.is-panning .req-map-node, .req-map-scroll.is-panning .req-map-node * { pointer-events: none; }
+.req-map-detail.req-map-editor { width: 360px; }
+.req-map-editor .req-map-detail-head .caption { color: var(--muted); font-size: 10px; }
+.req-map-editor .project-form-grid { gap: 10px; }
+.req-map-editor .project-form-grid .field > span,
+.req-map-editor .project-form-grid textarea,
+.req-map-editor .project-form-grid input,
+.req-map-editor .project-form-grid select { font-size: 11.5px; }
+.req-map-editor .req-map-detail-foot { flex-wrap: wrap; }
+.req-map-draft { border-style: dashed; border-color: var(--accent); background: var(--soft); position: absolute; }
+.req-map-draft .req-map-node-hit small { color: var(--accent); }
+.req-map-draft-tag { position: absolute; top: -9px; left: 8px; font-size: 9px; padding: 1px 5px; border-radius: 8px; background: var(--accent); color: #fff; }
 .req-toolbar-caption { color: var(--muted); font-size: 11px; }
 /* UI-CR066 r2：模型是项目级独立分支，视觉上与需求实体区分。 */
 .req-kind.model { color: var(--teal, var(--accent)); }
@@ -165,7 +217,7 @@
 .req-map-node.model .req-map-node-hit small { color: var(--teal, var(--accent)); }
 .req-map-edges path.dashed { stroke-dasharray: 5 4; }
 .req-workspace > .req-tree-pane.pane-overlay { left: 56px; }
-.req-workspace > .req-toc-pane.pane-overlay { top: 80px; }
+.req-body > .req-toc-pane.pane-overlay { top: 0; }
 .req-tree-pane > .pane-handle.left { right: 0; }
 .req-toc-pane > .pane-handle.right { left: 0; }
 .req-line { height: 38px; border-radius: 6px; gap: 6px; color: var(--ink); }
@@ -206,6 +258,11 @@
 .design-file-select { max-width: 65%; min-width: 0; font-size: 12px; }
 .design-doc { overflow: auto; flex: 1; min-height: 0; padding: 26px 34px 60px; }
 .design-source { font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* UI-CR073：HTML 设计文件以沙箱 iframe 渲染页面预览。 */
+.design-preview-host { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.design-preview-bar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--line-soft); background: var(--panel-2); font-size: 11px; color: var(--muted); flex: 0 0 auto; }
+.design-preview-frame { flex: 1 1 auto; min-height: 0; width: 100%; border: 0; background: #fff; }
+.design-preview-note { padding: 8px 12px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--line-soft); flex: 0 0 auto; }
 .design-edit { flex: 1; min-height: 0; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .design-edit textarea { flex: 1; min-height: 240px; resize: none; }
 .design-toc { border-left: 1px solid var(--line-soft); display: flex; flex-direction: column; min-height: 0; }

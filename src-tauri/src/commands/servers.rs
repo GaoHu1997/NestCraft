@@ -1,7 +1,6 @@
 //! 服务器管理命令：主机 CRUD、连接、终端、SFTP 文件树、监控采样、受限命令审批。
 
 use crate::db;
-use tauri::Manager;
 use crate::models::{FileNode, HostMetrics, ServerHost, TermEvent, now_ms, new_id};
 use crate::ssh;
 use rusqlite::{params, OptionalExtension};
@@ -10,14 +9,16 @@ use std::sync::Mutex;
 
 /// 受管密钥存储（服务器密码/密钥口令），与 providers 同一文件约定但独立键空间。
 fn secrets_file(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    secrets_file_at(&dir)
+    let _ = app;
+    secrets_file_at(&crate::storage_layout::category("secrets")?)
 }
 
-/// CR-059：路径参数版（内置 AI 工具 save_server 复用同一受管密钥文件）。
+/// CR-059：数据根参数版（内置 AI 工具 save_server 复用同一受管密钥文件）。
+/// dir 是统一数据根；密钥文件固定在其 secrets 分类下。
 pub(crate) fn secrets_file_at(dir: &std::path::Path) -> Result<std::path::PathBuf, String> {
-    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    Ok(dir.join("server-secrets.json"))
+    let secrets_dir = dir.join("secrets");
+    std::fs::create_dir_all(&secrets_dir).map_err(|e| e.to_string())?;
+    Ok(secrets_dir.join("server-secrets.json"))
 }
 
 fn secrets_read(app: &tauri::AppHandle) -> BTreeMap<String, String> {
@@ -52,6 +53,8 @@ pub struct HostDraft {
     pub secret: Option<String>,     // 密码，或密钥文件口令
     pub key_path: Option<String>,   // authType=key 时的私钥路径
     pub group_tag: Option<String>,
+    /// 测试连接得到的系统名（可选）；UPDATE 时用 COALESCE 保留既有值。
+    pub os: Option<String>,
 }
 
 #[tauri::command]
@@ -59,7 +62,7 @@ pub fn server_list(app: tauri::AppHandle) -> Result<Vec<ServerHost>, String> {
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
     let mut stmt = conn
-        .prepare("SELECT id, name, host, port, username, authType, groupTag FROM server_host ORDER BY createdAt")
+        .prepare("SELECT id, name, host, port, username, authType, groupTag, os, lastSeenAt, cpuPct, memPct, diskPct FROM server_host ORDER BY createdAt")
         .map_err(|e| e.to_string())?;
     let mut out: Vec<ServerHost> = stmt
         .query_map([], |r| {
@@ -72,6 +75,11 @@ pub fn server_list(app: tauri::AppHandle) -> Result<Vec<ServerHost>, String> {
                 name: r.get(1)?,
                 port: r.get(3)?,
                 username: r.get(4)?,
+                os: r.get(7)?,
+                last_seen_at: r.get(8)?,
+                cpu_pct: r.get(9)?,
+                mem_pct: r.get(10)?,
+                disk_pct: r.get(11)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -84,8 +92,8 @@ pub fn server_list(app: tauri::AppHandle) -> Result<Vec<ServerHost>, String> {
 }
 
 #[tauri::command]
-pub fn server_save(app: tauri::AppHandle, draft: HostDraft) -> Result<String, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+pub fn server_save(_app: tauri::AppHandle, draft: HostDraft) -> Result<String, String> {
+    let dir = crate::storage_layout::root().map_err(|e| e.to_string())?;
     server_save_at(&dir, draft)
 }
 
@@ -132,13 +140,14 @@ pub(crate) fn server_save_at(data_dir: &std::path::Path, draft: HostDraft) -> Re
     let transaction = conn.unchecked_transaction().map_err(|error| error.to_string())?;
     if draft.id.is_some() {
         transaction.execute(
-            "UPDATE server_host SET name=?2, host=?3, port=?4, username=?5, authType=?6, groupTag=?7 WHERE id=?1",
-            params![id, draft.name.trim(), draft.host.trim(), draft.port, draft.username.trim(), draft.auth_type, draft.group_tag],
+            "UPDATE server_host SET name=?2, host=?3, port=?4, username=?5, authType=?6, groupTag=?7, os=COALESCE(?8, os) WHERE id=?1",
+            params![id, draft.name.trim(), draft.host.trim(), draft.port, draft.username.trim(), draft.auth_type, draft.group_tag, draft.os],
         ).map_err(|error| error.to_string())?;
     } else {
+        // 新主机：把测试连接得到的系统名一并写入（未提供时为 NULL），避免再次保存才落库。
         transaction.execute(
-            "INSERT INTO server_host (id, name, host, port, username, authType, secretRef, groupTag, createdAt) VALUES (?1,?2,?3,?4,?5,?6,?1,?7,?8)",
-            params![id, draft.name.trim(), draft.host.trim(), draft.port, draft.username.trim(), draft.auth_type, draft.group_tag, now_ms()],
+            "INSERT INTO server_host (id, name, host, port, username, authType, secretRef, groupTag, os, createdAt) VALUES (?1,?2,?3,?4,?5,?6,?1,?7,?8,?9)",
+            params![id, draft.name.trim(), draft.host.trim(), draft.port, draft.username.trim(), draft.auth_type, draft.group_tag, draft.os, now_ms()],
         ).map_err(|error| error.to_string())?;
     }
     secrets_write_at(&secrets_path, &next_secrets)?;
@@ -198,6 +207,79 @@ pub async fn server_connect(app: tauri::AppHandle, host_id: String) -> Result<()
     }
     let auth = host_auth(&app, &host)?;
     ssh::connect(&host_id, &host.host, host.port as u16, &host.username, &auth).await
+}
+
+/// 测试连接的表单草稿：可不保存直接验证；`id` 仅用于读取已保存凭据。
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestDraft {
+    pub id: Option<String>,
+    pub host: String,
+    pub port: i64,
+    pub username: String,
+    pub auth_type: String,
+    pub secret: Option<String>,
+    pub key_path: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestResult {
+    pub os: String,
+    pub latency_ms: i64,
+}
+
+/// 一次性连接测试：绝不改变主机连接状态、不写数据库、不写受管密钥、不进入连接管理器。
+#[tauri::command]
+pub async fn server_test_connection(app: tauri::AppHandle, draft: TestDraft) -> Result<TestResult, String> {
+    let host = draft.host.trim().to_string();
+    let username = draft.username.trim().to_string();
+    if host.is_empty() {
+        return Err("主机地址不能为空".into());
+    }
+    if username.is_empty() {
+        return Err("用户名不能为空".into());
+    }
+    if !(1..=65535).contains(&draft.port) {
+        return Err("端口必须在 1–65535 范围内".into());
+    }
+    if !matches!(draft.auth_type.as_str(), "password" | "key" | "none") {
+        return Err("认证类型必须是 password、key 或 none".into());
+    }
+
+    let supplied_secret = draft.secret.as_deref().filter(|secret| !secret.is_empty());
+    let supplied_key = draft.key_path.as_deref().filter(|path| !path.trim().is_empty());
+    let auth = if draft.auth_type == "none" {
+        HostAuth::None
+    } else if draft.auth_type == "key" && supplied_key.is_some() {
+        // 本次提交了私钥路径：口令沿用提交的 secret（可为空）。
+        HostAuth::Key {
+            key_path: supplied_key.unwrap_or_default().trim().to_string(),
+            passphrase: supplied_secret.map(str::to_string),
+        }
+    } else if draft.auth_type == "password" && supplied_secret.is_some() {
+        HostAuth::Password { password: supplied_secret.unwrap_or_default().to_string() }
+    } else if let Some(id) = draft.id.as_deref().filter(|id| !id.is_empty()) {
+        // 表单留空则回落到已保存凭据（只读，不写回）。
+        let saved = find_host(&app, id)?;
+        // 防误发：目标改了却留空凭据时，不能把已保存凭据发往新地址/新用户。
+        if saved.host.trim() != host || saved.port != draft.port || saved.username.trim() != username {
+            return Err(if draft.auth_type == "key" {
+                "地址或用户名已修改，请重新填写私钥路径"
+            } else {
+                "地址或用户名已修改，请重新填写密码"
+            }
+            .into());
+        }
+        host_auth(&app, &saved)?
+    } else if draft.auth_type == "key" {
+        return Err("请填写私钥路径".into());
+    } else {
+        return Err("请填写密码".into());
+    };
+
+    let (os, latency_ms) = ssh::test_connect(&host, draft.port as u16, &username, &auth).await?;
+    Ok(TestResult { os, latency_ms })
 }
 
 #[tauri::command]
@@ -536,9 +618,21 @@ pub async fn server_metrics(app: tauri::AppHandle, host_id: String) -> Result<Ho
     let host = find_host(&app, &host_id)?;
     let conn = ssh::get_connection(&host.username, &host.host, host.port as u16).ok_or("主机未连接")?;
     // 用显式分隔标记采集，避免任一文件过长导致后续内容被截断
-    let cmd = "echo '@@STAT'; grep '^cpu' /proc/stat; echo '@@MEM'; grep -E '^(MemTotal|MemAvailable):' /proc/meminfo; echo '@@LOAD'; cat /proc/loadavg; echo '@@UP'; cut -d' ' -f1 /proc/uptime; echo '@@HOST'; cat /proc/sys/kernel/hostname; echo '@@OS'; (cat /etc/os-release 2>/dev/null | grep -E '^PRETTY_NAME=' || uname -s)";
+    let cmd = "echo '@@STAT'; grep '^cpu' /proc/stat; echo '@@MEM'; grep -E '^(MemTotal|MemAvailable):' /proc/meminfo; echo '@@LOAD'; cat /proc/loadavg; echo '@@UP'; cut -d' ' -f1 /proc/uptime; echo '@@HOST'; cat /proc/sys/kernel/hostname; echo '@@OS'; (cat /etc/os-release 2>/dev/null | grep -E '^PRETTY_NAME=' || uname -s); echo '@@DISK'; df -kP / 2>/dev/null | tail -n 1";
     let (out, _) = ssh::exec_command(&conn, cmd, 10).await?;
-    parse_metrics(&out)
+    let metrics = parse_metrics(&out)?;
+    // CR-072：采样成功后写回列表缓存（本地记录），供 server_list 直接展示；不改连接/审批语义。
+    let mem_pct = if metrics.mem_total_mb > 0 { Some(metrics.mem_used_mb as f64 / metrics.mem_total_mb as f64 * 100.0) } else { None };
+    let disk_pct = if metrics.disk_total_mb > 0 { Some(metrics.disk_used_mb as f64 / metrics.disk_total_mb as f64 * 100.0) } else { None };
+    if let Ok(guard) = db::conn() {
+        if let Some(c) = guard.as_ref() {
+            let _ = c.execute(
+                "UPDATE server_host SET os=?2, lastSeenAt=?3, cpuPct=?4, memPct=?5, diskPct=?6 WHERE id=?1",
+                rusqlite::params![host_id, metrics.os.clone(), now_ms(), metrics.cpu_avg, mem_pct, disk_pct],
+            );
+        }
+    }
+    Ok(metrics)
 }
 
 fn parse_metrics(text: &str) -> Result<HostMetrics, String> {
@@ -551,6 +645,8 @@ fn parse_metrics(text: &str) -> Result<HostMetrics, String> {
     let mut uptime_secs = 0f64;
     let mut hostname = String::new();
     let mut os = String::new();
+    let mut disk_total_mb = 0i64;
+    let mut disk_used_mb = 0i64;
 
     let mut section = "";
     for raw in text.lines() {
@@ -563,6 +659,7 @@ fn parse_metrics(text: &str) -> Result<HostMetrics, String> {
                 "UP" => "up",
                 "HOST" => "host",
                 "OS" => "os",
+                "DISK" => "disk",
                 _ => "",
             };
             continue;
@@ -617,6 +714,15 @@ fn parse_metrics(text: &str) -> Result<HostMetrics, String> {
                     os = t.to_string();
                 }
             }
+            "disk" => {
+                let f: Vec<&str> = t.split_whitespace().collect();
+                if f.len() >= 3 {
+                    if let (Ok(tot), Ok(used)) = (f[1].parse::<i64>(), f[2].parse::<i64>()) {
+                        disk_total_mb = tot / 1024;
+                        disk_used_mb = used / 1024;
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -648,6 +754,8 @@ fn parse_metrics(text: &str) -> Result<HostMetrics, String> {
         mem_used_mb: (mem_total_mb - mem_available_mb).max(0),
         os: if os.is_empty() { "Linux（/proc 采样）".into() } else { os },
         uptime: format_uptime(uptime_secs),
+        disk_total_mb,
+        disk_used_mb,
     })
 }
 

@@ -612,6 +612,40 @@ booking_request 表以 (user_id, idempotency_key) 唯一索引；命中则返回
 | expires_at | TEXT | NOT NULL | 保留窗口 |
 
 索引：slot(activity_id, starts_at)、booking(slot_id, status)、booking_request(expires_at)。`
+    },
+    /* UI-CR073（用户第 9 项）：HTML 设计稿以页面预览呈现，不再默认显示源码。
+       本样例为自包含静态页面，无脚本、无外部资源，可在沙箱 iframe 内完整渲染。 */
+    html: {
+      name: "UI-预约主流程原型.html", updated: "今天 10:20", version: "v3",
+      body: `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>预约主流程 · 设计预览</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px; font: 14px/1.7 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; color: #1f2937; background: #fff; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: #6b7280; font-size: 12px; margin: 0 0 20px; }
+  .flow { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .step { border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px; }
+  .step b { display: block; font-size: 13px; margin-bottom: 6px; }
+  .step span { color: #6b7280; font-size: 12px; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; background: #eaf1ff; color: #2b6cf6; font-size: 11px; }
+  .state { margin-top: 20px; padding: 12px 14px; border-radius: 10px; background: #f8fafc; font-size: 12px; color: #475569; }
+  button { margin-top: 12px; padding: 7px 16px; border: 0; border-radius: 8px; background: #2b6cf6; color: #fff; font-size: 13px; cursor: pointer; }
+  button[disabled] { background: #cbd5e1; cursor: not-allowed; }
+</style></head>
+<body>
+  <h1>预约主流程</h1>
+  <p class="sub">设计稿内嵌样例 · 用于验证「设计页显示页面效果而不是源码」</p>
+  <div class="flow">
+    <div class="step"><b>1 活动详情</b><span>标题、时间、地点、剩余名额。</span></div>
+    <div class="step"><b>2 时段选择</b><span>按日期分组，容量标签「余 1」。</span></div>
+    <div class="step"><b>3 预约确认</b><span>参加者信息 + 取消政策。</span></div>
+    <div class="step"><b>4 结果页</b><span>成功 / 满额 / 网络失败三种状态。</span></div>
+  </div>
+  <div class="state"><span class="tag">满额</span> 提交按钮禁用，说明下一次开放时间；不展示内部堆栈。</div>
+  <button disabled>确认预约</button>
+</body></html>`
     }
   };
 

@@ -1,0 +1,167 @@
+/* 从 zyplayer-doc wiki-ui views/view 的目录与编辑页抄来的文档操作样式。 */
+.zy-folder-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 6px;
+  padding: 0 2px;
+}
+.zy-folder-bar .label {
+  color: #888;
+  font-size: 12px;
+  line-height: 32px;
+}
+.zy-menu {
+  position: relative;
+}
+.zy-menu > button {
+  border: 0;
+  background: transparent;
+  color: #888;
+  height: 32px;
+  padding: 0 8px;
+  cursor: pointer;
+}
+.zy-menu-pop {
+  position: absolute;
+  z-index: 20;
+  right: 0;
+  top: 100%;
+  min-width: 148px;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: #fff;
+  border: 1px solid #eee;
+  border-radius: 4px;
+  box-shadow: 0 6px 16px rgb(0 0 0 / 8%);
+}
+.zy-menu-pop button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 6px 12px;
+  cursor: pointer;
+  color: #333;
+}
+.zy-menu.open > .zy-menu-pop, .zy-menu:focus-within > .zy-menu-pop { display: block; }
+.zy-menu-pop button:hover { background: #f5f5f5; }
+.zy-menu-pop button.danger { color: #cf1322; }
+
+.kp-tree-entry { position: relative; }
+.kp-tree-entry .zy-page-action {
+  display: none;
+  position: absolute;
+  right: 0;
+  top: 0;
+  height: 35px;
+  background: #fafafa;
+  border-radius: 4px;
+}
+.kp-tree-entry:hover .zy-page-action,
+.kp-tree-entry .zy-menu:focus-within .zy-page-action,
+.kp-tree-entry .zy-page-action:focus-within { display: flex; }
+.zy-doc-icon { display: inline-flex; margin-right: 4px; vertical-align: middle; }
+.knowledge-workspace .kb-side.left-aside-box { background: #fafafa; border-right: 1px solid #eee; }
+.knowledge-workspace .left-aside-top-box { padding: 10px 10px 0; }
+.zy-space-row { display: flex; flex-flow: row nowrap; margin-bottom: 8px; }
+.zy-space-row .home-page-btn {
+  width: 32px; height: 32px; border: 1px solid #d9d9d9; border-radius: 4px 0 0 4px;
+  background: #fff; color: #666; cursor: pointer; margin-right: -1px;
+}
+.zy-space-row .choice-space-select {
+  flex: 1; min-width: 0; height: 32px; border: 1px solid #d9d9d9; border-radius: 0 4px 4px 0;
+  background: #fff; color: #333; padding: 0 8px;
+}
+.knowledge-workspace .wiki-page-footer {
+  display: flex; border-top: 1px solid #eee; padding: 5px; background: #fafafa; flex: none;
+}
+.knowledge-workspace .wiki-page-footer .footer-btn {
+  flex: 1; height: 32px; border: 0; background: #fafafa; color: #666; cursor: pointer;
+}
+.knowledge-workspace .wiki-page-footer .footer-btn:hover { background: #eaeaea; }
+.knowledge-workspace .wiki-page-footer .footer-split { width: 1px; background: #eee; margin: 8px 0; }
+.zy-submenu { position: relative; }
+.zy-submenu > button { font-weight: 600; }
+.zy-submenu-pop {
+  display: none; position: absolute; left: 100%; top: 0; min-width: 140px;
+  background: #fff; border: 1px solid #eee; border-radius: 4px; box-shadow: 0 6px 16px rgb(0 0 0 / 8%); padding: 4px 0;
+}
+.zy-submenu:hover .zy-submenu-pop, .zy-submenu:focus-within .zy-submenu-pop { display: block; }
+.kp-tree-slot, .kp-tree-entry, .kp-tree-status { height: 35px; }
+.kp-tree-viewport { background: #fafafa; }
+.zy-import-tip { display: block; color: #888; font-size: 12px; padding: 0 12px 6px; }
+.zy-setting-box { width: min(700px, 80%); min-width: 280px; margin: 24px auto; background: #fff; border: 1px solid #f0f0f0; border-radius: 8px; }
+.zy-setting-head, .zy-recycle-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid #f0f0f0; }
+.zy-setting-box label { display: block; margin: 12px 16px 4px; color: #666; }
+.zy-setting-box input, .zy-setting-box textarea { width: calc(100% - 32px); margin: 0 16px 12px; border: 1px solid #d9d9d9; border-radius: 4px; padding: 8px; box-sizing: border-box; }
+.zy-recycle { padding: 10px 20px 20px; }
+.zy-recycle table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.zy-recycle th, .zy-recycle td { text-align: left; padding: 8px; border-bottom: 1px solid #f0f0f0; }
+.zy-more-pop { min-width: 168px; }
+.wang-editor-box .editor-toolbar { width: 980px; max-width: 100%; margin: 0 auto; background: #fcfcfc; }
+.wang-editor-box .editor-container { width: 850px; max-width: calc(100% - 24px); margin: 0 auto; background: #fff; padding: 20px 50px 50px; border: 1px solid #e8e8e8; box-shadow: 0 2px 10px rgb(0 0 0 / 12%); }
+.wang-editor-box .page-editor-body { margin-top: 20px; min-height: 600px; }
+.wang-editor-box .wang-editor-content { padding: 20px 0; overflow: auto; }
+
+.knowledge-workspace .kw-document:has(.zy-page-show) .kw-document-head,
+.knowledge-workspace .kw-document:has(.page-edit-vue) .kw-document-head { display: none; }
+.zy-page-show, .page-edit-vue { min-height: 100%; background: #fff; }
+.zy-view-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 60px;
+  padding: 8px 16px;
+  border-bottom: 1px solid #f0f0f0;
+}
+.zy-title-time .wiki-title { font-size: 20px; color: #333; }
+.zy-title-time .time { font-size: 12px; color: #888; margin-top: 2px; }
+.zy-view-actions, .fake-header-actions { display: flex; gap: 8px; }
+.zy-icon-btn, .fake-header-actions button, .zy-primary {
+  border: 1px solid #d9d9d9;
+  background: #fff;
+  border-radius: 4px;
+  height: 32px;
+  padding: 0 10px;
+  cursor: pointer;
+}
+.zy-primary { background: #1677ff; border-color: #1677ff; color: #fff; }
+.zy-icon-btn.danger { color: #cf1322; }
+.zy-view-body { padding: 20px 8% 48px; }
+.wang-editor-body { font-size: 14px; line-height: 1.7; }
+.fake-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 50px;
+  padding: 0 8px;
+  background: #fff;
+  border-bottom: 1px solid #f0f0f0;
+}
+.page-title-input {
+  flex: 1;
+  height: 36px;
+  border: 0;
+  border-bottom: 1px solid #ddd;
+  font-size: 20px;
+  outline: none;
+}
+.wang-editor-box { background: #f5f5f5; }
+.editor-toolbar-box { border-bottom: 1px solid #e8e8e8; background: #fcfcfc; }
+.zy-mavon { background: #fff; }
+.zy-mavon-bar { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 8px; border-bottom: 1px solid #eee; background: #fff; }
+.zy-mavon-bar button { border: 0; background: transparent; color: #666; cursor: pointer; padding: 4px 6px; }
+.zy-mavon-bar button:hover { color: #111; background: #f5f5f5; }
+.zy-mavon-body { display: block; min-height: 420px; }
+.zy-mavon-body.split { display: grid; grid-template-columns: 1fr 1fr; }
+.zy-mavon-input { width: 100%; min-height: 420px; border: 0; resize: vertical; padding: 12px 16px; font: 14px/1.6 ui-monospace, monospace; outline: none; }
+.zy-mavon-preview { padding: 12px 16px; border-left: 1px solid #f0f0f0; overflow: auto; }
+.page-edit-vue.is-full { position: fixed; inset: 0; z-index: 30; background: #fff; }
+.zy-edit-error { margin: 0; padding: 6px 12px; color: #cf1322; }
+.zy-drop-target { outline: 1px dashed #1677ff; }

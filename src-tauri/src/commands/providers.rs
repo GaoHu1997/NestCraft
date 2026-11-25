@@ -6,7 +6,6 @@
 //! - 密钥明文仅存受管文件（app_data_dir/secrets.json，0600 权限），DB 存掩码与引用
 
 use crate::db;
-use tauri::Manager;
 use crate::models::{EffortMap, ModelCandidate, ModelConfig, Provider, ProviderEndpoint, ProviderKey, now_ms, new_id};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
@@ -16,7 +15,8 @@ const THINKING_LEVELS: [&str; 7] = ["off", "minimal", "low", "medium", "high", "
 
 /// 受管密钥存储（本地文件，仅本机使用）。
 fn secrets_file(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let _ = app;
+    let dir = crate::storage_layout::category("secrets")?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir.join("secrets.json"))
 }

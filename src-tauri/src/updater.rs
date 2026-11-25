@@ -188,14 +188,25 @@ fn publish(
     let _ = app.emit("update-progress", &status);
 }
 
-/// 更新目录：`<app_data>/update/`。
+/// 更新暂存目录；免安装版必须与 exe 同卷，见 [`staging_dir`]。
 pub fn update_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let dir = app
+    let exe = std::env::current_exe().map_err(|e| format!("无法定位当前程序: {e}"))?;
+    let app_data = app
         .path()
         .app_data_dir()
-        .map_err(|e| format!("无法定位应用数据目录: {e}"))?
-        .join("update");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("创建更新目录失败: {e}"))?;
+        .map_err(|e| format!("无法定位应用数据目录: {e}"))?;
+    let portable = detect_kind(&exe) == "portable";
+    let dir = staging_dir(&exe, &app_data);
+    if let Err(error) = std::fs::create_dir_all(&dir) {
+        return Err(if portable {
+            format!(
+                "无法在程序所在目录创建更新暂存目录 {}：{error}（免安装版要求程序所在目录可写，请移动到用户目录等可写位置后重试）",
+                dir.display()
+            )
+        } else {
+            format!("创建更新目录失败: {error}")
+        });
+    }
     Ok(dir)
 }
 
@@ -208,6 +219,21 @@ pub fn detect_kind(exe: &Path) -> &'static str {
         "installed"
     } else {
         "unsupported"
+    }
+}
+
+/// 暂存目录按形态分化，关键是让免安装版的暂存包与 exe 处在同一个卷：
+/// Windows 的 `MoveFile` 不能跨卷，`<app_data>/update/` 位于系统盘、程序在别的盘时，
+/// 落位必然以 `os error 17`（ERROR_NOT_SAME_DEVICE）失败并回滚。
+/// 因此免安装版把暂存包放在程序目录下的 `.update/`，落位就是同卷改名；
+/// 安装版只负责启动已校验的安装包，不存在文件移动，仍用应用数据目录。
+fn staging_dir(exe: &Path, app_data: &Path) -> PathBuf {
+    if detect_kind(exe) == "portable" {
+        exe.parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(".update")
+    } else {
+        app_data.join("update")
     }
 }
 
@@ -916,15 +942,22 @@ fn spawn_detached(exe: &Path) -> Result<(), String> {
         .map_err(|e| format!("启动新版本失败: {e}"))
 }
 
-fn portable_apply(app: &tauri::AppHandle, staged: &Path) -> Result<(), String> {
-    let exe = std::env::current_exe().map_err(|e| format!("无法定位当前程序: {e}"))?;
-    let old = aside_path(&exe);
-    rename_with_retry(&exe, &old)
+/// 把已校验的暂存包换名落位到 exe；失败把旧版改回原名。
+/// 暂存目录与 exe 同卷（见 [`staging_dir`]），这里的改名不会跨卷。
+fn replace_executable(exe: &Path, staged: &Path) -> Result<(), String> {
+    let old = aside_path(exe);
+    rename_with_retry(exe, &old)
         .map_err(|e| format!("旧版程序改名失败（可能被杀毒软件占用）: {e}"))?;
-    if let Err(error) = std::fs::rename(staged, &exe) {
-        let _ = std::fs::rename(&old, &exe);
+    if let Err(error) = std::fs::rename(staged, exe) {
+        let _ = std::fs::rename(&old, exe);
         return Err(format!("新版程序落位失败，已回滚: {error}"));
     }
+    Ok(())
+}
+
+fn portable_apply(app: &tauri::AppHandle, staged: &Path) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| format!("无法定位当前程序: {e}"))?;
+    replace_executable(&exe, staged)?;
     spawn_detached(&exe)?;
     app.exit(0);
     Ok(())
@@ -1000,26 +1033,55 @@ pub fn apply(app: &tauri::AppHandle, expected_sha256: Option<String>) -> Result<
     result
 }
 
-/// 启动清理：删除上次替换留下的旧版程序与未完成下载；保留已就绪的暂存包。
+/// 旧版备份文件名判定：`<exe>.old`、`<exe>.old-2`…`<exe>.old-9`、`<exe>.old-<pid>`。
+///
+/// 注意不能用 `file_stem`（`NestCraft`）拼前缀：备份实际叫 `NestCraft.exe.old`，
+/// 用 `NestCraft.old` 去比永远不命中，替换一次就永久残留一份旧程序。
+fn is_old_backup(candidate: &str, exe_name: &str) -> bool {
+    let prefix = format!("{exe_name}.old");
+    candidate == prefix
+        || candidate
+            .strip_prefix(&prefix)
+            .is_some_and(|rest| rest.starts_with('-'))
+}
+
+/// 启动清理：删除上次替换留下的旧版程序、未完成下载与过期暂存状态。
+///
+/// 旧版备份名是 `<exe>.old`（例如 `NestCraft.exe.old`、`NestCraft.exe.old-2`、
+/// `NestCraft.exe.old-<pid>`），必须按完整文件名匹配；早先按 `file_stem` 拼出
+/// `NestCraft.old` 前缀，永远匹配不到，替换一次就永久残留一份几十 MB 的旧程序。
 pub fn cleanup(app: &tauri::AppHandle) {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let stem = exe
-                .file_stem()
-                .map(|value| value.to_string_lossy().to_string())
-                .unwrap_or_default();
-            if !stem.is_empty() {
-                for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    if name.starts_with(&format!("{stem}.old")) {
-                        let _ = std::fs::remove_file(entry.path());
-                    }
+    let Some(exe) = std::env::current_exe().ok() else {
+        return;
+    };
+    if let Some(dir) = exe.parent() {
+        if let Some(name) = exe.file_name().map(|value| value.to_string_lossy().to_string()) {
+            for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+                let candidate = entry.file_name().to_string_lossy().to_string();
+                if is_old_backup(&candidate, &name) {
+                    let _ = std::fs::remove_file(entry.path());
                 }
             }
         }
     }
-    if let Ok(dir) = update_dir(app) {
+    let app_data = app.path().app_data_dir().ok();
+    let staging = app_data.as_deref().map(|data| staging_dir(&exe, data));
+    if let Some(dir) = &staging {
         let _ = std::fs::remove_file(dir.join("update.part"));
+        // 暂存包已落位（改名走掉）时，staged.json 不再有意义，避免“幽灵就绪”。
+        if !dir.join("update-staged.exe").is_file() {
+            let _ = std::fs::remove_file(dir.join("staged.json"));
+        }
+    }
+    // 旧版本把暂存包放在应用数据目录；暂存位置改到程序目录后清掉遗留，避免白占空间。
+    if let Some(data) = app_data {
+        let legacy = data.join("update");
+        if staging.as_deref() != Some(legacy.as_path()) {
+            let _ = std::fs::remove_file(legacy.join("update.part"));
+            let _ = std::fs::remove_file(legacy.join("update-staged.exe"));
+            let _ = std::fs::remove_file(legacy.join("staged.json"));
+            let _ = std::fs::remove_dir(&legacy);
+        }
     }
 }
 
@@ -1114,6 +1176,88 @@ mod tests {
         std::fs::write(root.join("portable.marker"), b"portable").expect("marker");
         assert_eq!(detect_kind(&exe), "portable");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn portable_staging_dir_is_next_to_exe_so_placement_stays_on_one_volume() {
+        let root = std::env::temp_dir().join(format!("nestcraft-staging-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("temp dir");
+        let exe = root.join("NestCraft.exe");
+        let app_data = root.join("appdata");
+        // 非免安装版沿用应用数据目录（安装包只被启动，不参与文件移动）。
+        assert_eq!(staging_dir(&exe, &app_data), app_data.join("update"));
+        std::fs::write(root.join("portable.marker"), b"portable").expect("marker");
+        // 免安装版暂存包必须与 exe 同目录：落位是同卷改名，不再触发 os error 17。
+        assert_eq!(staging_dir(&exe, &app_data), root.join(".update"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn replace_executable_swaps_new_build_and_leaves_cleanable_backup() {
+        let root = std::env::temp_dir().join(format!("nestcraft-replace-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".update")).expect("staging dir");
+        let exe = root.join("NestCraft.exe");
+        let staged = root.join(".update").join("update-staged.exe");
+        std::fs::write(&exe, b"old-build").expect("old exe");
+        std::fs::write(&staged, b"new-build").expect("staged");
+        replace_executable(&exe, &staged).expect("同卷落位应成功");
+        assert_eq!(std::fs::read(&exe).expect("read exe"), b"new-build".to_vec());
+        assert!(!staged.exists(), "暂存包应已改名走掉");
+        let backup = root.join("NestCraft.exe.old");
+        assert_eq!(std::fs::read(&backup).expect("backup"), b"old-build".to_vec());
+        assert!(is_old_backup("NestCraft.exe.old", "NestCraft.exe"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn portable_update_flow_places_new_build_and_cleanup_removes_old_copy() {
+        // 模拟「程序在非系统盘」：暂存目录跟着程序走，落位是同卷改名，清理能删掉旧备份。
+        let root = std::env::temp_dir().join(format!("nestcraft-flow-test-{}", std::process::id()));
+        let app_data = std::env::temp_dir().join(format!("nestcraft-flow-appdata-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&app_data);
+        std::fs::create_dir_all(&root).expect("temp dir");
+        std::fs::write(root.join("portable.marker"), b"portable").expect("marker");
+        let exe = root.join("NestCraft.exe");
+        std::fs::write(&exe, b"v0.0.4").expect("old exe");
+        let staging = staging_dir(&exe, &app_data);
+        assert_eq!(staging, root.join(".update"));
+        std::fs::create_dir_all(&staging).expect("staging dir");
+        let staged = staging.join("update-staged.exe");
+        std::fs::write(&staged, b"v0.0.5").expect("staged");
+
+        replace_executable(&exe, &staged).expect("同卷落位应成功");
+        assert_eq!(std::fs::read(&exe).expect("read exe"), b"v0.0.5".to_vec());
+        assert!(!staged.exists(), "暂存包落位后不应残留");
+
+        // 新版本启动清理：旧备份被删除，新程序不受影响。
+        let backup = root.join("NestCraft.exe.old");
+        assert!(backup.is_file(), "落位应留下旧版备份");
+        for entry in std::fs::read_dir(&root).expect("read dir").flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if is_old_backup(&name, "NestCraft.exe") {
+                std::fs::remove_file(entry.path()).expect("cleanup backup");
+            }
+        }
+        assert!(!backup.exists(), "清理必须能删掉 <exe>.old");
+        assert!(exe.is_file(), "清理不得误删当前程序");
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    #[test]
+    fn old_backup_matching_uses_full_executable_name() {
+        assert!(is_old_backup("NestCraft.exe.old", "NestCraft.exe"));
+        assert!(is_old_backup("NestCraft.exe.old-2", "NestCraft.exe"));
+        assert!(is_old_backup("NestCraft.exe.old-4096", "NestCraft.exe"));
+        assert!(!is_old_backup("NestCraft.exe", "NestCraft.exe"));
+        // 旧实现用 file_stem 拼出 `NestCraft.old`，这一条正是它漏删的形态。
+        assert!(!is_old_backup("NestCraft.old", "NestCraft.exe"));
+        assert!(!is_old_backup("NestCraft.exe.old2", "NestCraft.exe"));
+        assert!(!is_old_backup("NestCraft.exe.bak", "NestCraft.exe"));
     }
 
     #[test]

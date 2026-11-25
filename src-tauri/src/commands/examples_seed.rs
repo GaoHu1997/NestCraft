@@ -330,17 +330,12 @@ fn library_ids_present(conn: &rusqlite::Connection, key: &str) -> bool {
 
 /// 首次启动安装示例；已安装且记录仍在时直接返回。
 pub fn ensure_seeded(app: &tauri::AppHandle) -> Result<SeedReport, String> {
-    use tauri::Manager;
-
-    let base = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| format!("应用数据目录不可用：{error}"))?
-        .join("examples")
-        .join(format!("v{SEED_VERSION}"));
-
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
+    let base = crate::commands::general::resolve_data_dir(conn)?
+        .join("examples")
+        .join(format!("v{SEED_VERSION}"));
+    let _ = app;
     seed_into(&base, conn)
 }
 

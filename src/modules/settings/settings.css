@@ -324,6 +324,24 @@ html[data-theme="dark"] .probe-section { --set-warning: #e0a23c; --set-warning-s
 .probe-progress { height: 6px; border-radius: 3px; background: var(--set-surface-3); overflow: hidden; }
 .probe-progress-fill { display: block; height: 100%; background: var(--set-primary); transition: width .25s ease; }
 
+/* CR-058 r5：P20 行为指纹归因面板（结果区下方、逐针列表上方；仅完成/历史回看态显示）。
+   与原型 cr058.css .probe-attr* 同名同布局；概率性提示视觉：中性面板 + 距离条，不用红牌实锤色。 */
+.probe-attr { margin-top: 10px; border: 1px solid var(--set-line-soft); border-radius: 8px; background: var(--set-surface-2); padding: 10px 14px; }
+.probe-attr-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.probe-attr-title { font-size: 12.5px; font-weight: 600; }
+.probe-attr-claimed { color: var(--set-muted); }
+.probe-attr-hint { margin-left: auto; color: var(--set-muted); font-size: 11px; }
+.probe-attr-list { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.probe-attr-cand { display: grid; grid-template-columns: 26px minmax(0, 1.2fr) minmax(60px, 1fr) 56px; align-items: center; gap: 10px; font-size: 12px; }
+.probe-attr-cand .a-rank { color: var(--set-muted); font-size: 11px; }
+.probe-attr-cand .a-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--set-ink); }
+.probe-attr-cand .a-bar { height: 6px; border-radius: 3px; background: var(--set-surface-3); overflow: hidden; }
+.probe-attr-cand .a-bar-fill { display: block; height: 100%; background: var(--set-line-strong); border-radius: 3px; }
+.probe-attr-cand .a-bar-fill.top { background: var(--set-primary); }
+.probe-attr-cand .a-dist { text-align: right; color: var(--set-muted); font-size: 11px; }
+.probe-attr-empty { margin: 4px 0 0; }
+.probe-attr-note { margin: 8px 0 0; color: var(--set-muted); font-size: 11px; }
+
 
 /* ================= CR-059：模型配置评审调整 ================= */
 

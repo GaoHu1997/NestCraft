@@ -1,0 +1,12 @@
+{
+  "purpose": "服务器主机系统官方标识，仅用于识别主机操作系统，不表示任何官方背书或合作。",
+  "rule": "图标由检测到的系统标识决定，用户不可配置、不可从内置图标库选择；未知系统使用中性占位。",
+  "source": "Simple Icons v13（https://github.com/simple-icons/simple-icons），CC0 1.0；图形路径已按各品牌官方主色着色。",
+  "windows": "Windows 四格标识按公开官方形态绘制，不来自 Simple Icons。",
+  "trademarks": "Ubuntu、Debian、CentOS、Rocky Linux、AlmaLinux、Fedora、Arch Linux、openSUSE、Alpine Linux、Amazon、Oracle、Red Hat、FreeBSD、Apple、Linux、Windows 等名称与标识归各自权利人所有。",
+  "files": [
+    "ubuntu.svg", "debian.svg", "centos.svg", "rockylinux.svg", "almalinux.svg",
+    "fedora.svg", "archlinux.svg", "opensuse.svg", "alpinelinux.svg", "amazon.svg",
+    "oracle.svg", "redhat.svg", "freebsd.svg", "apple.svg", "linux.svg", "windows.svg"
+  ]
+}

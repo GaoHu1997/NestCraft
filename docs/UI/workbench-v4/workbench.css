@@ -3,16 +3,12 @@
 
 .wb-page { max-width: none; margin: 0; padding: 0; height: 100%; min-height: 0; display: flex; flex-direction: column; }
 .wb-page .ws-tabs { flex: 0 0 auto; margin-bottom: 0; }
-/* 工作台页签：纯图标（坐在电脑前的小人），不显示文字。
-   必须与相邻文字页签在视觉上对齐：
-   - 文字页签是 block + 44px 行盒，中文视觉中心略低于几何中心；
-   - 图标是真实 18px 高度，若仅靠 flex 居中会看起来偏上。
-   因此图标用与文字相同的 flex 居中，并加 1px 光学补偿。 */
-.ws-tabs .ws-tab.ws-tab-icon { display: inline-flex; align-items: center; justify-content: center; gap: 0; padding: 0 12px; min-width: 44px; line-height: 1; }
-.ws-tab-icon svg { flex: 0 0 auto; display: block; transform: translateY(1px); }
+/* CR-082：工作台页签＝电脑（显示器）图标 + 文字「工作台」。
+   页签不再只显示图标：图标 16px、文字沿用页签 13px，图标与文字间距 6px；
+   padding 与选中下划线回到文字页签口径（cr036.css 的 0 12px / 8px 内缩），不再需要光学补偿与最小宽度。 */
+.ws-tabs .ws-tab.ws-tab-icon { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 12px; line-height: 1; }
+.ws-tab-icon svg { flex: 0 0 auto; display: block; }
 .wb-page .ws-tab { white-space: nowrap; }
-/* 选中下划线与文字页签同宽内缩，避免图标页签下划线看起来更长 */
-.ws-tabs .ws-tab.ws-tab-icon[aria-selected="true"]::after { left: 10px; right: 10px; }
 .wb-share-note { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px; margin-right: 4px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); color: var(--muted); font-size: 10.5px; white-space: nowrap; }
 
 .wb-shell { position: relative; flex: 1 1 auto; min-height: 0; display: flex; background: var(--surface); }
