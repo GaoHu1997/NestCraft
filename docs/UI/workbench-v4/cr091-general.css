@@ -1,0 +1,138 @@
+/* CR-091：设置 → 通用 布局重排（UI-CR091-v1）。纯视觉与交互层，不接真实业务。 */
+
+/* ---------- 顶部粘附工具条：分组跳转 + 未保存状态 + 放弃/保存 ---------- */
+.c91-bar {
+  position: sticky; top: 0; z-index: 6;
+  display: flex; align-items: center; gap: 8px; flex-wrap: nowrap;
+  margin: -18px -24px 14px; padding: 10px 24px;
+  background: var(--surface); border-bottom: 1px solid var(--line-soft);
+}
+.c91-jump { display: flex; align-items: center; gap: 3px; flex-wrap: nowrap; overflow-x: auto; min-width: 0; flex: 0 1 auto; padding-bottom: 1px; }
+.c91-jump button {
+  height: 26px; padding: 0 9px; border-radius: 999px; border: 1px solid transparent;
+  font: inherit; font-size: 12px; color: var(--muted); cursor: pointer; background: transparent;
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; flex: 0 0 auto;
+}
+.c91-jump button:hover { background: var(--surface-3); color: var(--ink); }
+.c91-jump button[aria-current="true"] {
+  border-color: var(--line); background: var(--surface-2); color: var(--ink); font-weight: 600;
+}
+.c91-jump button:focus-visible { outline: none; box-shadow: var(--ring); }
+.c91-spacer { flex: 1 1 auto; }
+.c91-dirty { font-size: 11.5px; color: var(--warning); font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+.c91-dirty[data-c91-clean="true"] { color: var(--muted); }
+.c91-bar .btn { flex: 0 0 auto; height: 28px; }
+.c91-bar .btn[disabled] { opacity: .45; }
+
+/* ---------- 分组卡 ---------- */
+.c91-group {
+  border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface);
+  margin-bottom: 14px; overflow: clip; scroll-margin-top: 54px;
+}
+.c91-group-h {
+  display: flex; align-items: center; gap: 9px; padding: 10px 16px;
+  background: var(--surface-2); border-bottom: 1px solid var(--line-soft);
+}
+.c91-group-h .c91-ico {
+  width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center;
+  background: var(--surface); border: 1px solid var(--line); color: var(--ink-2);
+}
+.c91-group-h h3 { font-size: 13px; font-weight: 600; }
+.c91-group-tag {
+  margin-left: auto; font-size: 10.5px; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; background: var(--surface);
+}
+.c91-rows { padding: 0 16px; }
+.c91-row {
+  display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 16px;
+  padding: 11px 0; border-bottom: 1px solid var(--line-soft); align-items: start;
+}
+.c91-rows > .c91-row:last-child { border-bottom: 0; }
+.c91-label { padding-top: 4px; }
+.c91-label b { display: block; font-size: 12.5px; font-weight: 550; line-height: 1.4; }
+.c91-label .c91-need { font-size: 10px; font-weight: 500; color: var(--muted); margin-left: 5px; }
+.c91-control { min-width: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.c91-control > .input { width: 100%; max-width: 300px; }
+.c91-control > .input.c91-num { width: 88px; max-width: 88px; }
+.c91-control > .input.c91-short { width: 132px; max-width: 132px; }
+.c91-control > .select { width: auto; min-width: 140px; max-width: 220px; }
+.c91-sub-h {
+  padding: 9px 16px 7px; margin: 0 -16px; font-size: 11.5px; font-weight: 600; color: var(--muted);
+  letter-spacing: .02em; background: var(--surface-2); border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft);
+}
+.c91-hint { font-size: 11px; color: var(--muted); line-height: 1.5; flex-basis: 100%; }
+.c91-err { font-size: 11px; color: var(--danger); flex-basis: 100%; }
+.c91-control .input[aria-invalid="true"] { border-color: var(--danger); box-shadow: 0 0 0 3px var(--danger-soft); }
+.c91-inline-note {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted);
+  padding: 2px 0; white-space: nowrap; flex: 0 0 auto;
+}
+
+/* ---------- 头像：作为“个人资料”里的独立字段，控件只有一个可点的小头像 ---------- */
+.c91-head-spacer { flex: 1 1 auto; }
+.c91-avatar-btn {
+  position: relative; width: 40px; height: 40px; padding: 0; border: 1px solid var(--line);
+  border-radius: 11px; background: var(--surface); display: grid; place-items: center; cursor: pointer;
+}
+.c91-avatar-btn:hover { border-color: var(--line-strong); background: var(--surface-2); }
+.c91-avatar-btn:focus-visible { outline: none; box-shadow: var(--ring); }
+.c91-avatar-btn .c91-av { width: 34px; height: 34px; border-radius: 9px; }
+.c91-avatar-badge {
+  position: absolute; right: -4px; bottom: -4px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--surface); border: 1px solid var(--line); color: var(--muted);
+  display: grid; place-items: center; opacity: 0; transition: opacity .12s var(--ease);
+}
+.c91-avatar-btn:hover .c91-avatar-badge, .c91-avatar-btn:focus-visible .c91-avatar-badge { opacity: 1; }
+
+/* 头像容器：按自身风格渲染，不跟随 body 的全局风格属性。 */
+.c91-av {
+  width: 26px; height: 26px; border-radius: 8px; border: 1px solid transparent;
+  display: inline-grid; place-items: center; overflow: hidden; background: transparent; flex: 0 0 auto;
+}
+.c91-av img { display: block; object-fit: contain; }
+.c91-av img.has-photo { width: 100% !important; height: 100% !important; object-fit: cover; filter: none !important; }
+.c91-av[data-v="a"] { background: transparent; border-color: transparent; }
+.c91-av[data-v="a"] img { width: 90%; height: 90%; }
+.c91-av[data-v="b"] { background: var(--teal-soft); border-color: var(--teal-line); }
+.c91-av[data-v="b"] img { width: 74%; height: 74%; }
+.c91-av[data-v="c"] { background: var(--teal-soft); border-color: var(--teal-line); border-radius: 6px; }
+.c91-av[data-v="c"] img { width: 72%; height: 72%; }
+.c91-av[data-v="d"] { background: #0f4c45; border-color: rgba(255, 255, 255, .14); }
+.c91-av[data-v="d"] img { width: 72%; height: 72%; filter: brightness(0) invert(1); }
+.c91-av[data-v="e"] { background: var(--surface); border-color: transparent; box-shadow: 0 0 0 1.5px #0f9f8f, 0 0 0 3px rgba(43, 108, 246, .28); }
+.c91-av[data-v="e"] img { width: 72%; height: 72%; }
+
+/* ---------- 代码预览 ---------- */
+.c91-preview {
+  margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  font-family: var(--mono); line-height: 1.6; width: 100%; max-width: 520px; box-sizing: border-box;
+  overflow-wrap: break-word;
+}
+.c91-preview.light { background: #fbfcfe; color: #1d2430; border-color: #e3e8f0; }
+.c91-preview.dark { background: #14181f; color: #dce3ec; border-color: #262c36; }
+.c91-preview .tk-k { color: #a35bcc; } .c91-preview .tk-s { color: #1a9d5a; } .c91-preview .tk-n { color: #b76a00; }
+.c91-preview.dark .tk-k { color: #c99bff; } .c91-preview.dark .tk-s { color: #6ee7a8; } .c91-preview.dark .tk-n { color: #e0a04a; }
+
+/* ---------- 数据位置分类 ---------- */
+.c91-dirs { display: flex; flex-wrap: wrap; gap: 5px; }
+.c91-dir { font-family: var(--mono); font-size: 10.5px; color: var(--ink-2); background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: 5px; padding: 2px 7px; }
+
+/* ---------- 关于 ---------- */
+.c91-about { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.c91-version { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+.c91-about-meta { font-size: 11px; color: var(--muted); }
+
+/* ---------- 密度预览：紧凑时收窄正文行距 ---------- */
+body[data-density="compact"] .c91-row { padding: 8px 0; }
+body[data-density="compact"] .c91-group { margin-bottom: 10px; }
+
+/* ---------- 窄屏 ---------- */
+@media (max-width: 720px) {
+  .c91-bar { margin: -18px -16px 12px; padding: 10px 16px; flex-wrap: wrap; row-gap: 8px; }
+  .c91-jump { flex: 1 1 100%; order: 1; }
+  .c91-spacer { display: none; }
+  .c91-dirty { order: 2; margin-left: auto; }
+  .c91-bar .btn { order: 2; }
+  .c91-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .c91-label { padding-top: 0; }
+}

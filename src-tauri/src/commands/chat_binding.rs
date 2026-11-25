@@ -13,15 +13,18 @@
 //!   条件含 sessionRole='ordinary'（执行会话门控）与 nativeBindingRevision=expected；
 //!   rows_affected=0 → 只归档（LATE），不覆盖绑定；首轮写入附加 nativeThreadRef IS NULL；
 //! - fresh 确认 `confirm_fresh`：用户确认后才清空旧引用并写 system 断点消息；
-//! - 原因码 → 中文文案 `reason_text`（横幅/弹窗/断点卡共用，跨重启一致）。
+//! - 原因码 → 中文文案 `reason_text`（横幅/弹窗/断点卡共用，跨重启一致）；
+//! - BUG-003：派生视图按 `runner` 分流——平台通道不适用 CLI 原生绑定（返回 None）；
+//!   CLI 无任何 turn 记录时用 `REF_NOT_ESTABLISHED` 与「已结算未落引用」区分。
 
 use crate::db;
 use crate::models::{new_id, now_ms, SessionBindingView};
 use rusqlite::OptionalExtension;
 use sha2::{Digest, Sha256};
 
-pub const REASON_CODES: [&str; 10] = [
+pub const REASON_CODES: [&str; 11] = [
     "REF_MISSING",
+    "REF_NOT_ESTABLISHED",
     "REF_STALE",
     "REF_NOT_READY",
     "INCOMPATIBLE_CLI",
@@ -54,6 +57,7 @@ fn explicit_fresh_confirmed(confirmed_turn_id: Option<&str>) -> bool {
 pub fn reason_text(code: &str) -> &'static str {
     match code {
         "REF_MISSING" => "引用缺失（历史无原生绑定）",
+        "REF_NOT_ESTABLISHED" => "尚无原生线程引用（首轮未完成或历史来自旧版本）",
         "REF_STALE" => "原线程引用已过期",
         "REF_NOT_READY" => "引用尚未就绪，请重试",
         "INCOMPATIBLE_CLI" => "CLI 或版本不兼容",
@@ -562,8 +566,13 @@ pub fn confirm_fresh(
 }
 
 /// SessionMeta.binding 派生（不查库；最新轮次结果由查询列传入）。
+///
+/// BUG-003：`runner` 必须参与判定。平台通道（`platform`）按历史回放承载上下文，
+/// 不产生 CLI 原生线程，也不写 `execution_session_turn`；若仍按「有消息且无引用」派生
+/// 绑定状态，平台会话每轮都会被误判为 `freshPending` 并锁住输入。
 pub fn derive_view(
     session_role: &str,
+    runner: &str,
     cli_id: &str,
     thread_ref: Option<&str>,
     binding_revision: i64,
@@ -573,6 +582,10 @@ pub fn derive_view(
     message_count: i64,
 ) -> Option<SessionBindingView> {
     if session_role != "ordinary" {
+        return None;
+    }
+    // BUG-003：平台通道不适用 CLI 原生绑定，返回 None（前端据此不显示横幅、不锁输入）。
+    if runner == "platform" {
         return None;
     }
     let view = |state: &str, reason: Option<&str>, fp: Option<String>| SessionBindingView {
@@ -595,7 +608,15 @@ pub fn derive_view(
     }
     if message_count > 0 {
         // 不支持续接的 CLI（grok）无引用可谈：原因按 UNSUPPORTED_CLI 展示。
-        let reason = if cli_supported(cli_id) { "REF_MISSING" } else { "UNSUPPORTED_CLI" };
+        // BUG-003：CLI 完全没有 turn 记录说明首轮在结算前中断（或历史来自 CR-037 之前），
+        // 与「已结算但未落引用」区分，避免用户被误导成引用丢失。
+        let reason = if !cli_supported(cli_id) {
+            "UNSUPPORTED_CLI"
+        } else if last_outcome.is_none() {
+            "REF_NOT_ESTABLISHED"
+        } else {
+            "REF_MISSING"
+        };
         return Some(view("freshPending", Some(reason), None));
     }
     None
@@ -712,6 +733,52 @@ mod tests {
         confirmed.confirmed_turn_id = Some("fresh-9".into());
         confirmed.binding_revision = 3;
         assert!(matches!(resolve_binding(&confirmed, "claude", "k", 0, true), BindingDecision::Send { mode: "fresh", requested: None }));
+    }
+
+    // ---------- BUG-003：派生视图按通道与首轮结算区分 ----------
+
+    #[test]
+    fn bug003_platform_sessions_never_derive_cli_binding() {
+        // 平台会话有历史、无 CLI 引用：不得派生任何绑定状态（否则首轮后即被锁输入）。
+        assert!(derive_view("ordinary", "platform", "codex", None, 0, None, None, None, 10).is_none());
+        // 防御：即使残留引用（通道切换已被禁止），平台仍按不适用处理。
+        assert!(derive_view("ordinary", "platform", "claude", Some("t-1"), 1, Some("turn-1"), Some("confirmed"), None, 10).is_none());
+    }
+
+    #[test]
+    fn bug003_cli_without_settled_turn_reports_not_established() {
+        let view = derive_view("ordinary", "cli", "codex", None, 0, None, None, None, 10).expect("应派生待确认");
+        assert_eq!(view.state, "freshPending");
+        assert_eq!(view.reason_code.as_deref(), Some("REF_NOT_ESTABLISHED"));
+    }
+
+    #[test]
+    fn bug003_cli_settled_without_ref_keeps_ref_missing() {
+        let view = derive_view("ordinary", "cli", "codex", None, 1, Some("turn-1"), Some("archived"), Some("STOPPED"), 10)
+            .expect("应派生待确认");
+        assert_eq!(view.state, "freshPending");
+        assert_eq!(view.reason_code.as_deref(), Some("REF_MISSING"));
+    }
+
+    #[test]
+    fn bug003_unsupported_cli_reason_unchanged() {
+        let view = derive_view("ordinary", "cli", "grok", None, 0, None, None, None, 3).expect("应派生待确认");
+        assert_eq!(view.state, "freshPending");
+        assert_eq!(view.reason_code.as_deref(), Some("UNSUPPORTED_CLI"));
+    }
+
+    #[test]
+    fn bug003_native_fresh_blocked_and_executor_unchanged() {
+        let native = derive_view("ordinary", "cli", "claude", Some("t-1"), 2, Some("turn-1"), Some("confirmed"), None, 5)
+            .expect("native");
+        assert_eq!(native.state, "native");
+        let fresh = derive_view("ordinary", "cli", "claude", None, 3, Some("fresh-1"), None, None, 5).expect("fresh");
+        assert_eq!(fresh.state, "fresh");
+        let blocked = derive_view("ordinary", "cli", "claude", Some("t-1"), 2, Some("turn-1"), Some("blocked"), Some("GRANT_REVOKED"), 5)
+            .expect("blocked");
+        assert_eq!(blocked.state, "blocked");
+        assert_eq!(blocked.reason_code.as_deref(), Some("GRANT_REVOKED"));
+        assert!(derive_view("executor", "cli", "codex", None, 0, None, None, None, 2).is_none());
     }
 
     // ---------- CAS：失配只归档不覆盖；首轮附加 NULL 条件；executor 门控 ----------
@@ -851,23 +918,24 @@ mod tests {
 
     #[test]
     fn derived_view_follows_state_priority() {
-        assert!(derive_view("executor", "claude", Some("r"), 1, None, None, None, 5).is_none());
-        let v = derive_view("ordinary", "claude", Some("r"), 1, None, Some("blocked"), Some("REF_STALE"), 5).unwrap();
+        assert!(derive_view("executor", "cli", "claude", Some("r"), 1, None, None, None, 5).is_none());
+        let v = derive_view("ordinary", "cli", "claude", Some("r"), 1, None, Some("blocked"), Some("REF_STALE"), 5).unwrap();
         assert_eq!((v.state.as_str(), v.reason_code.as_deref()), ("blocked", Some("REF_STALE")));
         assert_eq!(v.ref_fingerprint.as_deref(), Some(fingerprint_ref("r").as_str()));
-        let v = derive_view("ordinary", "claude", Some("r"), 1, None, Some("confirmed"), None, 5).unwrap();
+        let v = derive_view("ordinary", "cli", "claude", Some("r"), 1, None, Some("confirmed"), None, 5).unwrap();
         assert_eq!(v.state, "native");
-        let v = derive_view("ordinary", "claude", None, 2, Some("fresh-9"), Some("confirmed"), None, 5).unwrap();
+        let v = derive_view("ordinary", "cli", "claude", None, 2, Some("fresh-9"), Some("confirmed"), None, 5).unwrap();
         assert_eq!(v.state, "fresh");
         // 普通结算轮的 turn-… 不是重建确认：引用缺失仍按待确认暴露原因（CR-068 J11/J12）。
-        let v = derive_view("ordinary", "claude", None, 2, Some("turn-9"), Some("confirmed"), None, 5).unwrap();
+        let v = derive_view("ordinary", "cli", "claude", None, 2, Some("turn-9"), Some("confirmed"), None, 5).unwrap();
         assert_eq!((v.state.as_str(), v.reason_code.as_deref()), ("freshPending", Some("REF_MISSING")));
-        let v = derive_view("ordinary", "claude", None, 0, None, None, None, 3).unwrap();
-        assert_eq!((v.state.as_str(), v.reason_code.as_deref()), ("freshPending", Some("REF_MISSING")));
+        // BUG-003：完全没有 turn 记录 → 首轮未完成，原因与「已结算未落引用」区分。
+        let v = derive_view("ordinary", "cli", "claude", None, 0, None, None, None, 3).unwrap();
+        assert_eq!((v.state.as_str(), v.reason_code.as_deref()), ("freshPending", Some("REF_NOT_ESTABLISHED")));
         // grok：freshPending 原因按 UNSUPPORTED_CLI 展示
-        let v = derive_view("ordinary", "grok", None, 0, None, None, None, 3).unwrap();
+        let v = derive_view("ordinary", "cli", "grok", None, 0, None, None, None, 3).unwrap();
         assert_eq!((v.state.as_str(), v.reason_code.as_deref()), ("freshPending", Some("UNSUPPORTED_CLI")));
-        assert!(derive_view("ordinary", "claude", None, 0, None, None, None, 0).is_none());
+        assert!(derive_view("ordinary", "cli", "claude", None, 0, None, None, None, 0).is_none());
     }
 
     #[test]

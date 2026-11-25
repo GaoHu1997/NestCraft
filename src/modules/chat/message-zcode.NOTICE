@@ -1,0 +1,23 @@
+ZCode conversation presentation adaptation
+Copyright 2026 Z.AI Co., Ltd
+Licensed under the Apache License, Version 2.0; see message-zcode.LICENSE.
+
+Source: https://github.com/z-ai/zcode
+Relevant source portions: packages/ui/src/v4/ConversationTurnGroup.tsx
+(work header and consecutive tool summaries), conversationAssistantWorkItems.ts
+(summary category/statistics and lexical path normalization), and
+packages/ui/src/styles.css (light/dark neutral message surface values).
+
+Modified for NestCraft, 2026-11-25:
+- Adapted to this project's original React message DOM and native details.
+- Preserved existing call/result pairing, arrival order and full raw details.
+- Added explicit tool identity mapping, distinct-call counts and result-only labels.
+- Kept unknown tool categories and lifecycle states unknown, with failure hints.
+- Restricted file counting to explicit input paths, using lexical normalization.
+- Used responsive 16px reading / 14px summaries in the sidebar, and 18px reading
+  / 16px summaries in wide message containers, to match user screenshot scale.
+- Scoped all appearance changes to the message scroller and existing scroll owner.
+
+The upstream NOTICE.md contains broader application behavior descriptions and
+unrelated third-party declarations; those components and behaviors were not
+copied. This notice retains attribution relevant to the presentation adaptation.

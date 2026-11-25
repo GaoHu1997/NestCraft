@@ -1,0 +1,23 @@
+/* UI-CR088: wikilink states and backlink list. Inherits UI-SCROLL-001. */
+.kw-link { text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.kw-link[data-state="resolved"] { color: var(--primary); }
+.kw-link[data-state="unresolved"] { color: var(--danger); border-bottom: 1px dashed var(--danger); text-decoration: none; }
+.kw-link[data-state="ambiguous"] { color: var(--warning); border-bottom: 1px dashed var(--warning); text-decoration: none; }
+.kw-link:hover { text-decoration: underline; }
+
+.kw-link-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); background: var(--surface-2); padding: 0 6px; flex: none; }
+.kw-link-tabs button { padding: 8px 10px; font-size: 12px; color: var(--muted); border-bottom: 2px solid transparent; }
+.kw-link-tabs button[aria-selected="true"] { color: var(--primary); border-bottom-color: var(--primary); background: var(--surface); }
+.kw-link-tabs .count { margin-left: 4px; font-size: 11px; color: var(--muted); }
+
+.kw-backlinks { padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.kw-backlink { display: block; width: 100%; text-align: left; padding: 8px; border: 1px solid var(--line-soft); border-radius: 6px; background: var(--surface); }
+.kw-backlink:hover { background: var(--surface-2); }
+.kw-backlink b { display: block; font-size: 12px; overflow-wrap: anywhere; }
+.kw-backlink .path { display: block; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.kw-backlink .snippet { display: block; font-size: 11px; color: var(--ink-2); margin-top: 3px; overflow-wrap: anywhere; }
+.kw-link-empty { padding: 14px 10px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.kw-candidate { display: block; width: 100%; text-align: left; padding: 8px; border: 1px solid var(--line-soft); border-radius: 6px; margin-bottom: 6px; }
+.kw-candidate:hover { background: var(--surface-2); }
+.kw-candidate b { font-size: 12px; display: block; overflow-wrap: anywhere; }
+.kw-candidate .path { font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }

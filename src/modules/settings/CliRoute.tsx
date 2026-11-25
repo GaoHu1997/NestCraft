@@ -2,7 +2,8 @@ import { Icon } from "@/components/icons";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type * as api from "@/api";
 import type { ModelCandidate } from "@/api";
-import { EFFORT_LEVELS } from "./shared";
+import { EFFORT_ORDER } from "./modelCapacity";
+import { permissionOptions as cliPermissionOptions } from "./cliCapabilities";
 
 /**
  * CR-059 D3：CLI 任务模型路由（单行折叠）。
@@ -95,14 +96,39 @@ function ModelSelect(props: {
   </select>;
 }
 
-function EffortSelect(props: { label: string; value: string; disabled: boolean; onChange: (value: string) => void }) {
-  const known = (EFFORT_LEVELS as readonly string[]).includes(props.value);
-  return <select className="select" aria-label={props.label} value={props.value} disabled={props.disabled}
+function EffortSelect(props: {
+  label: string; value: string; disabled: boolean; options: string[];
+  /** 无选项时展示的原因（未选模型／模型未配置档位／跟随主 agent）。 */
+  emptyHint?: string;
+  onChange: (value: string) => void;
+}) {
+  const known = props.options.includes(props.value);
+  const unavailable = !props.options.length;
+  return <select className="select" aria-label={props.label} value={props.value}
+    disabled={props.disabled || unavailable}
+    title={unavailable ? props.emptyHint : undefined}
     onChange={event => props.onChange(event.target.value)}>
-    <option value="">沿用会话</option>
-    {props.value && !known && <option value={props.value}>已保存档位不可用</option>}
-    {EFFORT_LEVELS.map(level => <option key={level} value={level}>{level}</option>)}
+    <option value="" disabled={unavailable}>{unavailable ? (props.emptyHint || "所选模型未配置思考档位") : "沿用会话"}</option>
+    {props.value && !known && !unavailable && <option value={props.value}>已保存档位不可用</option>}
+    {props.options.map(level => <option key={level} value={level}>{level}</option>)}
   </select>;
+}
+
+/**
+ * 取所选模型真实配置的思考档位：键序按七档阶梯，未知自定义档位稳定排后。
+ * `null` 值表示该档有效但不下发参数，仍然是可选档位。
+ */
+export function effortOptionsOf(models: ModelCandidate[], value: string): string[] {
+  const target = models.find(item => modelValue(item) === value);
+  if (!target) return [];
+  const efforts = target.efforts ?? {};
+  const rank = (key: string) => {
+    const index = (EFFORT_ORDER as readonly string[]).indexOf(key);
+    return index < 0 ? EFFORT_ORDER.length : index;
+  };
+  return Object.keys(efforts)
+    .filter(key => key.length > 0 && (efforts[key] === null || (typeof efforts[key] === "string" && !!efforts[key]?.trim())))
+    .sort((a, b) => rank(a) - rank(b));
 }
 
 export function CliRoute(props: {
@@ -216,19 +242,32 @@ export function CliRoute(props: {
           <div><label>兜底模型</label>
             <ModelSelect value={route.fallback.model} models={models} label="兜底模型" placeholder="跟随主 agent"
               disabled={disabled}
-              onChange={model => props.onChange({ ...route, fallback: { ...route.fallback, model } })} /></div>
+              onChange={model => {
+                // 跟随主 agent（空值）时思考档位由主 agent 决定；指定模型后只保留该模型支持的档位。
+                const options = model ? effortOptionsOf(models, model) : [];
+                const effort = options.includes(route.fallback.effort) ? route.fallback.effort : "";
+                props.onChange({ ...route, fallback: { ...route.fallback, model, effort } });
+              }} /></div>
           <div><label>思考等级</label>
             <EffortSelect label="兜底思考等级" value={route.fallback.effort} disabled={disabled}
+              options={effortOptionsOf(models, route.fallback.model)}
+              emptyHint={route.fallback.model ? "所选模型未配置思考档位" : "跟随主 agent"}
               onChange={effort => props.onChange({ ...route, fallback: { ...route.fallback, effort } })} /></div>
         </div>
-        <p className="route-note">任一模型槽不可用时使用；默认与主 agent 当前选择一致（实时跟随）。兜底模型不可删除。</p>
+        <p className="route-note">任一模型槽不可用时使用；默认与主 agent 当前选择一致，思考档位同样跟随。</p>
       </> : slot ? <>
         <div className="two-col">
           <div><label>模型</label>
             <ModelSelect value={slot.model} models={models} label="模型槽模型" placeholder="未选择" disabled={disabled}
-              onChange={model => updateSlot(slotIndex, { model })} /></div>
+              onChange={model => {
+                const options = model ? effortOptionsOf(models, model) : [];
+                const effort = options.includes(slot.effort) ? slot.effort : "";
+                updateSlot(slotIndex, { model, effort });
+              }} /></div>
           <div><label>思考等级</label>
             <EffortSelect label="模型槽思考等级" value={slot.effort} disabled={disabled}
+              options={effortOptionsOf(models, slot.model)}
+              emptyHint={slot.model ? "所选模型未配置思考档位" : "先选择模型"}
               onChange={effort => updateSlot(slotIndex, { effort })} /></div>
         </div>
         <div><label>执行任务类型</label>
@@ -250,22 +289,18 @@ export function CliRoute(props: {
   </div>;
 }
 
-/** CLI 权限挡位（CR-059 D4）：文案与 AI 侧栏一致；auto/full 在原生通道核验前禁用。 */
-export const PERMISSION_OPTIONS: { id: string; name: string; enabled: boolean; reason?: string }[] = [
-  { id: "default", name: "默认模式", enabled: true },
-  { id: "plan", name: "规划模式", enabled: true },
-  { id: "agent", name: "代理模式", enabled: true },
-  { id: "auto", name: "自动审核", enabled: false, reason: "原生审查通道未核验" },
-  { id: "full", name: "完全访问", enabled: false, reason: "隔离与托管策略未核验" },
-];
+/** CLI 权限挡位（CR-085 AC-01）：按各 CLI 自身能力提供，与 AI 侧栏同源（cliCapabilities）。
+ *  未核验的挡位保持可见但禁用，并给出原因；不借用其它 CLI 的档位。 */
+export const PERMISSION_OPTIONS = cliPermissionOptions("claude");
 
 export function PermissionSelect(props: { cliId: string; value: string; disabled: boolean; onChange: (value: string) => void }) {
-  const known = PERMISSION_OPTIONS.some(option => option.id === props.value);
+  const options = cliPermissionOptions(props.cliId);
+  const known = options.some(option => option.id === props.value);
   return <select className="select" aria-label={`${props.cliId} 权限模式`} value={props.value} disabled={props.disabled}
     onChange={event => props.onChange(event.target.value)}>
-    {!known && props.value && <option value={props.value}>{props.value}</option>}
-    {PERMISSION_OPTIONS.map(option => <option key={option.id} value={option.id} disabled={!option.enabled}>
-      {option.name}{option.enabled ? "" : `（${option.reason}）`}
+    {!known && props.value && <option value={props.value}>{props.value}（原权限已失效）</option>}
+    {options.map(option => <option key={option.id} value={option.id} disabled={!option.enabled}>
+      {option.name}{option.enabled ? "" : `（${option.desc}）`}
     </option>)}
   </select>;
 }

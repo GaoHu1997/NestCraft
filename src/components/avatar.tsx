@@ -69,6 +69,41 @@ export function AvatarField({ style, photo, onChange }: Choice & { onChange: (ne
   </>;
 }
 
+/** CR-091：设置页「头像」字段只放一个小头像；点击打开同一个更换头像弹窗（应用即生效）。 */
+export function AvatarButton({ style, photo, label }: { style: AvatarStyleId; photo: string | null; label: string }) {
+  const [open, setOpen] = useState(false);
+  return <>
+    <button type="button" className="g-avatar-btn" aria-label={`更换头像（当前样式 ${style.toUpperCase()}）`} title={`更换头像 · ${label}`} aria-haspopup="dialog" onClick={() => setOpen(true)}>
+      <UserAvatar size={34} photo={photo} label={label} />
+      <span className="g-avatar-badge" aria-hidden="true"><Icon name="camera" size={12} /></span>
+    </button>
+    {open && <AvatarDialog style={style} photo={photo} onClose={() => setOpen(false)} onApply={() => setOpen(false)} />}
+  </>;
+}
+
+/** CR-091：头像当前样式与图片同源（应用后由 app:avatar-changed 刷新）。 */
+export function useAvatarChoice(): Choice {
+  const photo = useAvatarPhoto();
+  const [style, setStyle] = useState<AvatarStyleId>("b");
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      api.getAvatarStyle().then(value => {
+        if (alive && (AVATAR_STYLE_IDS as readonly string[]).includes(value)) setStyle(value as AvatarStyleId);
+      }).catch(() => {});
+    };
+    load();
+    window.addEventListener("app:avatar-changed", load);
+    window.addEventListener("app:settings-changed", load);
+    return () => {
+      alive = false;
+      window.removeEventListener("app:avatar-changed", load);
+      window.removeEventListener("app:settings-changed", load);
+    };
+  }, []);
+  return { style, photo };
+}
+
 function AvatarDialog({ style, photo, onClose, onApply }: Choice & { onClose: () => void; onApply: (next: Choice) => void }) {
   const [draftStyle, setStyle] = useState(style);
   const [source, setSource] = useState<string | null>(null);
@@ -81,6 +116,15 @@ function AvatarDialog({ style, photo, onClose, onApply }: Choice & { onClose: ()
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  /* CR-091：设置弹窗本身是 showModal 的 <dialog>（top layer），头像弹窗必须是同层 <dialog>，
+     否则会被设置弹窗的 backdrop 挡住而点开看不到。 */
+  const hostRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    if (!host.open) host.showModal();
+    return () => { if (host.open) host.close(); };
+  }, []);
   const dragRef = useRef<{ x: number; y: number; crop: Crop } | null>(null);
   const sequence = useRef(0);
   const busy = loading || saving;
@@ -161,7 +205,8 @@ function AvatarDialog({ style, photo, onClose, onApply }: Choice & { onClose: ()
       onApply({ style: draftStyle, photo: output || null });
     } catch (e) { setError(`保存失败：${String(e)}。当前头像保持不变，请重试。`); setSaving(false); }
   }
-  return createPortal(<div className="cr51-modal-mask" onMouseDown={e => { if (e.target === e.currentTarget && !saving) onClose(); }}>
+  return createPortal(<dialog ref={hostRef} className="cr51-avatar-host" aria-label="更换头像" onCancel={e => { e.preventDefault(); e.stopPropagation(); if (!saving) onClose(); }}>
+    <div className="cr51-modal-mask" onMouseDown={e => { if (e.target === e.currentTarget && !saving) onClose(); }}>
     <div ref={dialogRef} className="cr51-avatar-modal" role="dialog" aria-modal="true" aria-labelledby="cr51-avatar-title" data-avatar-style={draftStyle}>
       <div className="cr51-avatar-modal-h"><b id="cr51-avatar-title">更换头像</b><span className="set-caption">内置样式或自定义图片</span><button className="btn icon ghost sm" type="button" aria-label="关闭" disabled={saving} onClick={onClose}><Icon name="x" size={14} /></button></div>
       <div className="cr51-avatar-modal-b" data-scroll>
@@ -195,5 +240,6 @@ function AvatarDialog({ style, photo, onClose, onApply }: Choice & { onClose: ()
       </div>
       <div className="cr51-avatar-modal-f"><button className="btn sm" type="button" disabled={saving} onClick={() => preset("b")}>恢复默认 Logo</button><span className="grow" /><button className="btn" type="button" disabled={saving} onClick={onClose}>取消</button><button className="btn primary" type="button" disabled={busy} onClick={() => void apply()}>{saving ? "保存中…" : "应用"}</button></div>
     </div>
-  </div>, document.body);
+    </div>
+  </dialog>, document.body);
 }

@@ -1,0 +1,191 @@
+/* navigation.css —— 代码导航样式（类名前缀 cda-nav- / cda-crumb）。
+   仅引用主题令牌；滚动条按 UI-SCROLL-001，由全局 src/components/scrollbar.ts 与 base.css
+   的 .scrollbar-active 承担，本文件只声明 overflow 与固定尺寸，不做常显或宽度切换。 */
+
+/* ---------- Ctrl 悬停下划线（SC-090-07） ---------- */
+.cda-nav-link {
+  text-decoration: underline;
+  cursor: pointer;
+  border-radius: 2px;
+}
+.cda-nav-link:hover {
+  background: var(--soft);
+}
+
+/* ---------- 面包屑（SC-090-10） ---------- */
+.cda-crumb-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-wrap: wrap;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 11.5px;
+  background: var(--paper);
+  min-width: 0;
+}
+.cda-crumb {
+  border: 0;
+  background: transparent;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--ink-2);
+  cursor: pointer;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.cda-crumb:hover {
+  background: var(--hover-bg);
+  color: var(--accent);
+}
+.cda-crumb-file {
+  font-weight: 600;
+  color: var(--ink);
+}
+.cda-crumb-sep {
+  color: var(--muted);
+  padding: 0 1px;
+  cursor: default;
+  user-select: none;
+}
+
+/* ---------- 多目标选择器（SC-090-08） ---------- */
+.cda-nav-picker {
+  position: fixed;
+  left: 50%;
+  top: 120px;
+  transform: translateX(-50%);
+  z-index: 65;
+  width: min(440px, 92vw);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+.cda-nav-picker-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--ink);
+}
+.cda-nav-picker-head svg {
+  color: var(--accent);
+}
+.cda-nav-picker-filter {
+  margin: 8px 10px;
+  width: calc(100% - 20px);
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-ctl);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 12.5px;
+}
+.cda-nav-picker-list {
+  max-height: 300px;
+  overflow: auto;
+  padding: 4px 6px 8px;
+}
+.cda-nav-pick {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  width: 100%;
+  padding: 8px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.cda-nav-pick:hover,
+.cda-nav-pick.active {
+  background: var(--soft);
+}
+.cda-nav-pick-ico {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border-radius: 5px;
+  background: var(--panel-2);
+  color: var(--accent);
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line-soft);
+}
+.cda-nav-pick-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.cda-nav-pick-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.cda-nav-pick-loc {
+  font: 11px Consolas, "Cascadia Mono", monospace;
+  color: var(--accent);
+  margin-top: 1px;
+}
+.cda-nav-pick-src {
+  font: 11px Consolas, "Cascadia Mono", monospace;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+.cda-nav-picker-empty {
+  padding: 18px 12px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* ---------- CR-094：继承跳转入口与 gutter 标记 ---------- */
+
+.cda-nav-pick-note {
+  font-size: 11px;
+  line-height: 16px;
+  padding: 0 5px;
+  margin-left: 6px;
+  border-radius: 4px;
+  color: var(--accent, #2b6cf6);
+  border: 1px solid currentColor;
+  opacity: .85;
+  white-space: nowrap;
+}
+
+.cda-nav-gutter {
+  width: 14px;
+}
+
+.cda-nav-gutter-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 100%;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--accent, #2b6cf6);
+  opacity: .75;
+  user-select: none;
+}
+
+.cda-nav-gutter-mark:hover {
+  opacity: 1;
+}
+
+.cda-nav-gutter-down { color: #2b6cf6; }
+.cda-nav-gutter-up { color: #8a5cf6; }
+.cda-nav-gutter-both { color: #2b6cf6; letter-spacing: -1px; }

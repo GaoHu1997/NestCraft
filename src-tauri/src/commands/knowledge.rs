@@ -13,10 +13,21 @@ mod files;
 pub mod performance;
 #[path = "kb_verified.rs"]
 mod verified;
+#[path = "kb_links.rs"]
+pub mod links;
+// CR-089：图谱、内置工具、本地语义（各自独立文件，公共接线由主代理维护）
+#[path = "kb_graph.rs"]
+pub mod graph;
+#[path = "kb_tools.rs"]
+pub mod tools;
+#[path = "kb_semantic.rs"]
+pub mod semantic;
 #[path = "kb_snapshot.rs"]
 pub mod snapshot;
 #[path = "kb_transfers.rs"]
 pub mod transfers;
+#[path = "kb_preview.rs"]
+pub mod preview;
 pub use files::{ExportResult, ImportOutcome, KnowledgeFileData, KnowledgeFileInfo, RecycleItem, UploadItem, UploadResult};
 
 fn enabled_root(conn: &Connection, id: &str) -> Result<files::SafeRoot, String> {
@@ -139,8 +150,19 @@ fn publish_note(conn: &Connection, id: &str, rel: &str, content: &str) -> Result
         ).map_err(|e| e.to_string())?;
     }
     crate::commands::kb_index::republish_note_tx(&tx, id, &note_id, rel, &display_title, content, &hash, is_md)?;
+    if is_md {
+        links::ensure_schema(&tx)?;
+        links::replace_for_note(&tx, id, &note_id, rel, content)?;
+    }
     tx.execute("UPDATE knowledge_library SET revision=revision+1 WHERE id=?1 AND enabled=1", [id]).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
+    // CR-089：语义向量与正文解耦；编码失败只记日志，不影响已保存的正文。
+    if is_md {
+        let chunks = semantic::chunk_text(content);
+        if let Err(error) = semantic::upsert_embeddings(conn, id, &note_id, rel, &hash, &chunks) {
+            eprintln!("[CR-089] 语义索引更新失败（正文已保存）：{error}");
+        }
+    }
     Ok(note_id)
 }
 fn saved_note(conn: &Connection, id: &str, rel: &str, content: String, fallback_id: Option<&str>) -> NoteContent {
@@ -192,6 +214,8 @@ fn scan_notes(conn: &Connection, id: &str, root: &mut files::SafeRoot) -> Result
         ).map_err(|e| e.to_string())?;
     }
     crate::commands::kb_index::republish_library_tx(&tx, id, &library_files)?;
+    links::ensure_schema(&tx)?;
+    links::rebuild_tx(&tx, id, root)?;
     tx.execute("UPDATE knowledge_library SET revision=revision+1 WHERE id=?1 AND enabled=1",[id]).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(md_count)
@@ -481,21 +505,38 @@ pub fn kb_rename_doc(id: String, relative_uri: String, name: String) -> Result<N
     let _mutation = files::MUTATION.lock().map_err(|_| "知识操作锁不可用")?;
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
-    files::rename_entry(&mut enabled_root(conn,&id)?,&relative_uri,&name)
+    let mut root = enabled_root(conn, &id)?;
+    let node = files::rename_entry(&mut root, &relative_uri, &name)?;
+    // File already moved: a link-rewrite failure must not fail the rename itself.
+    if let Err(error) = links::apply_move(conn, &id, &mut root, &relative_uri, &node.relative_uri) {
+        eprintln!("[CR-088] 重命名后链接更新失败（文件已改名）：{error}");
+    }
+    Ok(node)
 }
 #[tauri::command]
 pub fn kb_delete_doc(id: String, relative_uri: String) -> Result<(), String> {
     let _mutation = files::MUTATION.lock().map_err(|_| "知识操作锁不可用")?;
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
-    files::delete_entry(&mut enabled_root(conn,&id)?,&relative_uri)
+    let mut root = enabled_root(conn, &id)?;
+    files::delete_entry(&mut root, &relative_uri)?;
+    conn.execute("DELETE FROM knowledge_note_index WHERE libraryId=?1 AND relativeUri=?2", [&id, &relative_uri]).map_err(|e| e.to_string())?;
+    if let Err(error) = links::rebuild_from_root(conn, &id, &mut root) {
+        eprintln!("[CR-088] 删除后链接索引重建失败：{error}");
+    }
+    Ok(())
 }
 #[tauri::command]
 pub fn kb_move_doc(id: String, relative_uri: String, parent_relative_uri: String) -> Result<NoteNode, String> {
     let _mutation = files::MUTATION.lock().map_err(|_| "知识操作锁不可用")?;
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
-    files::move_entry(&mut enabled_root(conn,&id)?,&relative_uri,&parent_relative_uri)
+    let mut root = enabled_root(conn, &id)?;
+    let node = files::move_entry(&mut root, &relative_uri, &parent_relative_uri)?;
+    if let Err(error) = links::apply_move(conn, &id, &mut root, &relative_uri, &node.relative_uri) {
+        eprintln!("[CR-088] 移动后链接更新失败（文件已移动）：{error}");
+    }
+    Ok(node)
 }
 fn recycle_store(conn: &Connection) -> Result<PathBuf, String> {
     let dir = crate::commands::general::resolve_data_dir(conn)?.join("recycle");

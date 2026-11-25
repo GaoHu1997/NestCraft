@@ -44,8 +44,13 @@
   <link rel="stylesheet" href="cr075.css">
   <!-- CR-078：主菜单「工作台」更名「概览」，首页重建为日程 / 用量两 Tab（设计资源）。 -->
   <link rel="stylesheet" href="cr078.css">
-  <!-- CR-079：会话框顶部运行栏（CLI/大管家、分支、worktree）。 -->
+  <!-- CR-079：会话框顶部运行栏（CLI/助理、分支、worktree）。 -->
   <link rel="stylesheet" href="cr079.css">
+  <link rel="stylesheet" href="cr085-abilities.css">
+  <link rel="stylesheet" href="cr085-sdk.css">
+  <link rel="stylesheet" href="cr085-settings.css">
+  <link rel="stylesheet" href="cr091-general.css">
+  <link rel="stylesheet" href="message-reference.css">
 </head>
 <body>
   <div class="app" id="app"></div>
@@ -63,6 +68,7 @@
   <!-- CR-075：服务器列表、主机表单与自动连接工作台（设计资源，覆盖本页服务器屏幕）。 -->
   <script src="cr075.js"></script>
   <script src="chat-dock.js"></script>
+  <script src="message-presentation.js"></script>
   <script src="ai.js"></script>
   <script src="office-model.js"></script>
   <script src="office.js"></script>
@@ -91,6 +97,12 @@
   <script src="cr070.js"></script>
   <!-- CR-078：概览页（日程 / 用量）。覆盖式接管 Screens.home("workbench")，须在 screens-home.js 之后、main.js 之前加载。 -->
   <script src="cr078.js"></script>
+  <!-- CR-085：设置精简与配置交互，仅合成演示，不接真实业务。 -->
+  <script src="cr085-abilities.js"></script>
+  <script src="cr085-sdk.js"></script>
+  <script src="cr085-settings.js"></script>
+  <!-- CR-091：设置 → 通用 布局重排（分组、补充项、单一草稿保存）。仅合成演示，须在 cr085-settings.js 之后加载。 -->
+  <script src="cr091-general.js"></script>
   <!-- CR-026 执行计划桥接（execution-plan-model.js / execution-closure.js / execution-closure.css）
        为并行会话产物，文件原地保留；本版新外壳未挂载，待合并确认后再接入，避免两套派发流程互相覆盖。 -->
 </body>

@@ -1,0 +1,30 @@
+/* UI-CR084-v1.1. Inherits UI-SCROLL-001; preserve the native overflow/gutter. */
+.kp-paged-document { display:flex; flex-direction:column; height:100%; min-height:0; color:var(--ink); background:var(--surface); }
+.kp-preview-head { display:flex; align-items:center; gap:12px; padding:16px 22px 12px; border-bottom:1px solid var(--line); flex:none; }
+.kp-preview-head h1 { font-size:16px; margin:0; overflow-wrap:anywhere; }
+.kp-preview-head p { font-size:12px; color:var(--muted); margin:3px 0 0; }
+.kp-preview-actions { display:flex; gap:8px; margin-left:auto; }
+.kp-preview-toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:9px 20px; background:var(--surface-2); border-bottom:1px solid var(--line); flex:none; font-size:13px; }
+.kp-preview-toolbar input { width:52px; text-align:center; background:var(--surface); border:1px solid var(--line-strong); border-radius:4px; padding:3px; }
+.kp-preview-toolbar select { background:var(--surface); border:1px solid var(--line-strong); padding:4px; border-radius:4px; }
+.kp-preview-stage { flex:1; min-height:0; min-width:0; overflow:auto; padding:28px; background:var(--bg); }
+.kp-pdf-page { position:relative; margin:0 auto; background:white; color:#1f2329; box-shadow:0 0 0 1px var(--line); }
+.kp-pdf-page canvas { display:block; }
+.kp-page-loading { position:absolute; top:12px; left:12px; background:var(--surface); color:var(--muted); padding:6px 10px; border:1px solid var(--line); border-radius:4px; font-size:12px; }
+.kp-preview-state { display:block; white-space:normal; max-width:700px; margin:70px auto; padding:28px; border:1px solid var(--line); border-radius:8px; background:var(--surface); }
+.kp-preview-state h2 { margin:0 0 12px; font-size:19px; }
+.kp-preview-state p { margin:8px 0 18px; color:var(--ink-2); overflow-wrap:anywhere; }
+.kp-preview-state .btn { margin-right:8px; }
+.kp-preview-coverage { display:flex; gap:10px; flex-wrap:wrap; font-size:12px; padding:7px 20px; border-top:1px solid var(--line); background:var(--surface); color:var(--muted); flex:none; }
+.kp-page-navigation { display:flex; flex-direction:column; gap:3px; }
+.kp-page-navigation button { padding:9px; font-size:12px; text-align:left; border-radius:6px; color:var(--ink-2); }
+.kp-page-navigation button:hover { background:var(--surface-2); }
+.kp-page-navigation button[aria-current="true"] { background:var(--primary-soft); color:var(--primary); }
+.knowledge-workspace .kw-scroll:has(> .kp-paged-document) { overflow:visible; }
+/* PDF text selection only: no annotations, hyperlinks, actions or script layer. */
+.kp-pdf-page .textLayer { position:absolute; inset:0; overflow:clip; opacity:1; line-height:1; text-align:initial; text-size-adjust:none; forced-color-adjust:none; transform-origin:0 0; z-index:1; }
+.kp-pdf-page .textLayer :is(span,br) { color:transparent; position:absolute; white-space:pre; cursor:text; transform-origin:0% 0%; }
+.kp-pdf-page .textLayer > :not(.markedContent), .kp-pdf-page .textLayer .markedContent span:not(.markedContent) { z-index:1; --font-height:0; --scale-x:1; --rotate:0deg; font-size:calc(var(--scale-factor)*var(--font-height)); transform:rotate(var(--rotate)) scaleX(var(--scale-x)); }
+.kp-pdf-page .textLayer .markedContent { display:contents; }
+.kp-pdf-page .textLayer ::selection { background:rgba(43,108,246,.3); }
+@media(max-width:760px) { .kp-preview-head { padding:12px; flex-wrap:wrap; }.kp-preview-actions { margin-left:0; }.kp-preview-toolbar,.kp-preview-coverage { padding-left:12px; padding-right:12px; }.kp-preview-stage { padding:12px; }.kp-preview-state { margin:20px auto; padding:20px; } }

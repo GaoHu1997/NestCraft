@@ -518,15 +518,22 @@ fn check_disk(conn:&Connection,limits:&Limits)->Result<(),String>{
 }
 fn directory_bytes(path:&Path)->Result<u64,String>{
     let _io=tantivy_engine::disk_scan_atomic_guard().map_err(|e|format!("INDEX_DISK_PROBE: {e}"))?;
-    for attempt in 0..4 {
+    for attempt in 0..12 {
         match directory_bytes_once(path){
             Ok(n)=>return Ok(n),
             // Windows delete-pending can be AccessDenied until directory handles close.
             // The failed traversal has fully unwound before retry; persistent ACL errors fail.
-            Err(e)if e.kind()==std::io::ErrorKind::PermissionDenied&&attempt<3=>std::thread::sleep(Duration::from_millis(2)),
+            // CI runners (slower FS / realtime scanning) need a longer, growing window than local disks.
+            Err(e)if e.kind()==std::io::ErrorKind::PermissionDenied&&attempt<11=>std::thread::sleep(Duration::from_millis(5*(attempt as u64+1))),
             Err(e)=>return Err(format!("INDEX_DISK_PROBE: {e}"))
         }
     }unreachable!()
+}
+/// 并发删除受管临时目录时，Windows delete-pending 会让条目表现为 NotFound 或
+/// AccessDenied(ERROR_ACCESS_DENIED → PermissionDenied)。这类瞬时子条目跳过即可；
+/// 根路径的持久 ACL 错误仍返回 Err，由 directory_bytes 重试耗尽后 fail-closed。
+fn transient_entry(e:&std::io::Error)->bool{
+    e.kind()==std::io::ErrorKind::NotFound||e.kind()==std::io::ErrorKind::PermissionDenied
 }
 fn directory_bytes_once(path:&Path)->std::io::Result<u64>{
     let m=match fs::symlink_metadata(path){Ok(m)=>m,Err(e)if e.kind()==std::io::ErrorKind::NotFound=>return Ok(0),Err(e)=>return Err(e)};
@@ -534,10 +541,13 @@ fn directory_bytes_once(path:&Path)->std::io::Result<u64>{
     let entries=match fs::read_dir(path){Ok(entries)=>entries,Err(e)if e.kind()==std::io::ErrorKind::NotFound=>return Ok(0),Err(e)=>return Err(e)};
     let mut total=0u64;
     for entry in entries{
-        let entry=match entry{Ok(e)=>e,Err(e)if e.kind()==std::io::ErrorKind::NotFound=>continue,Err(e)=>return Err(e)};
-        let m=match fs::symlink_metadata(entry.path()){Ok(m)=>m,Err(e)if e.kind()==std::io::ErrorKind::NotFound=>continue,Err(e)=>return Err(e)};
+        let entry=match entry{Ok(e)=>e,Err(e)if transient_entry(&e)=>continue,Err(e)=>return Err(e)};
+        let m=match fs::symlink_metadata(entry.path()){Ok(m)=>m,Err(e)if transient_entry(&e)=>continue,Err(e)=>return Err(e)};
         if unsafe_entry(&m)||(!m.is_dir()&&!m.is_file()){return Err(std::io::Error::other("INDEX_PATH_UNSAFE"));}
-        let size=if m.is_dir(){directory_bytes_once(&entry.path())?}else{m.len()};total=total.checked_add(size).ok_or_else(||std::io::Error::other("INDEX_SIZE_OVERFLOW"))?;
+        let size=if m.is_dir(){
+            match directory_bytes_once(&entry.path()){Ok(n)=>n,Err(e)if transient_entry(&e)=>0,Err(e)=>return Err(e)}
+        }else{m.len()};
+        total=total.checked_add(size).ok_or_else(||std::io::Error::other("INDEX_SIZE_OVERFLOW"))?;
     }Ok(total)
 }
 fn unsafe_entry(meta:&fs::Metadata)->bool{

@@ -1,0 +1,86 @@
+/* CR-090 编码区文件操作：右键菜单与行内输入样式（仅本模块使用，ft- 前缀）。 */
+
+/* ---------- 右键菜单 ---------- */
+.ft-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 196px;
+  max-height: 380px;
+  overflow: auto;
+  padding: 5px;
+  background: var(--paper, #fff);
+  border: 1px solid var(--line, #e6e8eb);
+  border-radius: 8px;
+  box-shadow: var(--shadow, 0 12px 32px rgba(23, 32, 48, 0.12));
+  /* UI-SCROLL-001：默认透明，滚动时由 .ft-scrolling 着色，停止 700ms 后移除。 */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.ft-menu.ft-scrolling { scrollbar-color: var(--thumb, #a4abb5) transparent; }
+.ft-menu::-webkit-scrollbar { width: 10px; height: 10px; }
+.ft-menu::-webkit-scrollbar-thumb {
+  background: transparent;
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 8px;
+}
+.ft-menu.ft-scrolling::-webkit-scrollbar-thumb { background: var(--thumb, #a4abb5); background-clip: content-box; }
+.ft-menu.ft-scrolling::-webkit-scrollbar-thumb:hover { background: var(--thumb-hover, #86909c); background-clip: content-box; }
+.ft-menu::-webkit-scrollbar-track,
+.ft-menu::-webkit-scrollbar-corner { background: transparent; }
+
+.ft-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink, #1f2329);
+  text-align: left;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.ft-menu-item svg { width: 14px; height: 14px; color: var(--muted, #86909c); flex: 0 0 auto; }
+.ft-menu-item:hover,
+.ft-menu-item.kb { background: var(--soft, #eef3ff); color: var(--accent, #2b6cf6); }
+.ft-menu-item:hover svg,
+.ft-menu-item.kb svg { color: var(--accent, #2b6cf6); }
+.ft-menu-item.danger { color: var(--danger, #d93b3b); }
+.ft-menu-item.danger svg { color: var(--danger, #d93b3b); }
+.ft-menu-item.danger:hover { background: var(--danger-soft, #fdecec); color: var(--danger, #d93b3b); }
+.ft-menu-sep { height: 1px; margin: 4px 6px; background: var(--line-soft, #eceef1); }
+
+/* ---------- 行内输入（新建 / 重命名） ---------- */
+.ft-inline-row { z-index: 4; }
+.ft-inline-wrap { position: relative; flex: 1 1 auto; min-width: 0; display: flex; align-items: center; }
+.ft-inline-input {
+  width: 100%;
+  min-width: 0;
+  padding: 2px 5px;
+  border: 1px solid var(--accent, #2b6cf6);
+  border-radius: 4px;
+  background: var(--paper, #fff);
+  color: var(--ink, #1f2329);
+  font-size: 12.5px;
+  line-height: 18px;
+}
+.ft-inline-input:focus-visible { outline: none; }
+.ft-inline-input.invalid { border-color: var(--danger, #d93b3b); }
+.ft-inline-err {
+  position: absolute;
+  left: 0;
+  top: 100%;
+  z-index: 6;
+  margin-top: 1px;
+  padding: 1px 5px;
+  font-size: 10.5px;
+  color: var(--danger, #d93b3b);
+  background: var(--paper, #fff);
+  border: 1px solid var(--danger, #d93b3b);
+  border-radius: 4px;
+  white-space: nowrap;
+  box-shadow: var(--shadow, 0 6px 18px rgba(23, 32, 48, 0.14));
+}

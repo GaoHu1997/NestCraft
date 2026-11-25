@@ -1,0 +1,9 @@
+/* UI-CR084: reading/source controls and inert source; scrolling inherits UI-SCROLL-001. */
+.cr084-markdown { min-width: 0; }
+.cr084-markdown-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 9px 16px; background: var(--surface-2); border-bottom: 1px solid var(--line); }
+.cr084-markdown-tools button { white-space: nowrap; }
+.cr084-markdown-notice { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 16px; background: var(--warning-soft); color: var(--warning); }
+.cr084-markdown-notice button { color: var(--primary); text-decoration: underline; }
+.cr084-markdown-source { margin: 16px; padding: 24px; background: var(--surface); border: 1px solid var(--line); font-family: var(--mono); font-size: 13px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; }
+.cr084-markdown-coverage { padding: 7px 16px; border-top: 1px solid var(--line); background: var(--surface); color: var(--muted); font-size: 12px; }
+@media (max-width: 760px) { .cr084-markdown-tools, .cr084-markdown-notice, .cr084-markdown-coverage { padding-left: 12px; padding-right: 12px; } .cr084-markdown-source { margin: 12px; padding: 15px; } }

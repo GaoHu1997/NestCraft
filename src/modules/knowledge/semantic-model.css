@@ -1,0 +1,14 @@
+/* UI-CR089 SC-M01～M04：本地语义模型状态与首次下载。遵循 UI-SCROLL-001（不常显滚动条）。 */
+.kw-model-panel { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--line-soft); border-radius: 6px; background: var(--surface); }
+.kw-model-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.kw-model-head b { font-size: 12px; }
+.kw-model-tag { font-size: 11px; padding: 1px 6px; border-radius: 10px; border: 1px solid var(--line); color: var(--muted); background: var(--surface-2); }
+.kw-model-tag[data-state="ready"] { color: var(--ok, #2e7d4f); border-color: var(--ok, #2e7d4f); }
+.kw-model-tag[data-state="downloading"] { color: var(--primary); border-color: var(--primary); }
+.kw-model-tag[data-state="error"] { color: var(--danger); border-color: var(--danger); }
+.kw-model-panel p { margin: 0; font-size: 12px; color: var(--ink-2); line-height: 1.6; }
+.kw-model-panel .caption { font-size: 11px; color: var(--muted); }
+.kw-model-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.kw-model-bar { height: 6px; border-radius: 3px; background: var(--line-soft); overflow: hidden; }
+.kw-model-bar > i { display: block; height: 100%; background: var(--primary); transition: width 120ms linear; }
+.kw-model-panel .kw-error-text { color: var(--danger); }

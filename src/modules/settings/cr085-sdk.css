@@ -1,0 +1,47 @@
+/* CR-085 / FEAT-015：SDK 操作记录面板与折叠头。
+   UI-SCROLL-001：沿用全局 scrollbar.ts 与 base.css，只声明 overflow 与固定宽度，
+   不改变滚动条宽度、不 hover 唤醒、不禁用滚动。 */
+
+.cr085-sdk-records { position: sticky; bottom: 0; display: flex; justify-content: flex-end; padding: 8px 0 4px; margin-top: 8px; }
+.cr085-sdk-records-toggle { display: inline-flex; align-items: center; gap: 6px; }
+.cr085-sdk-records-panel {
+  position: absolute; right: 0; bottom: 44px; z-index: 6;
+  width: min(560px, 100%); max-height: min(360px, 60vh);
+  display: flex; flex-direction: column;
+  background: var(--set-surface, var(--surface)); border: 1px solid var(--line);
+  border-radius: var(--r-md, 10px); box-shadow: var(--shadow-pop, 0 10px 30px rgba(0, 0, 0, .16));
+  overflow: hidden;
+}
+.cr085-sdk-records-panel > header { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line-soft); }
+.cr085-sdk-records-panel > header b { font-size: 13px; }
+.cr085-sdk-records-panel > header .set-icon-btn { margin-left: auto; }
+.cr085-sdk-records-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); min-height: 0; flex: 1; }
+.cr085-sdk-records-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; border-right: 1px solid var(--line-soft); min-height: 0; }
+.cr085-sdk-records-list li > button {
+  display: grid; gap: 3px; width: 100%; padding: 8px 10px; text-align: left;
+  background: transparent; border: 0; border-bottom: 1px solid var(--line-soft);
+  font: inherit; color: inherit; cursor: pointer;
+}
+.cr085-sdk-records-list li > button:hover { background: var(--surface-2, rgba(0, 0, 0, .03)); }
+.cr085-sdk-records-list li > button[aria-current="true"] { background: var(--primary-soft, rgba(59, 108, 246, .08)); }
+.cr085-rec-title { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cr085-rec-meta { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--muted); }
+.cr085-rec-meta .ok { color: var(--success, #1a7f4b); }
+.cr085-rec-meta .err { color: var(--danger, #c33); }
+.cr085-rec-meta .run { color: var(--primary); }
+.cr085-sdk-records-log { display: grid; align-content: start; gap: 8px; padding: 10px 12px; overflow-y: auto; min-height: 0; }
+.cr085-rec-log-head { display: grid; gap: 2px; }
+.cr085-rec-log-head b { font-size: 12px; }
+.cr085-rec-log { margin: 0; max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* 折叠头：版本字符串不推动右侧箭头，超长省略。 */
+.set-sdk-head .set-sdk-info b { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+.set-sdk-head .set-sdk-info b .tag.warn { background: var(--warn-bg, #fff4e5); color: var(--warn-deep, #9a5b00); }
+.set-sdk-head > .set-sdk-select > .caption { max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (max-width: 720px) {
+  .cr085-sdk-records-panel { width: 100%; max-height: 62vh; }
+  .cr085-sdk-records-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: 120px minmax(0, 1fr); }
+  .cr085-sdk-records-list { border-right: 0; border-bottom: 1px solid var(--line-soft); }
+  .set-sdk-head > .set-sdk-select > .caption { max-width: 100%; }
+}

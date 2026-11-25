@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>知识库 · CR-086 设计 v1</title>
+<link rel="stylesheet" href="../workbench-v4/tokens.css"><link rel="stylesheet" href="../workbench-v4/base.css">
+<style>
+body{height:100dvh;display:flex;flex-direction:column}
+.review{padding:7px 18px;background:var(--warning-soft);color:var(--warning);display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:12px}
+.review select{background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:3px;max-width:190px}
+.top{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--surface)}
+.top b{font-size:14px}.top .spacer{flex:1}
+.btn{padding:5px 10px;border:1px solid var(--line-strong);border-radius:6px;background:var(--surface);white-space:nowrap}
+.btn:hover{background:var(--surface-3)}.btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn:disabled{opacity:.45;cursor:default}
+.shell{display:grid;grid-template-columns:250px minmax(0,1fr) 300px;flex:1;min-height:0}
+.tree,.aside{min-height:0;overflow:auto;background:var(--surface);padding:12px 8px}
+.tree{border-right:1px solid var(--line)}.aside{border-left:1px solid var(--line);display:flex;flex-direction:column;padding:0}
+.side-title{font-size:12px;color:var(--muted);padding:6px 10px}
+.node{display:flex;align-items:center;gap:6px;width:100%;padding:6px 8px;border-radius:5px;text-align:left;font-size:13px;color:var(--ink-2);min-width:0}
+.node:hover{background:var(--surface-2)}.node[aria-current="true"]{background:var(--primary-soft);color:var(--primary)}
+.node .nm{overflow-wrap:anywhere;min-width:0}
+.node.folder{color:var(--ink);font-weight:600}
+.node .badge{margin-left:auto;font-size:11px;color:var(--muted)}
+.indent{display:block;width:12px;flex:none}
+.center{min-height:0;min-width:0;display:flex;flex-direction:column}
+.docbar{display:flex;align-items:center;gap:8px;padding:10px 18px;border-bottom:1px solid var(--line);background:var(--surface)}
+.docbar .title{font-size:15px;font-weight:600;overflow-wrap:anywhere}
+.docbar .path{font-size:11px;color:var(--muted)}
+.docbar .actions{margin-left:auto;display:flex;gap:6px}
+.mode{display:flex;border:1px solid var(--line-strong);border-radius:6px;overflow:hidden}
+.mode button{padding:4px 10px;font-size:12px;background:var(--surface)}.mode button[aria-pressed="true"]{background:var(--primary);color:#fff}
+.body{flex:1;min-height:0;overflow:auto;padding:26px 34px;background:var(--bg)}
+.paper{max-width:760px;margin:0 auto;background:var(--surface);border:1px solid var(--line);padding:38px 42px;line-height:1.9}
+.paper h1{font-size:24px;margin:0 0 16px}.paper h2{font-size:17px;margin:22px 0 10px}.paper p{margin:9px 0}
+.paper ul{padding-left:20px;margin:8px 0}
+.kw-link{text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.kw-link[data-state="resolved"]{color:var(--primary)}
+.kw-link[data-state="unresolved"]{color:var(--danger);border-bottom:1px dashed var(--danger);text-decoration:none}
+.kw-link[data-state="ambiguous"]{color:var(--warning);border-bottom:1px dashed var(--warning);text-decoration:none}
+.editor{max-width:860px;margin:0 auto}
+.editor textarea{width:100%;min-height:420px;padding:20px;border:1px solid var(--line);border-radius:8px;background:var(--surface);font-family:var(--mono);font-size:13px;line-height:1.8;resize:vertical}
+.autocomplete{position:absolute;z-index:6;width:300px;background:var(--surface);border:1px solid var(--line-strong);border-radius:8px;box-shadow:var(--shadow-pop);padding:5px;display:none}
+.autocomplete.open{display:block}
+.autocomplete button{display:flex;flex-direction:column;align-items:flex-start;width:100%;padding:6px 8px;border-radius:5px;text-align:left}
+.autocomplete button:hover,.autocomplete button[data-active="true"]{background:var(--primary-soft)}
+.autocomplete .p{font-size:11px;color:var(--muted)}
+.tabs{display:flex;border-bottom:1px solid var(--line);background:var(--surface-2);flex:none}
+.tabs button{padding:9px 12px;font-size:12px;color:var(--muted);border-bottom:2px solid transparent}
+.tabs button[aria-selected="true"]{color:var(--primary);border-bottom-color:var(--primary);background:var(--surface)}
+.tabpanes{flex:1;min-height:0;overflow:auto;padding:10px}
+.bl{display:block;width:100%;text-align:left;padding:8px;border-radius:6px;border:1px solid var(--line-soft);margin-bottom:6px;background:var(--surface)}
+.bl:hover{background:var(--surface-2)}
+.bl b{font-size:12px;display:block;overflow-wrap:anywhere}
+.bl .p{font-size:11px;color:var(--muted);overflow-wrap:anywhere}
+.bl .s{font-size:11px;color:var(--ink-2);margin-top:3px;display:block;overflow-wrap:anywhere}
+.empty{padding:16px 12px;color:var(--muted);font-size:12px;line-height:1.7}
+.dialog-mask{position:fixed;inset:0;background:rgba(17,24,39,.38);display:none;place-items:center;z-index:20}
+.dialog-mask.open{display:grid}
+.dialog{width:min(520px,92vw);background:var(--surface);border-radius:10px;box-shadow:var(--shadow-pop);padding:20px}
+.dialog h2{font-size:16px;margin:0 0 8px}.dialog p{font-size:13px;color:var(--ink-2);margin:6px 0}
+.dialog ul{max-height:180px;overflow:auto;margin:10px 0;padding-left:18px;font-size:12px;color:var(--ink-2)}
+.dialog .row{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+.preview-card{position:fixed;z-index:15;width:320px;background:var(--surface);border:1px solid var(--line-strong);border-radius:8px;box-shadow:var(--shadow-pop);padding:12px;display:none}
+.preview-card.open{display:block}
+.preview-card b{font-size:12px;display:block;margin-bottom:4px;overflow-wrap:anywhere}
+.preview-card p{font-size:12px;color:var(--ink-2);margin:0;line-height:1.7;overflow-wrap:anywhere}
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:8px 14px;border-radius:6px;font-size:12px;opacity:0;transition:opacity .15s;z-index:30}
+.toast.show{opacity:1}
+.mobile-toggle{display:none}
+@media(max-width:1080px){.shell{grid-template-columns:minmax(0,1fr) 280px}.tree{display:none}.tree.open{display:block;position:fixed;left:0;top:112px;bottom:0;width:260px;z-index:8;box-shadow:var(--shadow-pop)}.mobile-toggle{display:inline-block}}
+@media(max-width:760px){.shell{grid-template-columns:minmax(0,1fr)}.aside{display:none}.aside.open{display:flex;position:fixed;right:0;top:112px;bottom:0;width:280px;z-index:8;box-shadow:var(--shadow-pop)}.body{padding:14px}.paper{padding:22px 18px}.docbar{padding:8px 12px;flex-wrap:wrap}.docbar .actions{margin-left:0}}
+</style>
+<script defer src="../workbench-v4/scrollbar.js"></script>
+</head>
+<body data-design-version="UI-CR088-v1">
+<div class="review"><strong>CR-088 · 设计 v1 · 未实现</strong><span>本地文件库 · wikilink 与反向链接</span>
+<label>状态<select id="state" aria-label="评审状态">
+<option value="normal">正常（有链接/反链）</option>
+<option value="empty">空库</option>
+<option value="nobacklinks">无反向链接</option>
+<option value="unresolved">含未解析链接</option>
+<option value="ambiguous">含歧义链接</option>
+<option value="rename">重命名预览</option>
+</select></label></div>
+<header class="top"><b>知识库 · NestCraft 产品资料库</b><span class="path">本地文件夹</span><span class="spacer"></span>
+<button class="btn mobile-toggle" id="t-tree">文件</button><button class="btn mobile-toggle" id="t-panel">反链</button>
+<button class="btn" id="theme">深色</button></header>
+<div class="shell">
+<aside class="tree" id="tree" aria-label="文件目录"><div class="side-title">文件与附件</div><div id="tree-body"></div><p class="empty" style="border-top:1px solid var(--line-soft);margin-top:8px">上传的附件保存到你上传时所在的目录；不会自动建 assets。</p></aside>
+<main class="center">
+<div class="docbar"><div><div class="title" id="doc-title">产品定位</div><div class="path" id="doc-path">01-产品/产品定位.md</div></div>
+<div class="actions"><div class="mode" role="group" aria-label="编辑模式"><button type="button" id="m-read" aria-pressed="true">阅读</button><button type="button" id="m-edit" aria-pressed="false">编辑</button></div><button class="btn" id="rename">重命名</button></div></div>
+<div class="body" id="content" tabindex="0" aria-label="正文区"></div>
+</main>
+<aside class="aside" id="panel" aria-label="大纲与反向链接">
+<div class="tabs" role="tablist"><button role="tab" aria-selected="true" data-tab="outline">大纲</button><button role="tab" aria-selected="false" data-tab="backlinks">反向链接 <span id="bl-count">3</span></button><button role="tab" aria-selected="false" data-tab="unresolved">未解析 <span id="un-count">2</span></button></div>
+<div class="tabpanes" id="panes"></div>
+</aside>
+</div>
+<div class="dialog-mask" id="mask"><div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title"><h2 id="dlg-title"></h2><div id="dlg-body"></div><div class="row" id="dlg-actions"></div></div></div>
+<div class="preview-card" id="preview" role="tooltip"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script>
+(()=>{
+'use strict';
+const $=id=>document.getElementById(id), esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const files=[
+ {id:'f1',name:'产品定位.md',path:'01-产品/产品定位.md',kind:'md',current:true},
+ {id:'f2',name:'路线图.md',path:'01-产品/路线图.md',kind:'md'},
+ {id:'f3',name:'竞品分析.md',path:'02-研究/竞品分析.md',kind:'md'},
+ {id:'f4',name:'周报.md',path:'02-研究/周报.md',kind:'md'},
+ {id:'f5',name:'周报.md',path:'01-产品/周报.md',kind:'md'},
+ {id:'f6',name:'产品使用手册.pdf',path:'01-产品/产品使用手册.pdf',kind:'pdf'},
+ {id:'f7',name:'需求说明.docx',path:'01-产品/需求说明.docx',kind:'docx'},
+ {id:'f8',name:'旧版定位.md',path:'归档/旧版定位.md',kind:'md'}
+];
+const treeFolders={'01-产品':['f1','f2','f5','f6','f7'],'02-研究':['f3','f4'],'归档':['f8']};
+const backlinks=[
+ {path:'01-产品/首页.md',title:'首页',snippet:'…产品概览见 [[产品定位]] 与 [[路线图]]…'},
+ {path:'02-研究/竞品分析.md',title:'竞品分析',snippet:'…结论对齐 [[产品定位#目标用户]]…'},
+ {path:'02-研究/周报.md',title:'第 46 周周报',snippet:'…本周更新了 [[产品定位|定位文档]]…'}
+];
+const unresolved=[{t:'还不存在的笔记'},{t:'空白模板'}];
+const outline=[['1','产品定位'],['2','目标用户'],['2','差异化'],['1','本页小结']];
+const article=`<h1>产品定位</h1>
+<p>本页说明产品面向谁、解决什么问题。相关文档：<a class="kw-link" data-state="resolved" data-target="01-产品/路线图.md">路线图</a>、<a class="kw-link" data-state="resolved" data-target="02-研究/竞品分析.md">研究/竞品分析</a>。</p>
+<h2>目标用户</h2><p>需要把本地资料变成可检索知识库的个人与小团队；强调本地文件、可离线、可迁移。</p>
+<h2>差异化</h2><p>与在线文档的差别：库就是磁盘上的文件夹，文件即真相。详见 <a class="kw-link" data-state="resolved" data-target="01-产品/产品定位.md">产品定位</a> 与 <a class="kw-link" data-state="resolved" data-target="01-产品/路线图.md#Q3 目标">路线图 › Q3 目标</a>。</p>
+<p>待补：<a class="kw-link" data-state="unresolved" data-target="还不存在的笔记">还不存在的笔记</a>；歧义示例：<a class="kw-link" data-state="ambiguous" data-target="周报">周报</a>（两处同名）。</p>
+<h2>本页小结</h2><p>回到 <a class="kw-link" data-state="self" data-target="#本页小结">本页小结</a>。附件按上传所在目录保存。</p>
+${Array.from({length:14},(_,i)=>`<p>补充说明 ${i+1}：库就是磁盘上的文件夹，任何编辑器都能打开这些文件；本应用只负责索引、链接与阅读，不改变文件归属，也不把内容搬到云端。</p>`).join('')}`;
+let tab='outline',mode='read',state='normal',renamed=false;
+function filesUI(){
+ if(state==='empty'){$('tree-body').innerHTML='<p class="empty">这个库还是空的。<br>在磁盘文件夹里放 .md，或点上方“新建笔记”。</p>';return;}
+ let html='';
+ for(const [folder,ids] of Object.entries(treeFolders)){
+  html+=`<div class="node folder"><span class="indent"></span><span class="nm">${esc(folder)}</span></div>`;
+  for(const id of ids){const f=files.find(x=>x.id===id);if(!f)continue;
+   const name=renamed&&f.id==='f1'?'产品定位v2':f.name;
+   html+=`<button class="node" data-file="${f.id}" aria-current="${f.current?'true':'false'}"><span class="indent"></span><span class="nm">${esc(name)}</span>${f.kind!=='md'?`<span class="badge">${f.kind}</span>`:''}</button>`;}
+ }
+ $('tree-body').innerHTML=html;
+}
+function linkUI(){
+ if(state==='unresolved') return article.replace('data-state="ambiguous"','data-state="unresolved"');
+ if(state==='ambiguous') return article.replace('data-state="unresolved"','data-state="unresolved"');
+ return article;
+}
+function readingUI(){return `<article class="paper" id="article">${linkUI()}</article>`;}
+function editingUI(){
+ const src='# 产品定位\n\n本页说明产品面向谁。相关：[[路线图]]、[[研究/竞品分析]]。\n\n## 目标用户\n\n本地文件知识库。\n\n更多：[[产品定位|定位文档]]、[[路线图#Q3 目标]]、[[还不存在的笔记]]。';
+ return `<div class="editor"><textarea id="src" aria-label="Markdown 源码">${esc(src)}</textarea><div class="autocomplete" id="ac" role="listbox" aria-label="链接候选"><button data-pick="产品定位.md"><span>产品定位.md</span><span class="p">01-产品/产品定位.md</span></button><button data-pick="路线图.md"><span>路线图.md</span><span class="p">01-产品/路线图.md</span></button><button data-pick="竞品分析.md"><span>竞品分析.md</span><span class="p">02-研究/竞品分析.md</span></button></div></div>`;
+}
+function panesUI(){
+ if(tab==='outline'){
+  $('panes').innerHTML=outline.map(([lv,t])=>`<button class="bl" data-heading="${esc(t)}"><b style="padding-left:${(Number(lv)-1)*10}px">${esc(t)}</b></button>`).join('');
+ }else if(tab==='backlinks'){
+  if(state==='nobacklinks'){$('panes').innerHTML='<p class="empty">还没有笔记引用它。在别的笔记里输入 [[产品定位]] 就会出现在这里。</p>';$('bl-count').textContent='0';return;}
+  $('bl-count').textContent=String(backlinks.length);
+  $('panes').innerHTML=backlinks.map(b=>`<button class="bl" data-open="${esc(b.path)}"><b>${esc(b.title)}</b><span class="p">${esc(b.path)}</span><span class="s">${esc(b.snippet)}</span></button>`).join('');
+ }else{
+  $('un-count').textContent=String(unresolved.length);
+  $('panes').innerHTML=unresolved.map(u=>`<button class="bl" data-create="${esc(u.t)}"><b>${esc(u.t)}</b><span class="p">点击新建该笔记</span></button>`).join('');
+ }
+}
+function render(){
+ $('bl-count').textContent=state==='nobacklinks'?'0':'3';$('un-count').textContent='2';
+ $('doc-title').textContent=renamed?'产品定位v2':'产品定位';
+ $('doc-path').textContent=state==='empty'?'—':'01-产品/'+(renamed?'产品定位v2':'产品定位')+'.md';
+ $('m-read').setAttribute('aria-pressed',String(mode==='read'));$('m-edit').setAttribute('aria-pressed',String(mode==='edit'));
+ $('content').innerHTML=state==='empty'
+  ? '<div class="empty" style="max-width:480px;margin:60px auto;text-align:center">这是一个空的知识库文件夹。<br>把 Markdown 文件放进文件夹即可开始；附件会保留在原来的目录。</div>'
+  : mode==='edit'?editingUI():readingUI();
+ filesUI();panesUI();
+}
+function toast(t){const el=$('toast');el.textContent=t;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),2200);}
+function openDialog(title,bodyHtml,actions){
+ $('dlg-title').textContent=title;$('dlg-body').innerHTML=bodyHtml;
+ $('dlg-actions').innerHTML=actions.map(([label,kind,id])=>`<button class="btn ${kind==='primary'?'primary':''}" data-dlg="${id}">${label}</button>`).join('');
+ $('mask').classList.add('open');
+}
+function closeDialog(){$('mask').classList.remove('open');}
+function renamePreview(){
+ openDialog('重命名：产品定位 → 产品定位v2',
+  `<p>将更新 <b>3</b> 个文件中的 <b>4</b> 处链接；显示文本与标题锚点保持。</p>
+   <ul><li>01-产品/首页.md · 1 处</li><li>02-研究/竞品分析.md · 1 处</li><li>02-研究/周报.md · 2 处（含 |定位文档）</li></ul>
+   <p class="empty" style="padding:0">同名歧义链接 [[周报]] 不在其中，不会被改。</p>`,
+  [['取消','','cancel'],['更新并重命名','primary','confirm']]);
+}
+document.addEventListener('click',e=>{
+ const b=e.target.closest('button,a');if(!b)return;
+ if(b.dataset.file){files.forEach(f=>f.current=f.id===b.dataset.file);render();return;}
+ if(b.classList.contains('kw-link')){
+  const st=b.dataset.state,t=b.dataset.target;
+  if(st==='unresolved'){openDialog('新建笔记？',`<p>目标《${esc(t)}》还不存在。现在按该路径新建吗？</p>`,[['取消','','cancel'],['新建','primary','create']]);}
+  else if(st==='ambiguous'){openDialog('选择要打开的笔记',`<p>《${esc(t)}》在两处同名：</p><ul><li>01-产品/周报.md</li><li>02-研究/周报.md</li></ul>`,[['取消','','cancel'],['01-产品/周报.md','primary','pick-a'],['02-研究/周报.md','','pick-b']]);}
+  else {toast('打开：'+t);}
+  return;
+ }
+ if(b.id==='m-edit'){mode='edit';render();return;}
+ if(b.id==='m-read'){mode='read';render();return;}
+ if(b.id==='rename'){renamePreview();return;}
+ if(b.id==='theme'){const dark=document.documentElement.dataset.theme!=='dark';document.documentElement.dataset.theme=dark?'dark':'light';b.textContent=dark?'浅色':'深色';return;}
+ if(b.id==='t-tree'){$('tree').classList.toggle('open');return;}
+ if(b.id==='t-panel'){$('panel').classList.toggle('open');return;}
+ if(b.dataset.tab){tab=b.dataset.tab;document.querySelectorAll('.tabs button').forEach(x=>x.setAttribute('aria-selected',String(x===b)));panesUI();return;}
+ if(b.dataset.dlg){const id=b.dataset.dlg;
+  if(id==='confirm'){renamed=true;closeDialog();render();toast('已重命名并更新 4 处链接');return;}
+  if(id==='create'){closeDialog();toast('已新建《还不存在的笔记》，链接转为已解析');const l=document.querySelector('.kw-link[data-state="unresolved"]');if(l){l.dataset.state='resolved';}return;}
+  closeDialog();return;}
+ if(b.dataset.create){openDialog('新建笔记？',`<p>按 [[${esc(b.dataset.create)}]] 新建一篇笔记？</p>`,[['取消','','cancel'],['新建','primary','create']]);return;}
+ if(b.dataset.open){toast('打开：'+b.dataset.open);return;}
+ if(b.dataset.pick){const ta=$('src');if(ta){ta.value=ta.value.replace(/\[\[[^\]]*$/,`[[${b.dataset.pick}]]`);}$('ac').classList.remove('open');return;}
+});
+document.addEventListener('input',e=>{
+ if(e.target.id==='src'){const ac=$('ac');if(!ac)return;const v=e.target.value,pos=e.target.selectionStart;const before=v.slice(0,pos);
+  const open=before.lastIndexOf('[[');if(open>=0&&!before.slice(open).includes(']]')){ac.classList.add('open');ac.style.left='24px';ac.style.top=(e.target.offsetTop+120)+'px';}else ac.classList.remove('open');}
+});
+document.addEventListener('mouseover',e=>{
+ const l=e.target.closest('.kw-link');if(!l||l.dataset.state!=='resolved')return;
+ const card=$('preview');const r=l.getBoundingClientRect();
+ card.innerHTML=`<b>${esc(l.dataset.target)}</b><p>目标笔记摘要：本页说明产品面向谁、解决什么问题，强调本地文件与可离线。</p>`;
+ card.classList.add('open');card.style.left=Math.min(r.left,innerWidth-340)+'px';card.style.top=(r.bottom+8)+'px';
+});
+document.addEventListener('mouseout',e=>{if(e.target.closest('.kw-link'))$('preview').classList.remove('open');});
+$('state').onchange=e=>{state=e.target.value;mode='read';renamed=false;render();if(state==='rename'){renamePreview();}};
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeDialog();$('preview').classList.remove('open');$('tree').classList.remove('open');$('panel').classList.remove('open');}});
+render();
+})();
+</script>
+</body>
+</html>

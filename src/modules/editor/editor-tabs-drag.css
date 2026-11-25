@@ -1,0 +1,44 @@
+/* UI-CR090 / SC-090-05、06：编码区页签预览态与拖拽排序样式。
+   视觉基准见 docs/UI/editor-nav/index.html（.tab.preview / .tab.dragging / 插入指示线）。
+   仅补充页签自身外观，不改 CodeArea.css；溢出仍由共享「更多」下拉承接，不出现横向滚动条。 */
+
+/* 拖拽需要定位上下文：插入指示线用绝对定位伪元素，不占布局宽度，避免影响溢出测量。 */
+.cda-tab {
+  position: relative;
+  cursor: grab;
+  touch-action: none;
+}
+
+/* 预览页签：文件名斜体、颜色略淡（脏点若存在仍按原样式显示）。 */
+.cda-tab-preview .cda-tab-name {
+  font-style: italic;
+  color: var(--muted);
+}
+
+/* 拖拽中的页签：半透明，提示正在移动。 */
+.cda-tab-dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+}
+
+/* 落点指示线：2px，贴在被插入页签的左侧或右侧缝隙。 */
+.cda-tab-drop-before::before,
+.cda-tab-drop-after::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 2px;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.cda-tab-drop-before::before {
+  left: -2px;
+}
+
+.cda-tab-drop-after::after {
+  right: -2px;
+}

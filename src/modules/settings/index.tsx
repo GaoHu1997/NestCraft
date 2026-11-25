@@ -10,8 +10,10 @@ import { SettingsSdk } from "./SettingsSdk";
 import { SettingsSkill } from "./SettingsSkill";
 import { SettingsMcp } from "./SettingsMcp";
 import { SettingsTool } from "./SettingsTool";
-import { SettingsIcon } from "./SettingsDialog";
+import { SettingsSearch } from "./SettingsSearch";
+import { SettingsConfirm, SettingsIcon } from "./SettingsDialog";
 import "./settings.css";
+import "./cr085-abilities.css";
 
 const TABS = [
   { id: "general", label: "通用", icon: "settings", sub: "用户信息、代码样式与服务器默认值。" },
@@ -21,11 +23,27 @@ const TABS = [
   { id: "skill", label: "能力 · Skill", icon: "layers", sub: "技能是过程性指令；启用不等于授权执行。" },
   { id: "mcp", label: "能力 · MCP", icon: "box", sub: "MCP 服务器发现工具与资源。" },
   { id: "tool", label: "能力 · Tools", icon: "zap", sub: "内置工具与风险等级。" },
+  { id: "search", label: "搜索", icon: "zap", sub: "本地授权目录与联网搜索后端。" },
 ];
 const normalizeTab = (tab: string) => ({ cli: "sdk", skills: "skill", tools: "tool" }[tab] || (TABS.some(t => t.id === tab) ? tab : "general"));
 
 export function SettingsCenter(props: { initialTab: string; onOpenTab: (tab: string) => void; onClose: () => void }) {
   const [tab, setTab] = useState(normalizeTab(props.initialTab));
+  // CR-091：通用页有未保存改动时，关闭设置前先确认。
+  const [generalDirty, setGeneralDirty] = useState({ dirty: false, count: 0 });
+  const [confirmClose, setConfirmClose] = useState(false);
+  useEffect(() => {
+    const onDirty = (event: Event) => {
+      const detail = (event as CustomEvent<{ dirty?: boolean; count?: number }>).detail;
+      setGeneralDirty({ dirty: Boolean(detail?.dirty), count: Number(detail?.count ?? 0) });
+    };
+    window.addEventListener("settings:general-dirty", onDirty);
+    return () => window.removeEventListener("settings:general-dirty", onDirty);
+  }, []);
+  const requestClose = () => {
+    if (tab === "general" && generalDirty.dirty) setConfirmClose(true);
+    else props.onClose();
+  };
   const [profile, setProfile] = useState({ name: "", email: "" });
   // CR-051 r6：设置左栏头像与通用页/弹窗同源（自定义照片优先，默认品牌 Logo）。
   const settingsPhoto = useAvatarPhoto();
@@ -58,10 +76,15 @@ export function SettingsCenter(props: { initialTab: string; onOpenTab: (tab: str
   }, []);
   const selected = TABS.find(t => t.id === tab)!;
   const open = (id: string) => { setTab(id); props.onOpenTab(id); };
-  return <dialog ref={dialogRef} className="set-modal" aria-label="设置与账户" onCancel={(e) => { e.preventDefault(); props.onClose(); }} onMouseDown={(e) => {
+  useEffect(() => {
+    const listener = (e: Event) => { const next=(e as CustomEvent<{tab?:string}>).detail?.tab;if(next){setTab(normalizeTab(next));props.onOpenTab(normalizeTab(next));} };
+    window.addEventListener('settings:open-tab',listener);
+    return ()=>window.removeEventListener('settings:open-tab',listener);
+  },[props.onOpenTab]);
+  return <dialog ref={dialogRef} className="set-modal" aria-label="设置与账户" onCancel={(e) => { e.preventDefault(); requestClose(); }} onMouseDown={(e) => {
     if (e.target !== e.currentTarget) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) props.onClose();
+    if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) requestClose();
   }}>
     <div className="set-shell pane-container" ref={layoutRef}>
       <nav {...navigation.paneProps} className={`${navigation.paneProps.className} set-nav`} style={navigation.style} aria-label="设置分类">
@@ -72,9 +95,8 @@ export function SettingsCenter(props: { initialTab: string; onOpenTab: (tab: str
       <section className="set-body">
         {/* CR-068 S01/S04：头部只放标题与说明。模型页生图图标若接到本行，按设计位于最右业务位（CSS margin-left:auto），
             头部右侧预留 58px，右上 X 独立定位在 14px，两者不重叠。 */}
-        <div className="set-head"><div><h2>{selected.label}</h2><p className="set-caption">{selected.sub}</p></div>
-          {/* CR-068 M06：模型管理标题同行最右侧的生图入口，仅图标，不显示文字。 */}
-          {tab === "models" && <button type="button" className="set-icon-btn set-head-imagegen" onClick={() => window.dispatchEvent(new CustomEvent("settings:open-imagegen"))} title="生图配置" aria-label="生图配置"><SettingsIcon name="image" /></button>}
+        <div className="set-head"><div><h2>{selected.label}</h2></div>
+          {tab === "models" && <div className="row cr085-head-actions"><button type="button" className="btn sm primary" onClick={() => window.dispatchEvent(new CustomEvent("settings:new-provider"))}><SettingsIcon name="plus" />新增供应商</button><button type="button" className="set-icon-btn set-head-imagegen" onClick={() => window.dispatchEvent(new CustomEvent("settings:open-imagegen"))} title="生图配置" aria-label="生图配置"><SettingsIcon name="image" /></button></div>}
         </div>
         <div className="set-scroll">
           <div hidden={tab !== "general"}><SettingsGeneral /></div>
@@ -85,10 +107,14 @@ export function SettingsCenter(props: { initialTab: string; onOpenTab: (tab: str
           <div hidden={tab !== "skill"}><SettingsSkill /></div>
           <div hidden={tab !== "mcp"}><SettingsMcp /></div>
           <div hidden={tab !== "tool"}><SettingsTool /></div>
+          <div hidden={tab !== "search"}><SettingsSearch /></div>
         </div>
       </section>
       {/* CR-068 S01/S02：右上角 X 关闭；左栏不再有「设置与账户」文案与关闭按钮。 */}
-      <button type="button" className="set-icon-btn set-close" aria-label="关闭设置" title="关闭设置" onClick={props.onClose}><SettingsIcon name="close" /></button>
+      <button type="button" className="set-icon-btn set-close" aria-label="关闭设置" title="关闭设置" onClick={requestClose}><SettingsIcon name="close" /></button>
+      {confirmClose && <SettingsConfirm title="放弃未保存的更改？" message={`通用页有 ${generalDirty.count} 项更改尚未保存，关闭后不会写入。`}
+        onCancel={() => setConfirmClose(false)}
+        onOk={() => { setConfirmClose(false); props.onClose(); }} />}
     </div>
   </dialog>;
 }

@@ -658,6 +658,92 @@ fn source_give_up(done: u64, elapsed: Duration) -> Option<String> {
     None
 }
 
+/// 通用加速下载结果：实际使用的源与写入的文件。
+pub struct AcceleratedFetch {
+    pub url: String,
+    pub path: PathBuf,
+    pub bytes: u64,
+}
+
+/// 复用更新器同一套加速策略，供其它按需下载（如 CR-089 本地语义模型）使用：
+/// 候选源按「直连 → 加速镜像」顺序尝试，慢源 30 秒/512KiB 判定切源，单源 600 秒上限，
+/// 落盘前用 SHA-256 完整校验；失败自动切下一个源，错误合并后返回。
+pub fn accelerated_fetch(
+    urls: &[String],
+    target: &Path,
+    expected_sha256: &str,
+    total_hint: u64,
+    progress: &mut dyn FnMut(&str, u64, u64, u64),
+) -> Result<AcceleratedFetch, String> {
+    let mut errors: Vec<String> = Vec::new();
+    for url in urls {
+        let agent = http_agent();
+        let part = target.with_extension("part");
+        let _ = std::fs::remove_file(&part);
+        match download_generic(&agent, url, &part, total_hint, progress) {
+            Ok(bytes) => {
+                if !expected_sha256.is_empty() {
+                    match sha256_file(&part) {
+                        Ok(hash) if hash == expected_sha256 => {}
+                        Ok(_) => {
+                            let _ = std::fs::remove_file(&part);
+                            errors.push(format!("{url} 校验失败（SHA-256 不匹配）"));
+                            continue;
+                        }
+                        Err(error) => {
+                            let _ = std::fs::remove_file(&part);
+                            errors.push(format!("{url} 校验读取失败：{error}"));
+                            continue;
+                        }
+                    }
+                }
+                std::fs::rename(&part, target).map_err(|e| format!("保存下载文件失败: {e}"))?;
+                return Ok(AcceleratedFetch { url: url.clone(), path: target.to_path_buf(), bytes });
+            }
+            Err(error) => {
+                let _ = std::fs::remove_file(&part);
+                errors.push(format!("{url}: {error}"));
+            }
+        }
+    }
+    Err(summarize_errors(&errors))
+}
+
+fn download_generic(
+    agent: &ureq::Agent,
+    url: &str,
+    part: &Path,
+    total_hint: u64,
+    progress: &mut dyn FnMut(&str, u64, u64, u64),
+) -> Result<u64, String> {
+    let response = agent.get(url).call().map_err(|e| format!("下载请求失败: {e}"))?;
+    let mut reader = response.into_reader();
+    let mut file = std::fs::File::create(part).map_err(|e| format!("创建下载文件失败: {e}"))?;
+    let mut done: u64 = 0;
+    let mut meter = SpeedMeter::new();
+    let started = Instant::now();
+    let mut last_emit = Instant::now() - Duration::from_secs(1);
+    let mut buffer = [0u8; CHUNK_SIZE];
+    loop {
+        if let Some(reason) = source_give_up(done, started.elapsed()) {
+            return Err(reason);
+        }
+        let count = reader.read(&mut buffer).map_err(|e| format!("读取失败: {e}"))?;
+        if count == 0 { break; }
+        file.write_all(&buffer[..count]).map_err(|e| format!("写入失败: {e}"))?;
+        done += count as u64;
+        let speed = meter.sample(count as u64);
+        if last_emit.elapsed() >= Duration::from_millis(120) {
+            last_emit = Instant::now();
+            let total = if total_hint > 0 { total_hint } else { done };
+            progress(url, done, total, speed);
+        }
+    }
+    let _ = file.flush();
+    progress(url, done, if total_hint > 0 { total_hint } else { done }, 0);
+    Ok(done)
+}
+
 fn download_once(
     app: &tauri::AppHandle,
     agent: &ureq::Agent,

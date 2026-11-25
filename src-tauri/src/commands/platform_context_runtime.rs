@@ -23,6 +23,10 @@ pub(crate) struct Prepared {
     pub usage: Option<(i64,i64,i64)>,
     pub summary_requests: usize,
     pub pending_results: std::collections::BTreeMap<String,String>,
+    /// CR-086：已启用技能的（名称, 描述）；正文由 read_skill 工具按需读取。
+    pub skills: Vec<(String,String)>,
+    /// CR-092：个人记忆注入文本（画像摘要 + 相关记忆）；空串表示无记忆或已关闭注入。
+    pub memory_context: String,
 }
 
 impl Prepared {
@@ -31,13 +35,28 @@ impl Prepared {
         let budget = ContextBudget::load(conn,session.provider_id.as_deref().ok_or("缺少供应商")?,session.model_id.as_deref().ok_or("缺少模型")?)?;
         let history = memory::load_history(conn,&scope)?;
         let (revision,blocks) = memory::load_blocks(conn,&scope,&history)?;
+        // CR-086：技能清单进系统提示，正文按需读取，避免整篇占用上下文。
+        let skills = crate::commands::capabilities::skill_briefs(conn);
+        // CR-092：持有连接时计算一次个人记忆注入文本（内部复用同一 conn，不取新连接、不跨 await）。
+        let memory_context =
+            crate::commands::memory::build_memory_context_for_session(conn, &session, &prompt).unwrap_or_default();
         Ok(Self {session,scope,budget,history,blocks,drafts:Vec::new(),revision,prompt,
-            user_id:crate::models::new_id("msg"),base_len:0,usage:None,summary_requests:0,pending_results:Default::default()})
+            user_id:crate::models::new_id("msg"),base_len:0,usage:None,summary_requests:0,pending_results:Default::default(),skills,memory_context})
     }
 
     pub fn system(&self) -> String {
-        format!("{}{}\n当前项目：{}；执行特性：{}。",PLATFORM_SYSTEM_PROMPT,CONTEXT_PROMPT,
-            self.scope.project_id.as_deref().unwrap_or("未绑定"),self.session.feature_id.as_deref().unwrap_or("无"))
+        let mut text = format!("{}{}\n当前项目：{}；执行特性：{}。",PLATFORM_SYSTEM_PROMPT,CONTEXT_PROMPT,
+            self.scope.project_id.as_deref().unwrap_or("未绑定"),self.session.feature_id.as_deref().unwrap_or("无"));
+        if !self.skills.is_empty() {
+            text.push_str("\n\n可用技能（需要正文时调用 read_skill，name 用冒号前的名字）：");
+            for (name, brief) in &self.skills {
+                text.push_str(&format!("\n- {}：{}", name, brief));
+            }
+        }
+        if !self.memory_context.is_empty() {
+            text.push_str(&self.memory_context);
+        }
+        text
     }
 
     pub fn messages(&self) -> Vec<ChatMsg> { memory::project(&self.history,&self.blocks,&self.system(),&self.prompt) }
@@ -83,7 +102,17 @@ impl Prepared {
         }
         // 回放hash包括元信息，必须在统计合并后计算，不使历史重开误判原文漂移。
         memory::save_transcript(&tx,&self.scope,&self.user_id,transcript)?;
-        tx.commit().map_err(|e| e.to_string())
+        tx.commit().map_err(|e| e.to_string())?;
+        // CR-092 / FEAT-026：平台会话落库后后台抽取个人记忆（失败仅记日志，不阻塞对话；可经 memory.extract.enabled 关闭）。
+        let memory_session_id = self.session.id.clone();
+        std::thread::spawn(move || match crate::commands::memory::run_extraction_for_session(&memory_session_id) {
+            Ok(report) => eprintln!(
+                "[CR-092] 记忆抽取完成 session={} added={} updated={} superseded={}",
+                memory_session_id, report.added, report.updated, report.superseded
+            ),
+            Err(error) => eprintln!("[CR-092] 记忆抽取跳过 session={memory_session_id}: {error}"),
+        });
+        Ok(())
     }
 
     pub fn wire_result(&mut self,call_id: &str,content: &str)->String {
@@ -153,7 +182,7 @@ pub(crate) fn add_usage(total: &mut Option<(i64,i64,i64)>, usage: Option<(i64,i6
     }
 }
 
-pub(crate) async fn prepare(turn: &PlatformTurn, state: &mut Prepared, defs: &[crate::commands::ai_tools::ToolDef],
+pub(crate) async fn prepare(turn: &PlatformTurn, state: &mut Prepared, defs: &[super::PlatformTool],
     abort: &tokio::sync::watch::Receiver<bool>) -> Result<(),String> {
     let initial=budgeted_body(turn,&state.messages(),defs,&state.budget)?;
     if !state.budget.pressure(&initial,70) { state.budget.check(&initial)?; return Ok(()); }

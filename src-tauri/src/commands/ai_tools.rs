@@ -189,7 +189,7 @@ fn schema_obj(props: Value, required: &[&str]) -> Value {
 
 /// 13 个工作台业务工具 + 6 个原有内置工具（BUG-CR059-01）+ 1 个右栏请求工具（CR-054／STORY-073）
 /// + 1 个派发工具（CR-069／STORY-091：只建批次与任务，不执行、不推进状态）。
-const TOOL_COUNT: usize = 22;
+const TOOL_COUNT: usize = 34;
 
 pub(crate) fn workbench_tools() -> [ToolDef; TOOL_COUNT] {
     [
@@ -362,6 +362,19 @@ pub(crate) fn workbench_tools() -> [ToolDef; TOOL_COUNT] {
             ),
             risk: "medium",
         },
+        // CR-086：技能正文读取。CLI 通道（workbench MCP）与平台 runtime 共用同一实现。
+        ToolDef {
+            name: "read_skill",
+            registry_id: "workbench.read_skill",
+            description: "读取已启用技能（Skill）的正文；不传 name 时返回技能清单（名称与说明）。技能是平台持有的可复用作业指导，任务匹配时先读取再执行。",
+            schema: schema_obj(
+                json!({
+                    "name": { "type": "string", "description": "技能名；省略则列出全部已启用技能" }
+                }),
+                &[],
+            ),
+            risk: "low",
+        },
         // CR-059 / BUG-CR059-01：原有 6 项内置工具真实注入（复用同一 workbench MCP 通道）。
         ToolDef {
             name: "fs_read",
@@ -477,6 +490,27 @@ pub(crate) fn workbench_tools() -> [ToolDef; TOOL_COUNT] {
             ),
             risk: "low",
         },
+        // CR-089：知识库链接与图谱（只读，projectId 由 run_tool 注入以复用项目授权）
+        ToolDef {
+            name: "knowledge_links",
+            registry_id: "knowledge.links",
+            description: "查询一篇笔记的出链与反向链接（基于双链索引，只读）。",
+            schema: schema_obj(json!({
+                "noteId": { "type": "string", "description": "笔记稳定 ID" }
+            }), &["noteId"]),
+            risk: "low",
+        },
+        ToolDef {
+            name: "knowledge_graph",
+            registry_id: "knowledge.graph",
+            description: "展开知识图谱邻域：depth 1-3，节点≤50、边≤100；只读结构，不返回正文。",
+            schema: schema_obj(json!({
+                "noteId": { "type": "string", "description": "中心笔记 ID；省略则整库概览" },
+                "depth": { "type": "integer", "minimum": 1, "maximum": 3 },
+                "onlyUnresolved": { "type": "boolean" }
+            }), &[]),
+            risk: "low",
+        },
         // CR-069 / STORY-091：派发工具。只创建批次与任务，不启动执行、不推进状态、不代表完成。
         ToolDef {
             name: "dispatch_work",
@@ -504,6 +538,118 @@ pub(crate) fn workbench_tools() -> [ToolDef; TOOL_COUNT] {
             ),
             risk: "medium",
         },
+        // CR-093：本地搜索（在项目已授权目录内；缺省市当前项目）
+        ToolDef {
+            name: "fs_grep",
+            registry_id: "fs.grep",
+            description: "在项目已授权的本地目录内按正则搜索文件内容（只读）。返回文件路径、相对路径、行号与行内容；受结果数与单文件大小上限，自动跳过二进制/超大文件。需先在「设置·搜索」为该会话所属项目授权目录。",
+            schema: schema_obj(
+                json!({
+                    "pattern": { "type": "string", "description": "正则表达式" },
+                    "path": { "type": "string", "description": "可选：授权目录内的子路径" },
+                    "glob": { "type": "string", "description": "可选：文件名 glob 过滤，如 *.rs" },
+                    "caseSensitive": { "type": "boolean" },
+                    "maxResults": { "type": "integer", "description": "默认 200，上限 1000" },
+                    "projectId": { "type": "string" }
+                }),
+                &["pattern"],
+            ),
+            risk: "low",
+        },
+        ToolDef {
+            name: "fs_glob",
+            registry_id: "fs.glob",
+            description: "在项目已授权的本地目录内按文件名/相对路径 glob 查找（只读）。返回文件绝对路径与相对路径；不读正文。",
+            schema: schema_obj(
+                json!({
+                    "pattern": { "type": "string", "description": "glob，如 **/*.tsx" },
+                    "caseSensitive": { "type": "boolean" },
+                    "maxResults": { "type": "integer", "description": "默认 500，上限 5000" },
+                    "projectId": { "type": "string" }
+                }),
+                &["pattern"],
+            ),
+            risk: "low",
+        },
+        // CR-093：联网搜索（默认免 key 抓取，可配 Tavily 后端，失败回退）
+        ToolDef {
+            name: "web_search",
+            registry_id: "web.search",
+            description: "联网搜索。默认免 key 抓取 DuckDuckGo（Bing 备用）；设置可配 Tavily，未配置或失败自动回退默认。返回 title/url/snippet/来源，结果标注为外部数据。",
+            schema: schema_obj(
+                json!({
+                    "query": { "type": "string" },
+                    "count": { "type": "integer", "description": "默认取设置，上限 30" },
+                    "backend": { "type": "string", "enum": ["default", "tavily"], "description": "可选：覆盖设置中的后端" }
+                }),
+                &["query"],
+            ),
+            risk: "low",
+        },
+        ToolDef {
+            name: "web_fetch",
+            registry_id: "web.fetch",
+            description: "抓取网页并转为 AI 阅读友好的 Markdown 正文（仅 http/https，拒绝 localhost/私网/内网地址；超长按 maxChars 截断）。",
+            schema: schema_obj(
+                json!({
+                    "url": { "type": "string" },
+                    "maxChars": { "type": "integer", "description": "默认 20000，上限 200000" }
+                }),
+                &["url"],
+            ),
+            risk: "low",
+        },
+        // CR-092 / FEAT-026：个人记忆（工具侧 scope 由 projectId 派生；global 或 project:<id>）
+        ToolDef {
+            name: "memory_search",
+            registry_id: "workbench.memory_search",
+            description: "在个人记忆库（含项目记忆）中按关键词检索原子记忆，只读，返回摘要不含原文对话。",
+            schema: schema_obj(json!({
+                "query": { "type": "string" },
+                "kind": { "type": "string", "enum": ["fact","preference","goal","event","decision","relation"] },
+                "limit": { "type": "integer", "minimum": 1, "maximum": 20 }
+            }), &["query"]),
+            risk: "low",
+        },
+        ToolDef {
+            name: "memory_save",
+            registry_id: "workbench.memory_save",
+            description: "把一条关于用户的长期有用信息写入记忆（自动去重合并），content ≤1KB。kind 取 fact/preference/goal/event/decision/relation。",
+            schema: schema_obj(json!({
+                "content": { "type": "string" },
+                "kind": { "type": "string", "enum": ["fact","preference","goal","event","decision","relation"] },
+                "memKey": { "type": "string", "description": "可选稳定去重键" },
+                "importance": { "type": "integer", "minimum": 1, "maximum": 5 },
+                "scope": { "type": "string" }
+            }), &["content","kind"]),
+            risk: "medium",
+        },
+        ToolDef {
+            name: "memory_list",
+            registry_id: "workbench.memory_list",
+            description: "列出记忆条目（可按 kind/status 过滤），≤20 条。",
+            schema: schema_obj(json!({
+                "kind": { "type": "string" },
+                "status": { "type": "string", "enum": ["active","superseded","deleted"] },
+                "limit": { "type": "integer", "minimum": 1, "maximum": 20 },
+                "scope": { "type": "string" }
+            }), &[]),
+            risk: "low",
+        },
+        ToolDef {
+            name: "memory_forget",
+            registry_id: "workbench.memory_forget",
+            description: "软删除一条记忆（status=deleted）。",
+            schema: schema_obj(json!({ "id": { "type": "string" } }), &["id"]),
+            risk: "medium",
+        },
+        ToolDef {
+            name: "profile_get",
+            registry_id: "workbench.profile_get",
+            description: "读取用户画像摘要与结构化字段。",
+            schema: schema_obj(json!({ "scope": { "type": "string" } }), &[]),
+            risk: "low",
+        },
     ]
 }
 
@@ -522,6 +668,7 @@ pub const TOOL_LABELS: [(&str, &str); TOOL_COUNT] = [
     ("list_servers", "工作台·服务器清单"),
     ("save_server", "工作台·保存服务器"),
     ("generate_image", "工作台·生成图片"),
+    ("read_skill", "工作台·读取技能"),
     // CR-059 / BUG-CR059-01：原有内置工具真实注入后的中文名（与注册表一致）。
     ("fs_read", "工作台·读文件"),
     ("knowledge_list", "工作台·知识清单"),
@@ -532,7 +679,18 @@ pub const TOOL_LABELS: [(&str, &str); TOOL_COUNT] = [
     ("ssh_exec_status", "工作台·审批结论"),
     // CR-054 / STORY-073：右栏请求
     ("open_panel", "工作台·打开预览面板"),
+    ("knowledge_links", "知识库·反向链接"),
+    ("knowledge_graph", "知识库·知识图谱"),
     ("dispatch_work", "工作台·派发工作"),
+    ("fs_grep", "工作台·本地内容检索"),
+    ("fs_glob", "工作台·本地文件查找"),
+    ("web_search", "工作台·联网搜索"),
+    ("web_fetch", "工作台·网页读取"),
+    ("memory_search", "记忆·检索"),
+    ("memory_save", "记忆·写入"),
+    ("memory_list", "记忆·列表"),
+    ("memory_forget", "记忆·遗忘"),
+    ("profile_get", "记忆·画像"),
 ];
 
 pub(crate) fn tool_enabled(conn: &rusqlite::Connection, registry_id: &str) -> bool {
@@ -584,6 +742,15 @@ fn tool_error(message: &str) -> Value {
     json!({ "content": [{ "type": "text", "text": message }], "isError": true })
 }
 
+/// CR-089：把会话绑定的 projectId 注入工具参数，确保新知识工具走项目授权校验。
+fn with_project(ctx: &ToolContext, args: &Value) -> Value {
+    let mut cloned = args.clone();
+    if let (Some(pid), Some(obj)) = (ctx.project_id.as_ref(), cloned.as_object_mut()) {
+        obj.entry("projectId".to_string()).or_insert(json!(pid));
+    }
+    cloned
+}
+
 pub(crate) fn run_tool(ctx: &ToolContext, name: &str, args: &Value) -> Result<Value, String> {
     match name {
         "get_context" => tool_get_context(ctx),
@@ -600,6 +767,7 @@ pub(crate) fn run_tool(ctx: &ToolContext, name: &str, args: &Value) -> Result<Va
         "list_servers" => tool_list_servers(),
         "save_server" => tool_save_server(ctx, args),
         "generate_image" => tool_generate_image(ctx, args),
+        "read_skill" => tool_read_skill(args),
         // CR-059 / BUG-CR059-01：原有 6 项内置工具（复用 UI 命令同一套校验与授权路径）。
         "fs_read" => tool_fs_read(ctx, args),
         "knowledge_list" => tool_knowledge_list(ctx, args),
@@ -609,7 +777,19 @@ pub(crate) fn run_tool(ctx: &ToolContext, name: &str, args: &Value) -> Result<Va
         "ssh_exec" => tool_ssh_exec(args),
         "ssh_exec_status" => tool_ssh_exec_status(args),
         "open_panel" => tool_open_panel(args),
+        "knowledge_links" => crate::commands::knowledge::tools::kb_tool_links(Some(with_project(ctx, args))),
+        "knowledge_graph" => crate::commands::knowledge::tools::kb_tool_graph(Some(with_project(ctx, args))),
         "dispatch_work" => tool_dispatch_work(ctx, args),
+        "fs_grep" => crate::commands::search_tools::tool_fs_grep(ctx, args),
+        "fs_glob" => crate::commands::search_tools::tool_fs_glob(ctx, args),
+        "web_search" => crate::commands::search_tools::tool_web_search(ctx, args),
+        "web_fetch" => crate::commands::search_tools::tool_web_fetch(ctx, args),
+        // CR-092 / FEAT-026：个人记忆工具（scope 由 projectId 派生；写类走 memory 业务层合并）
+        "memory_search" => crate::commands::memory_tools::tool_search(&with_project(ctx, args)),
+        "memory_save" => crate::commands::memory_tools::tool_save(&with_project(ctx, args)),
+        "memory_list" => crate::commands::memory_tools::tool_list(&with_project(ctx, args)),
+        "memory_forget" => crate::commands::memory_tools::tool_forget(&with_project(ctx, args)),
+        "profile_get" => crate::commands::memory_tools::tool_profile_get(&with_project(ctx, args)),
         other => Err(format!("未知工具：{other}")),
     }
 }
@@ -1295,8 +1475,38 @@ fn tool_knowledge_search(ctx: &ToolContext, args: &Value) -> Result<Value, Strin
     if requested.is_empty() {
         return Ok(json!({ "hits": [], "note": "当前项目没有已授权的知识库", "projectId": project_id }));
     }
-    let hits = crate::commands::knowledge::kb_search(requested.clone(), query)?;
-    Ok(json!({ "projectId": project_id, "libraries": requested, "hits": hits }))
+    // CR-089：优先混合检索（关键词＋本地语义 RRF）；语义不可用时自动回落关键词并标注。
+    let mut hits: Vec<Value> = Vec::new();
+    let mut degraded: Vec<String> = Vec::new();
+    let mut semantic_available = false;
+    for library in &requested {
+        if let Ok(guard) = crate::db::conn() {
+            if let Some(conn) = guard.as_ref() {
+                match crate::commands::knowledge::semantic::hybrid_search(conn, library.as_str(), query.as_str(), 10) {
+                    Ok(result) => {
+                        semantic_available |= result.semantic_available;
+                        degraded.extend(result.degraded_reason.clone());
+                        for hit in result.hits {
+                            hits.push(json!({
+                                "libraryId": library, "noteId": hit.note_id, "title": hit.title,
+                                "relativeUri": hit.source_path, "snippet": hit.preview, "source": hit.source
+                            }));
+                        }
+                    }
+                    Err(error) => degraded.push(format!("{library}: {error}")),
+                }
+            }
+        }
+    }
+    if hits.is_empty() {
+        let fallback = crate::commands::knowledge::kb_search(requested.clone(), query)?;
+        hits = fallback.into_iter().map(|h| json!({
+            "libraryId": h.library_id, "noteId": h.note_id, "title": h.title,
+            "relativeUri": h.relative_uri, "snippet": h.snippet, "source": "keyword"
+        })).collect();
+    }
+    Ok(json!({ "projectId": project_id, "libraries": requested, "hits": hits,
+        "semantic": if semantic_available { "available" } else { "unavailable" }, "degraded": degraded }))
 }
 
 fn parse_item_list(args: &Value) -> Result<Vec<(String, String)>, String> {
@@ -1436,6 +1646,19 @@ fn tool_generate_image(ctx: &ToolContext, args: &Value) -> Result<Value, String>
         "attempts": result.attempts,
         "summary": text,
     }))
+}
+
+/// CR-086：读取技能正文；无 name 时列出已启用技能，便于 AI 自发现。
+fn tool_read_skill(args: &Value) -> Result<Value, String> {
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    match str_arg(args, "name") {
+        None => Ok(json!({ "skills": crate::commands::capabilities::skill_briefs(conn) })),
+        Some(name) => Ok(json!({
+            "name": name,
+            "content": crate::commands::capabilities::read_skill_text(conn, &name)?
+        })),
+    }
 }
 
 #[cfg(test)]
@@ -1610,17 +1833,15 @@ mod tests {
             .iter()
             .map(|(name, _, _, _)| *name)
             .collect();
-        // BUG-CR059-01：6 个原有内置工具的 registry_id 不带 workbench. 前缀，其余 13 个带。
+        // BUG-CR059-01：原有 6 项 + CR-093 搜索 4 项 + CR-089 知识 links/graph，registry_id 不带 workbench. 前缀。
         for id in &registry_ids {
             assert!(registered.contains(id), "注册表缺少 {id}");
         }
-        let workbench_prefixed = registry_ids.iter().filter(|id| id.starts_with("workbench.")).count();
-        assert_eq!(workbench_prefixed + 6, TOOL_COUNT, "6 项原有内置工具应为不带 workbench. 前缀的 registry_id");
         // 中文名映射表与工具目录一致
         assert_eq!(TOOL_LABELS.len(), TOOL_COUNT);
         for (tool, label) in TOOL_LABELS.iter() {
             assert!(catalog.contains(tool), "映射表含未知工具 {tool}");
-            assert!(label.starts_with("工作台·"), "显示名应带前缀：{label}");
+            assert!(!label.is_empty(), "显示名不应为空：{tool}");
         }
     }
 

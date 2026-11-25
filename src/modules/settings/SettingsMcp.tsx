@@ -3,6 +3,8 @@ import * as api from "@/api";
 import type { McpScanGroup, McpServer, McpToolInfo } from "@/api";
 import { Field, useToast } from "@/components/ui";
 import { MCP_NAME_RE } from "./shared";
+import { emptyMcpForm, formFromMcp, parseMcpJson, parseArgs, parseEnv, type McpForm } from "./capabilityHelpers";
+import "./cr085-abilities.css";
 import { SettingsConfirm, SettingsDialog, SettingsIcon, SettingsSwitch } from "./SettingsDialog";
 
 /**
@@ -12,27 +14,11 @@ import { SettingsConfirm, SettingsDialog, SettingsIcon, SettingsSwitch } from ".
  *   勾选导入为受管配置；敏感 env 只按受管密钥存储，列表与错误都不回显正文；
  * - 「添加 MCP」按图3表单：类型（STDIO/HTTP）/ 名称 / 命令（单行完整命令行）/ 额外参数（每行一个）/
  *   环境变量（每行一个 KEY=value）；footer 只有取消与保存；
- * - 解析：命令按 shell 词法拆分（引号/转义），额外参数逐行追加，env 逐行按首个 = 拆分，非法行报行号。
+ * - CR085：command为独立可执行路径；args/env使用可逆逐行编码，结构化导入不拼接后重拆。
  */
 
 type McpDraft = Parameters<typeof api.mcpSave>[0];
-interface McpForm {
-  id?: string;
-  name: string;
-  transport: "stdio" | "http";
-  commandLine: string;
-  argsText: string;
-  envText: string;
-  url: string;
-  enabled: boolean;
-  authMode: "oauth" | "bearer" | "none";
-  authToken: string;
-  allowInsecureLocalTls: boolean;
-}
-const emptyForm = (): McpForm => ({
-  name: "", transport: "stdio", commandLine: "", argsText: "", envText: "",
-  url: "", enabled: true, authMode: "oauth", authToken: "", allowInsecureLocalTls: false,
-});
+const emptyForm = emptyMcpForm;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 const isLoopbackUrl = (value: string) => {
   try { const url = new URL(value); return url.protocol === "https:" && LOOPBACK_HOSTS.has(url.hostname); } catch { return false; }
@@ -43,59 +29,8 @@ const MCP_AUTH_LABEL: Record<string, string> = {
 };
 const mcpAuthLabel = (status: string) => MCP_AUTH_LABEL[status] || "未知状态";
 
-/**
- * 命令按 shell 词法拆分：支持单/双引号与反斜杠转义；未闭合引号报错。
- * 与参考实现的 dsh 命令词法保持一致的最小实现。
- */
-export function splitCommandLine(line: string): string[] {
-  const out: string[] = [];
-  let current = "";
-  let quote: '"' | "'" | null = null;
-  let started = false;
-  for (let i = 0; i < line.length; i += 1) {
-    const ch = line[i];
-    if (quote) {
-      if (ch === quote) { quote = null; continue; }
-      if (ch === "\\" && quote === '"' && i + 1 < line.length) { current += line[++i]; continue; }
-      current += ch;
-      continue;
-    }
-    if (ch === '"' || ch === "'") { quote = ch; started = true; continue; }
-    if (ch === "\\" && i + 1 < line.length) { current += line[++i]; started = true; continue; }
-    if (/\s/.test(ch)) {
-      if (started) { out.push(current); current = ""; started = false; }
-      continue;
-    }
-    current += ch;
-    started = true;
-  }
-  if (quote) throw new Error(`命令中的 ${quote} 引号未闭合`);
-  if (started) out.push(current);
-  return out;
-}
-
-/** 额外参数：每行一个；空行忽略；以 # 开头的行视为注释。 */
-export function parseExtraArgs(text: string): string[] {
-  return text.split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(line => line && !line.startsWith("#"));
-}
-
-/** 环境变量：每行一个 KEY=value；非法行报行号（1 起）。 */
-export function parseEnvLines(text: string): Record<string, string> {
-  const env: Record<string, string> = {};
-  text.split(/\r?\n/).forEach((raw, index) => {
-    const line = raw.trim();
-    if (!line || line.startsWith("#")) return;
-    const eq = line.indexOf("=");
-    if (eq <= 0) throw new Error(`环境变量第 ${index + 1} 行不是 KEY=value 格式`);
-    const key = line.slice(0, eq).trim();
-    const value = line.slice(eq + 1);
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw new Error(`环境变量第 ${index + 1} 行键名不合法：${key}`);
-    env[key] = value;
-  });
-  return env;
-}
+export const parseExtraArgs = parseArgs;
+export const parseEnvLines = parseEnv;
 
 export function buildDraft(form: McpForm): McpDraft | string {
   if (!MCP_NAME_RE.test(form.name.trim())) return "名称限字母、数字、下划线与中划线，长度 1–32";
@@ -104,10 +39,9 @@ export function buildDraft(form: McpForm): McpDraft | string {
     let args: string[] = [];
     let env: Record<string, string> = {};
     if (form.transport === "stdio") {
-      const tokens = splitCommandLine(form.commandLine);
-      if (!tokens.length) return "STDIO 需填写启动命令";
-      command = tokens[0];
-      args = [...tokens.slice(1), ...parseExtraArgs(form.argsText)];
+      if (!form.commandLine.trim()) return "STDIO 需填写启动命令";
+      command = form.commandLine;
+      args = parseExtraArgs(form.argsText);
       env = parseEnvLines(form.envText);
     }
     if (form.transport === "http") {
@@ -136,48 +70,7 @@ export function buildDraft(form: McpForm): McpDraft | string {
   }
 }
 
-/** 既有配置 → 表单：命令与 args 合成单行命令行，其余参数逐行展示。 */
-function formFrom(value: Record<string, unknown>, name: string): McpForm {
-  const command = value.command;
-  const url = value.url;
-  const args = value.args ?? [];
-  const env = value.env ?? {};
-  if ((command != null && typeof command !== "string") || (url != null && typeof url !== "string")
-    || !Array.isArray(args) || args.some(x => typeof x !== "string")
-    || !env || typeof env !== "object" || Array.isArray(env) || Object.values(env).some(x => typeof x !== "string")) {
-    throw new Error("invalid config");
-  }
-  // 传输范围：仅 stdio 与 HTTP。streamable-http 是 HTTP 传输的规范名，按 http 处理；SSE/WebSocket 不支持。
-  if (value.transport && !["http", "stdio", "streamable-http"].includes(String(value.transport))) throw new Error("仅支持 stdio 或 HTTP 传输");
-  const transport = value.transport === "http" || value.transport === "streamable-http" || typeof url === "string" ? "http" : "stdio";
-  const quote = (token: string) => /[\s"']/.test(token) ? `"${token.replace(/"/g, '\\"')}"` : token;
-  return {
-    name, transport,
-    commandLine: typeof command === "string" ? [command, ...(args as string[])].map(quote).join(" ") : "",
-    argsText: "",
-    envText: Object.entries(env as Record<string, string>).map(([key, val]) => `${key}=${val}`).join("\n"),
-    url: typeof url === "string" ? url : "",
-    enabled: value.enabled !== false,
-    authMode: "oauth", authToken: "", allowInsecureLocalTls: false,
-  };
-}
-
-function formFromServer(server: McpServer): McpForm {
-  const quote = (token: string) => /[\s"']/.test(token) ? `"${token.replace(/"/g, '\\"')}"` : token;
-  return {
-    id: server.id,
-    name: server.name,
-    transport: server.transport === "http" ? "http" : "stdio",
-    commandLine: [server.command ?? "", ...(server.args ?? [])].filter(Boolean).map(quote).join(" "),
-    argsText: "",
-    envText: Object.entries(server.env ?? {}).map(([key, val]) => `${key}=${val}`).join("\n"),
-    url: server.url ?? "",
-    enabled: server.enabled,
-    authMode: server.authMode === "bearer" || server.authMode === "none" ? server.authMode : "oauth",
-    authToken: "",
-    allowInsecureLocalTls: server.allowInsecureLocalTls === true,
-  };
-}
+const formFromServer = formFromMcp;
 
 export function SettingsMcp() {
   const toast = useToast();
@@ -197,6 +90,9 @@ export function SettingsMcp() {
   const [scanLoading, setScanLoading] = useState(false);
   const [scanError, setScanError] = useState("");
   const [legacyImport, setLegacyImport] = useState(false);
+  const [jsonText, setJsonText] = useState("");
+  const [jsonMode, setJsonMode] = useState(false);
+  const testing = useRef(new Set<string>());
   const [fileName, setFileName] = useState("");
   const [fileLoading, setFileLoading] = useState(false);
   const [imported, setImported] = useState<Record<string, McpForm>>({});
@@ -219,6 +115,7 @@ export function SettingsMcp() {
   const notify = () => window.dispatchEvent(new CustomEvent("app:settings-changed", { detail: { keys: ["mcp"] } }));
 
   const resetDialogs = () => {
+    setJsonText("");setJsonMode(false);
     setFormError(""); setFileName(""); setImported({}); setImportName(""); setFileLoading(false);
     setTestResult(null); setTestError(""); setScanGroups([]); setScanSelected({}); setScanError(""); setLegacyImport(false);
   };
@@ -230,7 +127,7 @@ export function SettingsMcp() {
     if (next === "scan") void loadScan();
   };
   const close = () => { fileRequest.current++; setMode(null); resetDialogs(); setForm(emptyForm()); };
-  const update = (patch: Partial<McpForm>) => { setForm(previous => ({ ...previous, ...patch })); setFormError(""); setTestResult(null); setTestError(""); };
+  const update = (patch: Partial<McpForm>) => { setForm(previous => {const next={...previous,...patch};if(importName)setImported(p=>({...p,[importName]:next}));return next;}); setFormError(""); setTestResult(null); setTestError(""); };
 
   const loadScan = async () => {
     setScanLoading(true); setScanError("");
@@ -266,29 +163,29 @@ export function SettingsMcp() {
     setFileLoading(true); setFormError("");
     try {
       if (!/\.json$/i.test(file.name) || file.size > 2 * 1024 * 1024) throw new Error("invalid file");
-      const value = JSON.parse(await file.text()) as unknown;
-      if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid config");
-      const root = value as Record<string, unknown>;
-      const entries = root.mcpServers;
-      const forms: Record<string, McpForm> = Object.create(null);
-      if (entries && typeof entries === "object" && !Array.isArray(entries)) {
-        for (const [serverName, config] of Object.entries(entries)) {
-          if (!config || typeof config !== "object" || Array.isArray(config)) throw new Error("invalid server");
-          forms[serverName] = formFrom(config as Record<string, unknown>, serverName);
-        }
-      } else if (typeof root.name === "string") forms[root.name] = formFrom(root, root.name);
-      else throw new Error("missing servers");
+      const text = await file.text();
+      setJsonText(text);
+      const forms = parseMcpJson(text);
       const names = Object.keys(forms);
       if (!names.length || names.length > 100) throw new Error("invalid server count");
       if (request !== fileRequest.current) return;
       setImported(forms); setImportName(names[0]); setForm(forms[names[0]]); setFileName(file.name);
       setMode("add");
-    } catch {
-      if (request === fileRequest.current) setFormError("导入失败：请选择 2 MB 内包含 mcpServers 或单个 name 配置的 JSON；不显示可能含凭证的原错误正文");
+      setJsonMode(true);
+    } catch (e) {
+      if (request === fileRequest.current) {setMode("add");setJsonMode(true);setFormError(e instanceof Error && e.message !== "invalid file" ? e.message : "请选择2 MB内的JSON文件");}
     } finally { if (request === fileRequest.current) setFileLoading(false); }
   };
 
-  const save = async (test: boolean) => {
+  const verify = async (server: McpServer) => {
+    if (testing.current.has(server.id)) return;
+    testing.current.add(server.id);setTested(p=>({...p,[server.id]:"验证中…"}));
+    try { const tools=await api.mcpDiscoverTools(server.id);setList(p=>p.map(s=>s.id===server.id?{...s,tools}:s));setTested(p=>({...p,[server.id]:`已连接 · ${tools.length} 个工具`}));notify(); }
+    catch { setTested(p=>({...p,[server.id]:"连接失败"})); }
+    finally { testing.current.delete(server.id); }
+  };
+
+  const save = async (_test: boolean) => {
     if (lock.current || fileLoading) return;
     const built = buildDraft(form);
     if (typeof built === "string") return setFormError(built);
@@ -299,16 +196,7 @@ export function SettingsMcp() {
       setForm(previous => ({ ...previous, id }));
       setTested(previous => { const next = { ...previous }; delete next[id]; return next; });
       notify(); await refresh();
-      if (test) {
-        try {
-          const result = await api.mcpDiscoverTools(id);
-          setTestResult(result); setTested(previous => ({ ...previous, [id]: "本次发现成功" }));
-          await refresh();
-        } catch {
-          setTestError(form.transport === "http" ? "HTTP MCP 工具发现失败；请先完成 NestCraft 授权后重试。" : "本次工具发现失败；配置已保存。启用状态不代表已连接。");
-          setTested(previous => ({ ...previous, [id]: "本次发现失败" }));
-        }
-      } else { close(); toast("MCP 配置已保存，未自动连接或启动进程"); }
+      close(); toast("MCP 配置已保存");
     } catch (e) {
       setFormError(`MCP 保存失败，表单已保留：${String(e).replace(/^Error:\s*/, "")}`);
     } finally { lock.current = false; setBusy(false); }
@@ -365,32 +253,35 @@ export function SettingsMcp() {
 
   return <>
     <div className="row set-toolbar">
-      <span className="set-caption">{list.length} 个服务器 · 导入后为受管配置，外部删除不影响</span>
+      <span className="set-caption">{list.length} 个服务器</span>
       <span className="spacer" />
       <button className="btn sm" disabled={busy || loading || error} onClick={() => open("scan")}>
         <SettingsIcon name="search" />导入
       </button>
+      <button className="btn sm" disabled={busy} onClick={()=>{open("add");setJsonMode(true);}}>导入 JSON</button>
       <button className="btn sm primary" disabled={busy || loading || error} onClick={() => open("add")}>
         <SettingsIcon name="plus" />添加 MCP
       </button>
     </div>
     {loading && <p className="set-caption">加载 MCP 中…</p>}
     {error && <div className="set-note" role="alert">MCP 列表读取失败。<button className="btn sm" onClick={refresh}>重试</button></div>}
-    <div className="set-cap-list">{list.map(server => <div className="set-cap-row" key={server.id}>
+    <div className="set-cap-list cr085-mcp-list">{list.map(server => <div className="set-cap-row" key={server.id}>
       <span className="set-cap-icon"><SettingsIcon name="box" /></span>
       <button className="set-cap-main" disabled={busy} aria-label={`编辑 MCP ${server.name}`} onClick={() => open("edit", server)}>
         <b>{server.name}</b>
-        <span>{server.transport} · <span className="mono">{server.transport === "http" ? (server.url || "未填地址") : (server.command || "命令未知")}</span> · {server.tools.length} 个已发现工具</span>
+        <span className="mono cr085-mcp-target">{server.transport === "http" ? (server.url || "未填地址") : (server.command || "命令未知")}</span><span className={`cr085-mcp-state ${tested[server.id] === "连接失败" ? "error" : ""}`}>{tested[server.id] || "未验证连接"}</span>
       </button>
       <span className="set-status">{server.transport === "http"
         ? (server.authMode === "bearer" ? `静态令牌：${mcpAuthLabel(server.authStatus)}`
           : server.authMode === "none" ? "无认证" : `OAuth：${mcpAuthLabel(server.authStatus)}`)
-        : (server.enabled ? tested[server.id] || "启用 · 未验证连接" : "已停用")}</span>
+        : (server.enabled ? "" : "已停用")}</span>
       {server.transport === "http" && server.authMode === "oauth" && <button className="btn sm" disabled={busy}
         onClick={() => server.authStatus === "authenticated" ? revoke(server) : authorize(server)}>
         {server.authStatus === "authenticated" ? "撤销授权" : server.authStatus === "pending" ? "等待回调" : "授权"}
       </button>}
-      <SettingsSwitch checked={server.enabled} disabled={busy} label={`启用 MCP ${server.name}`} onChange={value => toggle(server, value)} />
+      <button className="btn sm" disabled={tested[server.id] === "验证中…" || busy} onClick={() => void verify(server)}>{tested[server.id] === "验证中…" ? "验证中…" : tested[server.id] === "连接失败" ? "重试连接" : "验证连接"}</button>
+      <button className="btn sm" disabled={busy || tested[server.id] === "验证中…"} onClick={() => open("edit", server)}>编辑</button>
+      <SettingsSwitch checked={server.enabled} disabled={busy || tested[server.id] === "验证中…"} label={`启用 MCP ${server.name}`} onChange={value => toggle(server, value)} />
       <button className="set-icon-btn set-cap-delete" disabled={busy} aria-label={`删除 MCP ${server.name}`} onClick={() => setDeleteTarget(server)}><SettingsIcon name="trash" /></button>
     </div>)}{!loading && !error && !list.length && <div className="set-empty">尚无 MCP 服务器</div>}</div>
 
@@ -430,14 +321,14 @@ export function SettingsMcp() {
           })}
         </div>)}
         {!scanLoading && !scanError && !selectable && <p className="set-caption">没有可导入的 MCP 配置。</p>}
-        {legacyImport ? <Field label="JSON 文件" hint="只读取用户选中的 JSON，不自动执行。">
+        {legacyImport ? <Field label="JSON 文件">
           <div className="row">
             <input className="input" type="file" accept=".json,application/json" aria-label="选择 MCP 配置文件" disabled={fileLoading}
               onChange={e => { void readFile(e.target.files?.[0]); e.target.value = ""; }} />
             {fileName && <span className="set-caption">{fileName}</span>}
           </div>
         </Field> : <p className="set-caption">
-          只读扫描其他 agent 的 MCP 配置；含敏感值的环境变量按受管密钥写入，不在列表回显。
+
           <button type="button" className="link-btn" onClick={() => setLegacyImport(true)}>从 JSON 文件导入…</button>
         </p>}
         {formError && <p className="set-err" role="alert">{formError}</p>}
@@ -456,10 +347,12 @@ export function SettingsMcp() {
       <fieldset className="set-fieldset" disabled={busy}>
         {Object.keys(imported).length > 1 && <Field label="选择要导入的服务器">
           <select className="select" aria-label="选择导入 MCP" value={importName}
-            onChange={e => { setImportName(e.target.value); setForm(imported[e.target.value]); setTestResult(null); setTestError(""); }}>
+            onChange={e => { setImported(p=>({...p,[importName]:form}));setImportName(e.target.value); setForm(imported[e.target.value]); setTestResult(null); setTestError(""); }}>
             {Object.keys(imported).map(serverName => <option key={serverName}>{serverName}</option>)}
           </select>
         </Field>}
+        <button className="btn sm" type="button" onClick={()=>setJsonMode(v=>!v)}>JSON 配置</button>
+        {jsonMode && <Field label="JSON 配置"><textarea className="textarea mono cr085-json" rows={6} aria-label="MCP JSON 配置" value={jsonText} onChange={e=>setJsonText(e.target.value)}/><button className="btn sm" type="button" onClick={()=>{try {const forms=parseMcpJson(jsonText);const first=Object.keys(forms)[0];setImported(forms);setImportName(first);setForm(forms[first]);setFormError("");}catch(e){setFormError(e instanceof Error?e.message:"配置解析失败");}}}>解析并预览</button></Field>}
         <Field label="类型">
           <select className="select" aria-label="MCP 类型" value={form.transport}
             onChange={e => update({ transport: e.target.value as McpForm["transport"] })}>
@@ -467,32 +360,32 @@ export function SettingsMcp() {
             <option value="http">HTTP</option>
           </select>
         </Field>
-        <Field label="名称" hint="必填；字母、数字、下划线、中划线，1–32 位。">
+        <Field label="名称">
           <input className="input" aria-label="MCP 名称" placeholder="例如 workspace-files" value={form.name}
             onChange={e => update({ name: e.target.value })} />
         </Field>
         {form.transport === "stdio" ? <>
-          <Field label="命令" hint="启动 MCP 服务器的完整命令行（按 shell 词法拆分）。">
+          <Field label="命令">
             <input className="input mono" aria-label="MCP 命令" value={form.commandLine}
               onChange={e => update({ commandLine: e.target.value })}
-              placeholder="npx -y @modelcontextprotocol/server-filesystem D:/work" />
+              placeholder="npx" />
           </Field>
-          <Field label="额外参数" hint="每行一个参数，追加到命令后。">
+          <Field label="参数（每行一项）">
             <textarea className="textarea mono" rows={3} aria-label="MCP 额外参数" value={form.argsText}
               onChange={e => update({ argsText: e.target.value })}
               placeholder={"-y\n@modelcontextprotocol/server-filesystem"} />
           </Field>
-          <Field label="环境变量" hint="每行一个 KEY=value；敏感值按受管密钥保存，不回显。">
+          <Field label="环境变量">
             <textarea className="textarea mono" rows={3} aria-label="MCP 环境变量" value={form.envText}
               onChange={e => update({ envText: e.target.value })}
               placeholder={"API_KEY=your-key-here\nDEBUG=true"} />
           </Field>
         </> : <>
           <Field label="URL">
-            <input className="input mono" type="password" autoComplete="new-password" aria-label="MCP HTTP 地址"
+            <input className="input mono" type="url" autoComplete="off" aria-label="MCP HTTP 地址"
               value={form.url} onChange={e => update({ url: e.target.value })} placeholder="https://example.com/mcp" />
           </Field>
-          <Field label="认证方式" hint="OAuth 由 NestCraft 完成浏览器授权；静态令牌直接使用服务提供的 Bearer；无认证仅用于受控服务。">
+          <Field label="认证方式">
             <select className="select" aria-label="MCP 认证方式" value={form.authMode}
               onChange={e => update({ authMode: e.target.value as McpForm["authMode"] })}>
               <option value="oauth">OAuth</option>
@@ -500,26 +393,24 @@ export function SettingsMcp() {
               <option value="none">无认证</option>
             </select>
           </Field>
-          {form.authMode === "bearer" && <Field label="Bearer 令牌" hint={form.id ? "留空则保留已保存令牌；仅写入受管密钥，保存后不回显。" : "仅写入受管密钥，不在列表、日志或错误中展示。"}>
+          {form.authMode === "bearer" && <Field label="Bearer 令牌" >
             <input className="input mono" type="password" autoComplete="new-password" aria-label="MCP Bearer 令牌"
               value={form.authToken} onChange={e => update({ authToken: e.target.value })}
               placeholder={form.id ? "留空保留原令牌" : "粘贴服务提供的令牌"} />
           </Field>}
           {isLoopbackUrl(form.url) && <div className="row small">
-            <span>信任本机自签名证书<span className="set-caption"> · 仅 loopback HTTPS，默认关闭</span></span>
+            <span>信任本机自签名证书</span>
             <SettingsSwitch checked={form.allowInsecureLocalTls} label="信任本机自签名证书"
               onChange={allowInsecureLocalTls => update({ allowInsecureLocalTls })} />
           </div>}
         </>}
-        <div className="row small">启用配置
-          <SettingsSwitch checked={form.enabled} label="启用 MCP 配置" onChange={enabled => update({ enabled })} />
-        </div>
+
         {fileLoading && <p className="set-caption">读取配置中…</p>}
         {formError && <p className="set-err" role="alert">{formError}</p>}
         {testError && <p className="set-err" role="alert">{testError}</p>}
         {testResult && <div className="col">
           <b>本次发现 {testResult.length} 个工具</b>
-          <p className="set-caption">本次发现成功不代表保持连接或完成权限验证。</p>
+
           {testResult.map(tool => <div className="row small" key={tool.name}>
             <span className="mono">{tool.name}</span><span className="muted">{tool.description || "暂无说明"}</span>
           </div>)}

@@ -75,6 +75,19 @@ UI 准入见 [UI-CR069](../../UI/文档/UI-CR069-平台主代理会话准入.md)
 
 待验收（未实现）。
 
+## BUG-003 增量：平台会话不适用 CLI 原生绑定（2026-11-25，仅定位与设计）
+
+- 用户反馈「一轮后提示上下文待确认重建」。诊断确认：`runner=platform` 会话由平台上下文回放承载，不写 `nativeThreadRef`，但 `derive_view` 不区分 `runner`，首轮结束即判 `freshPending`/`REF_MISSING`，前端锁输入并要求确认重建。本机库有真实样本（只发过一轮、无断点卡）。
+- 目标：平台会话不派生 CLI 绑定状态、不显示该横幅、不锁输入；CLI 路径零回归。新增 AC-BUG003-01/05，见 [BUG-003](../../PRD/BUG-003-会话被误判为待重建上下文.md#5-修复目标与验收标准)。
+- 2026-11-25 用户授权后已实现：`derive_view` 增加 `runner`，平台通道早退返回 `None`；前端按 `runner` 兜底，平台会话不再显示 CLI 横幅、不锁输入。设计先行 UI-BUG003-v1（SC-069-08/09）。**真实平台会话连发两轮、真实窗口视觉未执行**；AC-BUG003-01/05 代码与单测层通过、待验收。见 [LLD-BUG003](../../LLD/LLD-BUG003-会话绑定判定修复.md)／[UI-CR069](../../UI/文档/UI-CR069-平台主代理会话准入.md)／[REPORT-BUG003](../../Test/REPORT-BUG003-会话绑定误判诊断.md#5-执行结果)。
+
+## CR-086 增量：平台能力统一供给（2026-11-25）
+
+- 用户唯一要求：平台内部 skill／mcp／tool 直接给 CLI 或自己的 runtime 用。
+- 已实现：平台 runtime 使用工作台工具目录全部启用项（23 项，含 `generate_image`、`create_project` 等）；新增 `read_skill` 工具由 CLI 与平台共用，平台系统提示列技能清单、正文按需读取；平台接入已启用 MCP 服务器的发现缓存工具（`mcp__server__tool`，stdio 独立短会话／HTTP 复用会话）；技能路径支持数据根迁移后回退解析。
+- 技术验证：`cargo test --lib` **542 passed / 0 failed / 8 ignored**；`tsc` 与 `npm run build` exit 0；真实二进制 MCP 探针 23 项、`read_skill` 正文读取通过。**真实模型端到端与平台侧真实 MCP 调用未执行**。
+- 详见 [CR-086](../../PRD/CR-086-平台能力统一供给.md)／[LLD-CR086](../../LLD/LLD-CR086-平台能力统一供给.md)／[REPORT-CR086](../../Test/REPORT-CR086-平台能力统一供给验证.md)。
+
 ## 阻塞、遗留事项和下一步
 
 1. 阻塞：无正式编码授权。

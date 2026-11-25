@@ -10,8 +10,12 @@
 .brand-copy span { font-size: 10px; font-weight: 400; color: var(--muted); letter-spacing: .06em; }
 html[data-theme='dark'] .brand-mark { background: #dff3ec; border-color: #b9dccf; }
 .nc-top-sep { width: 1px; height: 22px; background: var(--line); }
-.nc-context { display: flex; gap: 8px; color: var(--ink-2); font-size: 13px; min-width: 0; white-space: nowrap; }
+.nc-context { display: flex; gap: 8px; color: var(--ink-2); font-size: 13px; min-width: 0; white-space: nowrap; align-items: center; }
 .nc-context > span { color: var(--muted); }
+/* CR-087：面包屑第一段为小房子（home）图标，不再显示「个人工作台」文字。
+   特异性需高于上面的 `.nc-context > span`（(0,1,1)），否则图标会被降成 --muted；
+   这里沿用第一段文案原来的 --ink-2，与页面名同级、比分隔符更实。 */
+.nc-context > .nc-context-home { display: inline-flex; align-items: center; justify-content: center; color: var(--ink-2); }
 .nc-searchbox { display: flex; gap: 8px; align-items: center; width: 240px; height: 32px; padding: 0 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; color: var(--muted); font-size: 12px; }
 .nc-searchbox kbd { margin-left: auto; font: 11px var(--font); padding: 0 5px; background: var(--surface-3); border: 1px solid var(--line); border-radius: 4px; }
 .nc-avatar { width: 30px; height: 30px; display: grid; place-items: center; background: var(--primary-soft); color: var(--primary-strong); border: 1px solid var(--primary-line); border-radius: 50%; font-size: 11px; font-weight: 600; flex-shrink: 0; cursor: pointer; }

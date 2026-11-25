@@ -330,7 +330,7 @@ pub(crate) fn parse_front_matter(text: &str) -> std::collections::BTreeMap<Strin
 }
 
 /// 扫描项目 docs/Plan 下的需求文档，重建 requirement_index 并构建树。
-fn scan_requirements(root: &Path, project_id: &str) -> Result<Vec<RequirementNode>, String> {
+pub(crate) fn scan_requirements(root: &Path, project_id: &str) -> Result<Vec<RequirementNode>, String> {
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
     conn.execute("DELETE FROM requirement_index WHERE projectId=?1", [project_id])

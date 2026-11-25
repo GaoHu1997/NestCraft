@@ -2,7 +2,7 @@ import { Icon } from "@/components/icons";
 import { useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 
-export function SettingsDialog({ title, subtitle, children, footer, onClose, width = 580, busy = false }: {
+export function SettingsDialog({ title, children, footer, onClose, width = 580, busy = false }: {
   title: string; subtitle?: string; children: ReactNode; footer?: ReactNode; onClose: () => void; width?: number; busy?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -17,7 +17,7 @@ export function SettingsDialog({ title, subtitle, children, footer, onClose, wid
     const rect = e.currentTarget.getBoundingClientRect();
     if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) onClose();
   }} aria-label={title}>
-    <div className="set-dialog-head"><div><h2>{title}</h2>{subtitle && <p className="set-caption">{subtitle}</p>}</div><button className="set-icon-btn" aria-label={`关闭${title}`} disabled={busy} onClick={onClose}><SettingsIcon name="close" /></button></div>
+    <div className="set-dialog-head"><div><h2>{title}</h2></div><button className="set-icon-btn" aria-label={`关闭${title}`} disabled={busy} onClick={onClose}><SettingsIcon name="close" /></button></div>
     <div className="set-dialog-body">{children}</div>
     {footer && <div className="set-dialog-foot" role="group" aria-label={`${title}操作`}>{footer}</div>}
   </dialog>;

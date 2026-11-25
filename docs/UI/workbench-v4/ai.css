@@ -118,6 +118,11 @@ html[data-theme="dark"] .approval { border-color: #4a3a1e; } html[data-theme="da
 .ai-menu .mi-main b { font-size: 12px; font-weight: 550; }
 .ai-menu .mi-main span { font-size: 10.5px; color: var(--muted); }
 .ai-menu .mi-icon { width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center; background: var(--surface-3); }
+.ai-menu .chat-menu-row-rich { gap: 10px; }
+.ai-menu .cmr-ico { flex: 0 0 auto; display: inline-flex; align-items: center; color: var(--muted); }
+.ai-menu .cmr-label { flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 6px; font-size: 12px; font-weight: 550; color: var(--ink); }
+.ai-menu .cmr-kw { font-size: 10.5px; font-weight: 400; color: var(--muted-2, var(--muted)); }
+.ai-menu .cmr-desc { margin-left: auto; flex: 1 1 auto; min-width: 0; text-align: right; font-size: 10.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 @media (max-width: 1180px) { .ai-panel { width: 340px; } }
 @media (max-width: 960px) {

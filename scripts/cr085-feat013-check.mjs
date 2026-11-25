@@ -1,0 +1,11 @@
+import { readFileSync } from 'node:fs';import assert from 'node:assert/strict';import ts from '../node_modules/typescript/lib/typescript.js';
+const source=readFileSync('src/modules/settings/capabilityHelpers.ts','utf8');const js=ts.transpileModule(source.replace("import { invoke } from '@/api';","const invoke=async()=>null;"),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText;const h=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+const args=['',' two words ',String.raw`C:\my work\folder\file.js`,'a=b','"quoted"','#not-comment','\n'];assert.deepEqual(h.parseArgs(h.formatArgs(args)),args);
+const env={TOKEN:'  demo=a=b  ',EMPTY:'',QUOTE:'"quoted"',LINES:'a\nb'};assert.deepEqual({...h.parseEnv(h.formatEnv(env))},env);
+const config={name:'space-path',type:'stdio',command:String.raw`C:\Program Files\nodejs\node.exe`,args,env};const f=h.parseMcpJson(JSON.stringify({mcpServers:{'space-path':config}}))['space-path'];assert.equal(f.commandLine,config.command);assert.deepEqual(h.parseArgs(f.argsText),args);assert.deepEqual({...h.parseEnv(f.envText)},env);
+assert.throws(()=>h.parseMcpJson('{"command":"npx","args":7}'));assert.throws(()=>h.parseMcpJson('bad-json'));assert.throws(()=>h.parseEnv('INVALID LINE'));
+assert.equal(h.builtinToolCategory('knowledge.read').id,'knowledge');assert.equal(h.builtinToolCategory('workbench.list_servers').id,'servers');assert.equal(h.builtinToolCategory('workbench.create_project').id,'requirements');assert.equal(h.builtinToolCategory('fs.read').id,'basic');
+const mcp=readFileSync('src/modules/settings/SettingsMcp.tsx','utf8');assert.ok(mcp.includes('api.mcpDiscoverTools(server.id)'));assert.ok(mcp.includes('验证连接'));assert.ok(!mcp.includes('启用 MCP 配置'));assert.ok(!mcp.includes('splitCommandLine(form.commandLine)'));
+const tools=readFileSync('src/modules/settings/SettingsTool.tsx','utf8');assert.ok(!tools.includes('CLI_NATIVE'));assert.ok(!tools.includes('已注入'));assert.ok(tools.includes('new Set()'));
+const center=readFileSync('src/modules/settings/index.tsx','utf8');assert.ok(center.includes('settings:new-provider'));assert.ok(!center.includes('{selected.sub}'));
+console.log('CR085 FEAT013 helpers+contracts: 18 checks PASS');

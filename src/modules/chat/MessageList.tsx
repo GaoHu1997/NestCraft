@@ -6,9 +6,12 @@ import type { ToastKind } from "@/components/ui";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { AttachmentMeta, ChatMessage, ContextRef } from "@/api";
 import { requestLocate } from "@/modules/locate";
-import { ThinkingIndicator, formatElapsed } from "./ThinkingIndicator";
+import { ThinkingIndicator } from "./ThinkingIndicator";
 import { toolDisplayName } from "./sessionRuntime";
-import { AttachmentImages } from "./AttachmentImages";
+import { AttachmentImages, ImageGallery, type GalleryItem } from "./AttachmentImages";
+import { changedInputPaths, classifyTool, formatMessageDuration, presentAgent, presentToolInput, summarizeTools, toolFailed, workDurationMs, type ToolCategory } from "./messagePresentation";
+import { TurnNavigator, type TurnNavItem } from "./TurnNavigator";
+import "./message-zcode.css";
 
 /**
  * 消息流渲染（CR-034 / STORY-062）：
@@ -16,7 +19,7 @@ import { AttachmentImages } from "./AttachmentImages";
  *   结果默认折叠，失败展开摘要）；配对缺失单侧成块并标注原因，不伪造配对（AC-01~03）；
  * - 图片等比缩放（宽≤100%、高≤360px）、点击放大浮层、失败占位（AC-04~06）；
  * - `路径:行[:列]` 渲染为链接，点击定位到编码区行；无项目上下文时退化为复制路径（AC-07~11）；
- * - 思考块收起态显示内容规模提示（AC-13）。
+ * - CR-076 最新截图：中性过程摘要、思考真实时长、紧凑子代理；全部原文可展开。
  */
 
 export type UiRole = ChatMessage["role"] | "error" | "subagent";
@@ -38,7 +41,7 @@ export interface UiMessage {
   createdAt?: number;
   attachments?: AttachmentMeta[];
   streaming?: boolean;
-  /** CR-056：思考阶段耗时（毫秒）。未知时折叠态只显示字数，不编造时长。 */
+  /** CR-056：思考阶段耗时（毫秒）。未知时仅显示思考，不编造时长。 */
   thinkingMs?: number | null;
   /** 来源标签：cli/model/agent 等，未知时由渲染层显示可读未知状态。 */
   sourceLabel?: string | null;
@@ -162,6 +165,47 @@ function Md(props: {
 
     // 重新处理时回到原始HTML，避免重复监听和双重链接化。
     host.innerHTML = html;
+    // 表格保留原生横向滚动，宽屏铺满正文，窄屏不挤压消息宽度。
+    for (const table of Array.from(host.querySelectorAll("table"))) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "chat-table-scroll";
+      table.before(wrapper);
+      wrapper.appendChild(table);
+    }
+
+    // 代码块工具栏：语言标签 + 复制 + 自动换行（对齐 ZCode 代码块头）
+    for (const pre of Array.from(host.querySelectorAll("pre"))) {
+      if (pre.closest(".chat-code-block")) continue;
+      const code = pre.querySelector("code");
+      const langMatch = /(?:^|\s)language-([\w+#.-]+)/.exec(code?.className ?? "");
+      const block = document.createElement("div");
+      block.className = "chat-code-block";
+      const head = document.createElement("div");
+      head.className = "chat-code-head";
+      const label = document.createElement("span");
+      label.className = "chat-code-lang";
+      label.textContent = langMatch ? langMatch[1] : "代码";
+      const actions = document.createElement("div");
+      actions.className = "chat-code-actions";
+      const copyBtn = document.createElement("button");
+      copyBtn.type = "button"; copyBtn.className = "chat-code-btn"; copyBtn.textContent = "复制"; copyBtn.title = "复制代码"; copyBtn.setAttribute("aria-label", "复制代码");
+      copyBtn.addEventListener("click", () => {
+        const text = code?.textContent ?? "";
+        try {
+          navigator.clipboard?.writeText(text).then(() => {
+            copyBtn.textContent = "已复制";
+            window.setTimeout(() => { copyBtn.textContent = "复制"; }, 1200);
+          }).catch(() => {});
+        } catch { /* 非安全上下文：忽略 */ }
+      });
+      const wrapBtn = document.createElement("button");
+      wrapBtn.type = "button"; wrapBtn.className = "chat-code-btn"; wrapBtn.textContent = "换行"; wrapBtn.title = "自动换行"; wrapBtn.setAttribute("aria-label", "自动换行");
+      wrapBtn.addEventListener("click", () => { const on = pre.classList.toggle("chat-code-wrap"); wrapBtn.classList.toggle("on", on); });
+      actions.append(copyBtn, wrapBtn);
+      head.append(label, actions);
+      pre.before(block);
+      block.append(head, pre);
+    }
 
     // 1) 图片：等比缩放、本地路径解析、点击放大、失败占位
     for (const img of Array.from(host.querySelectorAll("img"))) {
@@ -368,56 +412,48 @@ function buildBlocks(msgs: UiMessage[]): Block[] {
   return out;
 }
 
-function briefOf(inputJson: string | null): string {
-  try {
-    const obj = JSON.parse(inputJson ?? "{}") as Record<string, unknown>;
-    const first = Object.values(obj).find(v => typeof v === "string");
-    return typeof first === "string" ? first.slice(0, 90) : "";
-  } catch {
-    return inputJson?.slice(0, 90) ?? "";
-  }
+function ToolSummaryIcon({ category }: { category: ToolCategory }) {
+  return <Icon name={category === "change" ? "edit" : category === "run" ? "terminal" : category === "explore" ? "search" : "wrench"} size={16} />;
+}
+
+function BrainOutline() {
+  return <svg className="chat-thinking-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 5c-1-3-6-2-6 1-3 0-4 5-2 7-1 3 1 6 4 6 0 3 4 3 4 0V5Zm0 0c1-3 6-2 6 1 3 0 4 5 2 7 1 3-1 6-4 6 0 3-4 3-4 0" /><path d="M6 6c0 2 1 3 3 3M4 13c2-1 4 0 4 2M18 6c0 2-1 3-3 3m5 4c-2-1-4 0-4 2" /></svg>;
 }
 
 function ToolBlock({ pair, part }: ToolItem) {
+  const item = { pair, part };
   const running = pair.result == null && !!pair.useMsg?.streaming;
   const orphanResult = pair.useMsg == null;
   const orphanUse = pair.result == null && !running;
-  const status = running ? "run" : pair.result?.isError ? "fail" : pair.result ? "ok" : "pending";
-  const statusText = part === "call" && pair.result ? "结果见下方" : orphanResult ? "来源调用未记录" : running ? "执行中" : pair.result?.isError ? "失败" : orphanUse ? "结果未返回" : "完成";
-  const failureSummary = part !== "call" && pair.result?.isError
-    ? pair.result.content.trim().replace(/\s+/g, " ").slice(0, 160) || "工具执行失败，未返回错误详情"
+  const failed = toolFailed(item);
+  const status = failed ? "fail" : running ? "run" : pair.result ? "ok" : "pending";
+  const statusText = part === "call" && pair.result ? "结果见下方" : orphanResult ? `来源调用未记录${failed ? " · 失败" : ""}` : failed ? "失败" : running ? "执行中" : orphanUse ? "结果未返回" : "完成";
+  const failureSummary = part !== "call" && failed
+    ? pair.result?.content.trim().replace(/\s+/g, " ").slice(0, 160) || "工具执行失败，未返回错误详情"
     : "";
-  const input = parseJson<Record<string, unknown>>(pair.inputJson);
-  const command = typeof input?.command === "string" ? input.command : null;
-  const inputText = input ? JSON.stringify(input, null, 2) : pair.inputJson;
-  const parametersText = command !== null && input
-    ? JSON.stringify(Object.fromEntries(Object.entries(input).filter(([key]) => key !== "command")), null, 2)
-    : null;
+  const { inputText, command, parametersText } = presentToolInput(pair.inputJson);
   const output = part === "call" && pair.result ? null : pair.result?.content ?? pair.useMsg?.toolOutput;
-  const exitCode = part === "call" ? null : pair.resultMsg?.exitCode;
+  const exitCode = part === "call" ? null : pair.resultMsg?.exitCode ?? pair.useMsg?.exitCode;
+  const summary = summarizeTools([item]);
   return (
     <div className="chat-msg">
       <div className={`chat-toolblock ${status}`}>
-        <div className="chat-toolblock-head">
-          <span className={`tag ${status === "fail" ? "bad" : status === "ok" ? "good" : "blue"}`}>{toolDisplayName(pair.name) ?? "工具调用"}{part === "result" && " · 结果"}</span>
-          {briefOf(pair.inputJson) && <span className="small muted ellipsis chat-toolblock-brief">{briefOf(pair.inputJson)}</span>}
-          <span className="spacer" />
-          <span className={`chat-tool-state st-${status}`}>{statusText}{exitCode != null && ` · 退出码 ${exitCode}`}</span>
-        </div>
-        {failureSummary && <div className="chat-tool-fail-summary" title={pair.result?.content}>{failureSummary}</div>}
-        {(inputText || output != null) && (
-          <details className="chat-tool-detail">
-            <summary>{command !== null ? "命令与输出" : output != null ? "查看输入与输出" : "输入参数"}</summary>
-            {command !== null ? <pre className="chat-tool-command">{command || "（命令未记录）"}</pre> : inputText && inputText !== "{}" && <pre>{inputText}</pre>}
-            {parametersText && parametersText !== "{}" && <pre title="输入参数">{parametersText}</pre>}
-            {output != null && <pre className={pair.result?.isError ? "chat-tool-err" : ""}>{output || "（无输出）"}</pre>}
-          </details>
-        )}
+        <details className="chat-tool-detail">
+          <summary className="chat-tool-summary" aria-label={summary.text}><ToolSummaryIcon category={summary.category} /><span>{summary.text}</span><Icon className="chat-tool-chevron" name="chevronRight" size={14} /></summary>
+          <div className="chat-toolblock-head">
+            <span className="chat-tool-name">{toolDisplayName(pair.name) ?? pair.name ?? "工具调用"}{part === "result" && " · 结果"}</span>
+            <span className={`chat-tool-state st-${status}`}>{statusText}{exitCode != null && ` · 退出码 ${exitCode}`}</span>
+          </div>
+          {failureSummary && <div className="chat-tool-fail-summary" title={pair.result?.content}>{failureSummary}</div>}
+          {command !== null ? <pre className="chat-tool-command">{command || "（命令未记录）"}</pre> : inputText !== null && <pre>{inputText}</pre>}
+          {parametersText && parametersText !== "{}" && <pre title="输入参数">{parametersText}</pre>}
+          {output != null && <pre className={failed ? "chat-tool-err" : ""}>{output || "（无输出）"}</pre>}
+          {exitCode != null && <div className="chat-tool-exit">退出码 {exitCode}</div>}
+        </details>
       </div>
     </div>
   );
 }
-
 interface Turn {
   id: string;
   user: UiMessage | null;
@@ -439,35 +475,62 @@ function buildTurns(blocks: Block[]): Turn[] {
 
 function toolKey({ pair, part }: ToolItem) { return (part === "result" ? pair.resultMsg?.id : pair.useMsg?.id) ?? pair.toolId; }
 
-function ExecutionProcess({ blocks, working, renderMessage }: {
+function ExecutionProcess({ blocks, working, visible, startedAt, endedAt, renderMessage }: {
   blocks: Block[];
   working: boolean;
+  visible: boolean;
+  startedAt?: number;
+  endedAt?: number;
   renderMessage: (m: UiMessage) => React.ReactNode;
 }) {
-  const steps: (UiMessage | ToolItem[])[] = [];
+  const [open, setOpen] = useState(working);
+  const wasWorking = useRef(working);
+  const [clock, setClock] = useState<number | undefined>();
+  useEffect(() => {
+    if (wasWorking.current !== working) setOpen(working);
+    wasWorking.current = working;
+  }, [working]);
+  useEffect(() => {
+    if (!working || !visible || startedAt == null || !Number.isFinite(startedAt)) return;
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const sync = () => {
+      if (timer !== undefined) clearInterval(timer);
+      timer = undefined;
+      if (!document.hidden) {
+        setClock(Date.now());
+        timer = setInterval(() => setClock(Date.now()), 1000);
+      }
+    };
+    sync();
+    document.addEventListener("visibilitychange", sync);
+    return () => { if (timer !== undefined) clearInterval(timer); document.removeEventListener("visibilitychange", sync); };
+  }, [working, visible, startedAt]);
+  const steps: (UiMessage | ToolItem | ToolItem[])[] = [];
   for (const block of blocks) {
-    if ("pair" in block) {
+    if ("pair" in block && classifyTool(block.pair.name) !== null) {
       const last = steps[steps.length - 1];
       if (Array.isArray(last)) last.push(block);
       else steps.push([block]);
     } else steps.push(block);
   }
-  const hasError = blocks.some(block => "pair" in block ? block.pair.result?.isError : block.role === "error");
-  return <details className="chat-turn-process">
-    <summary><Icon name="chevronRight" size={12} />执行过程 <span className="chat-process-status" aria-live="polite">{working ? "进行中" : hasError ? "有错误" : "已结束"}</span></summary>
+  const hasError = blocks.some(block => "pair" in block ? toolFailed(block) : block.role === "error");
+  const duration = workDurationMs(startedAt, working ? clock : endedAt);
+  const label = `${working ? "工作中" : "已工作"}${duration !== null ? ` ${formatMessageDuration(duration)}` : ""}`;
+  return <details className="chat-turn-process" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary title="时长按本轮用户消息至最后记录的时间跨度估算，不代表实际运行耗时"><span className="chat-process-label">{label}</span><Icon className="chat-process-chevron" name="chevronRight" size={16} />{hasError && <span className="chat-process-status">有错误</span>}</summary>
     <div className="chat-turn-process-body">
       {steps.map(step => {
-        if (!Array.isArray(step)) return renderMessage(step);
+        if (!Array.isArray(step)) return "pair" in step ? <ToolBlock key={toolKey(step)} {...step} /> : renderMessage(step);
         if (step.length < 2) return <ToolBlock key={toolKey(step[0])} {...step[0]} />;
+        const summary = summarizeTools(step);
         return <details className="chat-tool-group" key={toolKey(step[0])}>
-          <summary><Icon name="chevronRight" size={12} />{`${step.length} 条工具记录`}</summary>
-          {step.map(item => <ToolBlock key={toolKey(item)} {...item} />)}
+          <summary aria-label={summary.text}><ToolSummaryIcon category={summary.category} /><span>{summary.text}</span><Icon className="chat-group-chevron" name="chevronRight" size={14} /></summary>
+          <div className="chat-tool-group-body">{step.map(item => <ToolBlock key={toolKey(item)} {...item} />)}</div>
         </details>;
       })}
     </div>
   </details>;
 }
-
 /* ---------- 消息列表 ---------- */
 
 export function MessageList(props: {
@@ -481,38 +544,103 @@ export function MessageList(props: {
   stepsSlot?: React.ReactNode;
   /** CR-062：点开子智能体只读详情。 */
   onOpenAgent?: (agentId: string) => void;
+  /** 新增（可选）：会话级滚动记忆键；缺失时以首条消息 id 兜底。 */
+  sessionKey?: string;
+  /** 新增（可选）：在该轮尾的终止错误消息上渲染「重试」。 */
+  onRetryTurn?: (errorMsgId: string) => void;
+  /** 新增（可选）：在用户消息上渲染「编辑」。 */
+  onEditUserMessage?: (msgId: string, text: string) => void;
 }) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const stickRef = useRef(true);
   const toast = useToast();
   const canLocate = !!props.rootUri || (props.officeFiles?.length ?? 0) > 0;
-  const [zoom, setZoom] = useState<{ src: string; alt: string; back: HTMLElement } | null>(null);
+  // 正文 Markdown 图片画廊：点击任一图片，可在该消息全部 Markdown 图片间切换（复用附件预览 UI）。
+  const [gallery, setGallery] = useState<{ items: GalleryItem[]; index: number; back: HTMLElement } | null>(null);
+  // 会话级滚动记忆（内存 Map）；键优先取 sessionKey，缺失时用首条消息 id 兜底。
+  const scrollMemory = useRef<Map<string, number>>(new Map());
+  const activeKeyRef = useRef<string | null>(null);
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
+  const [activeTurnId, setActiveTurnId] = useState<string | undefined>(undefined);
+  const sessionKey = props.sessionKey ?? props.msgs[0]?.id ?? "chat";
+
+  const syncScrollState = () => {
+    const el = boxRef.current;
+    if (!el) return;
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 90;
+    stickRef.current = near;
+    setShowScrollBottom(prev => (prev === !near ? prev : !near));
+  };
+
+  const syncActiveTurn = () => {
+    const el = boxRef.current;
+    if (!el) return;
+    const secs = Array.from(el.querySelectorAll<HTMLElement>(".chat-turn[data-turn-id]"));
+    if (!secs.length) { setActiveTurnId(undefined); return; }
+    const boxTop = el.getBoundingClientRect().top;
+    let best: HTMLElement = secs[0], bestDist = Infinity;
+    for (const s of secs) {
+      const d = Math.abs(s.getBoundingClientRect().top - boxTop - 8);
+      if (d < bestDist) { bestDist = d; best = s; }
+    }
+    setActiveTurnId(best.getAttribute("data-turn-id") ?? undefined);
+  };
 
   const onScroll = () => {
     const el = boxRef.current;
     if (!el) return;
-    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 90;
+    syncScrollState();
+    syncActiveTurn();
+    // 记录当前会话的阅读位置；内存保存，不写持久化。
+    scrollMemory.current.set(sessionKey, el.scrollTop);
   };
 
+  // 切换会话时恢复 scrollTop；同会话新消息仅在底部附近时贴底；滚动位置写入 Map。
   useEffect(() => {
     const el = boxRef.current;
-    if (el && stickRef.current) el.scrollTop = el.scrollHeight;
-  }, [props.msgs]);
-
-  // 放大浮层：Esc 与点击遮罩关闭，关闭后焦点回到原图（AC-05）
-  useEffect(() => {
-    if (!zoom || props.visible === false) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setZoom(null);
-        zoom.back.focus?.();
+    if (!el) return;
+    if (activeKeyRef.current !== sessionKey) {
+      activeKeyRef.current = sessionKey;
+      const saved = scrollMemory.current.get(sessionKey);
+      if (saved != null) {
+        el.scrollTop = saved;
+        syncScrollState();
+        // Markdown 异步渲染会撑开高度，下一帧再校正一次以贴近记忆位置。
+        const raf = window.requestAnimationFrame(() => {
+          const cur = boxRef.current;
+          if (cur && activeKeyRef.current === sessionKey) { cur.scrollTop = saved; syncScrollState(); }
+        });
+        return () => window.cancelAnimationFrame(raf);
       }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [zoom, props.visible]);
+      el.scrollTop = el.scrollHeight;
+      stickRef.current = true;
+      setShowScrollBottom(false);
+      return;
+    }
+    if (stickRef.current) el.scrollTop = el.scrollHeight;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionKey, props.msgs]);
+
+  const scrollToBottom = () => {
+    const el = boxRef.current;
+    if (!el) return;
+    stickRef.current = true;
+    setShowScrollBottom(false);
+    try { el.scrollTo({ top: el.scrollHeight, behavior: "smooth" }); }
+    catch { el.scrollTop = el.scrollHeight; }
+  };
 
   const turns = useMemo(() => buildTurns(buildBlocks(props.msgs)), [props.msgs]);
+  const navItems = useMemo<TurnNavItem[]>(() => turns.map((t, i) => ({ id: t.id, label: `第 ${i + 1} 轮 · ${(t.user?.content ?? "会话开始").replace(/\s+/g, " ").slice(0, 24)}`, kind: "user" as const })), [turns]);
+  const jumpToTurn = (id: string) => {
+    const el = boxRef.current?.querySelector<HTMLElement>(`.chat-turn[data-turn-id="${typeof CSS !== "undefined" && CSS.escape ? CSS.escape(id) : id}"]`);
+    el?.scrollIntoView({ block: "start", behavior: "smooth" });
+  };
+  // 回合导航：消息变化时刷新当前回合高亮（滚动时由 onScroll 更新）。
+  useEffect(() => {
+    syncActiveTurn();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turns.length, sessionKey]);
   const workingSince = useMemo(() => {
     for (let i = props.msgs.length - 1; i >= 0; i -= 1) {
       const m = props.msgs[i];
@@ -523,7 +651,7 @@ export function MessageList(props: {
 
   if (props.msgs.length === 0 && !props.stepsSlot && !props.working) {
     return (
-      <div className="chat-msgs" style={{ justifyContent: "center" }}>
+      <div className="chat-msgs chat-zcode-messages" style={{ justifyContent: "center" }}>
         <div className="chat-empty">
           <div className="chat-empty-icon" aria-hidden>
             <Icon name="message" size={26} />
@@ -535,39 +663,75 @@ export function MessageList(props: {
     );
   }
 
-  const renderMessage = (m: UiMessage, showReplyActions = false) => <MessageRow key={m.id} m={m} showReplyActions={showReplyActions} projectId={props.projectId} rootUri={props.rootUri} officeFiles={props.officeFiles} canLocate={canLocate} onOpenAgent={props.onOpenAgent} onImageOpen={(src, alt, el) => setZoom({ src, alt, back: el })} />;
+  // 点击正文图片：从该消息 .chat-md 收集全部 Markdown 图片，打开可在其间切换的画廊。
+  const openMarkdownGallery = (src: string, alt: string, el: HTMLElement) => {
+    const host = el.closest(".chat-md");
+    const imgs = host ? Array.from(host.querySelectorAll<HTMLImageElement>("img")) : [];
+    const items: GalleryItem[] = imgs.map(img => ({ src: img.getAttribute("src") ?? "", name: img.getAttribute("alt") || "图片" }));
+    if (!items.length) items.push({ src, name: alt });
+    const index = Math.max(0, imgs.indexOf(el as HTMLImageElement));
+    setGallery({ items, index, back: el });
+  };
+  const renderMessage = (m: UiMessage, opts: { replyActions?: boolean; onRetry?: () => void; onEdit?: () => void } = {}) => <MessageRow key={m.id} m={m} showReplyActions={opts.replyActions} onRetry={opts.onRetry} onEdit={opts.onEdit} projectId={props.projectId} rootUri={props.rootUri} officeFiles={props.officeFiles} canLocate={canLocate} onOpenAgent={props.onOpenAgent} onImageOpen={openMarkdownGallery} />;
   return (
     <>
-      <div className="chat-msgs" ref={boxRef} onScroll={onScroll}>
-        {turns.map((turn, index) => {
-          const working = !!props.working && index === turns.length - 1;
-          const tail = turn.reply[turn.reply.length - 1];
-          const final = !working && tail && !("pair" in tail) && tail.role === "assistant" && !!tail.content && !tail.streaming ? tail : null;
-          const terminalError = tail && !("pair" in tail) && tail.role === "error" ? tail : null;
-          const process = final || terminalError ? turn.reply.slice(0, -1) : turn.reply;
-          const hasProcess = process.some(block => "pair" in block || block.thinking || block.role === "subagent" || block.role === "assistant");
-          return <section className="chat-turn" key={turn.id}>
-            {turn.user && renderMessage(turn.user)}
-            {hasProcess || working ? <ExecutionProcess blocks={process} working={working} renderMessage={renderMessage} /> : process.map(block => "pair" in block ? <ToolBlock key={toolKey(block)} {...block} /> : renderMessage(block))}
-            {final && renderMessage(final, true)}
-            {terminalError && renderMessage(terminalError)}
-          </section>;
-        })}
-        {props.working && (
-          <div className="chat-msg assistant chat-working-row">
-            <ThinkingIndicator since={workingSince} />
-          </div>
-        )}
-        {props.stepsSlot}
-      </div>
-      {zoom && (
-        <div className="chat-img-zoom" role="dialog" aria-label="图片放大" onClick={() => { setZoom(null); zoom.back.focus?.(); }}>
-          <img src={zoom.src} alt={zoom.alt} onClick={e => e.stopPropagation()} />
-          <div className="chat-img-zoom-cap">{zoom.alt}</div>
+      <div className="chat-msgs-wrap">
+        <div className="chat-msgs chat-zcode-messages" ref={boxRef} onScroll={onScroll}>
+          {turns.map((turn, index) => {
+            const user = turn.user;
+            const working = !!props.working && index === turns.length - 1;
+            const tail = turn.reply[turn.reply.length - 1];
+            const final = !working && tail && !("pair" in tail) && tail.role === "assistant" && !!tail.content && !tail.streaming ? tail : null;
+            const terminalError = tail && !("pair" in tail) && tail.role === "error" ? tail : null;
+            const process = final || terminalError ? turn.reply.slice(0, -1) : turn.reply;
+            const endedAt = turn.reply.flatMap(block => "pair" in block ? [block.pair.useMsg?.createdAt, block.pair.resultMsg?.createdAt] : [block.createdAt]).filter((at): at is number => at != null && Number.isFinite(at));
+            const hasProcess = process.some(block => "pair" in block || block.thinking || block.role === "subagent" || block.role === "assistant");
+            const changedFiles = Array.from(new Set(turn.reply.flatMap(block => "pair" in block && classifyTool(block.pair.name) === "change" ? changedInputPaths(block.pair.inputJson) : [])));
+            return <section className="chat-turn" key={turn.id} data-turn-id={turn.id}>
+              {user && renderMessage(user, { onEdit: props.onEditUserMessage ? () => props.onEditUserMessage!(user.id, user.content) : undefined })}
+              {hasProcess || working ? <ExecutionProcess blocks={process} working={working} visible={props.visible !== false} startedAt={turn.user?.createdAt} endedAt={endedAt.length ? Math.max(...endedAt) : undefined} renderMessage={renderMessage} /> : process.map(block => "pair" in block ? <ToolBlock key={toolKey(block)} {...block} /> : renderMessage(block))}
+              {changedFiles.length > 0 && <details className="chat-turn-files">
+                <summary><Icon name="file" size={13} /><span>本轮改动 {changedFiles.length} 个文件</span></summary>
+                <div className="chat-turn-files-list">{changedFiles.map(p => <button type="button" key={p} className="chat-turn-file" title={p} onClick={() => { if (canLocate) requestLocate({ kind: "file", path: p, projectId: props.projectId, rootUri: props.rootUri }); else navigator.clipboard?.writeText(p).catch(() => {}); }}>{p.split(/[\\/]/).pop()}</button>)}</div>
+              </details>}
+              {final && renderMessage(final, { replyActions: true })}
+              {terminalError && renderMessage(terminalError, { onRetry: props.onRetryTurn ? () => props.onRetryTurn!(terminalError.id) : undefined })}
+            </section>;
+          })}
+          {props.working && (
+            <div className="chat-msg assistant chat-working-row">
+              <ThinkingIndicator since={workingSince} />
+            </div>
+          )}
+          {props.stepsSlot}
         </div>
+        {showScrollBottom && (
+          <button type="button" className="chat-scroll-bottom" onClick={scrollToBottom} aria-label="回到底部" title="回到底部">
+            <Icon name="arrowDown" size={14} />
+            <span>回到底部</span>
+          </button>
+        )}
+        <TurnNavigator items={navItems} activeId={activeTurnId} onJump={jumpToTurn} />
+      </div>
+      {gallery && gallery.items.length > 0 && (
+        <ImageGallery
+          items={gallery.items}
+          index={Math.min(gallery.index, gallery.items.length - 1)}
+          onIndexChange={next => setGallery(prev => (prev ? { ...prev, index: next } : prev))}
+          onClose={() => setGallery(null)}
+          origin={gallery.back}
+          ariaLabel="图片预览"
+        />
       )}
     </>
   );
+}
+
+/** 思考流式单行摘要：压缩空白并截取末尾，避免整段思考把摘要行撑高。 */
+function summarizeThinking(text: string): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  if (!flat) return "";
+  return flat.length > 90 ? `…${flat.slice(-90)}` : flat;
 }
 
 function messageTime(ts?: number): string {
@@ -583,6 +747,10 @@ function MessageRow(props: {
   showReplyActions?: boolean;
   onOpenAgent?: (agentId: string) => void;
   onImageOpen: (src: string, alt: string, el: HTMLElement) => void;
+  /** 可选：本轮终止错误的「重试」动作。 */
+  onRetry?: () => void;
+  /** 可选：用户消息的「编辑」动作。 */
+  onEdit?: () => void;
 }) {
   const { m } = props;
   const toast = useToast();
@@ -606,6 +774,14 @@ function MessageRow(props: {
           {m.content}
           {m.attachments?.length ? <AttachmentImages attachments={m.attachments} /> : null}
           </div>
+          {props.onEdit && (
+            <div className="chat-msg-actions chat-msg-actions-user">
+              <button type="button" className="chat-msg-action" onClick={props.onEdit} title="编辑这条消息">
+                <Icon name="edit" size={13} />
+                <span>编辑</span>
+              </button>
+            </div>
+          )}
           <div className="chat-msg-name chat-msg-time">{messageTime(m.createdAt)}</div>
         </div>
       </div>
@@ -617,11 +793,10 @@ function MessageRow(props: {
     return (
       <div className="chat-msg assistant">
         <div className="chat-bubble">
-          <div className="chat-msg-name chat-msg-time">{messageTime(m.createdAt)}</div>
         <div className="chat-card">
           {hasThinking && (
             <details className="chat-thinking-block">
-              <summary><span className="chat-thinking-mark">✦</span><span>{m.streaming && !m.content ? "思考中…" : "思考"}</span><span className="chat-think-size">{m.thinkingMs != null ? `持续 ${formatElapsed(m.thinkingMs)}` : `${m.thinking!.length} 字`}</span></summary>
+              <summary><BrainOutline /><span>{m.streaming && !m.content ? "思考中" : "思考"}</span>{m.streaming && hasThinking && <span className="chat-think-live" title={m.thinking ?? undefined}>{summarizeThinking(m.thinking ?? "")}</span>}{m.thinkingMs != null && Number.isFinite(m.thinkingMs) && m.thinkingMs >= 0 && <span className="chat-think-duration">持续了 {formatMessageDuration(m.thinkingMs)}</span>}<Icon className="chat-thinking-chevron" name="chevronRight" size={14} /></summary>
               <div className="chat-thinking-content">{m.thinking}</div>
             </details>
           )}
@@ -658,27 +833,46 @@ function MessageRow(props: {
   }
   if (m.role === "subagent") {
     const hasOutput = !!m.content && m.content !== m.producerTask;
+    const agent = presentAgent(m.sourceLabel);
     return (
       <div className="chat-msg subagent">
-        <div className="chat-agent-event">
-          <div className="chat-agent-event-head"><Icon name="bot" size={15} /><span className="chat-agent-kind">General Purpose</span><span className="chat-agent-state">{m.sourceLabel || "状态未知"}</span><span className="chat-agent-time">{messageTime(m.createdAt)}</span>
+        <details className="chat-agent-event">
+          <summary className="chat-agent-event-head">
+            <span className={`chat-agent-glyph${agent.type === "Explore" ? " is-explore" : ""}`} aria-hidden="true"><i /><i /><i /></span>
+            <span className={`chat-agent-kind${agent.type === "Explore" ? " is-explore" : ""}`}>{agent.type}</span>
+            <span className="chat-agent-task" title={m.producerTask || "子智能体任务"}>{m.producerTask || "子智能体任务"}</span>
+            <span className="chat-agent-state">{agent.status}</span>
+            <Icon className="chat-agent-chevron" name="chevronRight" size={14} />
+          </summary>
+          <div className="chat-agent-details">
+            <div className="chat-agent-full-task">{m.producerTask || "子智能体任务"}</div>
+            <div className="chat-agent-meta">{m.producerId || "agent-id 未知"}{m.cli ? ` · ${m.cli}` : ""}</div>
+            <div className="chat-agent-source">来源：{m.sourceLabel || "未记录"} · {messageTime(m.createdAt)}</div>
+            {hasOutput && <div className="chat-agent-output">{m.content}</div>}
             {m.producerId && props.onOpenAgent && (
               <button type="button" className="chat-agent-open" title="查看子智能体只读详情" aria-label={`查看子智能体 ${m.producerTask || m.producerId} 的只读详情`} onClick={() => props.onOpenAgent?.(m.producerId!)}>
-                查看 <Icon name="chevronRight" size={12} />
+                查看只读详情 <Icon name="chevronRight" size={12} />
               </button>
             )}
           </div>
-          <div className="chat-agent-task">{m.producerTask || "子智能体任务"}</div>
-          <div className="chat-agent-meta">{m.producerId || "agent-id 未知"}{m.cli ? ` · ${m.cli}` : ""}</div>
-          {hasOutput && <div className="chat-agent-output">{m.content}</div>}
-        </div>
+        </details>
       </div>
     );
   }
   if (m.role === "error") {
     return (
       <div className="chat-msg">
-        <div className="chat-card error">{m.content}</div>
+        <div className="chat-card error">
+          <div>{m.content}</div>
+          {props.onRetry && (
+            <div className="chat-msg-actions chat-msg-actions-static">
+              <button type="button" className="chat-msg-action" onClick={props.onRetry} title="重试这一轮">
+                <Icon name="refresh" size={13} />
+                <span>重试</span>
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     );
   }

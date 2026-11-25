@@ -152,7 +152,8 @@ export default function App() {
           <span className="brand-copy"><b>栖造</b><span>NESTCRAFT</span></span>
         </div>
         <span className="nc-top-sep" />
-        <span className="nc-context">个人工作台<span>/</span>{route.page === "project" || route.page === "server" || route.page === "knowledge-lib" ? windowTitle(route) : NAV_ITEMS.find(item => item.page === activePage)?.label}</span>
+        {/* CR-087：面包屑第一段由固定文案「个人工作台」改为小房子（home）图标；可读名称由 aria-label/title 提供。 */}
+        <span className="nc-context"><span className="nc-context-home" role="img" aria-label="个人工作台" title="个人工作台"><Icon name="home" size={14} /></span><span>/</span>{route.page === "project" || route.page === "server" || route.page === "knowledge-lib" ? windowTitle(route) : NAV_ITEMS.find(item => item.page === activePage)?.label}</span>
         <div className="nc-window-drag" title={chrome.native ? "拖动窗口；双击最大化或还原" : "窗口拖动热区（预览）"} onPointerDown={event => { if (event.button === 0 && event.detail < 2) void chrome.act("drag"); }} onDoubleClick={() => void chrome.act("maximize")} />
         <UpdateBadge />
         <button className="chat-iconbtn" aria-label="切换主题" title="切换主题" onClick={toggleTheme}><Icon name={theme === "dark" ? "sun" : "moon"} /></button>

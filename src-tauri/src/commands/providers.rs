@@ -72,7 +72,7 @@ fn secrets_write_path(path: &Path, map: &BTreeMap<String, String>) -> Result<(),
 fn mask_secret(s: &str) -> String {
     let chars: Vec<char> = s.chars().collect();
     if chars.len() <= 8 {
-        return "*".repeat(chars.len());
+        return if chars.len() < 2 { "****".into() } else { format!("{}****{}", chars[0], chars[chars.len()-1]) };
     }
     let head: String = chars[..4].iter().collect();
     let tail: String = chars[chars.len() - 4..].iter().collect();
@@ -83,7 +83,7 @@ fn mask_secret(s: &str) -> String {
 
 pub(crate) fn load_providers_inner(conn: &rusqlite::Connection) -> Result<Vec<Provider>, String> {
     let mut stmt = conn
-        .prepare("SELECT id, name, protocol, disabled, headersJson, fingerprintJson FROM provider ORDER BY createdAt")
+        .prepare("SELECT id, name, protocol, disabled, headersJson, fingerprintJson, apiMode, sortOrder FROM provider ORDER BY sortOrder, createdAt, id")
         .map_err(|e| e.to_string())?;
     let mut providers: Vec<Provider> = stmt
         .query_map([], |r| {
@@ -91,6 +91,8 @@ pub(crate) fn load_providers_inner(conn: &rusqlite::Connection) -> Result<Vec<Pr
                 id: r.get(0)?,
                 name: r.get(1)?,
                 protocol: r.get(2)?,
+                api_mode: r.get::<_, String>(6).map(|m| if m.is_empty() { if r.get::<_, String>(2).unwrap_or_default() == "anthropic" { "Anthropic".into() } else { "Chat".into() } } else { m })?,
+                sort_order: r.get(7)?,
                 disabled: r.get::<_, i64>(3)? != 0,
                 headers_json: r.get(4)?,
                 fingerprint_json: r.get(5)?,
@@ -187,6 +189,10 @@ pub fn provider_list(app: tauri::AppHandle) -> Result<Vec<Provider>, String> {
 #[serde(rename_all = "camelCase")]
 pub struct ProviderDraft {
     pub id: Option<String>,
+    #[serde(default)]
+    pub create_id: Option<String>,
+    #[serde(default)]
+    pub api_mode: Option<String>,
     pub name: String,
     pub protocol: String,
     pub disabled: bool,
@@ -294,6 +300,11 @@ fn save_provider_inner(
     secrets: &mut BTreeMap<String, String>,
     write_secrets: impl FnOnce(&BTreeMap<String, String>) -> Result<(), String>,
 ) -> Result<String, String> {
+    if draft.id.is_some() && draft.create_id.is_some() { return Err("创建ID与更新身份不能同时指定".into()); }
+    let mode = draft.api_mode.as_deref().unwrap_or(if draft.protocol == "anthropic" { "Anthropic" } else { "Chat" });
+    if !matches!(mode, "Chat" | "Responses" | "Anthropic") || (mode == "Anthropic") != (draft.protocol == "anthropic") {
+        return Err("默认协议与端点类型不一致".into());
+    }
     if draft.name.trim().is_empty() {
         return Err("供应商名称不能为空".into());
     }
@@ -301,15 +312,23 @@ fn save_provider_inner(
         return Err("协议必须是 anthropic 或 openai".into());
     }
     for m in &draft.models { validate_draft(m)?; }
-    for e in &draft.endpoints {
+    let mut endpoint_wires = BTreeSet::new();
+    for e in draft.endpoints.iter().filter(|e| !e.base_url.trim().is_empty()) {
+        if !endpoint_wires.insert(&e.protocol) { return Err("同一协议只能配置一个端点".into()); }
         models_url(&e.base_url)?;
         if e.protocol != "anthropic" && e.protocol != "openai" {
             return Err("端点协议必须是 anthropic 或 openai".into());
         }
     }
     let now = now_ms();
-    let pid = draft.id.clone().unwrap_or_else(|| new_id("prov"));
+    let pid = draft.id.clone().or_else(|| draft.create_id.as_deref().map(str::trim).filter(|id| !id.is_empty()).map(str::to_string)).unwrap_or_else(|| new_id("prov"));
+    if draft.id.is_none() && (pid.len() > 128 || !pid.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))) {
+        return Err("供应商ID仅允许字母、数字、短横线、下划线和点，最多128字符".into());
+    }
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    if draft.id.is_none() && tx.query_row("SELECT COUNT(*) FROM provider WHERE id=?1", [&pid], |r| r.get::<_, i64>(0)).map_err(|e| e.to_string())? != 0 {
+        return Err("供应商 ID 已存在".into());
+    }
     check_owned_ids(&tx, "provider_key", &pid, draft.keys.iter().map(|k| k.id.as_deref()))?;
     check_owned_ids(&tx, "provider_endpoint", &pid, draft.endpoints.iter().map(|e| e.id.as_deref()))?;
     check_owned_ids(&tx, "model", &pid, draft.models.iter().map(|m| m.id.as_deref()))?;
@@ -339,6 +358,10 @@ fn save_provider_inner(
             rusqlite::params![pid, draft.name.trim(), draft.protocol, draft.disabled as i64, draft.headers_json, now],
         ).map_err(|e| e.to_string())?;
     }
+    tx.execute("UPDATE provider SET apiMode=?2 WHERE id=?1", rusqlite::params![pid, mode]).map_err(|e| e.to_string())?;
+    if draft.id.is_none() {
+        tx.execute("UPDATE provider SET sortOrder=(SELECT COALESCE(MAX(sortOrder),-1)+1 FROM provider WHERE id<>?1) WHERE id=?1", [&pid]).map_err(|e| e.to_string())?;
+    }
     // 子表仅替换目标供应商，事务内任一步失败都保留原配置。
     // 新密钥用新引用：DB 提交前写入的是旧+新密钥全集，失败/崩溃不破坏旧引用。
     let mut next_secrets = secrets.clone();
@@ -354,7 +377,7 @@ fn save_provider_inner(
             }
             None => match old {
                 Some((secret_ref, masked, _)) => (secret_ref.clone(), masked.clone()),
-                None => (new_id("secret"), String::new()),
+                None => return Err("新密钥不能为空".into()),
             },
         };
         if !matches!(k.protocol.as_str(), "" | "Chat" | "Responses" | "Anthropic") {
@@ -370,11 +393,11 @@ fn save_provider_inner(
         ).map_err(|e| e.to_string())?;
     }
     tx.execute("DELETE FROM provider_endpoint WHERE providerId=?1", [&pid]).map_err(|e| e.to_string())?;
-    for e in &draft.endpoints {
+    for e in draft.endpoints.iter().filter(|e| !e.base_url.trim().is_empty()) {
         let eid = e.id.clone().unwrap_or_else(|| new_id("ep"));
         tx.execute(
             "INSERT INTO provider_endpoint (id, providerId, protocol, baseUrl, enabled, createdAt) VALUES (?1,?2,?3,?4,?5,?6)",
-            rusqlite::params![eid, pid, e.protocol, e.base_url.trim(), e.enabled as i64, now],
+            rusqlite::params![eid, pid, e.protocol, e.base_url.trim(), 1_i64, now],
         ).map_err(|e| e.to_string())?;
     }
     tx.execute("DELETE FROM model WHERE providerId=?1", [&pid]).map_err(|e| e.to_string())?;
@@ -413,6 +436,59 @@ fn provider_secret_refs(conn: &rusqlite::Connection, id: &str) -> Result<Vec<Str
     let mut stmt = conn.prepare("SELECT secretRef FROM provider_key WHERE providerId=?1").map_err(|e| e.to_string())?;
     let rows = stmt.query_map([id], |r| r.get(0)).map_err(|e| e.to_string())?;
     rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+}
+
+fn key_secret_ref(conn: &rusqlite::Connection, provider_id: &str, key_id: &str) -> Result<String, String> {
+    conn.query_row("SELECT secretRef FROM provider_key WHERE providerId=?1 AND id=?2",
+        rusqlite::params![provider_id, key_id], |r| r.get(0)).map_err(|_| "密钥不存在或不属于该供应商".into())
+}
+
+/// 仅响应用户主动编辑/复制；列表、日志和提示中均不返回明文。
+#[tauri::command]
+pub fn provider_key_reveal(app: tauri::AppHandle, provider_id: String, key_id: String) -> Result<String, String> {
+    let reference = {
+        let guard = db::conn()?;
+        key_secret_ref(guard.as_ref().ok_or("db not initialized")?, &provider_id, &key_id)?
+    };
+    secrets_read(&app)?.get(&reference).cloned().ok_or("密钥值不可读取".into())
+}
+
+/// 独立事务只写顺序；完整唯一集合防止跨供应商、遗漏或部分更新。
+fn reorder_inner(conn: &rusqlite::Connection, provider_id: Option<&str>, ids: &[String]) -> Result<(), String> {
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let sql = if provider_id.is_some() { "SELECT id FROM model WHERE providerId=?1" } else { "SELECT id FROM provider" };
+    let expected: BTreeSet<String> = {
+        let mut stmt = tx.prepare(sql).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(provider_id.into_iter()), |r| r.get(0)).map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())?
+    };
+    if let Some(pid) = provider_id {
+        if tx.query_row("SELECT COUNT(*) FROM provider WHERE id=?1", [pid], |r| r.get::<_, i64>(0)).map_err(|e| e.to_string())? != 1 {
+            return Err("供应商不存在".into());
+        }
+    }
+    let supplied: BTreeSet<String> = ids.iter().cloned().collect();
+    if supplied.len() != ids.len() || supplied != expected { return Err("排序必须包含完整且唯一的当前ID集合，请刷新后重试".into()); }
+    for (index, id) in ids.iter().enumerate() {
+        if let Some(pid) = provider_id {
+            tx.execute("UPDATE model SET sortOrder=?3 WHERE providerId=?1 AND id=?2", rusqlite::params![pid, id, index as i64])
+        } else {
+            tx.execute("UPDATE provider SET sortOrder=?2 WHERE id=?1", rusqlite::params![id, index as i64])
+        }.map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn provider_reorder(ids: Vec<String>) -> Result<(), String> {
+    let guard = db::conn()?;
+    reorder_inner(guard.as_ref().ok_or("db not initialized")?, None, &ids)
+}
+
+#[tauri::command]
+pub fn provider_models_reorder(provider_id: String, ids: Vec<String>) -> Result<(), String> {
+    let guard = db::conn()?;
+    reorder_inner(guard.as_ref().ok_or("db not initialized")?, Some(&provider_id), &ids)
 }
 
 fn unreferenced_secrets(conn: &rusqlite::Connection, refs: Vec<String>) -> Result<Vec<String>, String> {
@@ -478,8 +554,12 @@ fn parse_discovered_models(bytes: &[u8]) -> Result<Vec<serde_json::Value>, Strin
         let display = row.get("display_name").and_then(|v| v.as_str())
             .filter(|s| !s.trim().is_empty() && s.len() <= 512).unwrap_or(id);
         // 模型列表通常不提供这些能力字段，禁止依据名称猜测。
-        out.push(serde_json::json!({ "modelId": id, "displayName": display,
-            "contextWindow": null, "vision": null, "thinking": null }));
+        let (text, vision, image_gen) = modality_signal(row);
+        let thinking = reasoning_signal(row);
+        // 只透传已归一化能力，不把上游任意字段带回前端。
+        out.push(serde_json::json!({ "id": id, "modelId": id, "displayName": display, "display_name": display,
+            "contextWindow": null, "text": text, "vision": vision, "imageGen": image_gen,
+            "supports_reasoning": thinking, "thinking": thinking }));
     }
     Ok(out)
 }
@@ -544,7 +624,7 @@ async fn provider_listing_rows(app: &tauri::AppHandle, provider_id: &str) -> Res
     }).await.map_err(|_| "模型发现任务异常".to_string())?
 }
 
-/// 模型发现（只返回清单字段，不含思考等级/模态，CR-059 B1）。
+/// 模型发现不等待额外能力查询；明确上游信号归一化保留，未知不猜。
 #[tauri::command]
 pub async fn provider_discover_models(app: tauri::AppHandle, provider_id: String) -> Result<Vec<serde_json::Value>, String> {
     provider_listing_rows(&app, &provider_id).await
@@ -564,6 +644,21 @@ pub struct EffortResolution {
     /// vendor / knowledge / vendor+knowledge / none
     pub source: String,
     pub note: Option<String>,
+    pub text: Option<bool>,
+    pub vision: Option<bool>,
+    pub image_gen: Option<bool>,
+    pub modality_source: Option<String>,
+}
+
+fn modality_signal(row: &serde_json::Value) -> (Option<bool>, Option<bool>, Option<bool>) {
+    let flag = |names: &[&str]| names.iter().find_map(|name| row.get(*name).and_then(|v| v.as_bool())
+        .or_else(|| row.get("capabilities").and_then(|c| c.get(*name)).and_then(|v| v.as_bool())));
+    let array = |key: &str| row.get(key).or_else(|| row.get("architecture").and_then(|v| v.get(key)))
+        .and_then(|v| v.as_array()).filter(|a| !a.is_empty() && a.iter().all(|v| v.is_string()));
+    let has = |items: Option<&Vec<serde_json::Value>>, kind: &str| items.map(|a| a.iter().any(|v| v.as_str() == Some(kind)));
+    (flag(&["text", "supports_text"]).or_else(|| has(array("input_modalities"), "text")),
+     flag(&["vision", "supports_vision"]).or_else(|| has(array("input_modalities"), "image")),
+     flag(&["imageGen", "image_gen", "supports_image_generation"]).or_else(|| has(array("output_modalities"), "image")))
 }
 
 /// 从上游 `/models` 列表读取的推理信号（三态：Some(true)/Some(false)/None=未知）。
@@ -603,11 +698,13 @@ fn resolve_efforts(ids: &[String], rows: &[serde_json::Value]) -> Vec<EffortReso
         let row = rows.iter().find(|r| r.get("id").and_then(|v| v.as_str()) == Some(model_id.as_str()));
         let display = row.and_then(|r| r.get("display_name").and_then(|v| v.as_str())).unwrap_or(model_id);
         let signal = row.and_then(reasoning_signal);
+        let (text, vision, image_gen) = row.map(modality_signal).unwrap_or((None, None, None));
+        let modality_source = if text.is_some() || vision.is_some() || image_gen.is_some() { Some("vendor".to_string()) } else { None };
         if signal == Some(false) {
             return EffortResolution {
                 model_id: model_id.clone(), efforts: EffortMap::new(), default_effort: None,
                 context_window: None, max_tokens: None, source: "vendor".into(),
-                note: Some("上游明确声明不支持推理".into()),
+                note: Some("上游明确声明不支持推理".into()), text, vision, image_gen, modality_source,
             };
         }
         if let Some(entry) = crate::commands::think_kb::match_entry(model_id, display) {
@@ -620,20 +717,20 @@ fn resolve_efforts(ids: &[String], rows: &[serde_json::Value]) -> Vec<EffortReso
                 max_tokens: entry.max_tokens,
                 efforts,
                 source: if signal == Some(true) { "vendor+knowledge".into() } else { "knowledge".into() },
-                note: entry.note.map(str::to_string),
+                note: entry.note.map(str::to_string), text, vision, image_gen, modality_source,
             };
         }
         if signal == Some(true) {
             return EffortResolution {
                 model_id: model_id.clone(), efforts: generic_ladder(), default_effort: None,
                 context_window: None, max_tokens: None, source: "vendor".into(),
-                note: Some("上游确认支持推理，使用通用阶梯（中置信），请核实下发拼写".into()),
+                note: Some("上游确认支持推理，使用通用阶梯（中置信），请核实下发拼写".into()), text, vision, image_gen, modality_source,
             };
         }
         EffortResolution {
             model_id: model_id.clone(), efforts: EffortMap::new(), default_effort: None,
             context_window: None, max_tokens: None, source: "none".into(),
-            note: Some("供应商与内置知识库均未提供可信档位，请手动配置".into()),
+            note: Some("供应商与内置知识库均未提供可信档位，请手动配置".into()), text, vision, image_gen, modality_source,
         }
     }).collect()
 }
@@ -887,17 +984,17 @@ mod tests {
     fn database() -> rusqlite::Connection {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON;
-            CREATE TABLE provider(id TEXT PRIMARY KEY,name TEXT,protocol TEXT,disabled INTEGER,headersJson TEXT,createdAt INTEGER,updatedAt INTEGER);
+            CREATE TABLE provider(id TEXT PRIMARY KEY,name TEXT,protocol TEXT,disabled INTEGER,headersJson TEXT,createdAt INTEGER,updatedAt INTEGER,apiMode TEXT NOT NULL DEFAULT '',sortOrder INTEGER NOT NULL DEFAULT 0);
             CREATE TABLE provider_key(id TEXT PRIMARY KEY,providerId TEXT REFERENCES provider(id) ON DELETE CASCADE,alias TEXT,secretRef TEXT,masked TEXT,enabled INTEGER,createdAt INTEGER,protocol TEXT NOT NULL DEFAULT '',modelsJson TEXT,scopeSource TEXT,probedAt INTEGER);
             CREATE TABLE provider_endpoint(id TEXT PRIMARY KEY,providerId TEXT REFERENCES provider(id) ON DELETE CASCADE,protocol TEXT,baseUrl TEXT,enabled INTEGER,createdAt INTEGER);
             CREATE TABLE model(id TEXT PRIMARY KEY,providerId TEXT REFERENCES provider(id) ON DELETE CASCADE,modelId TEXT,displayName TEXT,text INTEGER,vision INTEGER,imageGen INTEGER,effortsJson TEXT,defaultEffort TEXT,contextWindow INTEGER,maxTokens INTEGER,sortOrder INTEGER NOT NULL DEFAULT 0,createdAt INTEGER,UNIQUE(providerId,modelId));
-            INSERT INTO provider VALUES('p1','one','openai',0,NULL,1,1),('p2','two','openai',0,NULL,1,1);
+            INSERT INTO provider(id,name,protocol,disabled,headersJson,createdAt,updatedAt) VALUES('p1','one','openai',0,NULL,1,1),('p2','two','openai',0,NULL,1,1);
             INSERT INTO provider_key VALUES('key-one','p1',NULL,'custom-ref','masked',1,1,'','[]',NULL,NULL),('key-two','p2',NULL,'key-two','other-mask',1,1,'','[]',NULL,NULL);").unwrap();
         conn
     }
 
     fn draft(secret: Option<&str>) -> ProviderDraft {
-        ProviderDraft { id: Some("p1".into()), name: "updated".into(), protocol: "openai".into(), disabled: false,
+        ProviderDraft { create_id: None, api_mode: None, id: Some("p1".into()), name: "updated".into(), protocol: "openai".into(), disabled: false,
             headers_json: None, keys: vec![KeyDraft { id: Some("key-one".into()), alias: None, secret: secret.map(str::to_string), enabled: false, protocol: String::new(), models: vec![], scope_source: None }],
             endpoints: vec![], models: vec![] }
     }
@@ -974,11 +1071,86 @@ mod tests {
         assert!(models[0]["thinking"].is_null());
         assert!(parse_discovered_models(&vec![b' '; MAX_MODELS_BODY as usize + 1]).is_err());
     }
+
+    #[test]
+    fn cr085_creation_identity_rejects_duplicates_and_missing_updates() {
+        let conn = database();
+        let mut secrets = BTreeMap::new();
+        let mut d = draft(None); d.id = None; d.create_id = Some("p1".into()); d.keys.clear();
+        assert!(save_provider_inner(&conn, d, &mut secrets, |_| panic!("must not write")).unwrap_err().contains("已存在"));
+        let mut d = draft(None); d.id = Some("missing".into()); d.keys.clear();
+        assert!(save_provider_inner(&conn, d, &mut secrets, |_| panic!("must not write")).unwrap_err().contains("不存在"));
+        let mut d = draft(None); d.create_id = Some("another".into());
+        assert!(save_provider_inner(&conn, d, &mut secrets, |_| panic!("must not write")).is_err());
+        for mode in ["Chat", "Responses"] {
+            let mut d = draft(None); d.id = None; d.create_id = Some(format!("custom-{mode}")); d.api_mode = Some(mode.into()); d.keys.clear();
+            let id = save_provider_inner(&conn, d, &mut secrets, |_| Ok(())).unwrap();
+            assert_eq!(conn.query_row("SELECT apiMode FROM provider WHERE id=?1", [&id], |r| r.get::<_, String>(0)).unwrap(), mode);
+        }
+        let mut d = draft(None); d.id = None; d.keys.clear();
+        assert!(save_provider_inner(&conn, d, &mut secrets, |_| Ok(())).unwrap().starts_with("prov"));
+        assert_eq!(conn.query_row("SELECT name FROM provider WHERE id='p1'", [], |r| r.get::<_, String>(0)).unwrap(), "one");
+    }
+
+    #[test]
+    fn cr085_endpoint_content_enables_and_blank_is_omitted() {
+        let conn = database();
+        let mut d = draft(None);
+        d.endpoints = vec![EndpointDraft { id: None, protocol: "openai".into(), base_url: "https://demo.invalid/v1".into(), enabled: false },
+            EndpointDraft { id: None, protocol: "anthropic".into(), base_url: " ".into(), enabled: true }];
+        save_provider_inner(&conn, d, &mut BTreeMap::new(), |_| Ok(())).unwrap();
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM provider_endpoint", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+        assert_eq!(conn.query_row("SELECT enabled FROM provider_endpoint", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+        let mut d = draft(None);
+        d.endpoints = (0..2).map(|_| EndpointDraft { id: None, protocol: "openai".into(), base_url: "https://demo.invalid".into(), enabled: true }).collect();
+        assert!(save_provider_inner(&conn, d, &mut BTreeMap::new(), |_| panic!("must not write")).is_err());
+    }
+
+    #[test]
+    fn cr085_key_reveal_checks_owner_and_short_mask_never_exposes_full_value() {
+        let conn = database();
+        assert_eq!(key_secret_ref(&conn, "p1", "key-one").unwrap(), "custom-ref");
+        assert!(key_secret_ref(&conn, "p1", "key-two").is_err());
+        assert!(key_secret_ref(&conn, "missing", "key-one").is_err());
+        assert_eq!(mask_secret("ab"), "a****b");
+        assert_eq!(mask_secret("a"), "****");
+        assert_eq!(mask_secret("demo-not-real-key-tail"), "demo****tail");
+    }
+
+    #[test]
+    fn cr085_sort_validates_complete_unique_sets_and_rolls_back_partial_failure() {
+        let conn = route_database();
+        insert_provider(&conn, "p1", "openai", false); insert_provider(&conn, "p2", "openai", false);
+        insert_model(&conn, "m1", "p1", "one", true, false); insert_model(&conn, "m2", "p1", "two", true, false);
+        insert_model(&conn, "foreign", "p2", "three", true, false);
+        let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        reorder_inner(&conn, None, &ids(&["p2", "p1"])).unwrap();
+        assert_eq!(load_providers_inner(&conn).unwrap()[0].id, "p2");
+        assert!(reorder_inner(&conn, None, &ids(&["p1", "p1"])).is_err());
+        assert!(reorder_inner(&conn, None, &ids(&["p1"])).is_err());
+        assert!(reorder_inner(&conn, Some("p1"), &ids(&["m1", "foreign"])).is_err());
+        reorder_inner(&conn, Some("p1"), &ids(&["m2", "m1"])).unwrap();
+        assert_eq!(load_providers_inner(&conn).unwrap()[1].models[0].id, "m2");
+        conn.execute_batch("CREATE TRIGGER reject_order BEFORE UPDATE OF sortOrder ON model WHEN NEW.id='m2' BEGIN SELECT RAISE(ABORT,'synthetic'); END;").unwrap();
+        assert!(reorder_inner(&conn, Some("p1"), &ids(&["m1", "m2"])).is_err());
+        assert_eq!(load_providers_inner(&conn).unwrap()[1].models[0].id, "m2");
+    }
+
+    #[test]
+    fn cr085_discovery_preserves_trusted_signals_and_never_infers_from_name() {
+        let rows = parse_discovered_models(br#"{"data":[{"id":"unknown-vision-thinking"},{"id":"explicit","supports_reasoning":true,"input_modalities":["text","image"],"output_modalities":["text"],"secret":"must-not-return"}]}"#).unwrap();
+        assert!(rows[0]["vision"].is_null());
+        assert!(rows[1].get("secret").is_none());
+        let hits = resolve_efforts(&["unknown-vision-thinking".into(), "explicit".into()], &rows);
+        assert_eq!(hits[0].modality_source, None); assert!(hits[0].efforts.is_empty());
+        assert_eq!((hits[1].text, hits[1].vision, hits[1].image_gen), (Some(true), Some(true), Some(false)));
+        assert_eq!(hits[1].modality_source.as_deref(), Some("vendor")); assert!(!hits[1].efforts.is_empty());
+    }
     /// CR-068 J06：路由回归使用独立内存库，secretRef 只写不可执行占位，测试绝不读取凭据。
     fn route_database() -> rusqlite::Connection {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON;
-            CREATE TABLE provider(id TEXT PRIMARY KEY,name TEXT,protocol TEXT,disabled INTEGER,headersJson TEXT,fingerprintJson TEXT,createdAt INTEGER,updatedAt INTEGER);
+            CREATE TABLE provider(id TEXT PRIMARY KEY,name TEXT,protocol TEXT,disabled INTEGER,headersJson TEXT,fingerprintJson TEXT,createdAt INTEGER,updatedAt INTEGER,apiMode TEXT NOT NULL DEFAULT '',sortOrder INTEGER NOT NULL DEFAULT 0);
             CREATE TABLE provider_key(id TEXT PRIMARY KEY,providerId TEXT REFERENCES provider(id) ON DELETE CASCADE,alias TEXT,secretRef TEXT,masked TEXT,enabled INTEGER,createdAt INTEGER,protocol TEXT NOT NULL DEFAULT '',modelsJson TEXT,scopeSource TEXT,probedAt INTEGER);
             CREATE TABLE provider_endpoint(id TEXT PRIMARY KEY,providerId TEXT REFERENCES provider(id) ON DELETE CASCADE,protocol TEXT,baseUrl TEXT,enabled INTEGER,createdAt INTEGER);
             CREATE TABLE model(id TEXT PRIMARY KEY,providerId TEXT REFERENCES provider(id) ON DELETE CASCADE,modelId TEXT,displayName TEXT,text INTEGER,vision INTEGER,imageGen INTEGER,effortsJson TEXT,defaultEffort TEXT,contextWindow INTEGER,maxTokens INTEGER,sortOrder INTEGER NOT NULL DEFAULT 0,createdAt INTEGER,UNIQUE(providerId,modelId));")

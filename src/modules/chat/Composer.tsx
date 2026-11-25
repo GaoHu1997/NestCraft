@@ -7,6 +7,7 @@ import type { OfficeFileRef } from "./MessageList";
 import { useChatOverlay } from "./overlay";
 
 import { AttachmentImages, imageTypes, maxImages, readImage } from "./AttachmentImages";
+import { ComposerHat } from "./ComposerHat";
 import "./composer-reference.css";
 
 interface DraftExtras { refs: ContextRef[]; atts: AttachmentMeta[] }
@@ -67,12 +68,24 @@ export function Composer(props: {
   value: string;
   streaming: boolean;
   disabled?: boolean;
+  /** 编辑消息模式：只影响占位提示，提交仍走 onSend（由 ChatPanel 负责按编辑后文本重发）。 */
+  editingMessage?: boolean;
   controls?: ReactNode;
   renderControls?: (controls: { add: ReactNode; send: ReactNode }) => ReactNode;
   onChange: (v: string) => void;
   onSend: (text: string, refs: ContextRef[], atts: AttachmentMeta[]) => Promise<boolean>;
   onStop: () => void | Promise<void>;
   runner?: "cli" | "platform";
+  /** CR-079：会话框顶部帽子栏（运行通道、分支、worktree）；缺省不渲染。 */
+  hat?: {
+    branch: string | null;
+    branches: { name: string; current: boolean }[];
+    worktree: boolean;
+    platformAvailable: boolean;
+    locked?: boolean;
+    onRunnerChange: (next: "cli" | "platform") => void;
+    onWorktreeChange: (next: boolean) => void;
+  };
   cliId?: string | null;
   onCreateGoal?: (text: string) => void;
   onOpenGoal?: () => void;
@@ -82,7 +95,6 @@ export function Composer(props: {
   const [busy, setBusy] = useState(false);
   const [imageError, setImageError] = useState("");
   const [query, setQuery] = useState("");
-  const [tab, setTab] = useState<"add" | "cmd">("add");
   const textarea = useRef<HTMLTextAreaElement>(null);
   const composing = useRef(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -108,6 +120,27 @@ export function Composer(props: {
     const ta = textarea.current;
     if (ta) { ta.style.height = "auto"; ta.style.height = `${Math.max(36, Math.min(336, ta.scrollHeight))}px`; }
   }, [props.value]);
+  // 打开系统文件选择器，把所选文件的完整绝对路径插入到光标处（只插路径，不上传/复制文件内容）。
+  const insertLocalFiles = async () => {
+    const ta = textarea.current;
+    const from = range.current?.from ?? ta?.selectionStart ?? value.current.length;
+    const to = range.current?.to ?? ta?.selectionEnd ?? value.current.length;
+    overlay.close(false);
+    range.current = null;
+    let paths: string[];
+    try { paths = await api.pickLocalFiles(); }
+    catch (error) { setImageError(error instanceof Error ? error.message : "打开文件选择器失败"); return; }
+    if (!paths.length) return;
+    const token = paths.length === 1 ? `${paths[0]} ` : paths.join("\n") + "\n";
+    props.onChange(value.current.slice(0, from) + token + value.current.slice(to));
+    const key = props.scopeKey;
+    requestAnimationFrame(() => {
+      if (scope.current !== key) return;
+      textarea.current?.focus({ preventScroll: true });
+      const pos = from + token.length;
+      textarea.current?.setSelectionRange(pos, pos);
+    });
+  };
   const doSend = async () => {
     const text = props.value.trim();
     if (!canSend || props.disabled || sending.current) return;
@@ -178,30 +211,32 @@ export function Composer(props: {
   };
   const isPicker = overlay.activeOverlay === "@" || overlay.activeOverlay === "/";
   const options = () => visibleReferenceRows(overlay.scopeRef.current?.querySelector(`[data-chat-overlay="${overlay.activeOverlay}"]`));
-  const addControl = <button type="button" className="chat-ctl-chip icon-only" data-chat-overlay-trigger="+" title="添加" aria-label="添加" aria-expanded={overlay.activeOverlay === "+"} onClick={e => { setTab("add"); overlay.toggle("+", e.currentTarget); }}><Icon name="plus" /></button>;
+  const addControl = <button type="button" className="chat-ctl-chip icon-only" data-chat-overlay-trigger="+" title="添加" aria-label="添加" aria-expanded={overlay.activeOverlay === "+"} onClick={e => { overlay.toggle("+", e.currentTarget); }}><Icon name="plus" /></button>;
   const sendControl = <button type="button" className="chat-send" aria-label={stop ? "停止" : "发送"} title={stop ? "停止" : props.streaming ? "按设定立即发送或排队" : "发送"} disabled={busy || props.disabled || !canSend && !stop || hasImages && !imageEnabled} onClick={() => { if (stop) void props.onStop(); else void doSend(); }}><Icon name={stop ? "stop" : "arrowUp"} /></button>;
   return <>
     {overlay.activeOverlay === "+" && <div className="chat-refpop chat-addpop" data-chat-overlay="+" role="dialog" aria-label="添加与指令">
-      <div className="chat-menu-tabs" role="tablist">{(["add", "cmd"] as const).map(t => <button type="button" role="tab" aria-selected={tab === t} className={tab === t ? "on" : ""} key={t} onClick={() => setTab(t)}>{t === "add" ? "添加" : "指令"}</button>)}</div>
-      <div className="chat-refpop-body">{tab === "add" ? <>
-        <button type="button" className="chat-menu-row" onClick={() => openMenu("@")}>引用文件或资料</button>
-        {imageEnabled ? <button type="button" className="chat-menu-row" disabled={props.disabled} onClick={() => { overlay.close(true); fileInput.current?.click(); }}>添加图片</button> : <Unavailable name="添加图片" reason="当前通道暂不支持图片" />}
-      </> : <>
-        <button type="button" className="chat-menu-row" disabled={overlay.getTrigger("perm")?.disabled} onClick={() => overlay.open("perm")}>权限</button>
-        <button type="button" className="chat-menu-row" disabled={overlay.getTrigger("model")?.disabled} onClick={() => overlay.open("model")}>模型</button>
-        <button type="button" className="chat-menu-row" onClick={() => openMenu("/")}>能力与指令</button>
+      <div className="chat-refpop-body">
+        <div className="chat-menu-section-head">添加</div>
+        <MenuRow icon={<Icon name="file" size={15} />} label="文件" keyword="file" desc="插入本地文件完整路径" onClick={() => void insertLocalFiles()} />
+        <MenuRow icon={<Icon name="image" size={15} />} label="图片" keyword="image" desc={imageEnabled ? "添加图片附件" : "当前通道不支持图片"} disabled={!imageEnabled || props.disabled} onClick={() => { overlay.close(true); fileInput.current?.click(); }} />
+        {(props.onCreateGoal || props.onOpenGoal) && <MenuRow icon={<Icon name="target" size={15} />} label="目标" keyword="goal" desc="/目标 命令，设置或查看长期任务目标" onClick={() => insertToken("/goal ")} />}
+        <div className="chat-menu-section-head">指令</div>
+        <MenuRow icon={<Icon name="shield" size={15} />} label="权限" keyword="permission" desc="切换权限预设" disabled={overlay.getTrigger("perm")?.disabled} onClick={() => overlay.open("perm")} />
+        <MenuRow icon={<Icon name="cpu" size={15} />} label="模型" keyword="model" desc="选择本会话使用的模型" disabled={overlay.getTrigger("model")?.disabled} onClick={() => overlay.open("model")} />
+        <MenuRow icon={<Icon name="command" size={15} />} label="能力与指令" keyword="commands" desc="进入 / 指令与技能列表" onClick={() => openMenu("/")} />
         <Unavailable name="下载日志" reason="ZIP 导出未接入" />
-      </>}</div>
+      </div>
     </div>}
     {(overlay.activeOverlay === "@" || overlay.activeOverlay === "/") && <ReferencePopover key={overlay.activeOverlay} trigger={overlay.activeOverlay} query={query} rootUri={props.rootUri} projectId={props.projectId} serverId={props.serverId} office={props.office} officeFiles={props.officeFiles} sessions={props.sessions} onSessionSearch={props.onSessionSearch} onPick={pick} onGoal={props.onCreateGoal || props.onOpenGoal ? () => insertToken("/goal ") : undefined} focusSearch={range.current === null} />}
     <div className="chat-composer" onDragOver={e => { if (imageEnabled && e.dataTransfer.types.includes("Files")) e.preventDefault(); }} onDrop={e => { if (!imageEnabled || !e.dataTransfer.files.length) return; e.preventDefault(); void addImages(Array.from(e.dataTransfer.files)); }}>
+      {props.hat && <ComposerHat runner={props.runner ?? "cli"} platformAvailable={props.hat.platformAvailable} branch={props.hat.branch} branches={props.hat.branches} worktree={props.hat.worktree} locked={props.hat.locked} onRunnerChange={props.hat.onRunnerChange} onWorktreeChange={props.hat.onWorktreeChange} />}
       {draft.refs.length > 0 && <div className="chat-chips">
         {draft.refs.map(r => <span className="chat-chip" key={`${r.kind}-${r.objectId}-${r.libraryId ?? ""}`}><span className="ellipsis">{r.display}</span><button type="button" className="chat-chip-x" aria-label={`移除引用 ${r.display}`} onClick={() => setDraft(props.scopeKey, { ...draft, refs: draft.refs.filter(x => x !== r) })}><Icon name="x" size={12} /></button></span>)}
       </div>}
       <AttachmentImages key={props.scopeKey} attachments={draft.atts} onRemove={i => { setDraft(props.scopeKey, { ...draft, atts: draft.atts.filter((_, j) => j !== i) }); setImageError(""); }} />
       {(imageError || hasImages && !imageEnabled) && <div className="chat-composer-error small" role="alert">{imageError || blockedImage}</div>}
       <textarea ref={textarea} className="chat-ta" data-chat-overlay-trigger="input" rows={1}
-        placeholder={props.office ? "描述办公意图，/ 调用指令，@ 项目资料或对话" : "描述你想构建的内容，/ 调用指令，@ 文件或对话"}
+        placeholder={props.editingMessage ? "正在编辑消息：修改后按 Enter 作为新回合发送" : props.office ? "描述办公意图，/ 调用指令，@ 项目资料或对话" : "描述你想构建的内容，/ 调用指令，@ 文件或对话"}
         value={props.value}
         onChange={e => { props.onChange(e.currentTarget.value); if (!composing.current && !(e.nativeEvent as InputEvent).isComposing) updateTrigger(e.currentTarget); }}
         onCompositionStart={() => { composing.current = true; }}
@@ -236,6 +271,15 @@ export function Composer(props: {
 
 function Unavailable({ name, reason }: { name: string; reason: string }) { return <div className="chat-unavailable-row"><button className="chat-menu-row" disabled title={`不可用：${reason}`}>{name}<span className="chat-cap">不可用</span></button><span>{reason}</span></div>; }
 
+/** DSH 式菜单行：左图标 + 名称 + 英文关键词 + 右侧说明；键盘/鼠标聚焦即高亮。 */
+function MenuRow({ icon, label, keyword, desc, disabled, onClick }: { icon: ReactNode; label: string; keyword?: string; desc?: string; disabled?: boolean; onClick?: () => void }) {
+  return <button type="button" className="chat-menu-row chat-menu-row-rich" disabled={disabled} onClick={onClick}>
+    <span className="chat-menu-row-ico" aria-hidden>{icon}</span>
+    <span className="chat-menu-row-label">{label}{keyword && <span className="chat-menu-row-kw">{keyword}</span>}</span>
+    {desc && <span className="chat-menu-row-desc">{desc}</span>}
+  </button>;
+}
+
 function ReferencePopover(props: {
   trigger: "@" | "/";
   query: string;
@@ -252,7 +296,9 @@ function ReferencePopover(props: {
 }) {
   const [q, setQ] = useState(props.query);
   const searchComposing = useRef(false);
-  const [files, setFiles] = useState<FileNode[]>([]);
+  const [dirEntries, setDirEntries] = useState<FileNode[]>([]);
+  const [dirRel, setDirRel] = useState("");
+  const [dirBusy, setDirBusy] = useState(false);
   const [skills, setSkills] = useState<SkillEntry[]>([]);
   const [mcps, setMcps] = useState<McpServer[]>([]);
   const [tools, setTools] = useState<ToolEntry[]>([]);
@@ -271,20 +317,29 @@ function ReferencePopover(props: {
           const [ss, mm, tt] = await Promise.all([api.skillList(), api.mcpList(), api.toolList()]);
           if (alive) { setSkills(ss.filter(s => s.enabled)); setMcps(mm.filter(m => m.enabled)); setTools(tt.filter(t => t.enabled)); }
         } else {
-          const treePromise = !props.office && props.rootUri ? api.fsListTree(props.rootUri, 6) : Promise.resolve([] as FileNode[]);
           const libPromise = props.projectId ? Promise.all([api.kbList(), api.kbGrants(props.projectId)]).then(([ll, gg]) => {
             const allowed = new Set(gg.filter(g => g.readAllowed).map(g => g.libraryId));
             return ll.filter(l => l.enabled && allowed.has(l.id));
           }) : Promise.resolve([] as KnowledgeLibrary[]); // 无 project 身份默认拒绝
-          const [ff, ll] = await Promise.all([treePromise, libPromise]);
+          const ll = await libPromise;
           const nn = (await Promise.all(ll.map(async lib => ({ lib, tree: await api.kbTree(lib.id) })))).flatMap(({ lib, tree }) => flatten(tree).map(note => ({ lib, note })));
-          if (alive) { setFiles(ff.filter(f => !f.isDir)); setLibs(ll); setNotes(nn); }
+          if (alive) { setLibs(ll); setNotes(nn); }
         }
       } catch (e) { if (alive) setError(String(e)); }
       finally { if (alive) setLoading(false); }
     };
     void load(); return () => { alive = false; };
   }, [props.trigger, props.projectId, props.rootUri, props.office]);
+  // @ 项目文件：单层 fsListDir 逐层进入，避免一次平铺整棵树造成目录喧宾夺主。
+  useEffect(() => {
+    if (props.trigger !== "@" || props.office || !props.rootUri) { setDirEntries([]); return; }
+    let alive = true; setDirBusy(true);
+    api.fsListDir(props.rootUri, dirRel)
+      .then(rows => { if (alive) setDirEntries(rows); })
+      .catch(() => { if (alive) setDirEntries([]); })
+      .finally(() => { if (alive) setDirBusy(false); });
+    return () => { alive = false; };
+  }, [props.trigger, props.office, props.rootUri, dirRel]);
   const match = (text: string) => text.toLowerCase().includes(q.toLowerCase());
   // CR-063：会话候选按关键词向后端查询，未加载的老会话也能被引用；查询失败退回本地列表。
   const [sessionHits, setSessionHits] = useState<SessionMeta[] | null>(null);
@@ -310,16 +365,21 @@ function ReferencePopover(props: {
     return matchingTools.length ? [{ ...m, tools: matchingTools }] : [];
   });
   const officeRows = (props.officeFiles ?? []).filter(f => match(`${f.path} ${f.name}`));
-  const fileRows = files.filter(f => match(f.path));
+  const fileEntries = dirEntries.filter(f => match(f.name));
   const localSessionRows = props.sessions.filter(s => props.projectId ? s.projectId === props.projectId : !s.projectId && !s.serverId).filter(s => match(s.title));
   const sessionRows = props.onSessionSearch && sessionHits !== null ? sessionHits : localSessionRows;
   return <div className="chat-refpop" data-chat-overlay={props.trigger} role="dialog" aria-busy={loading} aria-label={props.trigger === "@" ? "引用浮层" : "能力与指令"}>
     <div className="chat-refpop-head"><span>{props.trigger}</span><input autoFocus={props.focusSearch} aria-label="筛选引用或能力" value={q} placeholder={props.trigger === "@" ? "筛选项目文件、对话、已授权知识" : "筛选 Skill / MCP / Tool"} onChange={e => setQ(e.target.value)} onCompositionStart={() => { searchComposing.current = true; }} onCompositionEnd={e => { searchComposing.current = false; setQ(e.currentTarget.value); }} onKeyDown={e => { if (searchComposing.current || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) { e.stopPropagation(); return; } if (e.key === "ArrowDown") { const first = visibleReferenceRows(e.currentTarget.closest(".chat-refpop"))[0]; if (first) { e.preventDefault(); first.focus(); } } }} /></div>
     <div className="chat-refpop-body" onKeyDown={e => { if (searchComposing.current || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) { e.stopPropagation(); return; } if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return; const target = e.target as HTMLElement; const current = target.closest<HTMLButtonElement>("button.chat-ref-row"); if (!current) return; const buttons = visibleReferenceRows(e.currentTarget); const index = buttons.indexOf(current); if (index < 0) return; const next = buttons[(index + (e.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length]; if (next) { e.preventDefault(); next.focus(); } }}>{loading && <div className="chat-menu-hint">加载中…</div>}{error && <div className="chat-menu-hint" role="alert">加载失败：{error}</div>}
       {props.trigger === "@" ? <>
-        <div className="chat-ref-group-title">项目文件</div>
-        {props.office ? officeRows.map(f => <button className="chat-ref-row" key={f.id} onClick={() => props.onPick({ kind: "file", objectId: `office:${f.id}`, display: f.path })}><span className="name">{f.name}</span><span className="sub">{f.path}</span></button>) : fileRows.map(f => <button className="chat-ref-row" key={f.path} onClick={() => props.onPick({ kind: "file", objectId: f.path, display: f.path })}><span className="name">{f.name}</span><span className="sub">{f.path}</span></button>)}
-        {!loading && !(props.office ? officeRows : fileRows).length && <div className="chat-menu-hint">暂无匹配项目文件</div>}
+        <div className="chat-ref-group-title">项目文件{!props.office && dirRel ? ` · ${dirRel}` : ""}</div>
+        {props.office ? officeRows.map(f => <button className="chat-ref-row" key={f.id} onClick={() => props.onPick({ kind: "file", objectId: `office:${f.id}`, display: f.path })}><span className="name">{f.name}</span><span className="sub">{f.path}</span></button>) : <>
+          {dirRel && <button className="chat-ref-row dir" onClick={() => setDirRel(dirRel.split("/").slice(0, -1).join("/"))}><span className="name">‹ 返回上级</span></button>}
+          {fileEntries.map(f => f.isDir
+            ? <button className="chat-ref-row" key={f.path} onClick={() => setDirRel(dirRel ? `${dirRel}/${f.name}` : f.name)}><span className="name">{f.name}/</span><span className="sub">进入目录</span></button>
+            : <button className="chat-ref-row" key={f.path} onClick={() => props.onPick({ kind: "file", objectId: f.path, display: f.path })}><span className="name">{f.name}</span><span className="sub">{f.path}</span></button>)}
+        </>}
+        {!loading && !dirBusy && !(props.office ? officeRows : fileEntries).length && <div className="chat-menu-hint">暂无匹配{dirRel ? "文件" : "项目文件"}</div>}
         <div className="chat-ref-group-title">当前项目会话</div>{sessionRows.map(s => <button className="chat-ref-row" key={s.id} onClick={() => props.onPick({ kind: "session", objectId: s.id, display: s.title })}><span className="name">{s.title}</span><span className="sub">引用仅本项目会话正文</span></button>)}
         {props.trigger === "@" && sessionBusy && <div className="chat-menu-hint">搜索会话中…</div>}
         {!sessionRows.length && !sessionBusy && <div className="chat-menu-hint">暂无匹配会话</div>}

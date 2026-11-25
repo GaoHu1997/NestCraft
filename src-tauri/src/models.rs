@@ -166,6 +166,10 @@ pub struct Provider {
     pub id: String,
     pub name: String,
     pub protocol: String, // anthropic | openai
+    #[serde(default)]
+    pub api_mode: String, // Chat | Responses | Anthropic
+    #[serde(default)]
+    pub sort_order: i64,
     pub disabled: bool,
     pub headers_json: Option<String>,
     pub fingerprint_json: Option<String>,
@@ -311,6 +315,9 @@ pub struct McpServer {
 pub struct McpToolInfo {
     pub name: String,
     pub description: Option<String>,
+    /// CR-086：MCP 工具的 inputSchema；旧缓存无此字段时按宽松对象处理。
+    #[serde(default)]
+    pub input_schema: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

@@ -10,6 +10,7 @@ import { SessionHistory, HistoryIcon } from "./SessionHistory";
 import type { HistoryLoading } from "./SessionHistory";
 import { SubagentPanel } from "./SubagentPanel";
 import { ModelPicker, effectiveEfforts, permissionSupported } from "./ModelPicker";
+import type { PlatformPermissionId } from "./ModelPicker";
 import { StatsBar } from "./StatsBar";
 import { projectSessionStats, parseSessionStatsSnapshot } from "./sessionStats";
 import type { PersistentSessionStats } from "./sessionStats";
@@ -20,7 +21,10 @@ import { addUsage, finishOnce, getRuntime, hydrateUsage, isCurrentTurn, markFirs
 import { officeFileContentText } from "@/modules/office/office-model";
 import { requestPanel } from "./panelRequest";
 import type { PanelKind, PanelRequest } from "./panelRequest";
+import { chatActionStatus } from "@/api/chat-actions";
+import type { ChatActionStatus } from "@/api/chat-actions";
 import "./chat.css";
+import "./chat-actions.css";
 
 interface ChatPanelProps {
   projectId?: string;
@@ -78,6 +82,8 @@ interface PendingSend {
 /** CR-037：原因码 → 中文摘要（横幅/弹窗共用；与后端 reason_text 口径一致）。 */
 const REASON_TEXT: Record<string, string> = {
   REF_MISSING: "引用缺失（历史无原生绑定）",
+  // BUG-003：CLI 无任何 turn 记录（首轮中断或旧版本历史）与「已结算未落引用」区分。
+  REF_NOT_ESTABLISHED: "尚无原生线程引用（首轮未完成或历史来自旧版本）",
   REF_STALE: "原线程引用已过期",
   REF_NOT_READY: "引用尚未就绪，请重试",
   INCOMPATIBLE_CLI: "CLI 或版本不兼容",
@@ -220,6 +226,12 @@ function Panel(props: PanelProps) {
   const [cur, setCur] = useState<SessionMeta | null>(null);
   // CR-069：新会话运行通道草稿；创建会话后以 meta.runner 为准。默认 cli（与后端一致）。
   const [runnerDraft, setRunnerDraft] = useState<"cli" | "platform">("cli");
+  // CR-079：助理（平台主代理）专属权限档位，与 CLI 档位分开；默认受限。
+  const [platformPermission, setPlatformPermission] = useState<PlatformPermissionId>("limited");
+  // CR-079：worktree 开关。本轮仅界面开关与提示，真实独立工作区执行由执行层后续接入。
+  const [worktree, setWorktree] = useState(false);
+  const [gitBranch, setGitBranch] = useState<string | null>(null);
+  const [gitBranches, setGitBranches] = useState<{ name: string; current: boolean }[]>([]);
   const [msgs, setMsgs] = useState<UiMessage[]>([]);
   const [statsSnapshot, setStatsSnapshot] = useState<PersistentSessionStats | null>(null);
   const statsReq = useRef(0);
@@ -230,6 +242,17 @@ function Panel(props: PanelProps) {
   const [permissionBySession, setPermissionBySession] = useState<Record<string, string>>({});
   const [sendMode, setSendMode] = useState<"queue" | "immediate">("queue");
   const [queued, setQueued] = useState(0);
+  // 队列面板：镜像本次会话的待发队列（真实来源仍是 queues.current），并支持暂停。
+  const [queueRows, setQueueRows] = useState<PendingSend[]>([]);
+  const [queuePaused, setQueuePaused] = useState(false);
+  const queuePausedRef = useRef(false);
+  // 编辑消息模式：把被编辑的用户文本填入 Composer，提交时作为新回合重新发送。
+  const [editingMsg, setEditingMsg] = useState<{ id: string } | null>(null);
+  const editingMsgRef = useRef<{ id: string } | null>(null);
+  const editPrevDraft = useRef("");
+  // 后端只读运行态横幅（待发恢复/配额/运行时退出）。
+  const [actionStatus, setActionStatus] = useState<ChatActionStatus | null>(null);
+  const actionReq = useRef(0);
   const [cfgBusy, setCfgBusy] = useState(false);
   const [bgOpenId, setBgOpenId] = useState<string | null>(null);
   // CR-037：fresh 重建确认弹窗与切换 CLI 另建会话确认弹窗
@@ -273,12 +296,25 @@ function Panel(props: PanelProps) {
     if (cur?.id) void refreshSessionStats(cur.id, scope);
     return () => { ++statsReq.current; };
   }, [cur?.id, scope]);
+  /** 只读运行态横幅：随会话切换/运行状态变化刷新；失败即隐藏，不显示假成功。 */
+  useEffect(() => {
+    const sid = cur?.id ?? null;
+    const request = ++actionReq.current;
+    setActionStatus(null);
+    if (!sid) return;
+    void chatActionStatus(sid)
+      .then(status => { if (request === actionReq.current && viewing(sid)) setActionStatus(status); })
+      .catch(() => { if (request === actionReq.current) setActionStatus(null); });
+    return () => { ++actionReq.current; };
+  }, [cur?.id, scope, runningIds.length]);
   const curRt = cur ? getRuntime(cur.id) : null;
   const running = !!cur && runningIds.includes(cur.id);
   // J08：working 绑定本轮发送代次；本轮已结算即收起，不等待后端彻底静止或 assistant 消息创建。
   const working = running && !turns.current.get(cur?.id ?? "")?.finished;
   // CR-037：当前会话绑定状态（阻塞时禁输入但保留草稿与历史；REF_NOT_READY 可直接重试）
-  const binding = cur?.sessionRole === "executor" ? null : cur?.binding ?? null;
+  // BUG-003：平台通道不适用 CLI 原生绑定；后端已返回 null，这里再按 runner 兜底，
+  // 避免旧缓存或旧构建的 binding 在升级瞬间继续锁住平台会话输入。
+  const binding = cur?.sessionRole === "executor" || cur?.runner === "platform" ? null : cur?.binding ?? null;
   const composerLocked =
     cfgBusy ||
     (binding?.state === "blocked" && binding.reasonCode !== "REF_NOT_READY") ||
@@ -357,10 +393,16 @@ function Panel(props: PanelProps) {
       void persistDraft(sid, value); // 捕获 sid/value，不能读取其他会话的草稿
     }, 800);
   };
+  /** 从真实队列镜像出可渲染行；sid 缺省取当前会话。 */
+  const syncQueue = (sid: string | null = currentIdRef.current) => {
+    const rows = sid ? queues.current.get(sid) ?? [] : [];
+    setQueueRows(rows.map(r => ({ ...r })));
+    setQueued(rows.length);
+  };
   const setCurrent = (meta: SessionMeta | null, value: string) => {
     currentIdRef.current = meta?.id ?? null; curRef.current = meta;
     setCur(meta); setDraft(value); draftRef.current = value;
-    setQueued(meta ? queues.current.get(meta.id)?.length ?? 0 : 0);
+    syncQueue(meta?.id ?? null);
     setBgOpenId(null); setFreshConfirm(null); setCliSwitchTarget(null); setGoalDraft(null); overlay.close(false);
   };
   const filterSessions = (ss: SessionMeta[], project = props.projectId, server = props.serverId) => ss.filter(s =>
@@ -723,6 +765,32 @@ function Panel(props: PanelProps) {
     return () => { alive = false; window.removeEventListener("app:settings-changed", load); };
   }, []);
   useEffect(() => { if (props.visible !== false && cur) void markRead(cur); }, [props.visible, cur?.id, cur?.unread]);
+  /* CR-079：帽子栏分支来源为项目工作目录真实状态；服务器会话与无仓库不显示，不硬编码分支。 */
+  useEffect(() => {
+    let alive = true;
+    setGitBranch(null);
+    setGitBranches([]);
+    const path = props.rootUri;
+    if (!path || props.serverId) return () => { alive = false; };
+    void (async () => {
+      try {
+        const st = await api.gitStatus(path);
+        if (!alive) return;
+        if (st.state !== "ready" || !st.branch) return;
+        setGitBranch(st.branch);
+        const list = await api.gitBranches(path).catch(() => [] as api.BranchEntry[]);
+        if (!alive) return;
+        setGitBranches(list.filter(b => b.kind === "local").map(b => ({ name: b.name, current: b.current })));
+      } catch {
+        if (alive) { setGitBranch(null); setGitBranches([]); }
+      }
+    })();
+    return () => { alive = false; };
+  }, [props.rootUri, props.serverId]);
+  const changeWorktree = (next: boolean) => {
+    setWorktree(next);
+    toast(next ? "已启用：当前会话将在独立 worktree 工作区执行（执行隔离后续接入）" : "已关闭独立 worktree 工作区");
+  };
 
   const publish = (turn: Turn) => {
     messageCache.current.set(turn.sid, turn.msgs);
@@ -806,14 +874,28 @@ function Panel(props: PanelProps) {
         row = { ...meta, title }; // 合并新标题，避免用更新前的旧标题覆盖列表
       }
       if (scopeRef.current === turn.request.scope) updateSessionRow(row, turn.request.scope);
+      // B 方案：后端按本轮结果写 session.unread；若用户正在看该会话，立即清空为已读，避免切走后反弹未读点。
+      if (viewing(turn.sid, turn.request.scope)) {
+        try { await api.chatSessionUpdate({ id: turn.sid, unread: "" }); updateSessionRow({ ...row, unread: null }, turn.request.scope); }
+        catch { /* 清空失败：保留后端未读，不假装已读 */ }
+      }
     } catch (e) {
       // 静止状态未知时阻止自动排队，不假设后端已经停下。
       if (viewing(turn.sid, turn.request.scope)) toast(String(e), "warn");
       return;
     }
     if (mounted.current) setRunningIds(prev => prev.filter(x => x !== turn.sid));
-    const next = queues.current.get(turn.sid)?.shift();
-    if (viewing(turn.sid, turn.request.scope)) setQueued(queues.current.get(turn.sid)?.length ?? 0);
+    const queue = queues.current.get(turn.sid);
+    let next = queue?.shift();
+    if (queue && !queue.length) queues.current.delete(turn.sid);
+    // 队列暂停：把刚取出的一条放回队首，本轮结束后不自动发送下一条。
+    if (next && queuePausedRef.current) {
+      const list = queues.current.get(turn.sid) ?? [];
+      list.unshift(next);
+      queues.current.set(turn.sid, list);
+      next = undefined;
+    }
+    if (viewing(turn.sid, turn.request.scope)) syncQueue(turn.sid);
     if (next) {
       try { if (!await dispatch(next)) restoreQueued(next, "排队消息发送失败，内容已保留为该会话草稿"); }
       catch (e) { restoreQueued(next, String(e)); }
@@ -979,11 +1061,20 @@ function Panel(props: PanelProps) {
     }
   };
 
-  const startSend = async (text: string, refs: ContextRef[], atts: AttachmentMeta[]): Promise<boolean> => {
+  /**
+   * 发送核心：校验 CLI/模型/引用 → 组装请求 → 运行中按发送模式排队或打断 → 派发。
+   * accept 回调只做“本次发送已受理”的善后（清草稿等），由调用方决定；
+   * 重试/编辑重发传入空回调，避免影响当前草稿。
+   */
+  const performSend = async (
+    text: string,
+    refs: ContextRef[],
+    atts: AttachmentMeta[],
+    accept: (meta: SessionMeta) => void,
+  ): Promise<boolean> => {
     if ((!text.trim() && !atts.length) || sendLock.current || cfgLock.current) return false;
     sendLock.current = true;
     const targetScope = scope;
-    const originalDraft = draftRef.current;
     try {
       const meta = curRef.current ?? await createSession(true, props.featureTarget?.featureId);
       if (scopeRef.current !== targetScope) return false;
@@ -1014,23 +1105,16 @@ function Panel(props: PanelProps) {
       }
       const request: PendingSend = { sid: meta.id, text, refs: enriched.map(r => ({ ...r })), atts: atts.map(a => ({ ...a })), model: meta.modelId, cliId: meta.cliId ?? null, permissionId: permissionBySession[meta.id] ?? "default", scope: targetScope };
       const active = turns.current.get(meta.id);
-      const acceptDraft = () => {
-        const key = `${targetScope}:${meta.id}`;
-        // 未编辑过的会话可能尚未写入 drafts。与会话加载使用同一个草稿初值。
-        if ((drafts.get(key) ?? meta.draft ?? "") !== originalDraft) return;
-        clearComposerDraft(key, { refs, atts });
-        drafts.set(key, "");
-        if (viewing(meta.id, targetScope)) onDraftChange("");
-        else void persistDraft(meta.id, "");
-      };
       if ((active && !active.finished) || await api.chatStatus(meta.id)) {
         if (sendMode === "queue") {
-          const list = queues.current.get(meta.id) ?? []; list.push(request); queues.current.set(meta.id, list); setQueued(list.length);
-          acceptDraft();
+          const list = queues.current.get(meta.id) ?? []; list.push(request); queues.current.set(meta.id, list);
+          if (viewing(meta.id, targetScope)) syncQueue(meta.id);
+          accept(meta);
           return true;
         }
         const cancelled = queues.current.get(meta.id) ?? [];
-        queues.current.delete(meta.id); setQueued(0);
+        queues.current.delete(meta.id);
+        if (viewing(meta.id, targetScope)) syncQueue(meta.id);
         for (const pending of cancelled) restoreQueued(pending, "立即发送取消了旧排队，内容已保留");
         const aborting = api.chatAbort(meta.id);
         const finishing = active && !active.finished ? finalize(active, undefined, true) : Promise.resolve();
@@ -1039,16 +1123,60 @@ function Panel(props: PanelProps) {
         await waitSettled(meta.id);
       }
       const accepted = await dispatch(request);
-      if (accepted) acceptDraft();
+      if (accepted) accept(meta);
       return accepted;
     } catch (e) { toast(String(e), "err"); return false; }
     finally { sendLock.current = false; }
+  };
+  const startSend = (text: string, refs: ContextRef[], atts: AttachmentMeta[]): Promise<boolean> => {
+    const targetScope = scope;
+    const originalDraft = draftRef.current;
+    return performSend(text, refs, atts, meta => {
+      const key = `${targetScope}:${meta.id}`;
+      // 未编辑过的会话可能尚未写入 drafts。与会话加载使用同一个草稿初值。
+      if ((drafts.get(key) ?? meta.draft ?? "") !== originalDraft) return;
+      clearComposerDraft(key, { refs, atts });
+      drafts.set(key, "");
+      if (viewing(meta.id, targetScope)) onDraftChange("");
+      else void persistDraft(meta.id, "");
+    });
+  };
+  /** 消息级“重试”：从出错消息回溯到上一轮用户输入，用同一发送链路作为新回合重发。 */
+  const retryTurn = async (errorMsgId: string) => {
+    const at = msgs.findIndex(m => m.id === errorMsgId);
+    const from = at >= 0 ? at : msgs.length;
+    let user: UiMessage | null = null;
+    for (let i = from - 1; i >= 0; i -= 1) {
+      if (msgs[i].role === "user") { user = msgs[i]; break; }
+    }
+    if (!user) { toast("找不到对应的上一轮用户输入，无法重试", "warn"); return; }
+    const ok = await performSend(user.content ?? "", user.refs ?? [], user.attachments ?? [], () => {});
+    if (!ok) toast("重试未发送成功，请检查提示后重试", "warn");
+  };
+  /** 消息级“编辑重发”：填入 Composer 并标记编辑中；提交时按编辑后文本作为新回合发送。 */
+  const onEditUserMessage = (msgId: string, text: string) => {
+    const target = msgs.find(m => m.id === msgId && m.role === "user");
+    if (!target) { toast("找不到要编辑的用户消息", "warn"); return; }
+    editPrevDraft.current = draftRef.current;
+    onDraftChange(text ?? target.content ?? "");
+    if (target.refs?.length || target.attachments?.length) {
+      restoreComposerDraft(`${scope}:${cur?.id ?? "new"}`, target.refs ?? [], target.attachments ?? []);
+    }
+    const state = { id: msgId };
+    editingMsgRef.current = state; setEditingMsg(state);
+    requestAnimationFrame(() => {
+      if (visibleRef.current) overlay.scopeRef.current?.querySelector<HTMLTextAreaElement>("textarea.chat-ta")?.focus({ preventScroll: true });
+    });
+  };
+  const cancelEditUserMessage = () => {
+    editingMsgRef.current = null; setEditingMsg(null);
+    onDraftChange(editPrevDraft.current);
   };
   const stopSend = async () => {
     const sid = currentIdRef.current; if (!sid) return;
     // 用户停止也取消待发送队列，保留文本到原会话；不能停完立即又自动发送。
     const pending = queues.current.get(sid) ?? [];
-    queues.current.delete(sid); setQueued(0);
+    queues.current.delete(sid); syncQueue(sid);
     for (const request of pending) restoreQueued(request, "已取消排队，内容已恢复到草稿");
     const turn = turns.current.get(sid);
     try {
@@ -1059,6 +1187,80 @@ function Panel(props: PanelProps) {
       if (!turn) { await waitSettled(sid); setRunningIds(prev => prev.filter(x => x !== sid)); }
     } catch (e) { toast(String(e), "err"); }
   };
+
+  /* ---------- 队列面板操作（真实作用于 queues.current；后端未提供队列持久化） ---------- */
+  const removeQueued = (index: number) => {
+    const sid = currentIdRef.current; if (!sid) return;
+    const list = queues.current.get(sid) ?? [];
+    if (index < 0 || index >= list.length) return;
+    list.splice(index, 1);
+    if (!list.length) queues.current.delete(sid);
+    syncQueue(sid);
+  };
+  const editQueued = (index: number, text: string) => {
+    const sid = currentIdRef.current; if (!sid) return;
+    const next = text.trim();
+    if (!next) { toast("排队消息不能为空", "warn"); return; }
+    const list = queues.current.get(sid) ?? [];
+    if (!list[index]) return;
+    list[index] = { ...list[index], text: next };
+    syncQueue(sid);
+  };
+  const toggleQueuePause = () => {
+    const next = !queuePausedRef.current;
+    queuePausedRef.current = next; setQueuePaused(next);
+    if (!next) void drainQueue();
+  };
+  /** 恢复暂停后若当前会话已静止，补发队首一条。 */
+  const drainQueue = async () => {
+    const sid = currentIdRef.current;
+    if (!sid || queuePausedRef.current || sendLock.current) return;
+    const active = turns.current.get(sid);
+    try {
+      if ((active && !active.finished) || await api.chatStatus(sid)) return; // 运行中，等本轮收尾再续
+    } catch { return; }
+    const list = queues.current.get(sid) ?? [];
+    const next = list.shift();
+    if (!next) return;
+    if (!list.length) queues.current.delete(sid); else queues.current.set(sid, list);
+    syncQueue(sid);
+    try { if (!await dispatch(next)) restoreQueued(next, "队列消息发送失败，内容已恢复为草稿"); }
+    catch (e) { restoreQueued(next, String(e)); }
+    syncQueue(sid);
+  };
+  /** 立即发送某条排队消息：先按停止语义收尾当前回合，再派发该条；其余保持排队。 */
+  const sendQueuedNow = async (index: number) => {
+    const sid = currentIdRef.current;
+    if (!sid || sendLock.current) return;
+    const list = queues.current.get(sid) ?? [];
+    const item = list[index];
+    if (!item) return;
+    list.splice(index, 1);
+    if (!list.length) queues.current.delete(sid); else queues.current.set(sid, list);
+    syncQueue(sid);
+    sendLock.current = true;
+    const prevPaused = queuePausedRef.current;
+    queuePausedRef.current = true; // 收尾当前回合时不自动再发下一条
+    try {
+      const active = turns.current.get(sid);
+      if ((active && !active.finished) || await api.chatStatus(sid)) {
+        const aborting = api.chatAbort(sid);
+        const finishing = active && !active.finished ? finalize(active, undefined, true) : Promise.resolve();
+        await aborting; await finishing; await waitSettled(sid);
+      }
+      queuePausedRef.current = prevPaused;
+      try { if (!await dispatch(item)) restoreQueued(item, "立即发送失败，内容已恢复为草稿"); }
+      catch (e) { restoreQueued(item, String(e)); }
+      if (!queuePausedRef.current) void drainQueue();
+    } catch (e) {
+      restoreQueued(item, String(e));
+    } finally {
+      queuePausedRef.current = prevPaused;
+      sendLock.current = false;
+      syncQueue(sid);
+    }
+  };
+
   // 恢复的运行没有本地Channel时只轮询状态，不造工具或回复。
   useEffect(() => {
     if (!runningIds.length) return;
@@ -1149,6 +1351,18 @@ function Panel(props: PanelProps) {
   const bindingBlocks = !!binding && (binding.state === "freshPending" || (binding.state === "blocked" && binding.reasonCode !== "REF_NOT_READY"));
   const bindingPill = bindingBlocks && binding ? BINDING_PILL[binding.state] ?? null : null;
   const newButton = <button className="chat-iconbtn" title="新会话" aria-label="新会话" onClick={newSession}><Icon name="plus" /></button>;
+  // 后端只读横幅：配额文本；无真实配额时 actionStatus.quota 为 null，不渲染。
+  const quotaText = actionStatus?.quota
+    ? (actionStatus.quota.used != null && actionStatus.quota.limit != null
+      ? `${actionStatus.quota.used} / ${actionStatus.quota.limit} ${actionStatus.quota.label}`
+      : actionStatus.quota.detail ?? actionStatus.quota.label)
+    : "";
+  // 消息级交互回调：MessageList 按契约读取这三个可选 prop；此处仅提供，未在本文件改动其实现。
+  const messageActions = {
+    sessionKey: cur?.id ?? undefined,
+    onRetryTurn: (msgId: string) => { void retryTurn(msgId); },
+    onEditUserMessage: (msgId: string, text: string) => { onEditUserMessage(msgId, text); },
+  };
   return <div ref={overlay.scopeRef} className={`chat-panel ${props.className ?? ""}`} hidden={props.visible === false} aria-label="AI 会话" data-ai-scope={scope} style={{ height: props.height ?? "100%", ...(props.width ? { width: Math.min(620, Math.max(320, props.width)) } : {}) }}>
     <div className="chat-head">
       {props.variant !== "workbench" && <button className={`chat-iconbtn ${overlay.activeOverlay === "history" ? "active" : ""}`} data-chat-overlay-trigger="history" title="会话历史" aria-label="会话历史" aria-expanded={overlay.activeOverlay === "history"} onClick={e => { if (overlay.activeOverlay !== "history") void loadSessionPage("", "first"); overlay.toggle("history", e.currentTarget); }}><HistoryIcon /></button>}
@@ -1161,6 +1375,12 @@ function Panel(props: PanelProps) {
       <span className="spacer" />{cur?.sessionRole === "executor" && cur.featureId && <span className="chat-scope-tag" title={`执行特性：${cur.featureTitle ?? cur.featureId}；本会话仅实现该Feature`} aria-label={`执行特性：${cur.featureTitle ?? cur.featureId}，单特性执行会话`}>FEAT · <b>{cur.featureId}</b></span>}{bindingPill && binding && <span className={`chat-binding-pill ${binding.state}`} title={binding.state === "blocked" ? `原线程不可续接：${reasonLabel(binding.reasonCode)}` : "上下文需要确认重建后才能发送"}>{bindingPill}</span>}{newButton}
     </div>
     <div className="chat-fade" />
+    {/* 后端只读运行态横幅：仅在有真实数据时显示，空则不渲染。 */}
+    {actionStatus && (actionStatus.runtimeExit || actionStatus.quota || actionStatus.pendingCommands.length > 0) && <div className="chat-action-banners" aria-label="运行状态横幅">
+      {actionStatus.runtimeExit && <div className="chat-action-banner runtime-exit" role="alert"><b>运行时已退出</b><span>{actionStatus.runtimeExit.reason}：{actionStatus.runtimeExit.detail}</span></div>}
+      {actionStatus.quota && <div className="chat-action-banner quota" role="status"><b>配额</b><span>{quotaText}</span></div>}
+      {actionStatus.pendingCommands.length > 0 && <div className="chat-action-banner pending" role="status"><b>待发命令恢复</b><span>{actionStatus.pendingCommands.length} 条待发命令已由后端恢复</span></div>}
+    </div>}
     {overlay.activeOverlay === "history" && <SessionHistory
       scopeId={scope}
       items={sessions}
@@ -1184,7 +1404,7 @@ function Panel(props: PanelProps) {
       onRename={(s, title) => void renameSession(s, title)}
       onClose={() => overlay.close(true)}
     />}
-    <MessageList msgs={msgs} projectId={props.projectId} rootUri={props.rootUri} officeFiles={props.officeFiles} visible={props.visible} working={working} onOpenAgent={id => { if (cur) props.onOpenAgent?.(cur.id, id); }} stepsSlot={queued > 0 ? <div className="chat-queued">已排队 {queued} 条，当前静止后发送</div> : undefined} />
+    <MessageList {...messageActions} msgs={msgs} projectId={props.projectId} rootUri={props.rootUri} officeFiles={props.officeFiles} visible={props.visible} working={working} onOpenAgent={id => { if (cur) props.onOpenAgent?.(cur.id, id); }} />
     {bindingBlocks && binding && <div className="chat-block-banner" role="alert" aria-label="绑定阻塞横幅">
       <span className="chat-block-ico" aria-hidden>!</span>
       <div className="chat-block-main">
@@ -1203,7 +1423,19 @@ function Panel(props: PanelProps) {
         <TodoPanel items={[...curRt.plan.tasks.values(), ...curRt.plan.todos]} expanded={curRt.todoExpanded} onToggle={() => { curRt.todoExpanded = !curRt.todoExpanded; bumpRt(); }} />
         {curRt.goal && curRt.goal.state !== "cancelled" && curRt.goal.state !== "complete" && <GoalBar key={curRt.goal.id} goal={curRt.goal} disarmed={!curRt.goalArmed} onEdit={text => { setGoal(cur.id, text); bumpRt(); }} onStateChange={state => { updateGoalState(cur.id, state); bumpRt(); }} onCleared={() => { composerFocusAfterClear.current = { sid: cur.id, scope }; }} />}
       </>}
-      <Composer scopeKey={`${scope}:${cur?.id ?? "new"}`} rootUri={props.rootUri} projectId={props.projectId} office={props.office} officeFiles={props.officeFiles} sessions={sessions} serverId={props.serverId} value={draft} streaming={running} disabled={composerLocked} runner={cur?.runner ?? runnerDraft} cliId={cur ? cur.cliId : cliCands[0]?.id ?? null} onCreateGoal={text => { void createGoal(text); }} onOpenGoal={() => setGoalDraft("")} onChange={onDraftChange} onSend={startSend} onStop={stopSend} renderControls={({ add, send }) => <ModelPicker addControl={add} sendControl={send} cliId={cur?.cliId ?? null} providerId={cur?.providerId ?? null} modelId={cur?.modelId ?? null} effort={cur?.effort ?? null} cliCandidates={cliCands} models={models} permissionId={(cur?.id && permissionBySession[cur.id] as any) || "default"} locked={executionLocked || cfgBusy} onChange={applyCfg} runner={cur?.runner ?? runnerDraft} platformAvailable={models.length > 0} onRunnerChange={next => { void switchRunner(next); }} />} onSessionSearch={async (q: string) => (await api.chatSessionsPage({ ...(props.projectId ? { projectId: props.projectId } : {}), ...(props.serverId ? { serverId: props.serverId } : {}), ...(q.trim() ? { keyword: q.trim() } : {}), limit: 20 })).items} />
+      {queued > 0 && <ChatQueuePanel
+        rows={queueRows}
+        paused={queuePaused}
+        onRemove={removeQueued}
+        onEdit={editQueued}
+        onSendNow={index => { void sendQueuedNow(index); }}
+        onTogglePause={toggleQueuePause}
+      />}
+      {editingMsg && <div className="chat-edit-banner" role="status">
+        <span>正在编辑用户消息；发送后将以编辑后的文本作为新回合提交，原历史保留。</span>
+        <button type="button" onClick={cancelEditUserMessage}>取消编辑</button>
+      </div>}
+      <Composer scopeKey={`${scope}:${cur?.id ?? "new"}`} rootUri={props.rootUri} projectId={props.projectId} office={props.office} officeFiles={props.officeFiles} sessions={sessions} serverId={props.serverId} value={draft} streaming={running} disabled={composerLocked} editingMessage={!!editingMsg} runner={cur?.runner ?? runnerDraft} hat={{ branch: gitBranch, branches: gitBranches, worktree, platformAvailable: models.length > 0, locked: executionLocked || cfgBusy, onRunnerChange: next => { void switchRunner(next); }, onWorktreeChange: next => changeWorktree(next) }} cliId={cur ? cur.cliId : cliCands[0]?.id ?? null} onCreateGoal={text => { void createGoal(text); }} onOpenGoal={() => setGoalDraft("")} onChange={onDraftChange} onSend={async (text, refs, atts) => { const ok = await startSend(text, refs, atts); if (ok && editingMsgRef.current) { editingMsgRef.current = null; setEditingMsg(null); } return ok; }} onStop={stopSend} renderControls={({ add, send }) => <ModelPicker addControl={add} sendControl={send} cliId={cur?.cliId ?? null} providerId={cur?.providerId ?? null} modelId={cur?.modelId ?? null} effort={cur?.effort ?? null} cliCandidates={cliCands} models={models} permissionId={(cur?.id && permissionBySession[cur.id] as any) || "default"} locked={executionLocked || cfgBusy} onChange={applyCfg} runner={cur?.runner ?? runnerDraft} platformAvailable={models.length > 0} onRunnerChange={next => { void switchRunner(next); }} platformPermission={platformPermission} onPlatformPermissionChange={setPlatformPermission} />} onSessionSearch={async (q: string) => (await api.chatSessionsPage({ ...(props.projectId ? { projectId: props.projectId } : {}), ...(props.serverId ? { serverId: props.serverId } : {}), ...(q.trim() ? { keyword: q.trim() } : {}), limit: 20 })).items} />
       {goalDraft !== null && <Modal title="创建目标" onClose={() => setGoalDraft(null)} footer={<>
         <button type="button" className="btn" onClick={() => setGoalDraft(null)}>取消</button>
         <button type="submit" form="chat-goal-create" className="btn primary" disabled={!goalDraft.trim()}>创建目标</button>
@@ -1227,6 +1459,53 @@ function Panel(props: PanelProps) {
       />}
       <StatsBar data={statsData} />
     </div>
+  </div>;
+}
+
+/**
+ * 待发队列面板：展示当前会话的排队消息。
+ * 数据来自 ChatPanel 的 queues.current（本机内存）；暂停/继续、编辑、删除、立即发送
+ * 都是前端真实操作。后端目前没有队列持久化命令，所以没有“跨设备/重启恢复”。
+ */
+function ChatQueuePanel(props: {
+  rows: PendingSend[];
+  paused: boolean;
+  onRemove: (index: number) => void;
+  onEdit: (index: number, text: string) => void;
+  onSendNow: (index: number) => void;
+  onTogglePause: () => void;
+}) {
+  const [editing, setEditing] = useState<{ index: number; text: string } | null>(null);
+  if (!props.rows.length) return null;
+  return <div className="chat-queue-panel" role="region" aria-label="待发队列">
+    <div className="chat-queue-head">
+      <span className="chat-queue-title">待发队列 <b>{props.rows.length}</b></span>
+      <button type="button" className={`chat-queue-pause ${props.paused ? "paused" : ""}`} aria-pressed={props.paused} title={props.paused ? "继续自动发送队列" : "暂停自动发送队列"} onClick={props.onTogglePause}>{props.paused ? "继续" : "暂停"}</button>
+    </div>
+    <ol className="chat-queue-list">
+      {props.rows.map((row, index) => editing?.index === index ? <li key={`edit-${row.sid}-${index}`} className="chat-queue-item">
+        <div className="chat-queue-edit">
+          <textarea aria-label="编辑排队消息" value={editing.text} rows={2} onChange={e => setEditing({ index, text: e.target.value })} />
+          <div className="chat-queue-edit-actions">
+            <button type="button" onClick={() => { const text = editing.text.trim(); if (!text) return; props.onEdit(index, text); setEditing(null); }}>保存</button>
+            <button type="button" onClick={() => setEditing(null)}>取消</button>
+          </div>
+        </div>
+      </li> : <li key={`${row.sid}-${index}`} className="chat-queue-item">
+        <div className="chat-queue-text" title={row.text}>{row.text}</div>
+        <div className="chat-queue-meta">
+          {row.refs.length > 0 && <span>{row.refs.length} 个引用</span>}
+          {row.atts.length > 0 && <span>{row.atts.length} 个附件</span>}
+          {props.paused && <span className="chat-queue-tag">已暂停</span>}
+        </div>
+        <div className="chat-queue-actions">
+          <button type="button" onClick={() => setEditing({ index, text: row.text })}>编辑</button>
+          <button type="button" onClick={() => props.onSendNow(index)}>立即发送</button>
+          <button type="button" className="danger" onClick={() => props.onRemove(index)}>删除</button>
+        </div>
+      </li>)}
+    </ol>
+    <div className="chat-queue-note">队列仅保存在本机内存；关闭窗口或切换会话前请先发送或保存。后端暂无队列持久化。</div>
   </div>;
 }
 

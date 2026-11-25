@@ -1,0 +1,12 @@
+/* CR-093：设置·搜索页 */
+.set-search { display: flex; flex-direction: column; gap: 16px; }
+.set-search-card { display: flex; flex-direction: column; gap: 10px; padding: 16px; }
+.set-search-card h3 { margin: 0; font-size: 14px; }
+.set-search-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.set-search-label { min-width: 150px; color: var(--muted, #6b7280); font-size: 13px; }
+.set-search-input { padding: 6px 10px; border: 1px solid var(--border, #d0d7de); border-radius: 6px; background: var(--bg, #fff); color: inherit; font-size: 13px; min-width: 240px; }
+.set-search-input.narrow { min-width: 90px; width: 90px; }
+.set-radio { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.set-search-dirs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.set-search-dirs li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 10px; border: 1px solid var(--border, #e5e7eb); border-radius: 6px; }
+.set-search-dirs .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

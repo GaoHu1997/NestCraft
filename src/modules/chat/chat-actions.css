@@ -1,0 +1,220 @@
+/* 聊天：待发恢复 / 配额 / 运行时退出横幅 + 队列面板 + 编辑消息提示
+   仅新增类，不改动既有 chat.css。滚动条遵循 UI-SCROLL-001：队列面板不设内部滚动区，
+   条目增高时整体随页面流动，不新增常显或悬停即显的滚动条。 */
+
+.chat-action-banners {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 12px 0;
+}
+
+.chat-action-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--surface-2, var(--paper));
+}
+.chat-action-banner > b {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 600;
+}
+.chat-action-banner > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.chat-action-banner.runtime-exit {
+  border-color: var(--danger-line);
+  background: var(--danger-bg);
+  color: var(--danger-deep);
+}
+.chat-action-banner.quota {
+  border-color: var(--warn-line);
+  background: var(--warn-bg);
+  color: var(--warn-deep);
+}
+.chat-action-banner.pending {
+  border-color: var(--notice-line);
+  background: var(--notice-bg);
+  color: var(--notice-ink);
+}
+
+/* ---------- 待发队列面板 ---------- */
+
+.chat-queue-panel {
+  margin: 0 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2, var(--paper));
+  overflow: hidden;
+}
+
+.chat-queue-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 9px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.chat-queue-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.chat-queue-title b {
+  color: var(--warn-deep);
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-queue-pause {
+  border: 1px solid var(--input-line);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 10.5px;
+  line-height: 1;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.chat-queue-pause:hover { border-color: var(--accent); color: var(--accent); }
+.chat-queue-pause.paused { border-color: var(--warn-line); background: var(--warn-bg); color: var(--warn-deep); }
+
+.chat-queue-list {
+  list-style: none;
+  margin: 0;
+  padding: 2px 0;
+}
+
+.chat-queue-item {
+  padding: 6px 9px;
+  border-top: 1px solid var(--line-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.chat-queue-item:first-child { border-top: 0; }
+
+.chat-queue-text {
+  font-size: 11.5px;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat-queue-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.chat-queue-tag {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--warn-bg);
+  color: var(--warn-deep);
+}
+
+.chat-queue-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.chat-queue-actions > button {
+  border: 1px solid var(--input-line);
+  border-radius: 5px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 10.5px;
+  line-height: 1;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.chat-queue-actions > button:hover { border-color: var(--accent); color: var(--accent); }
+.chat-queue-actions > button.danger:hover { border-color: var(--danger-line); color: var(--danger-deep); background: var(--danger-bg); }
+
+.chat-queue-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.chat-queue-edit textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 40px;
+  resize: vertical;
+  border: 1px solid var(--input-line);
+  border-radius: 6px;
+  padding: 5px 7px;
+  font: 11.5px/1.5 var(--font-title, inherit);
+  color: var(--ink);
+  background: var(--paper);
+  outline: none;
+}
+.chat-queue-edit textarea:focus { border-color: var(--accent); }
+.chat-queue-edit-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.chat-queue-edit-actions > button {
+  border: 1px solid var(--input-line);
+  border-radius: 5px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 10.5px;
+  line-height: 1;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.chat-queue-edit-actions > button:hover { border-color: var(--accent); color: var(--accent); }
+
+.chat-queue-note {
+  padding: 5px 9px 6px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 9.5px;
+  color: var(--muted);
+}
+
+/* ---------- 编辑消息提示条 ---------- */
+
+.chat-edit-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 6px;
+  padding: 6px 9px;
+  border: 1px solid var(--notice-line);
+  border-radius: 8px;
+  background: var(--notice-bg);
+  color: var(--notice-ink);
+  font-size: 11px;
+}
+.chat-edit-banner > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.chat-edit-banner > button {
+  flex: 0 0 auto;
+  border: 1px solid var(--notice-line);
+  border-radius: 5px;
+  background: var(--paper);
+  color: var(--notice-ink);
+  font-size: 10.5px;
+  line-height: 1;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.chat-edit-banner > button:hover { border-color: var(--accent); color: var(--accent); }

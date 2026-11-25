@@ -238,41 +238,9 @@ window.CR078 = (() => {
   ];
   let seq = 11;
 
-  const state = { tab: "schedule", view: "2026-11", selected: "2026-11-24", dayTab: "events", form: null, usageRange: "7d" };
+  const state = { tab: "schedule", view: "2026-11", selected: "2026-11-24", dayTab: "events", form: null, editingTodo: null, picker: false, pickerYear: 2026, usageRange: "7d" };
   const TODAY = new Date(2026, 10, 24);
-  /* 当前位置天气（合成夹具，不联网）。正式实现：系统定位优先 + IP 兜底 → Open-Meteo（PRD Q-078-03～05 已决策）。
-     wx 态：ok 正常 / ip 定位仅到城市 / cached 定位失败用缓存 / failed 网络失败用缓存 / unavailable 无缓存无网络 / disabled 设置关闭。 */
-  const WEATHER = { city: "武汉 · 江岸", temp: 8, low: 5, high: 12, text: "晴", code: "sunny", updated: "22:31" };
-  function weatherBar(mode) {
-    const cached = (note, retry) => `<span class="c078-wx-ico is-muted" aria-hidden="true">${weatherIcon(WEATHER.code)}</span>
-      <div class="c078-wx-main"><b>${WEATHER.temp}°</b><span class="c078-wx-text">${esc(WEATHER.text)}</span></div>
-      <div class="c078-wx-meta"><span class="c078-wx-loc">${icon("globe", "ico-12")}${esc(WEATHER.city)}</span><span>${WEATHER.low}° / ${WEATHER.high}°</span><span class="c078-wx-note">${esc(note)}${retry ? ` <button class="c078-wx-retry" data-c078-act="wx-retry" type="button">重试</button>` : ""}</span></div>`;
-    if (mode === "ip") return `<span class="c078-wx-ico" aria-hidden="true">${weatherIcon(WEATHER.code)}</span>
-      <div class="c078-wx-main"><b>${WEATHER.temp}°</b><span class="c078-wx-text">${esc(WEATHER.text)}</span></div>
-      <div class="c078-wx-meta"><span class="c078-wx-loc">${icon("globe", "ico-12")}武汉</span><span>${WEATHER.low}° / ${WEATHER.high}°</span><span>更新 ${WEATHER.updated}</span></div>`;
-    if (mode === "cached") return cached("定位未授权 · 上次位置");
-    if (mode === "failed") return cached("更新失败", true);
-    if (mode === "unavailable") return `<span class="c078-wx-ico is-muted" aria-hidden="true">${weatherIcon("overcast")}</span>
-      <div class="c078-wx-main"><b class="is-dash">—</b><span class="c078-wx-text is-muted">天气不可用</span></div>
-      <div class="c078-wx-meta"><span>无网络且无缓存</span><span class="c078-wx-note"><button class="c078-wx-retry" data-c078-act="wx-retry" type="button">重试</button></span></div>`;
-    if (mode === "disabled") return `<span class="c078-wx-ico is-muted" aria-hidden="true">${weatherIcon("cloudy")}</span>
-      <div class="c078-wx-main"><b class="is-dash">—</b><span class="c078-wx-text is-muted">天气已关闭</span></div>
-      <div class="c078-wx-meta"><span>设置 · 通用 · 天气</span></div>`;
-    return `<span class="c078-wx-ico" aria-hidden="true">${weatherIcon(WEATHER.code)}</span>
-      <div class="c078-wx-main"><b>${WEATHER.temp}°</b><span class="c078-wx-text">${esc(WEATHER.text)}</span></div>
-      <div class="c078-wx-meta"><span class="c078-wx-loc">${icon("globe", "ico-12")}${esc(WEATHER.city)}</span><span>${WEATHER.low}° / ${WEATHER.high}°</span><span>更新 ${WEATHER.updated}</span></div>`;
-  }
-  const WX_ICONS = {
-    sunny: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/>',
-    cloudy: '<path d="M7 18h10a4 4 0 0 0 .5-8 5.5 5.5 0 0 0-10.6 1.4A3.3 3.3 0 0 0 7 18z"/>',
-    overcast: '<path d="M6 17h12a3.5 3.5 0 0 0 .3-7 6 6 0 0 0-11.4 1.2A3 3 0 0 0 6 17z"/><path d="M8 20h8"/>',
-    rain: '<path d="M7 15h10a4 4 0 0 0 .5-8 5.5 5.5 0 0 0-10.6 1.4A3.3 3.3 0 0 0 7 15z"/><path d="M9 18l-1 2.5M13 18l-1 2.5M17 18l-1 2.5"/>',
-    snow: '<path d="M7 15h10a4 4 0 0 0 .5-8 5.5 5.5 0 0 0-10.6 1.4A3.3 3.3 0 0 0 7 15z"/><path d="M9 19h.01M13 21h.01M17 19h.01"/>',
-    storm: '<path d="M7 14h10a4 4 0 0 0 .5-8 5.5 5.5 0 0 0-10.6 1.4A3.3 3.3 0 0 0 7 14z"/><path d="m13 15-2 3.5h3l-2 3.5"/>'
-  };
-  function weatherIcon(code) {
-    return `<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${WX_ICONS[code] || WX_ICONS.cloudy}</svg>`;
-  }
+  /* v8：移除详情栏顶部天气条（含定位 / Open-Meteo 相关夹具与降级态），详情栏直接从日期标题开始。 */
 
   function eventsOn(dateKey) {
     return events.filter(e => e.start <= dateKey && dateKey <= e.end).sort((a, b) => (a.allDay ? 0 : 1) - (b.allDay ? 0 : 1) || (a.time || "").localeCompare(b.time || ""));
@@ -323,10 +291,12 @@ window.CR078 = (() => {
     return { lanes: lanes.length, segs };
   }
 
+  function almTerms(s) { return String(s || "—").split(/[、\s]+/).filter(Boolean); }
+
   function schedulePage() {
     const { y, m } = monthMatrix(state.view);
     const selInfo = dayInfo(new Date(state.selected + "T00:00:00"));
-    return `<div class="page c078-page" data-design-version="UI-CR078-v5">
+    return `<div class="page c078-page" data-design-version="UI-CR078-v8">
       <div class="page-h"><div class="titles"><h1 class="page-title">概览</h1><p class="page-sub">日程与全平台用量集中在这里。</p></div></div>
       <div class="c078-tabs" role="tablist" aria-label="概览页签">
         <button class="c078-tab ${state.tab === "schedule" ? "active" : ""}" role="tab" aria-selected="${state.tab === "schedule"}" data-c078-act="tab" data-tab="schedule">${icon("calendar", "ico-16")}日程</button>
@@ -335,13 +305,16 @@ window.CR078 = (() => {
       <div class="c078-schedule">
         <section class="card c078-cal-card" aria-label="月日历">
           <div class="c078-cal-h">
-            <div class="row"><button class="btn icon sm" data-c078-act="shift-year" data-d="-1" aria-label="上一年">${icon("chevronLeft", "ico-14")}${icon("chevronLeft", "ico-14")}</button>
-              <button class="btn icon sm" data-c078-act="shift-month" data-d="-1" aria-label="上月">${icon("chevronLeft", "ico-14")}</button>
-              <b class="c078-cal-title">${y}年${m}月</b>
-              <button class="btn icon sm" data-c078-act="shift-month" data-d="1" aria-label="下月">${icon("chevronRight", "ico-14")}</button>
-              <button class="btn icon sm" data-c078-act="shift-year" data-d="1" aria-label="下一年">${icon("chevronRight", "ico-14")}${icon("chevronRight", "ico-14")}</button>
-              <button class="btn sm" data-c078-act="today">本月</button></div>
+            <div class="c078-cal-nav">
+              <button class="c078-nav-btn" data-c078-act="shift-year" data-d="-1" aria-label="上一年" title="上一年">«</button>
+              <button class="c078-nav-btn" data-c078-act="shift-month" data-d="-1" aria-label="上月" title="上月">‹</button>
+              <button class="c078-cal-title ${state.picker ? "open" : ""}" data-c078-act="open-picker" aria-haspopup="true" aria-expanded="${state.picker}">${y}年${m}月</button>
+              <button class="c078-nav-btn" data-c078-act="shift-month" data-d="1" aria-label="下月" title="下月">›</button>
+              <button class="c078-nav-btn" data-c078-act="shift-year" data-d="1" aria-label="下一年" title="下一年">»</button>
+              <button class="btn sm c078-today-btn" data-c078-act="today">今天</button>
+            </div>
             <button class="btn primary sm" data-c078-act="new">${icon("plus", "ico-14")}新建日程</button>
+            ${state.picker ? pickerHTML(y, m) : ""}
           </div>
           <div class="c078-cal-grid" role="grid" aria-rowcount="7" aria-colcount="8">
             <div class="c078-cal-wh" role="columnheader">周</div>
@@ -350,27 +323,35 @@ window.CR078 = (() => {
           </div>
         </section>
         <aside class="card c078-day" aria-label="日期详情">
-          <div class="c078-day-h c078-weather" role="group" aria-label="当前位置天气" data-wx="${state.wx || "ok"}">${weatherBar(state.wx || "ok")}</div>
           <div class="c078-day-b">
-            <div class="c078-day-title"><h3>${y}年${m}月${new Date(state.selected + "T00:00:00").getDate()}日</h3><span class="tag blue">${dayTone(state.selected)}</span></div>
-            <div class="c078-almanac">
-              <div class="c078-alm-row"><span>农历</span><b>${esc(selInfo.lunar.leap ? "闰" : "")}${LUNAR_MONTHS[selInfo.lunar.lm - 1]}月${LUNAR_DAYS[selInfo.lunar.ld - 1]}</b></div>
-              <div class="c078-alm-row"><span>干支</span><b>${esc(selInfo.gz.year)}年 ${esc(selInfo.gz.month)}月 ${esc(selInfo.gz.day)}日</b></div>
-              <div class="c078-alm-row"><span>值日</span><b>${esc(selInfo.gz.value)}日</b></div>
-              ${selInfo.festivals.length ? `<div class="c078-alm-row"><span>节日</span><b>${selInfo.festivals.map(f => `<span class="c078-fest is-${f.kind}">${esc(f.name)}</span>`).join("")}</b></div>` : ""}
-              ${selInfo.workOff ? `<div class="c078-alm-row"><span>调休</span><b><span class="c078-off">${selInfo.workOff}</span></b></div>` : ""}
-              <div class="c078-alm-yj"><div><span>宜</span><p>${esc(selInfo.good)}</p></div><div><span>忌</span><p>${esc(selInfo.bad)}</p></div></div>
+            <div class="c078-date-header" aria-label="所选日期黄历">
+              <div class="c078-alm-yj">
+                <div><span>宜</span><p title="${esc(selInfo.good || "—")}">${almTerms(selInfo.good).map(t => `<i>${esc(t)}</i>`).join("")}</p></div>
+                <div><span>忌</span><p title="${esc(selInfo.bad || "—")}">${almTerms(selInfo.bad).map(t => `<i>${esc(t)}</i>`).join("")}</p></div>
+              </div>
+              <div class="c078-date-main">
+                <span class="c078-date-number">${new Date(state.selected + "T00:00:00").getDate()}</span>
+                <b class="c078-date-lunar">${selInfo.lunar.leap ? "闰" : ""}${LUNAR_MONTHS[selInfo.lunar.lm - 1]}月${LUNAR_DAYS[selInfo.lunar.ld - 1]}</b>
+                <span class="c078-date-cycle">${esc(selInfo.gz.year)}${esc(selInfo.gz.zodiac)}年 ${esc(selInfo.gz.month)}月 ${esc(selInfo.gz.day)}日</span>
+              </div>
             </div>
+            <div class="c078-date-notes"><time datetime="${state.selected}">${state.selected}</time><span class="tag blue">${dayTone(state.selected)}</span><span>${esc(selInfo.gz.value)}日</span>${selInfo.festivals.map(f => `<span class="c078-fest is-${f.kind}">${esc(f.name)}</span>`).join("")}${selInfo.workOff ? `<span class="c078-off">${selInfo.workOff}</span>` : ""}</div>
             <div class="c078-day-tabs" role="tablist" aria-label="当天事项">
               <button class="c078-day-tab ${state.dayTab === "todo" ? "" : "active"}" role="tab" aria-selected="${state.dayTab !== "todo"}" data-c078-act="day-tab" data-tab="events">${icon("calendar", "ico-14")}日程 <span>${eventsOn(state.selected).length}</span></button>
               <button class="c078-day-tab ${state.dayTab === "todo" ? "active" : ""}" role="tab" aria-selected="${state.dayTab === "todo"}" data-c078-act="day-tab" data-tab="todo">${icon("check", "ico-14")}待办 <span>${todosOn(state.selected).filter(t => !t.done).length}</span></button>
-              ${state.dayTab === "todo" ? "" : `<button class="btn xs c078-day-add" data-c078-act="new" data-date="${state.selected}">${icon("plus", "ico-12")}新增</button>`}
             </div>
             <div class="c078-day-panel">
             ${state.dayTab === "todo" ? `
-              <div class="c078-day-list">${todosOn(state.selected).map(t => `<label class="c078-todo ${t.done ? "done" : ""}"><input type="checkbox" data-c078-act="todo-toggle" data-id="${t.id}" ${t.done ? "checked" : ""}><span>${esc(t.title)}</span></label>`).join("") || `<div class="c078-none">没有待办</div>`}</div>
+              <div class="c078-day-list">${todosOn(state.selected).map(t => {
+                const editing = state.editingTodo === t.id;
+                return `<div class="c078-todo ${t.done ? "done" : ""}"><input type="checkbox" data-c078-act="todo-toggle" data-id="${t.id}" ${t.done ? "checked" : ""}>` +
+                  (editing
+                    ? `<input class="input c078-todo-edit" id="c078-todo-edit-input" value="${esc(t.title)}" maxlength="80" aria-label="编辑待办">`
+                    : `<span class="c078-todo-text">${esc(t.title)}</span><button class="c078-todo-edit-btn" data-c078-act="todo-edit" data-id="${t.id}" aria-label="编辑待办 ${esc(t.title)}">${icon("edit", "ico-12")}</button>`) +
+                  `</div>`;
+              }).join("") || `<div class="c078-none">没有待办</div>`}</div>
               <form class="c078-todo-new" data-c078-form="todo"><input class="input" id="c078-todo-input" maxlength="80" placeholder="新增待办，回车保存" aria-label="新增待办"><button class="btn sm" type="submit">${icon("plus", "ico-12")}</button></form>` : `
-              <div class="c078-day-list">${eventsOn(state.selected).map(e => `<div class="c078-ev c-${e.color}"><span class="c078-ev-dot"></span><span class="c078-ev-main"><b>${esc(e.title)}</b><small>${e.allDay ? "全天" : `${e.time} – ${e.endTime}`}${e.start !== e.end ? ` · ${e.start} 至 ${e.end}` : ""}${e.note ? ` · ${esc(e.note)}` : ""}</small></span><button class="c078-ev-del" data-c078-act="del" data-id="${e.id}" aria-label="删除日程 ${esc(e.title)}">${icon("trash", "ico-12")}</button></div>`).join("") || `<div class="c078-none">这一天没有日程</div>`}</div>`}
+              <div class="c078-day-list">${eventsOn(state.selected).map(e => `<div class="c078-ev c-${e.color}"><span class="c078-ev-dot"></span><span class="c078-ev-main"><b>${esc(e.title)}</b><small>${e.allDay ? "全天" : `${e.time} – ${e.endTime}`}${e.start !== e.end ? ` · ${e.start} 至 ${e.end}` : ""}${e.note ? ` · ${esc(e.note)}` : ""}</small></span><button class="c078-ev-edit" data-c078-act="edit" data-id="${e.id}" aria-label="编辑日程 ${esc(e.title)}">${icon("edit", "ico-12")}</button><button class="c078-ev-del" data-c078-act="del" data-id="${e.id}" aria-label="删除日程 ${esc(e.title)}">${icon("trash", "ico-12")}</button></div>`).join("") || `<div class="c078-none">这一天没有日程</div>`}</div>`}
             </div>
           </div>
         </aside>
@@ -378,6 +359,25 @@ window.CR078 = (() => {
     </div>`;
   }
   function dayTone(key) { return key === ymd(TODAY) ? "今天" : key > ymd(TODAY) ? "未来" : "过去"; }
+
+  /* v7：点击「YYYY年M月」弹出年月快速选择器（年可步进 + 12 个月网格），选月即跳转。 */
+  function pickerHTML(y, m) {
+    const cy = state.pickerYear || y;
+    const months = Array.from({ length: 12 }, (_, i) => i + 1);
+    return `<div class="c078-picker-mask" data-c078-act="close-picker"></div>
+      <div class="c078-picker" role="dialog" aria-label="选择年月">
+        <div class="c078-picker-h">
+          <button class="c078-nav-btn" data-c078-act="picker-year" data-d="-1" aria-label="上一年">‹</button>
+          <b>${cy}年</b>
+          <button class="c078-nav-btn" data-c078-act="picker-year" data-d="1" aria-label="下一年">›</button>
+        </div>
+        <div class="c078-picker-grid">${months.map(mm => {
+          const isActive = cy === y && mm === m;
+          const isCurrent = cy === TODAY.getFullYear() && mm === TODAY.getMonth() + 1;
+          return `<button data-c078-act="pick-month" data-m="${mm}" class="${isActive ? "is-active" : isCurrent ? "is-current" : ""}">${mm}月</button>`;
+        }).join("")}</div>
+      </div>`;
+  }
 
   /* 一个周行 = 周号 + 7 个单元格 + 条带覆盖层（覆盖层与 7 天同列对齐）。条带按车道堆叠，跨天连续；周内外日期截断到边界。 */
   function renderWeek(week, y, m) {
@@ -388,8 +388,8 @@ window.CR078 = (() => {
     return `<div class="c078-cal-row" role="row">
       <div class="c078-cal-wk" role="rowheader">${isoWeek(week[0])}</div>
       ${week.map((d, di) => renderCell(d, y, m, di)).join("")}
-      <div class="c078-week-lanes" aria-hidden="true">
-        ${shown.map(s => `<span class="c078-band c-${s.e.color} ${s.head ? "head" : ""} ${s.tail ? "tail" : ""}" style="--from:${s.from};--span:${s.to - s.from + 1};--lane:${s.lane}" title="${esc(s.e.title)} · ${s.e.start}${s.e.start !== s.e.end ? " 至 " + s.e.end : ""}">${s.head || s.to - s.from < 2 ? esc(s.e.title) : ""}</span>`).join("")}
+      <div class="c078-week-lanes">
+        ${shown.map(s => `<span class="c078-band c-${s.e.color} ${s.head ? "head" : ""} ${s.tail ? "tail" : ""}" style="--from:${s.from};--span:${s.to - s.from + 1};--lane:${s.lane}" data-c078-act="edit" data-id="${s.e.id}" title="${esc(s.e.title)} · ${s.e.start}${s.e.start !== s.e.end ? " 至 " + s.e.end : ""}（点击编辑）">${s.head || s.to - s.from < 2 ? esc(s.e.title) : ""}</span>`).join("")}
       </div>
       ${hidden.length ? `<span class="c078-week-more" data-c078-act="select" data-date="${ymd(week[0])}">+${hidden.length} 条在详情</span>` : ""}
     </div>`;
@@ -519,7 +519,7 @@ window.CR078 = (() => {
     const heat = heatGrid(heatDays);
     const heatCols = heat.cols;
     const heatStyle = `--cols:${heatCols};grid-template-columns:repeat(${heatCols}, minmax(0, 1fr))`;
-    return `<div class="page c078-page" data-design-version="UI-CR078-v5">
+    return `<div class="page c078-page" data-design-version="UI-CR078-v8">
       <div class="page-h"><div class="titles"><h1 class="page-title">概览</h1><p class="page-sub">日程与全平台用量集中在这里。</p></div></div>
       <div class="c078-tabs" role="tablist" aria-label="概览页签">
         <button class="c078-tab ${state.tab === "schedule" ? "active" : ""}" role="tab" aria-selected="${state.tab === "schedule"}" data-c078-act="tab" data-tab="schedule">${icon("calendar", "ico-16")}日程</button>
@@ -622,13 +622,22 @@ window.CR078 = (() => {
 
   /* ==================== 事件 ==================== */
   function render() { UI.render(); }
+  /* 待办行内编辑提交：Enter / 失焦时保存，空值不覆盖；提交后退出编辑态。 */
+  function commitTodoEdit(inputEl) {
+    const id = state.editingTodo;
+    if (!id || !inputEl || !inputEl.isConnected) return;
+    const v = String(inputEl.value || "").trim();
+    const t = todos.find(x => x.id === id);
+    state.editingTodo = null;
+    if (t && v) t.title = v;
+    render();
+  }
   document.addEventListener("click", e => {
     const el = e.target.closest("[data-c078-act]");
     if (!el) return;
     const act = el.dataset.c078Act;
     if (act === "tab") { state.tab = el.dataset.tab; render(); return; }
     if (act === "day-tab") { state.dayTab = el.dataset.tab; render(); return; }
-    if (act === "wx-retry") { state.wx = "ok"; toast("已重新获取天气（原型演示）"); render(); return; }
     if (act === "range") { state.usageRange = el.dataset.key; render(); return; }
     if (act === "refresh") { toast("已刷新用量统计（原型演示，数据不变）"); return; }
     if (act === "shift-month" || act === "shift-year") {
@@ -637,12 +646,17 @@ window.CR078 = (() => {
       const dt = new Date(y, m - 1 + d, 1);
       state.view = `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}`; render(); return;
     }
-    if (act === "today") { state.view = `${TODAY.getFullYear()}-${pad2(TODAY.getMonth() + 1)}`; state.selected = ymd(TODAY); render(); return; }
+    if (act === "today") { state.picker = false; state.view = `${TODAY.getFullYear()}-${pad2(TODAY.getMonth() + 1)}`; state.selected = ymd(TODAY); render(); return; }
+    if (act === "open-picker") { state.picker = !state.picker; if (state.picker) state.pickerYear = Number(state.view.slice(0, 4)); render(); return; }
+    if (act === "picker-year") { state.pickerYear = (state.pickerYear || Number(state.view.slice(0, 4))) + Number(el.dataset.d); render(); return; }
+    if (act === "pick-month") { state.view = `${state.pickerYear || Number(state.view.slice(0, 4))}-${pad2(Number(el.dataset.m))}`; state.picker = false; render(); return; }
+    if (act === "close-picker") { state.picker = false; render(); return; }
     if (act === "select") {
       if (e.target.closest("[data-c078-act='new']") || e.target.closest("[data-c078-act='del']")) return;
       state.selected = el.dataset.date; render(); return;
     }
     if (act === "new") { eventForm(el.dataset.date || state.selected, null); return; }
+    if (act === "edit") { eventForm(null, el.dataset.id); return; }
     if (act === "del") {
       const ev = events.find(x => x.id === el.dataset.id);
       openDialog(dlgShell("删除日程", "", `<p class="small">确定删除「${esc(ev.title)}」？此操作只影响本机日程，不可撤销。</p>`, `<button class="btn" data-act="close-dialog">取消</button><button class="btn danger" data-c078-act="del-confirm" data-id="${ev.id}">删除</button>`)); return;
@@ -667,6 +681,7 @@ window.CR078 = (() => {
     if (act === "todo-toggle") {
       const t = todos.find(x => x.id === el.dataset.id); t.done = el.checked; render(); return;
     }
+    if (act === "todo-edit") { state.editingTodo = el.dataset.id; render(); setTimeout(() => { const i = document.getElementById("c078-todo-edit-input"); if (i) { i.focus(); i.select(); } }, 0); return; }
   }, true);
   document.addEventListener("change", e => {
     const r = e.target.closest('input[name="c078-allday"]'); if (!r) return;
@@ -683,7 +698,10 @@ window.CR078 = (() => {
   document.addEventListener("keydown", e => {
     if (e.key === "Enter" && e.target.matches(".c078-cell") && !e.target.closest("button")) { state.selected = e.target.dataset.date; render(); }
     if (e.key === "Enter" && e.target.matches(".c078-cell-add")) { e.stopPropagation(); }
+    if (e.target.matches(".c078-todo-edit")) { if (e.key === "Enter") { e.preventDefault(); commitTodoEdit(e.target); } else if (e.key === "Escape") { state.editingTodo = null; render(); } }
+    if (e.key === "Escape" && state.picker) { state.picker = false; render(); }
   });
+  document.addEventListener("blur", e => { if (e.target && e.target.matches && e.target.matches(".c078-todo-edit")) commitTodoEdit(e.target); }, true);
   /* 趋势图悬停浮层：显示该小时总量、各模型明细（色点＝堆叠段＝排行走廊同色）与缓存命中率。 */
   function hideTip() {
     const tip = document.querySelector(".c078-tip"); if (tip) tip.hidden = true;
@@ -725,5 +743,5 @@ ${hit ? `<div class="c078-tip-hit">缓存命中率：${hit}%</div>` : ""}`;
   const repaint = () => { if (UI.store.active === "home" && UI.store.homePage === "workbench") UI.render(); };
   repaint();
   if (document.readyState === "complete") setTimeout(repaint, 0); else window.addEventListener("load", () => setTimeout(repaint, 0), { once: true });
-  return { version: "UI-CR078-v5", state, dayInfo, toLunar, termOf, eventsOn, setWeather: m => { state.wx = m; UI.render(); }, get events() { return events; }, get todos() { return todos; } };
+  return { version: "UI-CR078-v8", state, dayInfo, toLunar, termOf, eventsOn, get events() { return events; }, get todos() { return todos; } };
 })();

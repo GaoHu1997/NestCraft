@@ -1,4 +1,4 @@
-/* UI-CR079-v1（设计稿）：会话框顶部“帽子”运行栏——运行通道 CLI/大管家、当前分支、worktree 开关。
+/* UI-CR079-v1（设计稿）：会话框顶部“帽子”运行栏——运行通道 CLI/助理、当前分支、worktree 开关。
    仅设计原型，不改正式软件；UI-SCROLL-001 继承（分支下拉内部滚动复用共享规则）。 */
 window.CR079 = (function () {
   "use strict";
@@ -11,7 +11,7 @@ window.CR079 = (function () {
     store.gitBranches = ["main", store.gitBranch || "feature/booking-idempotency", "develop", "release/2026.11"];
   }
 
-  // 大管家（平台主代理）专属权限档位，由平台工具白名单与运行策略决定，与 CLI 档位分开。
+  // 助理（平台主代理）专属权限档位，由平台工具白名单与运行策略决定，与 CLI 档位分开。
   const platformPermissions = [
     { id: "readonly", name: "只读", icon: "eye", desc: "仅读取/查询类工具，不写文件、不执行命令", available: true },
     { id: "limited", name: "受限", icon: "shield", desc: "白名单工具可读，写入与命令需逐次确认", available: true },

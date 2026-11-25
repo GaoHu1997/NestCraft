@@ -748,7 +748,7 @@ window.UI = (function () {
       <div class="brand"><span class="brand-mark"><img src="../brand-assets-v2/logo-sail.png" alt=""></span>
         <span class="brand-copy"><b>栖造</b><span>NESTCRAFT</span></span></div>
       <span class="top-sep"></span>
-      <div class="top-context"><span class="chip-workspace">${icon("grid", "ico-14")} 个人工作台</span><span class="muted">/</span><span>${esc(topContext())}</span></div>
+      <div class="top-context"><span class="chip-workspace" role="img" aria-label="个人工作台" title="个人工作台">${icon("home", "ico-14")}</span><span class="muted">/</span><span>${esc(topContext())}</span></div>
       <div class="top-spacer window-drag-guide" data-act="window-drag-guide" title="窗口拖动热区（浏览器原型只展示引导；双击模拟最大化／还原）" aria-label="窗口拖动热区"><span>拖动窗口 · 仿真</span></div>
       <div class="top-actions">
         ${updateBadge()}

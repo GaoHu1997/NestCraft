@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UI-CR089 语义模型首次下载 · 状态稿</title>
+<style>
+:root{--surface:#fff;--surface-2:#f6f7f9;--line:#e3e6eb;--line-soft:#eef0f4;--ink:#1b1f24;--ink-2:#4a5158;--muted:#7a828b;--primary:#2f6feb;--danger:#c23b3b;--ok:#2e7d4f}
+html[data-theme=dark]{--surface:#1b1e23;--surface-2:#22262c;--line:#333941;--line-soft:#2b3037;--ink:#e8eaee;--ink-2:#c3c9d1;--muted:#8b939d;--primary:#6b9bff;--danger:#e06c6c;--ok:#63b37f}
+body{margin:24px;font:13px/1.6 system-ui,"Microsoft YaHei",sans-serif;color:var(--ink);background:var(--surface-2)}
+h1{font-size:16px;margin:0 0 4px}
+.note{color:var(--muted);font-size:12px;margin-bottom:18px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px}
+.card h2{font-size:12px;color:var(--muted);margin:0 0 8px;font-weight:600}
+.row{display:flex;align-items:center;gap:8px;margin:6px 0}
+.bar{height:6px;background:var(--line-soft);border-radius:3px;overflow:hidden;flex:1}
+.bar>i{display:block;height:100%;background:var(--primary)}
+.btn{padding:5px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface);font-size:12px;cursor:default}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+.err{color:var(--danger);font-size:12px}
+.ok{color:var(--ok);font-size:12px}
+.tag{font-size:11px;padding:1px 6px;border-radius:10px;background:var(--surface-2);border:1px solid var(--line);color:var(--ink-2)}
+</style>
+</head>
+<body>
+<h1>UI-CR089 · 语义模型首次下载（四种状态）</h1>
+<p class="note">入口：知识库阅读器右侧「索引状态」区 / 设置·知识库。首次启动自动下载，约 41MB；离线或失败不阻塞阅读，检索自动回落关键词。</p>
+<div class="grid">
+  <section class="card" data-scene="SC-M01"><h2>SC-M01 检测到缺失（未开始）</h2>
+    <div class="row"><b>本地语义模型</b><span class="tag">未安装</span></div>
+    <p class="note" style="margin:4px 0">首次使用需下载约 41MB（模型 24MB + 运行时 17MB），仅一次。</p>
+    <div class="row"><button class="btn primary">立即下载</button><button class="btn">使用关键词检索</button></div>
+  </section>
+  <section class="card" data-scene="SC-M02"><h2>SC-M02 下载中</h2>
+    <div class="row"><b>正在下载模型</b><span>42%</span></div>
+    <div class="row"><div class="bar"><i style="width:42%"></i></div></div>
+    <p class="note" style="margin:4px 0">model_quantized.onnx · 10.1 / 24.0 MB · 2.1 MB/s</p>
+    <div class="row"><button class="btn">取消</button><span class="tag">可继续阅读，语义稍后可用</span></div>
+  </section>
+  <section class="card" data-scene="SC-M03"><h2>SC-M03 完成</h2>
+    <div class="row"><b>本地语义模型</b><span class="ok">已就绪</span></div>
+    <p class="note" style="margin:4px 0">bge-small-zh-v1.5 · int8 · 512 维 · 已编码 128 / 342 块</p>
+    <div class="row"><button class="btn">重建语义索引</button></div>
+  </section>
+  <section class="card" data-scene="SC-M04"><h2>SC-M04 失败 / 离线</h2>
+    <div class="row"><b>本地语义模型</b><span class="tag">不可用</span></div>
+    <p class="err">下载失败：网络不可达（hf-mirror.com）。已自动使用关键词检索，其他功能不受影响。</p>
+    <div class="row"><button class="btn primary">重试</button><button class="btn">稍后再说</button></div>
+  </section>
+</div>
+</body>
+</html>

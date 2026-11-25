@@ -386,6 +386,7 @@ const WORKBENCH_TOOL_LABELS: Record<string, string> = {
   save_server: "工作台·保存服务器",
   // CR-059 G4：生图工具
   generate_image: "工作台·生成图片",
+  read_skill: "工作台·读取技能",
   // CR-059 / BUG-CR059-01：原有 6 项内置工具真实注入后的中文名（与后端 TOOL_LABELS 一致）
   fs_read: "工作台·读文件",
   knowledge_list: "工作台·知识清单",

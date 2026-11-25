@@ -1,0 +1,1701 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>多语言代码阅读导航（Java / C# / Python） · UI-CR094-v1</title><style>
+:root{color-scheme:light;--paper:#fff;--panel:#fafbfc;--panel-2:#f4f6f8;--line:#e6e8eb;--line-soft:#eceef1;--ink:#1f2329;--ink-2:#41464e;--muted:#86909c;--accent:#2b6cf6;--accent-ink:#fff;--soft:#eef3ff;--thumb:#a4abb5;--thumb-hover:#86909c;--danger:#d93b3b;--danger-soft:#fdecec;--hover-bg:#f1f3f6;--hover-line:#e2e5e9;--code-bg:#fbfcfe;--shadow:0 12px 32px #1720301f;--kw:#8b3dff;--st:#0a7d55;--cm:#9aa3ae;--nm:#b26a00;--lang-java:#c2710c;--lang-cs:#7a4fd8;--lang-py:#2563eb;--lang-go:#0891b2;--lang-vue:#0f9d78;--lang-txt:#86909c}
+html[data-theme=dark]{color-scheme:dark;--paper:#1e2126;--panel:#23262c;--panel-2:#262a31;--line:#32373f;--line-soft:#2c3138;--ink:#e8eaee;--ink-2:#c2c8d0;--muted:#9aa3ae;--accent:#5b8dff;--accent-ink:#0f1420;--soft:#1e2a44;--thumb:#7d8794;--thumb-hover:#9aa3ae;--danger:#ff7b76;--danger-soft:#3a2324;--hover-bg:#2b3037;--hover-line:#3a4048;--code-bg:#1b1e23;--shadow:0 14px 36px #0006;--kw:#b79bff;--st:#6fd3a6;--cm:#6b7480;--nm:#e0b06a}
+*{box-sizing:border-box;scrollbar-width:thin;scrollbar-color:transparent transparent}
+*.scrollbar-active{scrollbar-color:var(--thumb) transparent}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:transparent;border:3px solid transparent;background-clip:content-box;border-radius:8px}
+.scrollbar-active::-webkit-scrollbar-thumb{background:var(--thumb);background-clip:content-box}
+.scrollbar-active::-webkit-scrollbar-thumb:hover{background:var(--thumb-hover);background-clip:content-box}
+::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}
+html,body{height:100%}
+body{margin:0;display:flex;flex-direction:column;overflow:hidden;color:var(--ink);background:var(--panel-2);font:13px/1.5 "Segoe UI","Microsoft YaHei",sans-serif}
+button,input{font:inherit;color:inherit}
+button{background:transparent;border:1px solid var(--line);border-radius:6px;padding:5px 9px;cursor:pointer;display:inline-flex;align-items:center;gap:5px}
+button:hover{background:var(--hover-bg)}
+button:disabled{opacity:.45;cursor:not-allowed}
+:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+[hidden]{display:none!important}
+.muted{color:var(--muted)}
+.spacer{flex:1}
+kbd{font:10.5px/1 Consolas,"Cascadia Mono",monospace;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:1px 4px;background:var(--paper);color:var(--ink-2);white-space:nowrap}
+
+/* ---------- 场景切换栏 ---------- */
+.lab{flex:0 0 auto;min-height:56px;display:flex;align-items:center;gap:12px;padding:8px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.lab b{font-size:14px}
+.lab label.lbl{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.lab select{background:var(--paper);border:1px solid var(--line);border-radius:6px;padding:5px 8px;color:var(--ink);min-width:238px}
+.lab small{font-size:11px}
+.lang-switch{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;background:var(--paper)}
+.lang-btn{border:0;border-radius:0;padding:5px 10px;font-size:12px;background:transparent;gap:6px}
+.lang-btn+.lang-btn{border-left:1px solid var(--line)}
+.lang-btn.on{background:var(--soft);color:var(--accent);font-weight:600}
+.lang-btn .dot{width:7px;height:7px;border-radius:50%;background:var(--muted)}
+.lang-btn[data-lang=java] .dot{background:var(--lang-java)}
+.lang-btn[data-lang=cs] .dot{background:var(--lang-cs)}
+.lang-btn[data-lang=py] .dot{background:var(--lang-py)}
+
+/* ---------- 设备舞台 ---------- */
+.stage{flex:1;min-height:0;background:var(--panel-2);display:flex;justify-content:center;align-items:stretch}
+.app{width:100%;height:100%;display:flex;flex-direction:column;background:var(--paper);overflow:hidden}
+body.narrow .stage{align-items:flex-start;padding:18px;overflow:auto}
+body.narrow .app{width:390px;height:720px;flex:0 0 auto;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}
+
+/* ---------- 工作区 ---------- */
+.workspace{flex:1;min-height:0;display:flex;position:relative;overflow:hidden}
+.rail{width:44px;flex:0 0 44px;display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 0;background:var(--panel);border-right:1px solid var(--line-soft)}
+.rail button{width:32px;height:32px;padding:0;justify-content:center;border-color:transparent;color:var(--muted)}
+.rail button.on{background:var(--soft);color:var(--accent)}
+.rail svg{width:18px;height:18px}
+
+.tree-pane{width:268px;flex:0 0 auto;min-width:0;display:flex;flex-direction:column;min-height:0;background:var(--paper);border-right:1px solid var(--line-soft);position:relative}
+.tree-pane.collapsed{display:none}
+.tree-head{height:40px;flex:0 0 40px;display:flex;align-items:center;gap:4px;padding:0 8px 0 12px;border-bottom:1px solid var(--line-soft)}
+.tree-head .title{font-weight:600;font-size:12.5px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tree-head button{width:26px;height:26px;padding:0;justify-content:center;border-color:transparent;color:var(--muted)}
+.tree{flex:1;min-height:0;overflow:auto;padding:4px 6px 18px;position:relative}
+.row{width:100%;display:flex;align-items:center;gap:6px;min-height:26px;padding:0 6px;border:0;border-radius:5px;background:transparent;color:var(--ink);text-align:left;white-space:nowrap;cursor:pointer;font-size:12.5px}
+.row:hover{background:var(--hover-bg)}
+.row.sel{background:var(--soft);color:var(--accent)}
+.row .chev{width:11px;flex:0 0 11px;font-size:10px;color:var(--muted);text-align:center}
+.row .chev.leaf{visibility:hidden}
+.row svg{width:14px;height:14px;flex:0 0 auto;color:var(--muted)}
+.row.dir svg{color:var(--accent)}
+.row .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.row .count{font-size:10px;color:var(--muted)}
+.langbar{width:3px;height:15px;flex:0 0 3px;border-radius:2px;background:var(--muted)}
+.ficon{width:18px;height:18px;flex:0 0 18px;border-radius:4px;display:grid;place-items:center;font:700 9px/1 "Segoe UI","Microsoft YaHei",sans-serif;color:#fff;background:var(--muted);letter-spacing:-.2px}
+.ficon.java{background:var(--lang-java)}.ficon.cs{background:var(--lang-cs)}.ficon.py{background:var(--lang-py)}.ficon.go{background:var(--lang-go)}.ficon.vue{background:var(--lang-vue)}.ficon.txt{background:var(--lang-txt)}
+body.narrow .tree-pane{position:absolute;top:0;bottom:0;left:44px;width:250px;z-index:30;border-right:1px solid var(--line);box-shadow:var(--shadow);transform:translateX(-110%);transition:transform .16s}
+body.narrow .tree-pane.open{transform:none}
+body.narrow .editor-bar .status,body.narrow .editor-bar .keyhint{display:none}
+body.narrow .editor-bar .path{flex:1 1 100%}
+body.narrow .precision{font-size:11px}
+
+/* ---------- 编辑区 ---------- */
+.main{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;background:var(--paper)}
+.scenario-note{flex:0 0 auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 12px;background:var(--soft);border-bottom:1px solid var(--line-soft);font-size:11.5px;color:var(--ink-2);line-height:1.6}
+.scenario-note .sc{font:10.5px/1 Consolas,monospace;color:var(--accent);border:1px solid var(--accent);border-radius:4px;padding:2px 5px;background:var(--paper)}
+.scenario-note code{font:11px Consolas,monospace;background:var(--paper);border:1px solid var(--line-soft);border-radius:4px;padding:0 4px}
+.hint-chip{font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--accent);color:var(--accent);background:var(--paper);cursor:pointer}
+.hint-chip:hover{background:var(--soft)}
+.hint-chip.ghost{border-color:var(--line);color:var(--muted)}
+.tabs-wrap{position:relative;height:40px;flex:0 0 40px;border-bottom:1px solid var(--line-soft);background:var(--panel-2);display:flex;align-items:center;padding:0 8px}
+.tabs{display:flex;align-items:center;gap:2px;overflow-x:auto;overflow-y:hidden;height:100%;width:100%}
+.tab{display:inline-flex;align-items:center;gap:6px;height:28px;max-width:230px;padding:0 4px 0 10px;border:1px solid transparent;border-radius:6px;font-size:12px;flex:0 0 auto;cursor:pointer;user-select:none;background:transparent}
+.tab:hover{background:var(--hover-bg)}
+.tab.active{background:var(--code-bg);border-color:var(--line-soft);font-weight:500}
+.tab-name{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tab-close{width:18px;height:18px;padding:0;border:0;border-radius:4px;justify-content:center;color:var(--muted);background:transparent;font-size:14px;line-height:1}
+.tab-close:hover{background:var(--hover-line);color:var(--ink)}
+.crumbs{flex:0 0 auto;display:flex;align-items:center;gap:2px;padding:5px 12px;border-bottom:1px solid var(--line-soft);font-size:11.5px;flex-wrap:wrap;background:var(--paper)}
+.crumb{border:0;background:transparent;padding:1px 5px;border-radius:4px;color:var(--ink-2);cursor:pointer;font-size:11.5px}
+.crumb:hover{background:var(--hover-bg);color:var(--accent)}
+.crumb.sep{color:var(--muted);padding:0 1px;cursor:default}
+.crumb.last{color:var(--ink);font-weight:600}
+.editor-bar{flex:0 0 auto;min-height:38px;display:flex;align-items:center;gap:8px;padding:4px 12px;border-bottom:1px solid var(--line-soft);font-size:11.5px;flex-wrap:wrap}
+.editor-bar .path{font:11.5px Consolas,"Cascadia Mono",monospace;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:120px}
+.editor-bar .status{color:var(--muted);white-space:nowrap}
+.lang-pill{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;border:1px solid var(--line);border-radius:20px;padding:1px 7px;color:var(--ink-2);white-space:nowrap}
+.lang-pill i{width:7px;height:7px;border-radius:50%;background:var(--muted)}
+.lang-pill.java i{background:var(--lang-java)}.lang-pill.cs i{background:var(--lang-cs)}.lang-pill.py i{background:var(--lang-py)}.lang-pill.go i{background:var(--lang-go)}.lang-pill.vue i{background:var(--lang-vue)}.lang-pill.txt i{background:var(--lang-txt)}
+.lang-pill.warn{border-color:var(--danger);color:var(--danger)}
+.nav-actions{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap}
+.act-btn{height:24px;padding:0 8px;font-size:11px;border-radius:6px;gap:4px}
+.act-btn b{font-size:10.5px;color:var(--accent)}
+.act-btn:disabled b{color:var(--muted)}
+.keyhint{font-size:10.5px;color:var(--muted);white-space:nowrap}
+.precision{flex:0 0 auto;display:flex;align-items:flex-start;gap:8px;padding:5px 12px;border-bottom:1px solid var(--line-soft);background:var(--panel-2);font-size:11.5px;color:var(--ink-2);line-height:1.55}
+.precision .ptag{flex:0 0 auto;font-size:10px;color:var(--accent);border:1px solid var(--accent);border-radius:20px;padding:0 7px;margin-top:1px;white-space:nowrap}
+.precision.warn .ptag{color:var(--danger);border-color:var(--danger)}
+.precision .ptext{min-width:0}
+.editor-stage{flex:1;min-height:0;position:relative;overflow:hidden;background:var(--code-bg)}
+.code-wrap{position:absolute;inset:0;overflow:auto}
+.code{margin:0;padding:8px 0 48px;font:13px/20px Consolas,"Cascadia Mono","JetBrains Mono",monospace;white-space:pre;min-height:100%}
+.cl{display:flex;min-height:20px}
+.cl:hover{background:var(--hover-bg)}
+.cl.line-hl{background:var(--soft);box-shadow:inset 2px 0 var(--accent)}
+.cl.is-cursor .ln{color:var(--accent);font-weight:600}
+.cl .ln{width:42px;flex:0 0 42px;text-align:right;padding-right:6px;color:var(--muted);user-select:none}
+.cl .gm{width:30px;flex:0 0 30px;display:flex;gap:4px;align-items:center;justify-content:center;padding-right:2px}
+.gmark{width:12px;height:16px;padding:0;border:0;border-radius:2px;background:transparent;color:var(--accent);font:12px/1 Consolas,monospace;justify-content:center;opacity:.95}
+.gmark:hover{background:var(--soft);opacity:1}
+.gmark.down{color:var(--accent)}
+.gmark.up{color:var(--muted)}
+.gmark.up:hover{color:var(--accent)}
+.cl .lc{flex:1;white-space:pre;padding-right:16px}
+.kw{color:var(--kw)}
+.st{color:var(--st)}
+.cm{color:var(--cm);font-style:italic}
+.nm{color:var(--nm)}
+.an{color:var(--accent);font-weight:600}
+.op{color:var(--kw);font-weight:600}
+.tlink{border-bottom:1px dashed var(--accent);cursor:pointer;border-radius:2px}
+.tlink[data-role=parent]{color:var(--accent);border-bottom-style:dotted}
+.tlink:hover{background:var(--soft)}
+.inline-warn{display:inline-flex;align-items:center;gap:4px;margin-left:14px;padding:0 7px;font:11px/16px "Segoe UI","Microsoft YaHei",sans-serif;color:var(--danger);background:var(--danger-soft);border:1px solid var(--danger);border-radius:20px;vertical-align:1px}
+.inline-warn::before{content:"!";font-weight:700}
+
+/* ---------- 右键菜单 / 浮层 ---------- */
+.ctx{position:fixed;z-index:60;min-width:216px;padding:5px;background:var(--paper);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);max-height:380px;overflow:auto}
+.ctx-item{display:flex;align-items:center;gap:9px;width:100%;padding:7px 9px;border:0;border-radius:5px;background:transparent;color:var(--ink);text-align:left;font-size:12.5px;cursor:pointer}
+.ctx-item .ctx-label{flex:1}
+.ctx-item kbd{background:var(--panel-2)}
+.ctx-item:hover,.ctx-item.kb{background:var(--soft);color:var(--accent)}
+.ctx-item[disabled]{color:var(--muted);cursor:not-allowed}
+.ctx-item[disabled] kbd{opacity:.5}
+.ctx-sep{height:1px;background:var(--line-soft);margin:4px 6px}
+.gtip{position:fixed;z-index:55;padding:3px 8px;font-size:11px;background:var(--ink);color:var(--paper);border-radius:5px;box-shadow:var(--shadow);pointer-events:none;white-space:nowrap}
+html[data-theme=dark] .gtip{background:#0d0f12;color:#e8eaee;border:1px solid var(--line)}
+
+/* ---------- 选择器 ---------- */
+.picker{position:fixed;z-index:65;width:min(452px,92vw);background:var(--paper);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);overflow:hidden}
+.picker-head{padding:10px 12px;font-size:12.5px;font-weight:600;border-bottom:1px solid var(--line-soft);display:flex;align-items:center;gap:7px}
+.picker-head .ph-ico{width:20px;height:20px;border-radius:5px;display:grid;place-items:center;background:var(--soft);color:var(--accent);font:700 11px/1 Consolas,monospace;flex:0 0 auto}
+.picker-head .count{color:var(--muted);font-weight:400}
+.picker-head kbd{margin-left:auto}
+.picker-filter{margin:8px 10px;width:calc(100% - 20px);padding:6px 9px;border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--ink);font-size:12.5px}
+.picker-list{max-height:286px;overflow-y:auto;overflow-x:hidden;padding:4px 6px 8px}
+.pick{display:flex;gap:9px;align-items:flex-start;width:100%;padding:7px 9px;border:0;border-radius:6px;background:transparent;text-align:left;cursor:pointer}
+.pick:hover,.pick.active{background:var(--soft)}
+.pick .pick-ico{width:22px;height:22px;flex:0 0 auto;border-radius:5px;background:var(--panel-2);color:var(--accent);display:grid;place-items:center;font:700 10px/1 Consolas,monospace;border:1px solid var(--line-soft)}
+.pick .pick-ico.java{color:var(--lang-java);border-color:var(--lang-java)}
+.pick .pick-ico.cs{color:var(--lang-cs);border-color:var(--lang-cs)}
+.pick .pick-ico.py{color:var(--lang-py);border-color:var(--lang-py)}
+.pick .pick-main{min-width:0;flex:1;display:flex;flex-direction:column}
+.pick .pick-name-row{display:flex;align-items:center;gap:6px;min-width:0}
+.pick .pick-name{font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pick-tag{font-size:10px;padding:0 6px;border-radius:20px;border:1px solid var(--line);color:var(--ink-2);background:var(--panel-2);white-space:nowrap;flex:0 0 auto;max-width:62%;overflow:hidden;text-overflow:ellipsis}
+.pick-tag.direct{color:var(--accent);border-color:var(--accent);background:var(--soft)}
+.pick .pick-loc{display:block;font:11px Consolas,monospace;color:var(--accent);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pick .pick-src{display:block;font:11px Consolas,monospace;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.picker-empty{padding:20px 12px;text-align:center;color:var(--muted);font-size:12px}
+.picker-foot{display:flex;gap:10px;flex-wrap:wrap;padding:6px 10px;border-top:1px solid var(--line-soft);font-size:10.5px;color:var(--muted)}
+.picker-foot kbd{font-size:10px}
+
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:90;padding:8px 16px;border-radius:8px;background:var(--ink);color:var(--paper);font-size:12px;box-shadow:var(--shadow);max-width:86vw}
+html[data-theme=dark] .toast{background:#0d0f12;color:#e8eaee;border:1px solid var(--line)}
+.toast.error{background:var(--danger);color:#fff}
+
+@media (max-width:640px){
+  .lab{padding:8px 10px;gap:8px}
+  .lab select{min-width:0;width:100%}
+  .lab label.lbl{width:100%}
+  .editor-bar .status,.keyhint{display:none}
+  .precision{font-size:11px}
+  .picker{width:calc(100vw - 24px)}
+}
+</style></head><body>
+<div class="lab">
+  <b>多语言代码阅读导航</b>
+  <label class="lbl">设计场景 <select id="scenario" aria-label="设计场景">
+    <option value="s1">SC-094-01 接口 → 实现类</option>
+    <option value="s2">SC-094-02 实现类 → 接口/父类</option>
+    <option value="s3">SC-094-03 C# 双向跳转</option>
+    <option value="s4">SC-094-04 Python 基类跳转</option>
+    <option value="s5">SC-094-05 继承 gutter 标记</option>
+    <option value="s6">SC-094-06 无结果 / 不支持语言</option>
+    <option value="s7">SC-094-07 多实现选择器（13）</option>
+    <option value="s8">SC-094-08 混合项目 + 面包屑</option>
+  </select></label>
+  <div class="lang-switch" role="group" aria-label="样例语言">
+    <button class="lang-btn on" type="button" data-lang="java" aria-pressed="true"><span class="dot"></span>Java</button>
+    <button class="lang-btn" type="button" data-lang="cs" aria-pressed="false"><span class="dot"></span>C#</button>
+    <button class="lang-btn" type="button" data-lang="py" aria-pressed="false"><span class="dot"></span>Python</button>
+  </div>
+  <button id="themeBtn" type="button">深色</button>
+  <button id="narrowBtn" type="button">窄屏 390</button>
+  <span class="spacer"></span>
+  <small class="muted">合成样例 · 不读写真实文件 · UI-CR094-v1</small>
+</div>
+<div class="stage">
+  <div class="app" id="app">
+    <div class="workspace">
+      <nav class="rail" aria-label="编码区工具">
+        <button id="railTree" class="on" type="button" title="资源管理器" aria-label="资源管理器">__ICO_RES__</button>
+        <button id="railGit" type="button" title="Git" aria-label="Git">__ICO_GIT__</button>
+        <button id="railExt" type="button" title="外部编辑器" aria-label="外部编辑器">__ICO_EXT__</button>
+      </nav>
+      <aside class="tree-pane" id="treePane" aria-label="混合项目文件树">
+        <div class="tree-head">
+          <span class="title">混合项目 · 合成样例</span>
+          <button id="btnCollapse" type="button" title="折叠文件树" aria-label="折叠文件树">__ICO_COLLAPSE__</button>
+        </div>
+        <div class="tree" id="tree" role="tree" aria-label="项目文件"></div>
+      </aside>
+      <main class="main">
+        <div class="scenario-note" id="scenarioNote"></div>
+        <div class="tabs-wrap"><div class="tabs" id="tabs" role="tablist"></div></div>
+        <div class="crumbs" id="crumbs" aria-label="面包屑"></div>
+        <div class="editor-bar" id="editorBar"></div>
+        <div class="precision" id="precision"></div>
+        <div class="editor-stage" id="editorStage">
+          <div class="code-wrap" id="codeWrap"><pre class="code" id="code"></pre></div>
+        </div>
+      </main>
+    </div>
+  </div>
+</div>
+<div class="ctx" id="ctx" role="menu" hidden></div>
+<div class="picker" id="picker" hidden role="dialog" aria-label="继承关系选择器"></div>
+<div class="gtip" id="gtip" hidden></div>
+<div class="toast" id="toast" hidden></div>
+<script>
+'use strict';
+const $ = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const baseName = p => p.split('/').pop();
+
+const ICO = {
+  res: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5.5h5l1.6 2H17v8H3z"/><path d="M3 5.5V4h4"/></svg>',
+  git: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="15" r="2"/><circle cx="14" cy="9" r="2"/><path d="M6 7v6M6 9c0-2 2-3 4-3h1c2 0 3 1 3 2"/></svg>',
+  ext: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 4h5v5M16 4l-6 6M13 12v4H4V7h4"/></svg>',
+  collapse: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 4v12M15 7l-4 3 4 3"/></svg>',
+  folder: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 5.5h5l1.5 2H17v8H3z"/></svg>',
+  file: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M5 2.5h7l3 3v12H5z"/><path d="M12 2.5v3h3"/></svg>'
+};
+$('#railTree').innerHTML = ICO.res;
+$('#railGit').innerHTML = ICO.git;
+$('#railExt').innerHTML = ICO.ext;
+$('#btnCollapse').innerHTML = ICO.collapse;
+
+const META = {
+  java: { label: 'Java', short: 'J', prec: 'Java：语法索引仅识别显式 implements／extends；匿名类 new IFoo(){}、Lambda、泛型实参与跨 jar 依赖的实现看不到。' },
+  cs: { label: 'C#', short: 'C#', prec: 'C#：class A : Base, IFoo 可见，但语法无法区分基类与接口（统一按「父类型」呈现）；partial class 分散多文件、显式接口实现 void IFoo.M() 可能漏。' },
+  py: { label: 'Python', short: 'Py', prec: 'Python：基于语法索引，动态绑定与 ABC 注册无法识别；鸭子类型、IFoo.register(Bar) 虚拟子类与 __subclasshook__ 也看不到（仅类定义中的基类列表可见）。' },
+  go: { label: 'Go', short: 'Go', prec: 'Go 暂不支持继承跳转，可跳转到定义。' },
+  vue: { label: 'Vue', short: 'V', prec: 'Vue 暂不支持继承跳转，可跳转到定义。' },
+  txt: { label: '纯文本', short: 'T', prec: '纯文本（.txt）完全不提供代码导航。' }
+};
+
+/* ================= 索引：合成代码 ================= */
+const FILES = {};
+const INDEX = { java: {}, cs: {}, py: {} };
+const ORDER = { java: [], cs: [], py: [] };
+
+function cleanType(s) {
+  return String(s).replace(/[{}]/g, '').replace(/<[^>]*>/g, '').replace(/=.*$/, '').trim();
+}
+function parseDecls(f, opts) {
+  const kinds = (opts && opts.kinds) || {};
+  f.lines.forEach((line, i) => {
+    const n = i + 1;
+    let kind = null, name = null, parents = [];
+    if (f.lang === 'java') {
+      const m = line.match(/^\s*(?:(?:public|protected|private)\s+)?(abstract\s+)?(interface|class|enum)\s+(\w+)/);
+      if (m) {
+        kind = m[1] ? 'abstract' : m[2]; name = m[3];
+        const ext = line.match(/\bextends\s+([A-Za-z0-9_.<>]+(?:\s*,\s*[A-Za-z0-9_.<>]+)*)/);
+        const imp = line.match(/\bimplements\s+([A-Za-z0-9_.<>]+(?:\s*,\s*[A-Za-z0-9_.<>]+)*)/);
+        if (ext) parents = parents.concat(ext[1].split(',').map(cleanType).filter(Boolean));
+        if (imp) parents = parents.concat(imp[1].split(',').map(cleanType).filter(Boolean));
+      }
+    } else if (f.lang === 'cs') {
+      const m = line.match(/^\s*(?:(?:public|protected|private|internal)\s+)?(abstract\s+)?(?:partial\s+)?(interface|class|record)\s+(\w+)(?:\s*<[^>]*>)?\s*(?::\s*([^{]+))?/);
+      if (m) {
+        kind = m[1] ? 'abstract' : m[2]; name = m[3];
+        if (m[4]) parents = m[4].split(',').map(cleanType).filter(Boolean);
+      }
+    } else if (f.lang === 'py') {
+      const m = line.match(/^class\s+(\w+)\s*(?:\(([^)]*)\))?\s*:/);
+      if (m) {
+        kind = 'class'; name = m[1];
+        if (m[2]) parents = m[2].split(',').map(x => cleanType(x.split('=')[0])).filter(Boolean);
+      }
+    }
+    if (!name) return;
+    const k = kinds[name] || kind;
+    const t = { name, kind: k, lang: f.lang, file: f.path, line: n, parentNames: parents, parentTypes: [], children: [], abstract: k === 'abstract', order: ORDER[f.lang].length };
+    INDEX[f.lang][name] = t;
+    ORDER[f.lang].push(t);
+    f.decls.push({ name, line: n, kind: k });
+    f.declByLine[n] = { name, role: 'decl' };
+    if (parents.length) f.parentRefs[n] = parents.slice();
+  });
+}
+function addFile(path, lang, lines, opts) {
+  const o = opts || {};
+  const f = { path, lang, lines, decls: [], declByLine: {}, parentRefs: {}, crumbs: o.crumbs || null };
+  FILES[path] = f;
+  if (INDEX[lang]) parseDecls(f, o);
+  return f;
+}
+
+/* ---- Java ---- */
+addFile('pay-java/PayService.java', 'java', [
+  'package com.nest.pay;',
+  '',
+  'import java.math.BigDecimal;',
+  '',
+  '/**',
+  ' * 支付网关统一接口（合成样例，仅供设计演示）',
+  ' */',
+  'public interface PayService {',
+  '    PayResult pay(PayRequest request);',
+  '',
+  '    RefundResult refund(String tradeNo, BigDecimal amount);',
+  '}'
+], { crumbs: ['PayService.java', 'PayService'] });
+
+addFile('pay-java/AbstractPayService.java', 'java', [
+  'package com.nest.pay;',
+  '',
+  '/** 抽象基类：统一校验与审计（合成样例） */',
+  'public abstract class AbstractPayService implements PayService {',
+  '    protected void verify(PayRequest request) {',
+  '        // 合成样例：只读展示',
+  '    }',
+  '',
+  '    protected void audit(String tradeNo) {',
+  '        // 记录审计号',
+  '    }',
+  '}'
+], { crumbs: ['AbstractPayService.java', 'AbstractPayService', 'verify(PayRequest)'] });
+
+addFile('pay-java/AlipayService.java', 'java', [
+  'package com.nest.pay;',
+  '',
+  'import java.math.BigDecimal;',
+  '',
+  '/** 支付宝实现（合成样例） */',
+  'public class AlipayService extends AbstractPayService implements PayService {',
+  '    @Override',
+  '    public PayResult pay(PayRequest request) {',
+  '        verify(request);',
+  '        return PayResult.ok("alipay");',
+  '    }',
+  '',
+  '    @Override',
+  '    public RefundResult refund(String tradeNo, BigDecimal amount) {',
+  '        return RefundResult.ok(tradeNo);',
+  '    }',
+  '}'
+], { crumbs: ['AlipayService.java', 'AlipayService', 'pay(PayRequest)'] });
+
+addFile('pay-java/WechatPayService.java', 'java', [
+  'package com.nest.pay;',
+  '',
+  '/** 微信支付实现：继承抽象基类（合成样例） */',
+  'public class WechatPayService extends AbstractPayService {',
+  '    @Override',
+  '    public PayResult pay(PayRequest request) {',
+  '        return PayResult.ok("wechat");',
+  '    }',
+  '',
+  '    @Override',
+  '    public RefundResult refund(String tradeNo, BigDecimal amount) {',
+  '        return RefundResult.ok(tradeNo);',
+  '    }',
+  '}'
+], { crumbs: ['WechatPayService.java', 'WechatPayService', 'pay(PayRequest)'] });
+
+addFile('pay-java/UnionPayService.java', 'java', [
+  'package com.nest.pay;',
+  '',
+  '/** 银联实现：经抽象基类间接实现 PayService（合成样例） */',
+  'public class UnionPayService extends AbstractPayService {',
+  '    @Override',
+  '    public PayResult pay(PayRequest request) {',
+  '        audit("union");',
+  '        return PayResult.ok("union");',
+  '    }',
+  '}'
+], { crumbs: ['UnionPayService.java', 'UnionPayService', 'pay(PayRequest)'] });
+
+addFile('pay-java/RefundService.java', 'java', [
+  'package com.nest.pay;',
+  '',
+  '/** 退款服务：合成样例中暂无实现类 */',
+  'public interface RefundService {',
+  '    RefundResult refund(String tradeNo);',
+  '}'
+], { crumbs: ['RefundService.java', 'RefundService'] });
+
+addFile('pay-java/SettleService.java', 'java', [
+  'package com.nest.pay;',
+  '',
+  '/** 批量结算服务：合成样例中实现较多 */',
+  'public interface SettleService {',
+  '    SettleResult settle(SettleBatch batch);',
+  '}'
+], { crumbs: ['SettleService.java', 'SettleService', 'settle(SettleBatch)'] });
+
+addFile('pay-java/AbstractSettleService.java', 'java', [
+  'package com.nest.pay;',
+  '',
+  '/** 结算抽象基类（合成样例） */',
+  'public abstract class AbstractSettleService implements SettleService {',
+  '    protected void check(SettleBatch batch) {',
+  '    }',
+  '}'
+], { crumbs: ['AbstractSettleService.java', 'AbstractSettleService', 'check(SettleBatch)'] });
+
+const BANKS = [
+  ['IcbcPayService', '工商银行', 'icbc', false],
+  ['CcbPayService', '建设银行', 'ccb', true],
+  ['AbcPayService', '农业银行', 'abc', true],
+  ['BocPayService', '中国银行', 'boc', false],
+  ['CmbPayService', '招商银行', 'cmb', false],
+  ['SpdbPayService', '浦发银行', 'spdb', false],
+  ['CiticPayService', '中信银行', 'citic', false],
+  ['CebPayService', '光大银行', 'ceb', false],
+  ['PsbcPayService', '邮储银行', 'psbc', false],
+  ['PabPayService', '平安银行', 'pab', false],
+  ['HxbPayService', '华夏银行', 'hxb', false],
+  ['GdbPayService', '广发银行', 'gdb', false],
+  ['BjPayService', '北京银行', 'bj', false]
+];
+BANKS.forEach(b => {
+  addFile('pay-java/legacy/' + b[0] + '.java', 'java', [
+    'package com.nest.pay;',
+    '',
+    '/** ' + b[1] + (b[3] ? '结算实现：经抽象基类间接实现（合成样例）' : '结算实现（合成样例）') + ' */',
+    'public class ' + b[0] + (b[3] ? ' extends AbstractSettleService' : ' implements SettleService') + ' {',
+    '    @Override',
+    '    public SettleResult settle(SettleBatch batch) {',
+    '        return SettleResult.ok("' + b[2] + '");',
+    '    }',
+    '}'
+  ], { crumbs: [b[0] + '.java', b[0], 'settle(SettleBatch)'] });
+});
+
+/* ---- C# ---- */
+addFile('pay-csharp/IOrderService.cs', 'cs', [
+  'using System.Threading.Tasks;',
+  '',
+  'namespace Nest.Order.Contracts',
+  '{',
+  '    /// <summary>订单服务契约（合成样例）</summary>',
+  '    public interface IOrderService',
+  '    {',
+  '        Task<OrderResult> CreateAsync(OrderRequest request);',
+  '        Task CancelAsync(string orderNo);',
+  '    }',
+  '}'
+], { crumbs: ['IOrderService.cs', 'IOrderService', 'CreateAsync(OrderRequest)'] });
+
+addFile('pay-csharp/OrderService.cs', 'cs', [
+  'using Nest.Order.Contracts;',
+  '',
+  'namespace Nest.Order.Services',
+  '{',
+  '    /// <summary>订单服务实现（合成样例）</summary>',
+  '    public class OrderService : IOrderService',
+  '    {',
+  '        public async Task<OrderResult> CreateAsync(OrderRequest request)',
+  '        {',
+  '            await Task.Delay(1);',
+  '            return OrderResult.Ok(request.OrderNo);',
+  '        }',
+  '',
+  '        public Task CancelAsync(string orderNo)',
+  '        {',
+  '            return Task.CompletedTask;',
+  '        }',
+  '    }',
+  '}'
+], { crumbs: ['OrderService.cs', 'OrderService', 'CreateAsync(OrderRequest)'] });
+
+addFile('pay-csharp/AuditOrderService.cs', 'cs', [
+  'using Nest.Order.Contracts;',
+  '',
+  'namespace Nest.Order.Services',
+  '{',
+  '    public class AuditOrderService : IOrderService',
+  '    {',
+  '        public Task<OrderResult> CreateAsync(OrderRequest request)',
+  '        {',
+  '            return Task.FromResult(OrderResult.Ok(request.OrderNo));',
+  '        }',
+  '',
+  '        public Task CancelAsync(string orderNo) => Task.CompletedTask;',
+  '    }',
+  '}'
+], { crumbs: ['AuditOrderService.cs', 'AuditOrderService', 'CreateAsync(OrderRequest)'] });
+
+addFile('pay-csharp/OrderServiceBase.cs', 'cs', [
+  'using Nest.Order.Contracts;',
+  '',
+  'namespace Nest.Order.Services',
+  '{',
+  '    /// <summary>抽象基类：C# 语法无法区分基类与接口（合成样例）</summary>',
+  '    public abstract class OrderServiceBase : IOrderService',
+  '    {',
+  '        public abstract Task<OrderResult> CreateAsync(OrderRequest request);',
+  '        public abstract Task CancelAsync(string orderNo);',
+  '    }',
+  '}'
+], { crumbs: ['OrderServiceBase.cs', 'OrderServiceBase', 'CreateAsync(OrderRequest)'] });
+
+addFile('pay-csharp/PayOrderService.cs', 'cs', [
+  'using Nest.Order.Contracts;',
+  '',
+  'namespace Nest.Order.Services',
+  '{',
+  '    public class PayOrderService : OrderServiceBase, IOrderService',
+  '    {',
+  '        public override Task<OrderResult> CreateAsync(OrderRequest request)',
+  '        {',
+  '            return Task.FromResult(OrderResult.Ok(request.OrderNo));',
+  '        }',
+  '',
+  '        public override Task CancelAsync(string orderNo) => Task.CompletedTask;',
+  '    }',
+  '}'
+], { crumbs: ['PayOrderService.cs', 'PayOrderService', 'CreateAsync(OrderRequest)'] });
+
+addFile('pay-csharp/IRefundService.cs', 'cs', [
+  'using System.Threading.Tasks;',
+  '',
+  'namespace Nest.Order.Contracts',
+  '{',
+  '    /// <summary>退款契约：合成样例中暂无实现</summary>',
+  '    public interface IRefundService',
+  '    {',
+  '        Task RefundAsync(string orderNo);',
+  '    }',
+  '}'
+], { crumbs: ['IRefundService.cs', 'IRefundService'] });
+
+addFile('pay-csharp/ISettleService.cs', 'cs', [
+  'using System.Threading.Tasks;',
+  '',
+  'namespace Nest.Order.Contracts',
+  '{',
+  '    public interface ISettleService',
+  '    {',
+  '        Task SettleAsync(SettleBatch batch);',
+  '    }',
+  '}'
+], { crumbs: ['ISettleService.cs', 'ISettleService', 'SettleAsync(SettleBatch)'] });
+
+addFile('pay-csharp/AbstractSettleService.cs', 'cs', [
+  'using Nest.Order.Contracts;',
+  '',
+  'namespace Nest.Order.Services',
+  '{',
+  '    public abstract class AbstractSettleService : ISettleService',
+  '    {',
+  '        public abstract Task SettleAsync(SettleBatch batch);',
+  '    }',
+  '}'
+], { crumbs: ['AbstractSettleService.cs', 'AbstractSettleService', 'SettleAsync(SettleBatch)'] });
+
+BANKS.forEach(b => {
+  addFile('pay-csharp/legacy/' + b[0] + '.cs', 'cs', [
+    'using Nest.Order.Contracts;',
+    '',
+    'namespace Nest.Order.Services',
+    '{',
+    '    public class ' + b[0] + (b[3] ? ' : AbstractSettleService' : ' : ISettleService'),
+    '    {',
+    '        public Task SettleAsync(SettleBatch batch) => Task.CompletedTask;',
+    '    }',
+    '}'
+  ], { crumbs: [b[0] + '.cs', b[0], 'SettleAsync(SettleBatch)'] });
+});
+
+/* ---- Python ---- */
+addFile('pay-python/pay_service.py', 'py', [
+  'from abc import ABC, abstractmethod',
+  '',
+  '',
+  'class PayService(ABC):',
+  '    """支付网关统一接口（合成样例）"""',
+  '',
+  '    @abstractmethod',
+  '    def pay(self, request: dict) -> dict:',
+  '        ...',
+  '',
+  '    @abstractmethod',
+  '    def refund(self, trade_no: str) -> dict:',
+  '        ...'
+], { crumbs: ['pay_service.py', 'PayService', 'pay(self, request)'] });
+
+addFile('pay-python/abstract_pay_service.py', 'py', [
+  'from pay.pay_service import PayService',
+  '',
+  '',
+  'class AbstractPayService(PayService):',
+  '    """抽象基类：统一校验与审计（合成样例）"""',
+  '',
+  '    def verify(self, request: dict) -> None:',
+  '        pass'
+], { kinds: { AbstractPayService: 'abstract' }, crumbs: ['abstract_pay_service.py', 'AbstractPayService', 'verify(self, request)'] });
+
+addFile('pay-python/alipay_service.py', 'py', [
+  'from pay.pay_service import PayService',
+  '',
+  '',
+  'class AlipayService(PayService):',
+  '    """支付宝实现（合成样例）"""',
+  '',
+  '    def pay(self, request: dict) -> dict:',
+  '        return {"code": "alipay", "ok": True}',
+  '',
+  '    def refund(self, trade_no: str) -> dict:',
+  '        return {"trade_no": trade_no, "ok": True}'
+], { crumbs: ['alipay_service.py', 'AlipayService', 'pay(self, request)'] });
+
+addFile('pay-python/wechat_service.py', 'py', [
+  'from pay.pay_service import PayService',
+  '',
+  '',
+  'class WechatPayService(PayService):',
+  '    """微信支付实现（合成样例）"""',
+  '',
+  '    def pay(self, request: dict) -> dict:',
+  '        return {"code": "wechat", "ok": True}',
+  '',
+  '    def refund(self, trade_no: str) -> dict:',
+  '        return {"trade_no": trade_no, "ok": True}'
+], { crumbs: ['wechat_service.py', 'WechatPayService', 'pay(self, request)'] });
+
+addFile('pay-python/unionpay_service.py', 'py', [
+  'from pay.abstract_pay_service import AbstractPayService',
+  'from pay.pay_service import PayService',
+  '',
+  '',
+  'class UnionPayService(AbstractPayService, PayService):',
+  '    """银联实现：多基类（合成样例）"""',
+  '',
+  '    def pay(self, request: dict) -> dict:',
+  '        self.verify(request)',
+  '        return {"code": "union", "ok": True}'
+], { crumbs: ['unionpay_service.py', 'UnionPayService', 'pay(self, request)'] });
+
+addFile('pay-python/refund_service.py', 'py', [
+  'class RefundService:',
+  '    """退款服务：合成样例中暂无子类"""',
+  '',
+  '    def refund(self, trade_no: str) -> dict:',
+  '        raise NotImplementedError'
+], { crumbs: ['refund_service.py', 'RefundService'] });
+
+addFile('pay-python/settle_service.py', 'py', [
+  'from abc import ABC, abstractmethod',
+  '',
+  '',
+  'class SettleService(ABC):',
+  '    """批量结算服务（合成样例）"""',
+  '',
+  '    @abstractmethod',
+  '    def settle(self, batch: dict) -> dict:',
+  '        ...'
+], { crumbs: ['settle_service.py', 'SettleService', 'settle(self, batch)'] });
+
+addFile('pay-python/abstract_settle_service.py', 'py', [
+  'from pay.settle_service import SettleService',
+  '',
+  '',
+  'class AbstractSettleService(SettleService):',
+  '    """结算抽象基类（合成样例）"""',
+  '',
+  '    def check(self, batch: dict) -> None:',
+  '        pass'
+], { kinds: { AbstractSettleService: 'abstract' }, crumbs: ['abstract_settle_service.py', 'AbstractSettleService', 'check(self, batch)'] });
+
+BANKS.forEach(b => {
+  const snake = b[0].replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+  addFile('pay-python/legacy/' + snake + '.py', 'py', [
+    'from pay.' + (b[3] ? 'abstract_settle_service import AbstractSettleService' : 'settle_service import SettleService'),
+    '',
+    '',
+    'class ' + b[0] + '(' + (b[3] ? 'AbstractSettleService' : 'SettleService') + '):',
+    '    """' + b[1] + '结算实现（合成样例）"""',
+    '',
+    '    def settle(self, batch: dict) -> dict:',
+    '        return {"ok": True}'
+  ], { crumbs: [snake + '.py', b[0], 'settle(self, batch)'] });
+});
+
+/* ---- 不支持 / 无导航的文件 ---- */
+addFile('cmd/pay.go', 'go', [
+  'package main',
+  '',
+  'import "fmt"',
+  '',
+  'type PayService interface {',
+  '    Pay(orderID string) error',
+  '}',
+  '',
+  'type AlipayService struct{}',
+  '',
+  'func (s *AlipayService) Pay(orderID string) error {',
+  '    fmt.Println("pay", orderID)',
+  '    return nil',
+  '}'
+], { crumbs: ['pay.go'] });
+
+addFile('web/PayPanel.vue', 'vue', [
+  '<template>',
+  '  <div class="pay-panel">{{ orderNo }}</div>',
+  '</template>',
+  '',
+  '<script setup lang="ts">',
+  'const props = defineProps<{ orderNo: string }>();',
+  '<\/script>'
+], { crumbs: ['PayPanel.vue'] });
+
+addFile('notes/pay-notes.txt', 'txt', [
+  '支付服务阅读笔记（纯文本合成样例）',
+  '- 接口：PayService',
+  '- 实现：AlipayService / WechatPayService',
+  '本文件不提供代码导航。'
+], { crumbs: ['pay-notes.txt'] });
+
+/* ================= 继承索引 ================= */
+function buildGraph() {
+  ['java', 'cs', 'py'].forEach(lang => {
+    ORDER[lang].forEach(t => {
+      t.parentTypes = [];
+      t.parentNames.forEach(pn => {
+        const p = INDEX[lang][pn];
+        if (p && p !== t && t.parentTypes.indexOf(p) < 0) t.parentTypes.push(p);
+      });
+    });
+    ORDER[lang].forEach(t => {
+      t.parentTypes.forEach(p => { if (p.children.indexOf(t) < 0) p.children.push(t); });
+    });
+  });
+}
+buildGraph();
+
+function implementationsOf(t) {
+  if (!t) return [];
+  const list = [], seen = new Set();
+  const direct = t.children.filter(c => !c.abstract && c.kind !== 'interface');
+  direct.sort((a, b) => a.order - b.order).forEach(c => { seen.add(c.name); list.push({ type: c, via: null }); });
+  const queue = t.children.filter(c => c.abstract || c.kind === 'interface').map(c => ({ node: c, via: c.name }));
+  const aSeen = new Set();
+  while (queue.length) {
+    const cur = queue.shift();
+    cur.node.children.forEach(c => {
+      if (c.abstract || c.kind === 'interface') {
+        if (c !== t && !aSeen.has(c.name)) { aSeen.add(c.name); queue.push({ node: c, via: cur.via }); }
+      } else if (!seen.has(c.name)) {
+        seen.add(c.name);
+        list.push({ type: c, via: cur.via });
+      }
+    });
+  }
+  return list;
+}
+function implNoun(lang) { return lang === 'java' ? '实现' : lang === 'cs' ? '子类型' : '子类'; }
+function downTip(t, n) { return n + ' 个' + implNoun(t.lang); }
+function upTip(t) {
+  if (t.parentTypes.length === 1) {
+    const p = t.parentTypes[0];
+    if (t.lang === 'cs') return '父类型：' + p.name;
+    if (t.lang === 'py') return '继承自 ' + p.name;
+    return (p.kind === 'interface' ? '实现自 ' : '继承自 ') + p.name;
+  }
+  return t.parentTypes.length + ' 个父类型：' + t.parentTypes.map(p => p.name).join('、');
+}
+function tagFor(lang, via) {
+  if (!via) return lang === 'java' ? '直接实现' : lang === 'cs' ? '直接声明' : '直接继承';
+  return lang === 'java' ? '经 ' + via + ' 间接继承' : lang === 'cs' ? '经 ' + via + ' 间接' : '经 ' + via + ' 间接继承';
+}
+function parentTag(lang, p) {
+  if (lang === 'py') return '基类';
+  if (lang === 'cs') return '父类型';
+  return p.kind === 'interface' ? '接口' : '父类';
+}
+function kindLetter(kind) { return kind === 'interface' ? 'I' : kind === 'abstract' ? 'A' : 'C'; }
+
+/* ================= 场景配置 ================= */
+const L = {
+  java: { iface: 'PayService', ifaceFile: 'pay-java/PayService.java', impl: 'AlipayService', implFile: 'pay-java/AlipayService.java', abstract: 'AbstractPayService', abstractFile: 'pay-java/AbstractPayService.java', noImpl: 'RefundService', noImplFile: 'pay-java/RefundService.java', settle: 'SettleService', settleFile: 'pay-java/SettleService.java', multi: 'AlipayService', multiFile: 'pay-java/AlipayService.java' },
+  cs: { iface: 'IOrderService', ifaceFile: 'pay-csharp/IOrderService.cs', impl: 'OrderService', implFile: 'pay-csharp/OrderService.cs', abstract: 'OrderServiceBase', abstractFile: 'pay-csharp/OrderServiceBase.cs', noImpl: 'IRefundService', noImplFile: 'pay-csharp/IRefundService.cs', settle: 'ISettleService', settleFile: 'pay-csharp/ISettleService.cs', multi: 'PayOrderService', multiFile: 'pay-csharp/PayOrderService.cs' },
+  py: { iface: 'PayService', ifaceFile: 'pay-python/pay_service.py', impl: 'AlipayService', implFile: 'pay-python/alipay_service.py', abstract: 'AbstractPayService', abstractFile: 'pay-python/abstract_pay_service.py', noImpl: 'RefundService', noImplFile: 'pay-python/refund_service.py', settle: 'SettleService', settleFile: 'pay-python/settle_service.py', multi: 'UnionPayService', multiFile: 'pay-python/unionpay_service.py' }
+};
+const SCENARIO_NAMES = { s1: '接口 → 实现类', s2: '实现类 → 接口/父类', s3: 'C# 双向跳转', s4: 'Python 基类跳转', s5: '继承 gutter 标记', s6: '无结果 / 不支持语言', s7: '多实现选择器（13）', s8: '混合项目 + 面包屑' };
+
+/* ================= 状态 ================= */
+const state = {
+  scenario: 's1', lang: 'java', theme: 'light', narrow: false,
+  activeFile: null, openTabs: [], cursor: null, highlight: null,
+  picker: null, ctxOpen: false, ctxIndex: 0, ctxItems: [], notice: null, dirs: {}
+};
+
+/* ================= 文件树 ================= */
+const TREE = (function buildTree() {
+  const root = { type: 'dir', name: '', path: '', children: [] };
+  Object.keys(FILES).forEach(path => {
+    const parts = path.split('/');
+    let node = root, cur = '';
+    parts.forEach((part, i) => {
+      cur = cur ? cur + '/' + part : part;
+      const isFile = i === parts.length - 1;
+      let child = node.children.find(c => c.name === part);
+      if (!child) { child = { type: isFile ? 'file' : 'dir', name: part, path: cur, children: [] }; node.children.push(child); }
+      node = child;
+    });
+  });
+  (function sort(node) {
+    node.children.sort((a, b) => a.type === b.type ? 0 : (a.type === 'dir' ? -1 : 1));
+    node.children.forEach(c => { if (c.type === 'dir') sort(c); });
+  })(root);
+  return root;
+})();
+(function defaultDirs(node) {
+  node.children.forEach(c => {
+    if (c.type === 'dir') { state.dirs[c.path] = !/legacy$/.test(c.path); defaultDirs(c); }
+  });
+})(TREE);
+
+function dirRow(node, depth, open) {
+  const active = false;
+  return '<div class="row dir' + (active ? ' sel' : '') + '" data-path="' + esc(node.path) + '" data-type="dir" role="treeitem" tabindex="0" style="padding-left:' + (8 + depth * 14) + 'px">' +
+    '<span class="chev">' + (open ? '▾' : '▸') + '</span>' + ICO.folder +
+    '<span class="name">' + esc(node.name) + '</span><span class="count">' + node.children.length + '</span></div>';
+}
+function fileRow(node, depth) {
+  const f = FILES[node.path];
+  const meta = META[f.lang];
+  const cls = 'row file' + (state.activeFile === node.path ? ' sel' : '');
+  return '<div class="' + cls + '" data-path="' + esc(node.path) + '" data-type="file" role="treeitem" tabindex="0" style="padding-left:' + (8 + depth * 14) + 'px">' +
+    '<span class="chev leaf">•</span><span class="langbar" style="background:var(--lang-' + f.lang + ')"></span>' +
+    '<span class="ficon ' + f.lang + '">' + esc(meta.short) + '</span><span class="name" title="' + esc(node.path) + '">' + esc(node.name) + '</span></div>';
+}
+function walkTree(dir, depth) {
+  let out = '';
+  dir.children.forEach(c => {
+    if (c.type === 'dir') {
+      const open = state.dirs[c.path] !== false;
+      out += dirRow(c, depth, open);
+      if (open) out += walkTree(c, depth + 1);
+    } else {
+      out += fileRow(c, depth);
+    }
+  });
+  return out;
+}
+function renderTree() {
+  $('#tree').innerHTML = walkTree(TREE, 0) || '<div class="muted" style="padding:10px">无文件</div>';
+}
+
+/* ================= 代码高亮 ================= */
+const KW = {
+  java: new Set(['package', 'import', 'public', 'private', 'protected', 'interface', 'class', 'abstract', 'implements', 'extends', 'void', 'return', 'new', 'if', 'else', 'final', 'static', 'this', 'super', 'throws', 'try', 'catch', 'enum', 'record', 'default', 'null', 'true', 'false', 'int', 'long', 'boolean', 'String', 'BigDecimal']),
+  cs: new Set(['using', 'namespace', 'public', 'private', 'protected', 'internal', 'interface', 'class', 'abstract', 'virtual', 'override', 'async', 'await', 'Task', 'return', 'new', 'void', 'string', 'get', 'set', 'partial', 'record', 'static', 'readonly', 'this', 'base', 'null', 'true', 'false', 'var', 'if', 'else']),
+  py: new Set(['from', 'import', 'class', 'def', 'return', 'if', 'else', 'elif', 'None', 'True', 'False', 'async', 'await', 'self', 'ABC', 'abstractmethod', 'raise', 'with', 'as', 'pass', 'lambda', 'dict', 'str', 'not', 'in', 'for', 'while', 'try', 'except']),
+  go: new Set(['package', 'import', 'type', 'struct', 'func', 'interface', 'return', 'nil', 'var', 'const', 'for', 'if', 'else', 'map', 'string', 'error', 'int'])
+};
+function tokenize(line, lang, links) {
+  const kws = KW[lang];
+  if (!kws) return esc(line);
+  const map = {};
+  (links || []).forEach(l => { map[l.name] = l; });
+  let out = '', i = 0;
+  while (i < line.length) {
+    const c = line[i];
+    const comment = lang === 'py' ? '#' : '//';
+    if (line.substr(i, 3) === '"""') {
+      const j = line.indexOf('"""', i + 3);
+      const end = j < 0 ? line.length : j + 3;
+      out += '<span class="st">' + esc(line.slice(i, end)) + '</span>'; i = end; continue;
+    }
+    if (line.substr(i, comment.length) === comment) {
+      out += '<span class="cm">' + esc(line.slice(i)) + '</span>'; break;
+    }
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < line.length && line[j] !== c) { if (line[j] === '\\') j++; j++; }
+      out += '<span class="st">' + esc(line.slice(i, j + 1)) + '</span>'; i = j + 1; continue;
+    }
+    if (c === '@' && /[A-Za-z]/.test(line[i + 1] || '')) {
+      let k = i + 1; while (k < line.length && /[A-Za-z0-9_]/.test(line[k])) k++;
+      out += '<span class="an">' + esc(line.slice(i, k)) + '</span>'; i = k; continue;
+    }
+    if (/[A-Za-z_$]/.test(c)) {
+      let k = i; while (k < line.length && /[A-Za-z0-9_$]/.test(line[k])) k++;
+      const w = line.slice(i, k);
+      if (map[w]) {
+        const tip = map[w].role === 'parent' ? ('点击跳转到父类型：' + w) : ('点击查看 ' + w + ' 的' + implNoun(lang));
+        out += '<span class="tlink" data-role="' + map[w].role + '" data-name="' + esc(w) + '" title="' + esc(tip) + '">' + esc(w) + '</span>';
+      }
+      else if (kws.has(w)) out += '<span class="kw">' + esc(w) + '</span>';
+      else out += esc(w);
+      i = k; continue;
+    }
+    if (/[0-9]/.test(c)) {
+      let m = i; while (m < line.length && /[0-9.]/.test(line[m])) m++;
+      out += '<span class="nm">' + esc(line.slice(i, m)) + '</span>'; i = m; continue;
+    }
+    if (c === ':' && (lang === 'cs' || lang === 'py')) { out += '<span class="op">:</span>'; i++; continue; }
+    out += esc(c); i++;
+  }
+  return out;
+}
+function lineLinks(f, n) {
+  const links = [];
+  const d = f.declByLine[n];
+  if (d) links.push({ name: d.name, role: 'decl' });
+  const ps = f.parentRefs[n];
+  if (ps) ps.forEach(pn => { if (INDEX[f.lang] && INDEX[f.lang][pn]) links.push({ name: pn, role: 'parent' }); });
+  return links;
+}
+function gutterHtml(f, name) {
+  const t = INDEX[f.lang] && INDEX[f.lang][name];
+  if (!t) return '';
+  const impls = implementationsOf(t).length;
+  const parents = t.parentTypes.length;
+  let h = '';
+  if (impls) h += '<button type="button" class="gmark down" data-gutter="impl" data-name="' + esc(t.name) + '" data-tip="' + esc(downTip(t, impls)) + '" aria-label="' + esc(downTip(t, impls)) + '">↓</button>';
+  if (parents) h += '<button type="button" class="gmark up" data-gutter="parent" data-name="' + esc(t.name) + '" data-tip="' + esc(upTip(t)) + '" aria-label="' + esc(upTip(t)) + '">↑</button>';
+  return h;
+}
+function renderCode() {
+  const f = state.activeFile ? FILES[state.activeFile] : null;
+  if (!f) { $('#code').innerHTML = '<div class="cl"><span class="ln"></span><span class="gm"></span><span class="lc" style="color:var(--muted)">未打开文件</span></div>'; return; }
+  $('#code').innerHTML = f.lines.map((line, i) => {
+    const n = i + 1;
+    const d = f.declByLine[n];
+    const g = d ? gutterHtml(f, d.name) : '';
+    const hl = state.highlight && state.highlight.file === f.path && state.highlight.line === n;
+    const cur = state.cursor && state.cursor.file === f.path && state.cursor.line === n;
+    const notice = state.notice && state.notice.file === f.path && state.notice.line === n ? '<span class="inline-warn">' + esc(state.notice.text) + '</span>' : '';
+    return '<div class="cl' + (hl ? ' line-hl' : '') + (cur ? ' is-cursor' : '') + '" data-line="' + n + '"><span class="ln">' + n + '</span><span class="gm">' + g + '</span><span class="lc">' + tokenize(line, f.lang, lineLinks(f, n)) + notice + '</span></div>';
+  }).join('');
+}
+
+/* ================= 编辑区外壳 ================= */
+function renderTabs() {
+  const tabs = $('#tabs');
+  if (!state.openTabs.length) { tabs.innerHTML = '<span class="muted" style="font-size:12px">未打开文件</span>'; return; }
+  tabs.innerHTML = state.openTabs.map(path => {
+    const f = FILES[path];
+    return '<div class="tab' + (path === state.activeFile ? ' active' : '') + '" data-path="' + esc(path) + '" role="tab" aria-selected="' + (path === state.activeFile) + '">' +
+      '<span class="ficon ' + f.lang + '" style="width:16px;height:16px;flex:0 0 16px;font-size:8.5px">' + esc(META[f.lang].short) + '</span>' +
+      '<span class="tab-name" title="' + esc(path) + '">' + esc(baseName(path)) + '</span>' +
+      '<button class="tab-close" type="button" data-close="' + esc(path) + '" aria-label="关闭 ' + esc(baseName(path)) + '">×</button></div>';
+  }).join('');
+}
+function activeCrumbs() {
+  const f = state.activeFile ? FILES[state.activeFile] : null;
+  if (!f) return [];
+  return f.crumbs || [baseName(f.path)].concat((f.decls || []).slice(0, 1).map(d => d.name));
+}
+function renderCrumbs() {
+  const parts = activeCrumbs();
+  if (!parts.length) { $('#crumbs').innerHTML = '<span class="crumb sep">未打开文件</span>'; return; }
+  $('#crumbs').innerHTML = parts.map((p, i) => {
+    const last = i === parts.length - 1;
+    return (i ? '<span class="crumb sep">›</span>' : '') + '<button class="crumb' + (last ? ' last' : '') + '" type="button" data-crumb="' + esc(p) + '">' + esc(p) + '</button>';
+  }).join('');
+}
+function currentType() {
+  if (!state.cursor) return null;
+  const idx = INDEX[state.cursor.lang];
+  return (idx && idx[state.cursor.name]) || null;
+}
+function renderEditorBar() {
+  const f = state.activeFile ? FILES[state.activeFile] : null;
+  const bar = $('#editorBar');
+  if (!f) { bar.innerHTML = '<span class="muted">未打开文件</span>'; return; }
+  const meta = META[f.lang];
+  const supported = !!INDEX[f.lang];
+  const t = currentType();
+  let actions = '';
+  if (supported && t) {
+    const impls = implementationsOf(t);
+    actions = '<div class="nav-actions">' +
+      '<button class="act-btn" type="button" data-act="bar-impl" ' + (impls.length ? '' : 'disabled') + ' title="Ctrl+Alt+B 跳转到' + esc(implNoun(f.lang)) + '">↓ ' + implNoun(f.lang) + ' <b>' + impls.length + '</b></button>' +
+      '<button class="act-btn" type="button" data-act="bar-parent" ' + (t.parentTypes.length ? '' : 'disabled') + ' title="Ctrl+U 跳转到父类型">↑ ' + (f.lang === 'py' ? '基类' : '父类型') + ' <b>' + t.parentTypes.length + '</b></button>' +
+      '<span class="keyhint"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>B</kbd> 实现 · <kbd>Ctrl</kbd>+<kbd>U</kbd> 父类型</span></div>';
+  } else {
+    actions = '<span class="keyhint">该语言不提供继承导航</span>';
+  }
+  bar.innerHTML = '<span class="path" title="' + esc(f.path) + '">' + esc(f.path) + '</span>' +
+    '<span class="lang-pill ' + f.lang + (supported ? '' : ' warn') + '"><i></i>' + meta.label + (supported ? '' : (f.lang === 'txt' ? ' · 不提供导航' : ' · 仅定义跳转')) + '</span>' +
+    '<span class="status">' + (supported ? '只读 · 语法索引' : '只读 · 无可导航符号') + '</span>' +
+    '<span class="spacer"></span>' + actions;
+}
+function renderPrecision() {
+  const lang = state.activeFile ? FILES[state.activeFile].lang : state.lang;
+  const meta = META[lang];
+  const warn = !INDEX[lang];
+  const el = $('#precision');
+  el.className = 'precision' + (warn ? ' warn' : '');
+  el.innerHTML = '<span class="ptag">' + (warn ? '语言支持' : '精度边界') + '</span><span class="ptext">' + esc(meta.prec) + '</span>';
+}
+
+/* ================= 场景说明 ================= */
+function renderNote() {
+  const id = state.scenario, cfg = L[state.lang], lang = state.lang;
+  const ifaceT = INDEX[lang] && INDEX[lang][cfg.iface];
+  const absT = INDEX[lang] && INDEX[lang][cfg.abstract];
+  const implCount = ifaceT ? implementationsOf(ifaceT).length : 0;
+  const absDown = absT ? implementationsOf(absT).length : 0;
+  const settleT = INDEX[lang] && INDEX[lang][cfg.settle];
+  const settleCount = settleT ? implementationsOf(settleT).length : 0;
+  const implParents = INDEX[lang] && INDEX[lang][cfg.impl] ? INDEX[lang][cfg.impl].parentTypes.length : 0;
+  const ifaceWord = lang === 'py' ? 'class' : 'interface';
+  const parentWord = lang === 'py' ? '基类' : '接口';
+  const declPhrase = lang === 'java' ? ('class ' + cfg.impl + ' implements ' + cfg.iface) : lang === 'cs' ? ('class ' + cfg.impl + ' : ' + cfg.iface) : ('class ' + cfg.impl + '(' + cfg.iface + ')');
+  let h = '';
+  if (id === 's1') {
+    h = '<span class="sc">SC-094-01</span> 光标在 <b>' + ifaceWord + ' ' + esc(cfg.iface) + '</b> 上：按 <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>B</kbd> 或右键「跳转到' + implNoun(lang) + '」，弹出「' + esc(cfg.iface) + ' 的' + implNoun(lang) + '（' + implCount + ' 处）」列表。' +
+      '<button class="hint-chip" type="button" data-act="s1-open">重开列表（' + implCount + ' 处）</button>' +
+      '<button class="hint-chip ghost" type="button" data-act="s1-close">先关闭列表</button>';
+  } else if (id === 's2') {
+    h = '<span class="sc">SC-094-02</span> 在 <code>' + esc(declPhrase) + '</code> 的 <b>' + esc(cfg.iface) + '</b> 上按 <kbd>Ctrl</kbd>+<kbd>U</kbd>（或右键「跳转到父类型」）跳到' + parentWord + '声明；本场景进入时已自动跳转一次，目标行高亮。多父类型时同样弹选择器。' +
+      '<button class="hint-chip" type="button" data-act="s2-back">回到 ' + esc(cfg.impl) + ' 再试一次</button>' +
+      '<button class="hint-chip ghost" type="button" data-act="s2-multi">多父类型：' + esc(cfg.multi) + '</button>';
+  } else if (id === 's3') {
+    h = '<span class="sc">SC-094-03</span> C#：<code>using</code> 命名空间行 + <code>class ' + esc(cfg.impl) + ' : ' + esc(cfg.iface) + '</code>（冒号 <span class="op">:</span> 高亮）。从接口看子类型，从 <code>: ' + esc(cfg.iface) + '</code> 跳回接口；语法无法区分基类与接口，统一按「父类型」呈现。' +
+      '<button class="hint-chip" type="button" data-act="s3-impls">↓ ' + esc(cfg.iface) + ' 的子类型（' + implCount + ' 处）</button>' +
+      '<button class="hint-chip" type="button" data-act="s3-parent">↑ 跳到 ' + esc(cfg.iface) + '</button>';
+  } else if (id === 's4') {
+    h = '<span class="sc">SC-094-04</span> Python：<code>class ' + esc(cfg.impl) + '(' + esc(cfg.iface) + ')</code>，点基类名或按 <kbd>Ctrl</kbd>+<kbd>U</kbd> 跳到 <code>pay_service.py</code>；精度提示见上方横条。' +
+      '<button class="hint-chip" type="button" data-act="s4-base">跳到基类 ' + esc(cfg.iface) + '</button>' +
+      '<button class="hint-chip ghost" type="button" data-act="s4-subs">' + esc(cfg.iface) + ' 的子类（' + implCount + ' 处）</button>';
+  } else if (id === 's5') {
+    h = '<span class="sc">SC-094-05</span> 行号旁 <b>↓</b> = 有实现/子类（悬停「' + (absT ? downTip(absT, absDown) : '') + '」），<b>↑</b> = 有父类型（悬停「' + (absT ? upTip(absT) : '') + '」）；点 ↓ 弹选择器（仅 1 项直接跳），点 ↑ 跳父类型或弹选择器。' +
+      '<button class="hint-chip" type="button" data-act="s5-iface">切到 ' + esc(cfg.iface) + '（只有 ↓：' + (ifaceT ? downTip(ifaceT, implCount) : '') + '）</button>' +
+      '<button class="hint-chip ghost" type="button" data-act="s5-impl">切到 ' + esc(cfg.impl) + '（只有 ↑：' + implParents + ' 个）</button>' +
+      '<button class="hint-chip ghost" type="button" data-act="s5-back">回到 ' + esc(cfg.abstract) + '（↑↓ 都有）</button>';
+  } else if (id === 's6') {
+    h = '<span class="sc">SC-094-06</span> 无实现接口 → 「未找到 ' + esc(cfg.noImpl) + ' 的实现」；<code>.go</code>／<code>.vue</code> → 「暂不支持继承跳转，可跳转到定义」；<code>.txt</code> → 完全不提供导航。' +
+      '<span class="muted">Go/Vue 的「跳转到定义」沿用 CR-090，本稿只验证继承跳转不可用。</span>' +
+      '<button class="hint-chip" type="button" data-act="s6-noimpl">无实现接口（' + META[lang].label + '）</button>' +
+      '<button class="hint-chip ghost" type="button" data-act="s6-go">cmd/pay.go</button>' +
+      '<button class="hint-chip ghost" type="button" data-act="s6-vue">web/PayPanel.vue</button>' +
+      '<button class="hint-chip ghost" type="button" data-act="s6-txt">notes/pay-notes.txt</button>';
+  } else if (id === 's7') {
+    h = '<span class="sc">SC-094-07</span> <b>' + esc(cfg.settle) + ' 的实现（' + settleCount + ' 处）</b>：列表可滚动、输入过滤（类名/文件名）、<kbd>↑</kbd><kbd>↓</kbd> 选择、<kbd>Enter</kbd> 跳转、<kbd>Esc</kbd> 关闭；滚动条滚动时显示、停止约 700ms 隐藏。' +
+      '<button class="hint-chip" type="button" data-act="s7-open">重开列表（' + settleCount + ' 处）</button>' +
+      '<button class="hint-chip ghost" type="button" data-act="s7-filter">过滤「Ccb」</button>' +
+      '<button class="hint-chip ghost" type="button" data-act="s7-clear">清空过滤</button>';
+  } else {
+    h = '<span class="sc">SC-094-08</span> 混合项目：左侧同时出现 <code>.java</code>／<code>.cs</code>／<code>.py</code>，图标与语言色条各自正确；面包屑显示 <b>文件 › 类 › 方法</b>（当前：' + esc(activeCrumbs().join(' › ')) + '）。' +
+      '<button class="hint-chip" type="button" data-act="s8-java">Java：AlipayService</button>' +
+      '<button class="hint-chip ghost" type="button" data-act="s8-py">Python：alipay_service.py</button>' +
+      '<button class="hint-chip ghost" type="button" data-act="s8-cs">C#：OrderService</button>';
+  }
+  const note = $('#scenarioNote');
+  note.innerHTML = h;
+  $$('#scenarioNote [data-act]').forEach(b => { b.onclick = () => onNoteAct(b.dataset.act); });
+}
+
+/* ================= 光标 / 跳转 ================= */
+function declCursor(file, name) {
+  const f = FILES[file];
+  const t = f && INDEX[f.lang] && INDEX[f.lang][name];
+  return t ? { lang: f.lang, name, file, line: t.line, role: 'decl' } : null;
+}
+function refCursor(file, name) {
+  const f = FILES[file];
+  let line = 1;
+  Object.keys(f.parentRefs || {}).forEach(k => { if (f.parentRefs[k].indexOf(name) >= 0) line = +k; });
+  return { lang: f.lang, name, file, line, role: 'parent' };
+}
+function setTabs(paths, active) {
+  state.openTabs = paths.slice();
+  state.activeFile = active;
+}
+function scrollToLine() {
+  requestAnimationFrame(() => {
+    if (!state.highlight) return;
+    const el = $('#code [data-line="' + state.highlight.line + '"]');
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center' });
+  });
+}
+function jumpTo(file, line, opts) {
+  const o = opts || {};
+  if (!FILES[file]) { toast('目标文件不可预览', 'error'); return; }
+  if (state.openTabs.indexOf(file) < 0) state.openTabs.push(file);
+  state.activeFile = file;
+  state.highlight = { file, line };
+  state.notice = null;
+  const f = FILES[file];
+  if (o.name && INDEX[f.lang] && INDEX[f.lang][o.name]) {
+    state.cursor = { lang: f.lang, name: o.name, file, line: INDEX[f.lang][o.name].line, role: 'decl' };
+  } else if (o.name && f.parentRefs) {
+    state.cursor = refCursor(file, o.name);
+  } else {
+    state.cursor = f.decls.length ? declCursor(file, f.decls[0].name) : null;
+  }
+  closePicker(); closeCtx(); renderAll(); scrollToLine();
+  if (!o.silent) toast('已跳转到 ' + (o.name ? o.name + ' · ' : '') + file + ':' + line);
+}
+function openFile(path) {
+  closePicker(); closeCtx();
+  state.notice = null; state.highlight = null;
+  if (state.openTabs.indexOf(path) < 0) state.openTabs.push(path);
+  state.activeFile = path;
+  const f = FILES[path];
+  state.cursor = f.decls && f.decls.length ? declCursor(path, f.decls[0].name) : null;
+  renderAll();
+}
+
+/* ================= 选择器 ================= */
+function pickerFiltered() {
+  if (!state.picker) return [];
+  const q = state.picker.filter.trim().toLowerCase();
+  if (!q) return state.picker.items;
+  return state.picker.items.filter(it => (it.name + ' ' + it.file).toLowerCase().indexOf(q) >= 0);
+}
+function openPicker(mode, lang, name) {
+  const t = INDEX[lang] && INDEX[lang][name];
+  if (!t) { toast('未找到 ' + name, 'error'); return; }
+  let items;
+  if (mode === 'impl') {
+    items = implementationsOf(t).map(x => ({ name: x.type.name, kind: x.type.kind, file: x.type.file, line: x.type.line, via: x.via }));
+  } else {
+    items = t.parentTypes.map(p => ({ name: p.name, kind: p.kind, file: p.file, line: p.line, via: null }));
+  }
+  if (!items.length) { showNoResult(t, mode); return; }
+  state.picker = { mode, lang, name, filter: '', active: 0, items };
+  const p = $('#picker');
+  p.hidden = false;
+  const title = mode === 'impl' ? (name + ' 的' + (lang === 'cs' ? '子类型' : lang === 'py' ? '子类' : '实现')) : (name + ' 的' + (lang === 'py' ? '基类' : '父类型'));
+  p.innerHTML = '<div class="picker-head"><span class="ph-ico">' + (mode === 'impl' ? '↓' : '↑') + '</span><span id="pickerTitle">' + esc(title) + '<span class="count" id="pickerCount">（' + items.length + ' 处）</span></span><kbd>Esc</kbd></div>' +
+    '<input class="picker-filter" id="pickerFilter" autocomplete="off" spellcheck="false" placeholder="输入类名或文件名过滤…" aria-label="过滤实现或父类型">' +
+    '<div class="picker-list" id="pickerList"></div>' +
+    '<div class="picker-foot"><span>共 ' + items.length + ' 项 · <span id="pickerFiltered">' + items.length + '</span> 项可见</span><span><kbd>↑</kbd><kbd>↓</kbd> 选择 · <kbd>Enter</kbd> 跳转 · <kbd>Esc</kbd> 关闭</span><span>滚动条：滚动时显示，停止 700ms 隐藏</span></div>';
+  const sr = $('#editorStage').getBoundingClientRect();
+  const w = Math.max(280, Math.min(452, sr.width - 16, window.innerWidth * 0.92));
+  p.style.width = w + 'px';
+  let left = sr.right - w - 18;
+  if (left < sr.left + 40) left = sr.left + 18;
+  left = Math.max(sr.left + 8, Math.min(left, sr.right - w - 8));
+  left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+  p.style.left = left + 'px';
+  const listEl = $('#pickerList');
+  listEl.style.maxHeight = Math.max(140, Math.min(286, sr.height - 195)) + 'px';
+  renderPickerList();
+  const ph = p.offsetHeight;
+  let top = Math.min(sr.top + 30, sr.bottom - ph - 8);
+  top = Math.max(sr.top + 8, top);
+  p.style.top = Math.max(8, Math.min(top, window.innerHeight - ph - 8)) + 'px';
+  const f = $('#pickerFilter');
+  f.addEventListener('input', () => { state.picker.filter = f.value; state.picker.active = 0; renderPickerList(); });
+  f.addEventListener('keydown', pickerKey);
+  f.focus();
+}
+function renderPickerList() {
+  const list = pickerFiltered();
+  const box = $('#pickerList');
+  if (!box) return;
+  if (state.picker.active >= list.length) state.picker.active = Math.max(0, list.length - 1);
+  if (!list.length) {
+    box.innerHTML = '<div class="picker-empty">无匹配' + (state.picker.mode === 'impl' ? '实现' : '父类型') + '，试试其他类名或文件名</div>';
+  } else {
+    box.innerHTML = list.map((it, idx) => {
+      const tag = state.picker.mode === 'impl' ? tagFor(state.picker.lang, it.via) : parentTag(state.picker.lang, it);
+      const preview = (FILES[it.file].lines[it.line - 1] || '').trim();
+      return '<button type="button" class="pick' + (idx === state.picker.active ? ' active' : '') + '" data-idx="' + idx + '">' +
+        '<span class="pick-ico ' + state.picker.lang + '">' + esc(kindLetter(it.kind)) + '</span>' +
+        '<span class="pick-main"><span class="pick-name-row"><span class="pick-name">' + esc(it.name) + '</span><span class="pick-tag' + (it.via ? '' : ' direct') + '">' + esc(tag) + '</span></span>' +
+        '<span class="pick-loc">' + esc(it.file + ':' + it.line) + '</span>' +
+        '<span class="pick-src">' + esc(preview) + '</span></span></button>';
+    }).join('');
+  }
+  const fc = $('#pickerFiltered');
+  if (fc) fc.textContent = String(list.length);
+  $$('#pickerList .pick').forEach(b => { b.onclick = () => choosePicker(+b.dataset.idx); });
+}
+function choosePicker(idx) {
+  const list = pickerFiltered();
+  const it = list[idx];
+  if (!it) return;
+  jumpTo(it.file, it.line, { name: it.name });
+}
+function pickerKey(e) {
+  if (!state.picker) return;
+  const list = pickerFiltered();
+  if (e.key === 'ArrowDown') { e.preventDefault(); state.picker.active = Math.min(state.picker.active + 1, list.length - 1); renderPickerList(); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); state.picker.active = Math.max(state.picker.active - 1, 0); renderPickerList(); }
+  else if (e.key === 'Enter') { e.preventDefault(); choosePicker(state.picker.active); }
+  else if (e.key === 'Escape') { e.preventDefault(); closePicker(); }
+}
+function closePicker() { state.picker = null; const p = $('#picker'); if (p) p.hidden = true; }
+function showNoResult(t, mode) {
+  const word = mode === 'impl' ? implNoun(t.lang) : '父类型';
+  state.notice = { file: t.file, line: t.line, text: '未找到 ' + t.name + ' 的' + word };
+  state.cursor = { lang: t.lang, name: t.name, file: t.file, line: t.line, role: 'decl' };
+  renderAll(); scrollToLine(); toast('未找到 ' + t.name + ' 的' + word);
+}
+
+/* ================= 导航动作 ================= */
+function navImpl() {
+  const t = currentType();
+  if (!t) { toast('当前文件不提供代码导航'); return; }
+  const impls = implementationsOf(t);
+  if (!impls.length) { showNoResult(t, 'impl'); return; }
+  openPicker('impl', t.lang, t.name);
+}
+function navParent() {
+  const c = state.cursor;
+  if (!c) { toast('当前文件不提供代码导航'); return; }
+  if (c.role === 'parent') {
+    const target = INDEX[c.lang] && INDEX[c.lang][c.name];
+    if (target) jumpTo(target.file, target.line, { name: target.name });
+    else toast('未找到 ' + c.name + ' 的父类型');
+    return;
+  }
+  const t = currentType();
+  if (!t) return;
+  if (t.parentTypes.length === 1) jumpTo(t.parentTypes[0].file, t.parentTypes[0].line, { name: t.parentTypes[0].name });
+  else if (t.parentTypes.length > 1) openPicker('parent', t.lang, t.name);
+  else showNoResult(t, 'parent');
+}
+function onNoteAct(act) {
+  const cfg = L[state.lang];
+  if (act === 's1-open') { openPicker('impl', state.lang, cfg.iface); }
+  else if (act === 's1-close') { closePicker(); toast('已关闭实现列表；可按 Ctrl+Alt+B 重开'); }
+  else if (act === 's2-back') {
+    closePicker();
+    setTabs([cfg.implFile, cfg.ifaceFile], cfg.implFile);
+    state.cursor = refCursor(cfg.implFile, cfg.iface);
+    state.highlight = { file: cfg.implFile, line: state.cursor.line };
+    state.notice = null; renderAll(); scrollToLine();
+    toast('回到 ' + baseName(cfg.implFile) + '：在 ' + cfg.iface + ' 上按 Ctrl+U 再跳一次');
+  }
+  else if (act === 's2-multi') {
+    openFile(cfg.multiFile);
+    state.cursor = refCursor(cfg.multiFile, cfg.iface);
+    state.highlight = { file: cfg.multiFile, line: state.cursor.line };
+    renderAll(); scrollToLine();
+    openPicker('parent', state.lang, cfg.multi);
+  }
+  else if (act === 's3-impls') { openPicker('impl', 'cs', cfg.iface); }
+  else if (act === 's3-parent') {
+    const t = INDEX.cs[cfg.iface];
+    jumpTo(t.file, t.line, { name: t.name });
+  }
+  else if (act === 's4-base') {
+    const t = INDEX.py[cfg.iface];
+    jumpTo(t.file, t.line, { name: t.name });
+  }
+  else if (act === 's4-subs') { openPicker('impl', 'py', cfg.iface); }
+  else if (act === 's5-iface') {
+    setTabs([cfg.ifaceFile, cfg.abstractFile], cfg.ifaceFile);
+    state.cursor = declCursor(cfg.ifaceFile, cfg.iface);
+    state.highlight = { file: cfg.ifaceFile, line: state.cursor.line };
+    state.notice = null; renderAll(); scrollToLine();
+    toast('当前文件只有 ↓（' + downTip(INDEX[state.lang][cfg.iface], implementationsOf(INDEX[state.lang][cfg.iface]).length) + '）');
+  }
+  else if (act === 's5-impl') {
+    setTabs([cfg.implFile, cfg.ifaceFile], cfg.implFile);
+    state.cursor = declCursor(cfg.implFile, cfg.impl);
+    state.highlight = { file: cfg.implFile, line: state.cursor.line };
+    state.notice = null; renderAll(); scrollToLine();
+    toast('当前文件只有 ↑：' + upTip(INDEX[state.lang][cfg.impl]));
+  }
+  else if (act === 's5-abstract' || act === 's5-back') {
+    setTabs([cfg.abstractFile, cfg.ifaceFile], cfg.abstractFile);
+    state.cursor = declCursor(cfg.abstractFile, cfg.abstract);
+    state.highlight = { file: cfg.abstractFile, line: state.cursor.line };
+    state.notice = null; renderAll(); scrollToLine();
+    toast('悬停 ↓：' + downTip(INDEX[state.lang][cfg.abstract], implementationsOf(INDEX[state.lang][cfg.abstract]).length) + '；悬停 ↑：' + upTip(INDEX[state.lang][cfg.abstract]));
+  }
+  else if (act === 's6-noimpl') {
+    const t = INDEX[state.lang][cfg.noImpl];
+    setTabs([cfg.noImplFile], cfg.noImplFile);
+    state.cursor = declCursor(cfg.noImplFile, cfg.noImpl);
+    state.notice = { file: cfg.noImplFile, line: t.line, text: '未找到 ' + cfg.noImpl + ' 的' + implNoun(state.lang) };
+    state.highlight = null; renderAll(); scrollToLine(); toast(state.notice.text);
+  }
+  else if (act === 's6-go') { openFile('cmd/pay.go'); toast('Go 暂不支持继承跳转，可跳转到定义'); }
+  else if (act === 's6-vue') { openFile('web/PayPanel.vue'); toast('Vue 暂不支持继承跳转，可跳转到定义'); }
+  else if (act === 's6-txt') { openFile('notes/pay-notes.txt'); toast('纯文本不提供代码导航'); }
+  else if (act === 's7-open') {
+    state.cursor = declCursor(cfg.settleFile, cfg.settle);
+    state.highlight = { file: cfg.settleFile, line: state.cursor.line };
+    renderAll(); openPicker('impl', state.lang, cfg.settle);
+  }
+  else if (act === 's7-filter') {
+    if (!state.picker) { state.cursor = declCursor(cfg.settleFile, cfg.settle); renderAll(); openPicker('impl', state.lang, cfg.settle); }
+    state.picker.filter = 'Ccb';
+    const f = $('#pickerFilter'); if (f) f.value = 'Ccb';
+    state.picker.active = 0; renderPickerList();
+  }
+  else if (act === 's7-clear') {
+    if (!state.picker) return;
+    state.picker.filter = ''; const f = $('#pickerFilter'); if (f) f.value = '';
+    state.picker.active = 0; renderPickerList();
+  }
+  else if (act === 's8-java') { state.lang = 'java'; applyScenario('s8', true); }
+  else if (act === 's8-py') { state.lang = 'py'; applyScenario('s8', true); }
+  else if (act === 's8-cs') { state.lang = 'cs'; applyScenario('s8', true); }
+  else if (act === 'bar-impl') { navImpl(); }
+  else if (act === 'bar-parent') { navParent(); }
+}
+
+/* ================= 右键菜单 ================= */
+function openCtx(x, y) {
+  const t = currentType();
+  if (!t) { toast('当前文件不提供代码导航'); return; }
+  const impls = implementationsOf(t);
+  state.ctxItems = [
+    { k: 'impl', label: '跳转到' + implNoun(t.lang), hint: 'Ctrl+Alt+B', n: impls.length },
+    { k: 'parent', label: '跳转到父类型', hint: 'Ctrl+U', n: t.parentTypes.length },
+    { sep: true },
+    { k: 'decl', label: '定位到类型声明', hint: '', n: 1 },
+    { k: 'copy', label: '复制类型名', hint: '', n: 1 }
+  ];
+  const ctx = $('#ctx');
+  ctx.innerHTML = state.ctxItems.map((m, i) => {
+    if (m.sep) return '<div class="ctx-sep"></div>';
+    return '<button type="button" class="ctx-item" role="menuitem" data-k="' + m.k + '" ' + (m.n ? '' : 'disabled') + ' tabindex="-1"><span class="ctx-label">' + esc(m.label) + (m.n > 1 ? '（' + m.n + '）' : '') + '</span>' + (m.hint ? '<kbd>' + esc(m.hint) + '</kbd>' : '') + '</button>';
+  }).join('');
+  ctx.hidden = false;
+  const w = ctx.offsetWidth, h = ctx.offsetHeight;
+  ctx.style.left = Math.max(8, Math.min(x, window.innerWidth - w - 8)) + 'px';
+  ctx.style.top = Math.max(8, Math.min(y, window.innerHeight - h - 8)) + 'px';
+  state.ctxOpen = true; state.ctxIndex = 0;
+  $$('.ctx-item', ctx).forEach(b => { b.onclick = () => { ctxAction(b.dataset.k); }; });
+  const first = $('.ctx-item:not([disabled])', ctx); if (first) first.classList.add('kb');
+}
+function closeCtx() { state.ctxOpen = false; const c = $('#ctx'); if (c) c.hidden = true; }
+function ctxAction(k) {
+  if (k === 'impl') { closeCtx(); navImpl(); }
+  else if (k === 'parent') { closeCtx(); navParent(); }
+  else if (k === 'decl') {
+    const t = currentType(); closeCtx();
+    if (t) jumpTo(t.file, t.line, { name: t.name });
+  } else if (k === 'copy') {
+    const t = currentType(); closeCtx();
+    if (t) {
+      try { if (navigator.clipboard) navigator.clipboard.writeText(t.name); } catch (err) { }
+      toast('已复制类型名：' + t.name);
+    }
+  }
+}
+function moveCtx(dir) {
+  const items = $$('#ctx .ctx-item:not([disabled])');
+  if (!items.length) return;
+  let cur = items.findIndex(b => b.classList.contains('kb'));
+  cur = cur < 0 ? (dir > 0 ? -1 : 0) : cur;
+  cur = (cur + dir + items.length) % items.length;
+  items.forEach(b => b.classList.remove('kb'));
+  items[cur].classList.add('kb'); items[cur].focus();
+}
+
+/* ================= 浮层 / Toast ================= */
+function showGtip(el) {
+  const g = $('#gtip');
+  g.textContent = el.dataset.tip;
+  g.hidden = false;
+  const r = el.getBoundingClientRect();
+  const w = g.offsetWidth;
+  g.style.left = Math.max(6, Math.min(r.left - 6, window.innerWidth - w - 6)) + 'px';
+  g.style.top = Math.max(6, r.top - 27) + 'px';
+}
+function hideGtip() { const g = $('#gtip'); if (g) g.hidden = true; }
+let toastTimer = null;
+function toast(msg, type) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.className = 'toast' + (type === 'error' ? ' error' : '');
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.hidden = true; }, 2600);
+}
+
+/* ================= 总渲染 ================= */
+function syncControls() {
+  $('#scenario').value = state.scenario;
+  $$('.lang-btn').forEach(b => {
+    const on = b.dataset.lang === state.lang;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', String(on));
+  });
+}
+function renderAll() {
+  renderTree(); renderTabs(); renderCrumbs(); renderEditorBar(); renderPrecision(); renderCode(); renderNote(); syncControls();
+}
+
+/* ================= 场景应用 ================= */
+function applyScenario(id, keepLang) {
+  closePicker(); closeCtx(); hideGtip();
+  const toastEl = $('#toast'); if (toastEl) toastEl.hidden = true; clearTimeout(toastTimer);
+  state.scenario = id; state.notice = null; state.highlight = null;
+  if (!keepLang) state.lang = 'java';
+  if (id === 's3') state.lang = 'cs';
+  if (id === 's4') state.lang = 'py';
+  const cfg = L[state.lang];
+  if (id === 's1') {
+    setTabs([cfg.ifaceFile], cfg.ifaceFile);
+    state.cursor = declCursor(cfg.ifaceFile, cfg.iface);
+    state.highlight = { file: cfg.ifaceFile, line: state.cursor.line };
+    renderAll(); scrollToLine();
+    const sc = id;
+    setTimeout(() => { if (state.scenario === sc && !state.picker) openPicker('impl', state.lang, cfg.iface); }, 60);
+  } else if (id === 's2') {
+    setTabs([cfg.implFile, cfg.ifaceFile], cfg.implFile);
+    const impl = INDEX[state.lang][cfg.impl];
+    const target = impl.parentTypes.find(p => p.kind === 'interface') || impl.parentTypes[0];
+    if (target) {
+      state.activeFile = target.file;
+      state.highlight = { file: target.file, line: target.line };
+      state.cursor = { lang: state.lang, name: target.name, file: target.file, line: target.line, role: 'decl' };
+      renderAll(); scrollToLine();
+      toast('已从 ' + cfg.impl + ' 跳到父类型 ' + target.name + ' · ' + target.file + ':' + target.line);
+    } else {
+      state.cursor = declCursor(cfg.implFile, cfg.impl);
+      renderAll();
+    }
+  } else if (id === 's3') {
+    setTabs(['pay-csharp/IOrderService.cs', 'pay-csharp/OrderService.cs', 'pay-csharp/OrderServiceBase.cs'], 'pay-csharp/OrderService.cs');
+    state.cursor = refCursor('pay-csharp/OrderService.cs', 'IOrderService');
+    state.highlight = { file: 'pay-csharp/OrderService.cs', line: state.cursor.line };
+    renderAll(); scrollToLine();
+  } else if (id === 's4') {
+    setTabs(['pay-python/pay_service.py', 'pay-python/alipay_service.py'], 'pay-python/alipay_service.py');
+    state.cursor = refCursor('pay-python/alipay_service.py', 'PayService');
+    state.highlight = { file: 'pay-python/alipay_service.py', line: state.cursor.line };
+    renderAll(); scrollToLine();
+  } else if (id === 's5') {
+    setTabs([cfg.abstractFile, cfg.ifaceFile], cfg.abstractFile);
+    state.cursor = declCursor(cfg.abstractFile, cfg.abstract);
+    state.highlight = { file: cfg.abstractFile, line: state.cursor.line };
+    renderAll(); scrollToLine();
+  } else if (id === 's6') {
+    setTabs([cfg.noImplFile], cfg.noImplFile);
+    const t = INDEX[state.lang][cfg.noImpl];
+    state.cursor = declCursor(cfg.noImplFile, cfg.noImpl);
+    state.notice = { file: cfg.noImplFile, line: t.line, text: '未找到 ' + cfg.noImpl + ' 的' + implNoun(state.lang) };
+    renderAll(); scrollToLine();
+    const sc = id;
+    setTimeout(() => { if (state.scenario === sc) toast(state.notice ? state.notice.text : ''); }, 60);
+  } else if (id === 's7') {
+    setTabs([cfg.settleFile], cfg.settleFile);
+    state.cursor = declCursor(cfg.settleFile, cfg.settle);
+    state.highlight = { file: cfg.settleFile, line: state.cursor.line };
+    renderAll(); scrollToLine();
+    const sc = id;
+    setTimeout(() => { if (state.scenario === sc && !state.picker) openPicker('impl', state.lang, cfg.settle); }, 60);
+  } else if (id === 's8') {
+    const actName = { java: 'AlipayService', cs: 'OrderService', py: 'AlipayService' }[state.lang];
+    const actFile = { java: 'pay-java/AlipayService.java', cs: 'pay-csharp/OrderService.cs', py: 'pay-python/alipay_service.py' }[state.lang];
+    const others = { java: ['pay-python/alipay_service.py', 'pay-csharp/OrderService.cs'], cs: ['pay-java/AlipayService.java', 'pay-python/alipay_service.py'], py: ['pay-java/AlipayService.java', 'pay-csharp/OrderService.cs'] }[state.lang];
+    setTabs([actFile].concat(others), actFile);
+    state.cursor = declCursor(actFile, actName);
+    state.highlight = { file: actFile, line: state.cursor.line };
+    renderAll(); scrollToLine();
+  }
+}
+
+/* ================= 事件 ================= */
+$('#scenario').addEventListener('change', function () { applyScenario(this.value); });
+$$('.lang-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const lang = btn.dataset.lang;
+    if (state.scenario === 's3' || state.scenario === 's4') {
+      toast((state.scenario === 's3' ? 'SC-094-03 固定 C# 样例' : 'SC-094-04 固定 Python 样例') + '，已切到 SC-094-02 的 ' + META[lang].label + ' 对照');
+      state.lang = lang; applyScenario('s2', true); return;
+    }
+    state.lang = lang; applyScenario(state.scenario, true);
+  });
+});
+$('#themeBtn').addEventListener('click', function () {
+  state.theme = state.theme === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = state.theme;
+  this.textContent = state.theme === 'dark' ? '浅色' : '深色';
+});
+$('#narrowBtn').addEventListener('click', function () {
+  state.narrow = !state.narrow;
+  document.body.classList.toggle('narrow', state.narrow);
+  this.textContent = state.narrow ? '正常宽度' : '窄屏 390';
+  if (state.narrow) { state.dirsOpenNarrow = state.dirsOpenNarrow || false; $('#treePane').classList.toggle('open', state.dirsOpenNarrow); }
+  else { $('#treePane').classList.remove('open'); }
+});
+$('#railTree').addEventListener('click', function () {
+  if (state.narrow) {
+    state.dirsOpenNarrow = !state.dirsOpenNarrow;
+    $('#treePane').classList.toggle('open', state.dirsOpenNarrow);
+    this.classList.toggle('on', state.dirsOpenNarrow);
+  } else {
+    const tp = $('#treePane');
+    tp.classList.toggle('collapsed');
+    this.classList.toggle('on', !tp.classList.contains('collapsed'));
+  }
+});
+$('#railGit').addEventListener('click', () => toast('Git 面板不在本设计稿范围'));
+$('#railExt').addEventListener('click', () => toast('外部编辑器不在本设计稿范围'));
+$('#btnCollapse').addEventListener('click', () => {
+  $('#treePane').classList.add('collapsed');
+  $('#railTree').classList.remove('on');
+  if (state.narrow) { state.dirsOpenNarrow = false; $('#treePane').classList.remove('open'); }
+});
+
+$('#tree').addEventListener('click', e => {
+  const row = e.target.closest('.row'); if (!row) return;
+  if (row.dataset.type === 'dir') { state.dirs[row.dataset.path] = !(state.dirs[row.dataset.path] !== false); renderTree(); return; }
+  openFile(row.dataset.path);
+});
+$('#tree').addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  const row = e.target.closest('.row'); if (!row) return;
+  e.preventDefault();
+  if (row.dataset.type === 'dir') { state.dirs[row.dataset.path] = !(state.dirs[row.dataset.path] !== false); renderTree(); }
+  else openFile(row.dataset.path);
+});
+$('#tabs').addEventListener('click', e => {
+  const close = e.target.closest('[data-close]');
+  if (close) {
+    e.stopPropagation();
+    const path = close.dataset.close;
+    state.openTabs = state.openTabs.filter(p => p !== path);
+    if (state.activeFile === path) {
+      const next = state.openTabs[0] || null;
+      if (next) openFile(next); else { state.activeFile = null; state.cursor = null; renderAll(); }
+    } else renderTabs();
+    return;
+  }
+  const tab = e.target.closest('.tab');
+  if (tab) openFile(tab.dataset.path);
+});
+$('#crumbs').addEventListener('click', e => {
+  const c = e.target.closest('[data-crumb]'); if (!c) return;
+  toast('面包屑定位：' + c.dataset.crumb);
+});
+$('#editorBar').addEventListener('click', e => {
+  const b = e.target.closest('[data-act]'); if (!b || b.disabled) return;
+  onNoteAct(b.dataset.act);
+});
+
+/* 代码区：gutter / 标识符 / 右键 */
+$('#codeWrap').addEventListener('mouseover', e => {
+  const g = e.target.closest('.gmark'); if (g) showGtip(g);
+});
+$('#codeWrap').addEventListener('mouseout', e => {
+  if (e.target.closest && e.target.closest('.gmark')) hideGtip();
+});
+$('#codeWrap').addEventListener('click', e => {
+  const g = e.target.closest('.gmark');
+  if (g) {
+    hideGtip();
+    const f = FILES[state.activeFile];
+    const t = INDEX[f.lang] && INDEX[f.lang][g.dataset.name];
+    if (!t) return;
+    const mode = g.dataset.gutter;
+    state.cursor = { lang: f.lang, name: t.name, file: t.file, line: t.line, role: 'decl' };
+    state.highlight = { file: t.file, line: t.line };
+    if (mode === 'impl') {
+      const impls = implementationsOf(t);
+      if (impls.length === 1) jumpTo(impls[0].type.file, impls[0].type.line, { name: impls[0].type.name });
+      else { renderAll(); openPicker('impl', f.lang, t.name); }
+    } else {
+      if (t.parentTypes.length === 1) jumpTo(t.parentTypes[0].file, t.parentTypes[0].line, { name: t.parentTypes[0].name });
+      else { renderAll(); openPicker('parent', f.lang, t.name); }
+    }
+    return;
+  }
+  const link = e.target.closest('.tlink');
+  if (!link) return;
+  const f = FILES[state.activeFile];
+  const cl = link.closest('.cl');
+  const line = cl ? +cl.dataset.line : 1;
+  const name = link.dataset.name;
+  if (link.dataset.role === 'parent') {
+    state.cursor = { lang: f.lang, name, file: f.path, line, role: 'parent' };
+    const target = INDEX[f.lang] && INDEX[f.lang][name];
+    if (target) jumpTo(target.file, target.line, { name: target.name });
+    else toast('未找到 ' + name + ' 的定义');
+  } else {
+    state.cursor = { lang: f.lang, name, file: f.path, line, role: 'decl' };
+    navImpl();
+  }
+});
+$('#codeWrap').addEventListener('contextmenu', e => {
+  const f = state.activeFile ? FILES[state.activeFile] : null;
+  if (!f) return;
+  if (!INDEX[f.lang]) {
+    e.preventDefault();
+    toast(META[f.lang].prec);
+    return;
+  }
+  const link = e.target.closest('.tlink');
+  if (link) {
+    const cl = link.closest('.cl');
+    state.cursor = { lang: f.lang, name: link.dataset.name, file: f.path, line: cl ? +cl.dataset.line : 1, role: link.dataset.role };
+  }
+  e.preventDefault();
+  openCtx(e.clientX, e.clientY);
+});
+document.addEventListener('click', e => {
+  if (!e.target || !e.target.isConnected) return;
+  if (state.ctxOpen && !e.target.closest('#ctx') && !e.target.closest('#codeWrap')) closeCtx();
+  if (state.picker && !e.target.closest('#picker') && !e.target.closest('.hint-chip') && !e.target.closest('.act-btn') && !e.target.closest('.lang-btn') && !e.target.closest('#codeWrap') && !e.target.closest('#ctx') && !e.target.closest('#editorBar') && !e.target.closest('#scenarioNote')) closePicker();
+});
+document.addEventListener('keydown', e => {
+  const inPickerInput = e.target && e.target.id === 'pickerFilter';
+  if (e.key === 'Escape') {
+    if (state.picker) { e.preventDefault(); closePicker(); return; }
+    if (state.ctxOpen) { e.preventDefault(); closeCtx(); return; }
+  }
+  if (state.ctxOpen) {
+    if (e.key === 'ArrowDown') { e.preventDefault(); moveCtx(1); return; }
+    if (e.key === 'ArrowUp') { e.preventDefault(); moveCtx(-1); return; }
+    if (e.key === 'Enter') { const kb = $('#ctx .ctx-item.kb'); if (kb) { e.preventDefault(); ctxAction(kb.dataset.k); } return; }
+  }
+  if (state.picker && !inPickerInput) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter') { pickerKey(e); return; }
+  }
+  if (inPickerInput) return;
+  if (e.ctrlKey && e.altKey && (e.key === 'b' || e.key === 'B')) { e.preventDefault(); navImpl(); return; }
+  if (e.ctrlKey && !e.altKey && (e.key === 'u' || e.key === 'U')) { e.preventDefault(); navParent(); }
+});
+$('#codeWrap').addEventListener('scroll', hideGtip);
+
+/* UI-SCROLL-001：滚动时显示，停止 700ms 隐藏 */
+const scrollTimers = new Map();
+document.addEventListener('scroll', e => {
+  const el = e.target;
+  if (!(el instanceof Element)) return;
+  if (el.scrollHeight <= el.clientHeight && el.scrollWidth <= el.clientWidth) return;
+  el.classList.add('scrollbar-active');
+  clearTimeout(scrollTimers.get(el));
+  scrollTimers.set(el, setTimeout(() => { el.classList.remove('scrollbar-active'); }, 700));
+}, { capture: true, passive: true });
+
+/* ================= 对外状态 ================= */
+window.designState = function () {
+  const f = state.activeFile ? FILES[state.activeFile] : null;
+  const kinds = [];
+  const detail = [];
+  if (f && INDEX[f.lang]) {
+    (f.decls || []).forEach(d => {
+      const t = INDEX[f.lang][d.name];
+      if (!t) return;
+      const down = implementationsOf(t).length;
+      const up = t.parentTypes.length;
+      detail.push({ name: t.name, down: down, up: up });
+      if (down && kinds.indexOf('down') < 0) kinds.push('down');
+      if (up && kinds.indexOf('up') < 0) kinds.push('up');
+    });
+  }
+  return {
+    version: 'UI-CR094-v1',
+    scenario: state.scenario,
+    scenarioName: SCENARIO_NAMES[state.scenario],
+    lang: state.lang,
+    pickerOpen: !!state.picker,
+    markerKinds: kinds,
+    markerDetail: { down: kinds.indexOf('down') >= 0, up: kinds.indexOf('up') >= 0, types: detail },
+    theme: document.documentElement.dataset.theme,
+    narrow: state.narrow,
+    activeFile: state.activeFile,
+    openTabs: state.openTabs.map(p => baseName(p)),
+    cursor: state.cursor ? { name: state.cursor.name, role: state.cursor.role, line: state.cursor.line } : null,
+    pickerCount: state.picker ? state.picker.items.length : 0,
+    pickerFiltered: state.picker ? pickerFiltered().length : 0,
+    pickerFilter: state.picker ? state.picker.filter : '',
+    breadcrumb: activeCrumbs(),
+    notice: state.notice ? state.notice.text : null,
+    scrollbars: 'scroll-on-show / 700ms-hide',
+    languages: ['java', 'cs', 'py']
+  };
+};
+
+/* ================= 启动 ================= */
+document.documentElement.dataset.theme = 'light';
+applyScenario('s1');
+</script></body></html>

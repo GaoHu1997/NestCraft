@@ -20,6 +20,9 @@ import type { LocateDetail } from "@/modules/locate";
 import { undoDepth, redoDepth } from "@codemirror/commands";
 import { basicSetup } from "codemirror";
 import { oneDark } from "@codemirror/theme-one-dark";
+import { StreamLanguage } from "@codemirror/language";
+import { java, csharp, c, cpp, kotlin, scala } from "@codemirror/legacy-modes/mode/clike";
+import { go } from "@codemirror/legacy-modes/mode/go";
 import { markdown } from "@codemirror/lang-markdown";
 import { javascript } from "@codemirror/lang-javascript";
 import { python } from "@codemirror/lang-python";
@@ -29,6 +32,15 @@ import { Confirm, Empty, renderMarkdown, useToast } from "@/components/ui";
 import { PaneClose, PaneToggle, ResizeHandle, usePaneWidth } from "@/components/pane-resize";
 import { FileTree } from "./FileTree";
 import { EditorTabs, baseName } from "./EditorTabs";
+import { Breadcrumbs } from "./navigation/Breadcrumbs";
+import { GotoPopup } from "./navigation/GotoPopup";
+import { navigationExtension, onGotoPicker, pickGotoTarget, closeGotoPicker, gotoImplementationsAt, gotoSupertypesAt } from "./navigation/goto";
+import type { GotoPickerState, GotoDeps } from "./navigation/goto";
+import { inheritanceGutter } from "./navigation/InheritanceGutter";
+import { FileContextMenu, type ContextMenuEntry } from "./FileContextMenu";
+import { sharedIndex, resetSharedIndex } from "./navigation/symbols";
+import type { SymbolIndex } from "./navigation/symbols";
+import { historyBack, historyForward, clearHistory } from "./navigation/history";
 import { DirtyTracker, SaveQueue } from "./performance-model";
 import { loadDocument, DocumentSaveSession } from "./document-session";
 import { lineEndings, preserveLineEndings } from "./line-endings";
@@ -97,6 +109,27 @@ function languageFor(path: string): Extension | Extension[] {
       return python();
     case "json":
       return json();
+    // CR-094：Java / C# / C / C++ / Kotlin / Scala / Go 的语法高亮（只影响显示，不做语义导航）。
+    case "java":
+      return StreamLanguage.define(java);
+    case "cs":
+      return StreamLanguage.define(csharp);
+    case "c":
+    case "h":
+      return StreamLanguage.define(c);
+    case "cpp":
+    case "cc":
+    case "cxx":
+    case "hpp":
+    case "hh":
+      return StreamLanguage.define(cpp);
+    case "kt":
+    case "kts":
+      return StreamLanguage.define(kotlin);
+    case "scala":
+      return StreamLanguage.define(scala);
+    case "go":
+      return StreamLanguage.define(go);
     default:
       return [];
   }
@@ -132,6 +165,8 @@ interface Tab {
   lineEnding: string;
   mixedLineEndings: boolean;
   preview: boolean;
+  /** 预览页签（CR-090 SC-090-05）：斜体、可被下一次预览替换；与上面的「窗口预览」语义不同 */
+  isPreview: boolean;
   windowOnly: boolean;
   sizeBytes: number;
   suspended: boolean;
@@ -152,7 +187,7 @@ const openingReservations = new Map<symbol, number>();
 const modelCost = (tab: Tab) => tab.state ? tab.state.doc.length * 4 + tab.state.doc.lines * 16 : 0;
 
 function emptyTab(path: string): Tab {
-  return { path, saved: Text.empty, dirty: false, binary: false, state: null, scroll: 0, scrollLeft: 0, readScroll: 0, mode: "editing", tracker: null, queue: null, savedState: null, saving: false, saveError: null, hash: "", encoding: "utf-8", lineEnding: "\n", mixedLineEndings: false, preview: false, windowOnly: false, sizeBytes: 0, suspended: false, notify: () => {} };
+  return { path, saved: Text.empty, dirty: false, binary: false, state: null, scroll: 0, scrollLeft: 0, readScroll: 0, mode: "editing", tracker: null, queue: null, savedState: null, saving: false, saveError: null, hash: "", encoding: "utf-8", lineEnding: "\n", mixedLineEndings: false, preview: false, isPreview: false, windowOnly: false, sizeBytes: 0, suspended: false, notify: () => {} };
 }
 
 function MarkdownReading({ tab, source }: { tab: Tab; source: string }) {
@@ -217,7 +252,19 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
   const rootUriRef = useRef(rootUri);
   const sessionOwner = useRef(Symbol("editor-session")).current;
   const activeScope = useRef("");
-  const openFileRef = useRef<(path: string) => Promise<void>>(async () => {});
+  const openFileRef = useRef<(path: string, opts?: { preview?: boolean }) => Promise<void>>(async () => {});
+  /** locateTarget 的转发 ref：编辑器扩展在渲染期创建，早于 locateTarget 定义（CR-090 导航）。 */
+  const locateTargetRef = useRef<(path: string, line?: number, col?: number) => Promise<void>>(async () => {});
+  const [navIndex, setNavIndex] = useState<SymbolIndex | null>(null);
+  const [navText, setNavText] = useState<string | null>(null);
+  const [navLine, setNavLine] = useState(1);
+  const [navTick, setNavTick] = useState(0);
+  const navTickTimer = useRef<number | undefined>(undefined);
+  const [picker, setPicker] = useState<GotoPickerState>({ open: false, title: "", targets: [] });
+  const [editorMenu, setEditorMenu] = useState<{ x: number; y: number; offset: number } | null>(null);
+  const [singleClickOpen, setSingleClickOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem("cda.singleClickOpen") === "1"; } catch { return false; }
+  });
 
   const langComp = useRef(new Compartment()).current;
   const themeComp = useRef(new Compartment()).current;
@@ -266,6 +313,11 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
       const tab = path ? tabsRef.current.find(t => t.path === path) : null;
       if (!tab || tab.binary) return;
       tab.state = u.state;
+      if (u.docChanged || u.selectionSet) {
+        // 面包屑跟随光标/文档，200ms 节流，避免每次光标移动都整块重渲染（CR-090）。
+        window.clearTimeout(navTickTimer.current);
+        navTickTimer.current = window.setTimeout(() => setNavTick(n => n + 1), 200);
+      }
       if (!u.docChanged) return;
       tab.tracker?.update(u.state.doc);
       window.clearTimeout(tab.autoSaveTimer);
@@ -276,6 +328,37 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
 
   /* ---------- 扩展（创建一次；语言/主题/字号走 Compartment） ---------- */
 
+  // CR-090：导航扩展只创建一次（内含 StateField），notify 走 ref，避免因 toast 引用变化重建。
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+  const navExt = useMemo(
+    () => navigationExtension({
+      rootUri: () => rootUriRef.current,
+      openAt: (p, l, c) => { void locateTargetRef.current(p, l, c); },
+      notify: (msg, kind) => toastRef.current(msg, kind === "warn" ? "warn" : "info"),
+      currentPath: () => activeRef.current,
+    }),
+    []
+  );
+
+  /** CR-094：继承跳转（Ctrl+Alt+B / Ctrl+U / gutter / 右键菜单）共用的依赖；用 ref 保持稳定。 */
+  const navDepsRef = useRef<GotoDeps | null>(null);
+  navDepsRef.current = {
+    index: () => sharedIndex(rootUriRef.current),
+    openAt: (p, l, c) => { void locateTargetRef.current(p, l, c); },
+    notify: (msg, kind) => toastRef.current(msg, kind === "warn" ? "warn" : "info"),
+    currentPath: () => activeRef.current,
+  };
+
+  const gutterExt = useMemo(
+    () => inheritanceGutter({
+      index: () => sharedIndex(rootUriRef.current).catch(() => null),
+      currentPath: () => activeRef.current,
+      openAt: (p, l, c) => { void locateTargetRef.current(p, l, c); },
+    }),
+    []
+  );
+
   const extensions = useMemo<Extension[]>(
     () => [
       basicSetup,
@@ -283,11 +366,13 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
       EditorView.updateListener.of(onUpdate),
       EditorView.domEventHandlers({ blur: () => { const tab = tabsRef.current.find(t => t.path === activeRef.current); if (tab) saveTab(tab); return false; } }),
       lineHighlightField,
+      navExt,
+      gutterExt,
       langComp.of([]),
       themeComp.of([]),
       fontComp.of(fontTheme(DEFAULT_FONT_SIZE)),
     ],
-    [saveActive, saveTab, onUpdate, langComp, themeComp, fontComp]
+    [saveActive, saveTab, onUpdate, langComp, themeComp, fontComp, navExt, gutterExt]
   );
 
   /** 对当前视图重配语言 / 主题 / 字号（切页签或主题字号变化后调用）。 */
@@ -416,17 +501,27 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
         }
       }
       rerender();
+      setNavTick(n => n + 1);
     },
     [extensions, applyCompartments, rerender, saveTab]
   );
 
-  const openFile = useCallback(async (path: string) => {
+  const openFile = useCallback(async (path: string, opts?: { preview?: boolean }) => {
     const seq = ++fileRequestRef.current;
     const root = rootUriRef.current;
     const existing = tabsRef.current.find(t => t.path === path);
-    if (existing && !existing.suspended) { activate(path); return; }
+    if (existing && !existing.suspended) { existing.isPreview = !!opts?.preview; activate(path); return; }
+    if (opts?.preview) {
+      // 预览页签只占一个槽位：先移除旧的无脏预览页签（CR-090 SC-090-05）。
+      const oldIdx = tabsRef.current.findIndex(t => t.isPreview && !t.dirty);
+      if (oldIdx >= 0) {
+        const old = tabsRef.current[oldIdx];
+        old.tracker?.dispose(); old.queue?.dispose();
+        tabsRef.current = tabsRef.current.filter((_, i) => i !== oldIdx);
+      }
+    }
     if (isBinaryPath(path)) {
-      const tab = emptyTab(path); tab.binary = true; tabsRef.current.push(tab); activate(path); return;
+      const tab = emptyTab(path); tab.binary = true; tab.isPreview = !!opts?.preview; tabsRef.current.push(tab); activate(path); return;
     }
     let pending: Promise<void>;
     {
@@ -453,6 +548,7 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
         if (rootUriRef.current !== root || fileRequestRef.current !== seq || !viewRef.current || tabsRef.current.some(t => t.path === path && !t.suspended)) return;
         const tab = existing ?? emptyTab(path);
         tab.suspended = false; const key = activeScope.current; tab.notify = () => { if (activeScope.current === key) rerender(); };
+        tab.isPreview = !!opts?.preview;
         if ("windowOnly" in loaded) { tab.windowOnly = true; tab.preview = true; }
         else {
           tab.saved = loaded.doc; tab.hash = loaded.hash; tab.encoding = loaded.encoding; tab.lineEnding = loaded.lineEnding; tab.mixedLineEndings = loaded.mixedLineEndings; tab.sizeBytes = loaded.sizeBytes;
@@ -530,6 +626,145 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
     if (tab?.dirty) setCloseTarget(path); else removeTab(path);
   };
 
+  /* ---------- CR-090：页签重排 / 预览转正 / 文件增删改联动 ---------- */
+
+  const reorderTabs = useCallback((from: number, to: number) => {
+    const arr = tabsRef.current.slice();
+    if (from < 0 || from >= arr.length || to < 0 || to >= arr.length || from === to) return;
+    const [moved] = arr.splice(from, 1);
+    arr.splice(to, 0, moved);
+    tabsRef.current = arr;
+    rerender();
+  }, [rerender]);
+
+  const keepTab = useCallback((path: string) => {
+    const tab = tabsRef.current.find(t => t.path === path);
+    if (!tab || !tab.isPreview) return;
+    tab.isPreview = false;
+    rerender();
+  }, [rerender]);
+
+  const handlePathsRemoved = useCallback((paths: string[]) => {
+    for (const p of paths) {
+      const tab = tabsRef.current.find(t => t.path === p);
+      if (!tab) continue;
+      if (tab.dirty || tab.saving || tab.saveSession?.unresolved) toast(`「${baseName(p)}」有未保存修改，已保留页签`, "warn");
+      else removeTab(p);
+    }
+  }, [removeTab, toast]);
+
+  const handlePathRenamed = useCallback((from: string, to: string) => {
+    const tab = tabsRef.current.find(t => t.path === from);
+    if (!tab) return;
+    tab.path = to;
+    if (activeRef.current === from) activeRef.current = to;
+    rerender();
+  }, [rerender]);
+
+  // 索引与导航历史随项目切换重置；建索引放后台，首屏不抢资源。
+  useEffect(() => {
+    resetSharedIndex();
+    clearHistory();
+    let alive = true;
+    setNavIndex(null);
+    setNavText(null);
+    const timer = window.setTimeout(() => {
+      sharedIndex(rootUri).then(idx => { if (alive) setNavIndex(idx); }).catch(() => {});
+    }, 800);
+    return () => { alive = false; window.clearTimeout(timer); };
+  }, [rootUri]);
+
+  // 多目标选择器：goto.ts 通过订阅驱动，只有 pickGotoTarget 才记录历史并跳转。
+  useEffect(() => onGotoPicker(setPicker), []);
+
+  // 面包屑数据：只在节流 tick / 索引就绪 / 显隐变化时读取文档文本。
+  useEffect(() => {
+    const path = activeRef.current;
+    const tab = path ? tabsRef.current.find(t => t.path === path) : null;
+    const view = viewRef.current;
+    if (!path || !tab || tab.binary || tab.windowOnly || !view) { setNavText(null); setNavLine(1); return; }
+    try {
+      setNavText(view.state.doc.toString());
+      setNavLine(view.state.doc.lineAt(view.state.selection.main.head).number);
+    } catch { setNavText(null); }
+  }, [navTick, navIndex, visible]);
+
+  // CR-094：Ctrl+Alt+B 跳实现、Ctrl+U 跳父类型（IntelliJ 键位）。
+  // 允许 CodeMirror 的 contenteditable 接收，但排除真实输入框与已打开的弹窗。
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!visibleRef.current) return;
+      if (document.querySelector("dialog[open],[role='dialog']")) return;
+      const el = event.target instanceof Element ? event.target : null;
+      if (el?.closest("input,textarea,[role='textbox']")) return;
+      const view = viewRef.current;
+      if (!view) return;
+      const deps = navDepsRef.current;
+      if (!deps) return;
+      const offset = view.state.selection.main.head;
+      if ((event.ctrlKey || event.metaKey) && event.altKey && !event.shiftKey && event.key.toLowerCase() === "b") {
+        event.preventDefault();
+        void gotoImplementationsAt(deps, offset);
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "u") {
+        event.preventDefault();
+        void gotoSupertypesAt(deps, offset);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // CR-094：编辑器右键菜单（跳转到实现 / 父类型）。
+  useEffect(() => {
+    if (!visible) return;
+    const host = hostRef.current;
+    if (!host) return;
+    const onContextMenu = (event: MouseEvent) => {
+      const view = viewRef.current;
+      const deps = navDepsRef.current;
+      if (!view || !deps) return;
+      const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+      const offset = pos ?? view.state.selection.main.head;
+      event.preventDefault();
+      setEditorMenu({ x: event.clientX, y: event.clientY, offset });
+    };
+    host.addEventListener("contextmenu", onContextMenu);
+    return () => host.removeEventListener("contextmenu", onContextMenu);
+  }, [visible]);
+
+  const editorMenuEntries: ContextMenuEntry[] = [
+    { kind: "item", key: "impl", label: "跳转到实现", icon: "steps" },
+    { kind: "item", key: "super", label: "跳转到父类型", icon: "arrowUp" },
+  ];
+
+  const runEditorMenu = (key: string) => {
+    const menu = editorMenu;
+    const deps = navDepsRef.current;
+    setEditorMenu(null);
+    if (!menu || !deps) return;
+    if (key === "impl") void gotoImplementationsAt(deps, menu.offset);
+    else if (key === "super") void gotoSupertypesAt(deps, menu.offset);
+  };
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      if (!visibleRef.current) return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest("input,textarea,[contenteditable='true'],[role='dialog']")) return;
+      if (document.querySelector("dialog[open],[role='dialog']")) return;
+      const open = (p: string, l: number, c?: number) => { void locateTargetRef.current(p, l, c); };
+      const ok = event.key === "ArrowLeft" ? historyBack(open) : historyForward(open);
+      if (ok) event.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+
   /* ---------- 会话答复定位（STORY-062 AC-08~11）：打开文件并滚动到目标行 ---------- */
 
   const locateTarget = useCallback(
@@ -560,6 +795,8 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
     },
     [openFile, changeMode, toast]
   );
+
+  locateTargetRef.current = locateTarget;
 
   const matchesScope = useCallback((d: LocateDetail) => {
     if (d.kind !== "file" || (!d.projectId && !d.rootUri)) return false;
@@ -607,19 +844,31 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
     <div ref={containerRef} className={`cda ${className ?? ""}`} data-ui-version="UI-CR055-FEAT007-v1">
       <aside {...treePane.paneProps} id={treeId} className={`cda-aside ${treePane.paneProps.className}`} aria-label="文件树">
         {treePane.overlay && <PaneClose pane={treePane} label="文件树" className="cda-tree-close btn sm" />}
-        <FileTree rootUri={rootUri} onOpenFile={p => void openFile(p)} />
+        <FileTree
+          rootUri={rootUri}
+          onOpenFile={(p, opts) => void openFile(p, opts)}
+          onPathRemoved={handlePathsRemoved}
+          onPathRenamed={handlePathRenamed}
+          singleClickOpen={singleClickOpen}
+          previewOpen={singleClickOpen}
+        />
         <ResizeHandle pane={treePane} label="编码文件栏" controls={treeId} />
       </aside>
       <section className="cda-main">
         <EditorTabs
-          tabs={tabs.map(t => ({ path: t.path, dirty: t.dirty }))}
+          tabs={tabs.map(t => ({ path: t.path, dirty: t.dirty, preview: t.isPreview }))}
           active={active}
           onSelect={p => void openFile(p)}
           onClose={closeTab}
+          onReorder={reorderTabs}
+          onKeep={keepTab}
         />
         <div className="cda-editor-bar">
           {!hideTree && !treePane.visible && <PaneToggle pane={treePane} label="文件树" controls={treeId} className="btn sm" />}
           <span className="mono ellipsis" title={active ?? ""}>{active ?? "未打开文件"}</span><span className="spacer" />
+          <label className="small cda-open-mode" title="单击文件即打开（否则单击选中、双击打开）">
+            <input type="checkbox" checked={singleClickOpen} onChange={e => { const v = e.target.checked; setSingleClickOpen(v); try { localStorage.setItem("cda.singleClickOpen", v ? "1" : "0"); } catch { /* 忽略存储失败 */ } }} /> 单击打开
+          </label>
           {isMarkdown && <div className="segment cda-mode" role="group" aria-label="Markdown模式">
             <button type="button" aria-pressed={showReading} onClick={() => changeMode("reading")}>阅读</button>
             <button type="button" aria-pressed={showEditor} onClick={() => changeMode("editing")}>编辑</button>
@@ -629,6 +878,15 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
           {canEdit && !showWindow && <button className="btn sm" onClick={() => { if (activeTab) { activeTab.preview = true; rerender(); } }}>窗口预览</button>}
           <button className="btn sm" disabled={!activeTab?.dirty || activeTab.saving} onClick={() => { if (active) setDiscardTarget(active); }}>取消修改</button>
         </div>
+        {active && activeTab && !activeTab.binary && (
+          <Breadcrumbs
+            path={active}
+            text={navText}
+            index={navIndex}
+            line={navLine}
+            onNavigate={(line, col) => { if (active) void locateTarget(active, line, col); }}
+          />
+        )}
         {isMarkdown && <div className="cda-reading-note">当前编辑缓冲 · 不执行HTML／脚本，不自动读取本地或外联资源</div>}
         {openingStatus && <div className="cda-perf-notice" role="status">{openingStatus} · 当前文档仍可编辑</div>}
         {activeTab?.saveError && <div className="cda-perf-notice error" role="alert">{activeTab.saveError} · 当前草稿已保留。</div>}
@@ -648,6 +906,16 @@ export function CodeArea({ rootUri, projectId, className, hideTree = false, visi
           )}
         </div>
       </section>
+      <GotoPopup open={picker.open} title={picker.title} targets={picker.targets} onPick={pickGotoTarget} onClose={closeGotoPicker} />
+      {editorMenu && (
+        <FileContextMenu
+          x={editorMenu.x}
+          y={editorMenu.y}
+          entries={editorMenuEntries}
+          onSelect={runEditorMenu}
+          onClose={() => setEditorMenu(null)}
+        />
+      )}
       {closeTarget && visible && <Confirm title="关闭未保存文件" message={`「${baseName(closeTarget)}」有未保存修改。关闭将丢弃当前草稿；取消会完整保留内容、选择和滚动位置。`} danger onCancel={() => setCloseTarget(null)} onOk={() => { removeTab(closeTarget); setCloseTarget(null); }} />}
       {discardTarget && visible && <Confirm title="取消文件修改" message={`丢弃「${baseName(discardTarget)}」的未保存修改并恢复已保存内容？`} danger onCancel={() => setDiscardTarget(null)} onOk={() => {
         const tab = tabsRef.current.find(t => t.path === discardTarget);

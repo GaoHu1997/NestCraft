@@ -123,9 +123,13 @@ fn session_row(row: &rusqlite::Row) -> rusqlite::Result<SessionMeta> {
     let last_outcome: Option<String> = row.get(20)?;
     let last_reason: Option<String> = row.get(21)?;
     let message_count: i64 = row.get(12)?;
+    // BUG-003：绑定派生必须按运行通道分流；runner 列与 SessionMeta.runner 同源（下标 23）。
+    let cli_id: String = row.get::<_, Option<String>>(4)?.unwrap_or_default();
+    let runner: String = row.get::<_, Option<String>>(23)?.unwrap_or_else(|| "cli".into());
     let binding = crate::commands::chat_binding::derive_view(
         &session_role,
-        row.get::<_, Option<String>>(4)?.as_deref().unwrap_or(""),
+        &runner,
+        cli_id.as_str(),
         thread_ref.as_deref(),
         binding_revision,
         confirmed_turn_id.as_deref(),
@@ -154,7 +158,7 @@ fn session_row(row: &rusqlite::Row) -> rusqlite::Result<SessionMeta> {
         binding,
         pinned_at: row.get(22)?,
         // CR-069：会话运行通道；列序见 SESSION_COLUMNS（pinnedAt=22，runner=23）。
-        runner: row.get::<_, Option<String>>(23)?.unwrap_or_else(|| "cli".into()),
+        runner,
     })
 }
 
@@ -836,6 +840,14 @@ pub async fn chat_send(
             }
         };
         drop(_running_turn);
+        // 未读状态（B 方案）：按本轮结果写 session.unread——正常成功→success、失败(is_error)→failed；
+        // 用户停止(aborted)与持久化失败(settle=None)不改写，避免把「你正在看/主动停止」的轮次标成未读。
+        let unread: Option<&str> = match (&result, &settle) {
+            (Ok(out), Some(_)) if !out.aborted => Some(if out.is_error { "failed" } else { "success" }),
+            (Err(_), _) => Some("failed"),
+            _ => None,
+        };
+        if let Some(u) = unread { set_session_unread(&session_id2, u); }
         match (&result, settle) {
             (_, Some(done)) => { let _ = channel.send(done); }
             (Ok(_), None) => {}
@@ -2276,6 +2288,25 @@ fn extract_content_text(c: Option<&serde_json::Value>) -> String {
     }
 }
 
+/// 更新会话未读列（可独立测试的纯 SQL 部分）。
+fn apply_session_unread(conn: &rusqlite::Connection, session_id: &str, unread: &str) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "UPDATE session SET unread=?2 WHERE id=?1",
+        rusqlite::params![session_id, unread],
+    )?;
+    Ok(())
+}
+
+/// 写入会话未读标记（success/failed）。独立短事务；调用方在主事务提交后调用，避免事务嵌套。
+/// 失败静默（未读只是提示，不应影响轮次结算与消息落库）。
+fn set_session_unread(session_id: &str, unread: &str) {
+    if let Ok(guard) = db::conn() {
+        if let Some(conn) = guard.as_ref() {
+            let _ = apply_session_unread(conn, session_id, unread);
+        }
+    }
+}
+
 /// 消息落库（无事务）：由 persist_assistant_with_conn 或结算事务复用，禁止嵌套开事务。
 pub(crate) fn insert_assistant_messages(conn: &rusqlite::Connection, session_id: &str, out: &StreamOutcome) -> Result<(), rusqlite::Error> {
     let now = now_ms();
@@ -2369,6 +2400,83 @@ fn persist_assistant_with_conn(conn: &rusqlite::Connection, session_id: &str, ou
     })
 }
 
+// ---------- 待发恢复 / 配额 / 运行时退出横幅（只读） ----------
+
+/// 配额视图：后端目前没有真实的会话配额数据源，字段为空时前端不显示。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatQuotaView {
+    pub used: Option<i64>,
+    pub limit: Option<i64>,
+    pub label: String,
+    pub detail: Option<String>,
+}
+
+/// 待发命令视图：当前待发队列完全在渲染进程内存中，后端没有持久化来源，正常为空。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatPendingCommandView {
+    pub id: String,
+    pub text: String,
+    pub created_at: i64,
+    pub source: String,
+}
+
+/// 运行时退出视图：只有在能确证 CLI 进程异常退出时才会填充；此处不伪造。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatRuntimeExitView {
+    pub reason: String,
+    pub detail: String,
+    pub at: i64,
+}
+
+/// 会话运行态横幅数据（只读）。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatActionStatus {
+    pub session_id: String,
+    pub updated_at: i64,
+    pub running: bool,
+    pub quota: Option<ChatQuotaView>,
+    pub runtime_exit: Option<ChatRuntimeExitView>,
+    pub pending_commands: Vec<ChatPendingCommandView>,
+}
+
+/// 只读查询会话运行态横幅数据：参数校验 + 中文错误，不返回敏感信息。
+///
+/// - `running`：本进程内该会话是否有进行中的回合（真实内存状态）。
+/// - `quota`：后端暂无真实配额数据源，返回 `None`，前端据此不渲染，不显示占位数字。
+/// - `runtimeExit`：后端未持久化 CLI 进程退出事件，无法确证时返回 `None`，不生成假横幅。
+/// - `pendingCommands`：待发队列目前仅存在于前端内存，后端无持久化来源，返回空数组。
+#[tauri::command]
+pub fn chat_action_status(session_id: String) -> Result<ChatActionStatus, String> {
+    let sid = session_id.trim().to_string();
+    if sid.is_empty() {
+        return Err("缺少会话 ID，无法查询运行状态".into());
+    }
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("数据库未初始化")?;
+    let exists: i64 = conn
+        .query_row("SELECT COUNT(*) FROM session WHERE id=?1", [&sid], |r| r.get(0))
+        .map_err(|e| format!("查询会话失败：{e}"))?;
+    if exists == 0 {
+        return Err("会话不存在或已被删除".into());
+    }
+    let running = RUNNING
+        .lock()
+        .map_err(|_| "会话运行状态不可用".to_string())?
+        .contains_key(&sid);
+    Ok(ChatActionStatus {
+        session_id: sid,
+        updated_at: now_ms(),
+        running,
+        quota: None,
+        runtime_exit: None,
+        pending_commands: Vec::new(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2431,6 +2539,23 @@ mod tests {
         assert_eq!(rows[4].2["items"], json!([{"text":"check","status":"completed"}]));
         assert_eq!(rows[5].2["items"], json!([]));
         assert_eq!(rows[6].2["toolOutput"], "partial");
+    }
+
+    #[test]
+    fn cr076_apply_session_unread_sets_and_clears() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE session(id TEXT PRIMARY KEY, unread TEXT); INSERT INTO session(id,unread) VALUES('s1',NULL);").unwrap();
+        apply_session_unread(&c, "s1", "success").unwrap();
+        let v: Option<String> = c.query_row("SELECT unread FROM session WHERE id='s1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(v.as_deref(), Some("success"));
+        apply_session_unread(&c, "s1", "failed").unwrap();
+        let v2: Option<String> = c.query_row("SELECT unread FROM session WHERE id='s1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(v2.as_deref(), Some("failed"));
+        apply_session_unread(&c, "s1", "").unwrap();
+        let v3: Option<String> = c.query_row("SELECT unread FROM session WHERE id='s1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(v3.as_deref(), Some(""));
+        // 不存在的会话：UPDATE 影响 0 行不报错（幂等安全）
+        apply_session_unread(&c, "missing", "success").unwrap();
     }
 
     #[test]

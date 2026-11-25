@@ -1,0 +1,25 @@
+/* UI-CR085-v1；UI-SCROLL-001 v1：显隐继续由 scrollbar.js 驱动，占位不变。 */
+.settings-dialog .set-head{align-items:center;flex:0 0 66px;height:66px;padding-right:60px;min-width:0}
+.settings-dialog .set-head h2{margin:0;white-space:nowrap}.set-head-actions{flex:0 0 auto}.set-head-actions .set-head-imagegen{margin:0}
+.settings-dialog .set-scroll{scrollbar-gutter:stable;min-width:0}
+.c85-count{font-size:12px;color:var(--muted);margin-bottom:10px}
+.c85-provider-identity{display:grid;grid-template-columns:minmax(120px,1fr) minmax(180px,2fr);gap:12px}
+.c85-provider-identity label{display:block;margin-bottom:5px;font-size:12px;color:var(--muted)}
+.c85-readonly{opacity:.6}.c85-readonly .input{background:var(--surface-3);cursor:not-allowed}
+.c85-endpoint{display:flex;align-items:center;gap:10px;margin-top:8px}.c85-endpoint .input{min-width:0;flex:1}.c85-endpoint .link-btn{display:inline-flex;gap:6px;align-items:center}
+.settings-dialog .c85-add-key{display:flex;align-items:center;justify-content:center;width:100%;height:36px;margin:0;border-radius:0;gap:6px}
+.c85-key-row{display:flex;align-items:center;gap:8px;min-height:40px;flex-wrap:wrap}
+.c85-key-row>.cb{border:1px solid var(--line);padding:0;flex:0 0 18px}
+.c85-key-identity{display:flex;align-items:center;gap:8px;flex:1;min-width:170px}.c85-key-identity b{max-width:120px;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;font-size:12px}
+.c85-key-identity .key-mask{font-size:11px;white-space:nowrap}.c85-key-identity .icon-btn{width:26px;height:26px;flex:0 0 auto}
+.c85-key-row .key-actions{display:flex;gap:4px;align-items:center;opacity:1}.c85-key-row .link-btn{display:inline-flex;align-items:center;gap:3px;white-space:nowrap;padding:3px 5px;font-size:11.5px}
+.c85-key-editor label{display:block;font-size:12px;margin-bottom:5px}.c85-key-editor .two-col{gap:10px}.key-form-actions{margin-top:10px}
+.c85-protocol-pop{position:fixed;z-index:100;max-height:260px;overflow:auto;padding:5px;border:1px solid var(--line-strong);border-radius:var(--r-md);background:var(--surface);box-shadow:var(--shadow-pop)}
+.c85-protocol-pop button{display:block;width:100%;padding:7px 10px;background:transparent;border:0;border-radius:var(--r-sm);text-align:left;font:inherit;font-size:12px;color:var(--ink)}
+.c85-protocol-pop button:hover,.c85-protocol-pop button[aria-checked=true]{background:var(--primary-soft);color:var(--primary)}.c85-protocol-pop button:disabled{opacity:.45;cursor:not-allowed}
+#dialog2 .model-pick-row{min-height:28px;height:28px;padding:3px 8px;gap:8px;display:flex;align-items:center}#dialog2 .pick-model-main{display:flex;align-items:center;gap:10px;flex:1;min-width:0}#dialog2 .pick-model-main b,#dialog2 .pick-model-main .mono{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:20px;min-width:0}#dialog2 .pick-model-main b{flex:1;font-size:12px}#dialog2 .pick-model-main .mono{flex:1;font-size:11px}#dialog2 .model-pick-row>.caption{font-size:11px;white-space:nowrap}
+.probe-section .probe-head{justify-content:flex-end}
+.c85-result{position:relative;height:108px;min-height:108px;padding:12px!important}.c85-probe-progress{position:absolute;left:12px;bottom:6px;width:calc(100% - 24px);height:3px;accent-color:var(--primary)}
+.c85-result-grid{display:grid;grid-template-columns:84px 88px 56px minmax(80px,1fr) minmax(90px,1fr) 70px;gap:12px;align-items:start}.c85-result-grid>div{display:flex;flex-direction:column;gap:7px;min-width:0}.c85-result-label{font-size:11px;color:var(--muted);white-space:nowrap}.c85-result-grid b{font-size:13px;font-weight:600;white-space:nowrap;text-overflow:ellipsis;overflow:hidden}.c85-result-grid small{font-size:10px;font-weight:400;color:var(--muted)}.c85-result-summary{height:32px;margin-top:8px;font-size:11.5px;line-height:16px;color:var(--muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.settings-dialog .set-nav-f{font-size:10px}.settings-dialog .set-head-actions .btn{white-space:nowrap}
+@media(max-width:720px){.settings-dialog .set-head{padding-right:44px;gap:8px;height:58px;flex-basis:58px}.settings-dialog .set-head h2{font-size:16px}.c85-result-grid{grid-template-columns:repeat(3,minmax(0,1fr));row-gap:12px}.c85-result{height:182px;min-height:182px}.c85-provider-identity{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.c85-key-row .key-actions{margin-left:24px;flex-wrap:wrap}.c85-key-identity{min-width:0}.c85-key-identity b{max-width:80px}.settings-dialog .set-head-actions{gap:3px}.settings-dialog .set-head-actions .btn{font-size:11px;padding:0 6px}#dialog2 .pick-model-main .mono{display:none}}

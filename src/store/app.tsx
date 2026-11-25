@@ -23,6 +23,8 @@ export function routeKey(route: Route): string {
   return "home";
 }
 
+export type ThemeMode = "system" | "light" | "dark";
+
 interface AppState {
   route: Route;
   go: (route: Route) => void;
@@ -33,6 +35,9 @@ interface AppState {
   settingsOpen: boolean;
   setSettingsOpen: (value: boolean) => void;
   theme: "light" | "dark";
+  /** CR-091：界面主题模式（含跟随系统）；theme 是解析后的实际色。 */
+  themeMode: ThemeMode;
+  setThemeMode: (mode: ThemeMode) => void;
   toggleTheme: () => void;
   aiVisible: boolean;
   setAiVisible: (value: boolean) => void;
@@ -50,7 +55,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [windows, setWindows] = useState<WorkspaceWindow[]>([{ key: "home", route: { page: "workbench" } }]);
   const [activeKey, setActiveKey] = useState("home");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [themeMode, setThemeModeState] = useState<ThemeMode>("system");
+  const [systemDark, setSystemDark] = useState(() =>
+    typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)").matches : false);
+  const theme: "light" | "dark" = themeMode === "system" ? (systemDark ? "dark" : "light") : themeMode;
   const [aiPreferences, setAiPreferences] = useState<Record<string, { visible: boolean; width: number }>>({});
   const [featureTargets, setFeatureTargets] = useState<Record<string, { featureId: string; featureTitle: string } | null>>({});
   const route = windows.find(window => window.key === activeKey)?.route ?? windows[0].route;
@@ -58,10 +66,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     api.getTheme().then(value => {
-      const next = value === "dark" ? "dark" : "light";
-      setTheme(next);
-      document.documentElement.dataset.theme = next;
+      const next: ThemeMode = value === "dark" || value === "light" ? value : "system";
+      setThemeModeState(next);
     }).catch(() => {});
+  }, []);
+
+  /* CR-091：跟随系统时监听系统深浅色变化。 */
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const query = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = (event: MediaQueryListEvent) => setSystemDark(event.matches);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
+
+  const setThemeMode = useCallback((mode: ThemeMode) => {
+    setThemeModeState(mode);
+    api.setThemeCmd(mode).catch(() => {});
   }, []);
 
   const go = useCallback((next: Route) => {
@@ -111,19 +136,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const setFeatureTarget = useCallback((projectId: string, target: { featureId: string; featureTitle: string } | null) => {
     setFeatureTargets(previous => ({ ...previous, [projectId]: target }));
   }, []);
+  /* CR-091：顶栏切换在跟随系统时按当前实际色切到相反固定值，避免「按了没反应」。 */
   const toggleTheme = useCallback(() => {
-    const next = theme === "light" ? "dark" : "light";
-    setTheme(next);
-    document.documentElement.dataset.theme = next;
-    api.setThemeCmd(next).catch(() => {});
-  }, [theme]);
+    setThemeMode(theme === "light" ? "dark" : "light");
+  }, [theme, setThemeMode]);
 
   const value = useMemo(() => ({
     route, go, openObject, windows, activateWindow, closeWindow, settingsOpen, setSettingsOpen,
-    theme, toggleTheme, aiVisible: aiPreference.visible, setAiVisible,
+    theme, themeMode, setThemeMode, toggleTheme, aiVisible: aiPreference.visible, setAiVisible,
     aiWidth: aiPreference.width, setAiWidth,
     featureTargets, setFeatureTarget,
-  }), [route, go, openObject, windows, activateWindow, closeWindow, settingsOpen, theme, toggleTheme, aiPreference.visible, setAiVisible, aiPreference.width, setAiWidth, featureTargets, setFeatureTarget]);
+  }), [route, go, openObject, windows, activateWindow, closeWindow, settingsOpen, theme, themeMode, setThemeMode, toggleTheme, aiPreference.visible, setAiVisible, aiPreference.width, setAiWidth, featureTargets, setFeatureTarget]);
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }

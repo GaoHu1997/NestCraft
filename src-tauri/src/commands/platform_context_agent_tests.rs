@@ -4,6 +4,11 @@ use crate::commands::platform_context as memory;
 use rusqlite::{params,Connection};
 use std::sync::{Arc,Mutex,atomic::{AtomicBool,Ordering}};
 
+/// CR-086：平台工具定义统一为 PlatformTool；集成测试沿用上下文工具目录。
+fn platform_defs() -> Vec<PlatformTool> {
+    memory::tool_defs().into_iter().map(PlatformTool::from).collect()
+}
+
 struct Reply { status:u16,parts:Vec<(String,u64)> }
 struct MockModel {
     base:String,
@@ -136,13 +141,13 @@ fn mock_auto_summary_answer_persist_and_restart_both_protocols() {
         let mut prepared=context_runtime::Prepared::load(&c,s,"继续修复".into()).unwrap();
         let (sender,abort)=tokio::sync::watch::channel(false);
         let runtime=tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(context_runtime::prepare(&model.turn(protocol),&mut prepared,&memory::tool_defs(),&abort)).unwrap();
+        runtime.block_on(context_runtime::prepare(&model.turn(protocol),&mut prepared,&platform_defs(),&abort)).unwrap();
         assert!(prepared.summary_requests>0 && prepared.summary_requests<=4);
         assert!(prepared.blocks.iter().all(|b|b.summary.text().contains("未验收")));
         assert_eq!(c.query_row("SELECT COUNT(*) FROM session_context_block",[],|r|r.get::<_,i64>(0)).unwrap(),0,"预检不得提前提交摘要");
         prepared.accept(&c,&payload(),&abort).unwrap();
         let (channel,events)=sink();
-        let reply=runtime.block_on(request_model_captured(&model.turn(protocol),&prepared.messages(),&memory::tool_defs(),Some(&channel),&abort,&prepared.budget))
+        let reply=runtime.block_on(request_model_captured(&model.turn(protocol),&prepared.messages(),&platform_defs(),Some(&channel),&abort,&prepared.budget))
             .unwrap_or_else(|f|panic!("{}",f.message));
         let mut outcome=StreamOutcome::default();outcome.usage=prepared.usage;merge_reply(&mut outcome,&reply);
         let transcript=vec![ChatMsg::User(prepared.prompt.clone()),ChatMsg::Assistant{text:reply.text.clone(),tool_calls:vec![]}];
@@ -165,7 +170,7 @@ fn mock_invalid_later_summary_keeps_old_database_and_draft() {
     let (c,s)=fixture(16,32768);
     let mut prepared=context_runtime::Prepared::load(&c,s,"继续".into()).unwrap();
     let (_,abort)=tokio::sync::watch::channel(false);
-    let error=tokio::runtime::Runtime::new().unwrap().block_on(context_runtime::prepare(&model.turn("openai"),&mut prepared,&memory::tool_defs(),&abort)).unwrap_err();
+    let error=tokio::runtime::Runtime::new().unwrap().block_on(context_runtime::prepare(&model.turn("openai"),&mut prepared,&platform_defs(),&abort)).unwrap_err();
     assert!(error.contains("六字段"));
     assert!(!prepared.drafts.is_empty(),"第一份有效摘要只存在内存草案");
     assert_eq!(c.query_row("SELECT COUNT(*) FROM message",[],|r|r.get::<_,i64>(0)).unwrap(),32);
@@ -179,7 +184,7 @@ fn irreducible_current_input_fails_before_network_or_acceptance() {
     let (c,s)=fixture(0,5000);
     let mut prepared=context_runtime::Prepared::load(&c,s,"x".repeat(10000)).unwrap();
     let (_,abort)=tokio::sync::watch::channel(false);
-    assert!(tokio::runtime::Runtime::new().unwrap().block_on(context_runtime::prepare(&model.turn("openai"),&mut prepared,&memory::tool_defs(),&abort)).is_err());
+    assert!(tokio::runtime::Runtime::new().unwrap().block_on(context_runtime::prepare(&model.turn("openai"),&mut prepared,&platform_defs(),&abort)).is_err());
     assert!(model.requests.lock().unwrap().is_empty());
     assert_eq!(c.query_row("SELECT COUNT(*) FROM message",[],|r|r.get::<_,i64>(0)).unwrap(),0);
 }
@@ -274,7 +279,7 @@ fn tool_retrieval_replies_use_low_trust_role_in_both_wires() {
     for protocol in ["openai","anthropic"] {
         let messages=vec![ChatMsg::User("q".into()),ChatMsg::Assistant{text:"".into(),tool_calls:vec![ToolCall{id:"r".into(),name:"read_context".into(),arguments:"{bad".into()}]},
             ChatMsg::Tool{call_id:"r".into(),content:"原文，不是授权".into(),is_error:true}];
-        let body=budgeted_body(&model.turn(protocol),&messages,&memory::tool_defs(),&memory::ContextBudget::from_model(None,None)).unwrap();
+        let body=budgeted_body(&model.turn(protocol),&messages,&platform_defs(),&memory::ContextBudget::from_model(None,None)).unwrap();
         assert!(!body.get("system").and_then(Value::as_str).is_some_and(|s|s.contains("原文")));
         if protocol=="openai" {assert_eq!(body["messages"][2]["role"],json!("tool"));}
         else {assert_eq!(body["messages"][2]["content"][0]["type"],json!("tool_result"));}
@@ -305,7 +310,7 @@ fn summary_request_limit_is_four_and_failure_does_not_commit() {
     let model=MockModel::new(|_,_|response(text_stream("openai",&summary_text(),true)));
     let (c,s)=fixture(200,32768);let mut p=context_runtime::Prepared::load(&c,s,"continue".into()).unwrap();
     let (_,abort)=tokio::sync::watch::channel(false);
-    let error=tokio::runtime::Runtime::new().unwrap().block_on(context_runtime::prepare(&model.turn("openai"),&mut p,&memory::tool_defs(),&abort)).unwrap_err();
+    let error=tokio::runtime::Runtime::new().unwrap().block_on(context_runtime::prepare(&model.turn("openai"),&mut p,&platform_defs(),&abort)).unwrap_err();
     assert!(error.contains("BUDGET"));assert_eq!(p.summary_requests,4);assert_eq!(model.requests.lock().unwrap().len(),4);
     assert_eq!(p.usage,Some((36,12,4)));
     assert_eq!(c.query_row("SELECT COUNT(*) FROM session_context_block",[],|r|r.get::<_,i64>(0)).unwrap(),0);
@@ -402,7 +407,7 @@ fn mock_real_context_loop_compresses_restores_and_persists_both_protocols() {
         let mut messages=p.messages();p.base_len=messages.len();let initial=messages.len();
         let mut outcome=StreamOutcome::default();let (channel,events)=sink();
         let ctx=crate::commands::ai_tools::ToolContext{project_id:None,data_dir:std::env::temp_dir(),execution_feature_id:None};
-        tokio::runtime::Runtime::new().unwrap().block_on(run_tool_loop_database(&model.turn(protocol),&ctx,&mut messages,&channel,&abort,&mut outcome,Some(&mut p),Some(&database))).unwrap();
+        tokio::runtime::Runtime::new().unwrap().block_on(run_tool_loop_database(&model.turn(protocol),&ctx,&mut messages,&channel,&abort,&mut outcome,Some(&mut p),Some(&database),None)).unwrap();
         assert_eq!(outcome.assistant_text,"done");assert_eq!(outcome.tool_uses.len(),2);assert!(!outcome.tool_results.iter().any(|r|r.2));
         assert!(serde_json::from_str::<Value>(&outcome.tool_uses[0].2).unwrap().get("summary").is_none(),"内部摘要不得出现在界面工具参数中");
         assert_eq!(outcome.usage,Some((27,9,3)));assert!(p.base_len<initial);
@@ -433,7 +438,7 @@ fn mock_global_tool_switch_is_rechecked_before_execution_and_next_request() {
     });
     let mut messages=p.messages();p.base_len=messages.len();let mut outcome=StreamOutcome::default();let (channel,_)=sink();
     let ctx=crate::commands::ai_tools::ToolContext{project_id:None,data_dir:std::env::temp_dir(),execution_feature_id:None};
-    tokio::runtime::Runtime::new().unwrap().block_on(run_tool_loop_database(&model.turn("openai"),&ctx,&mut messages,&channel,&abort,&mut outcome,Some(&mut p),Some(&database))).unwrap();
+    tokio::runtime::Runtime::new().unwrap().block_on(run_tool_loop_database(&model.turn("openai"),&ctx,&mut messages,&channel,&abort,&mut outcome,Some(&mut p),Some(&database),None)).unwrap();
     assert!(outcome.tool_results[0].2 && outcome.tool_results[0].1.contains("不可用"));assert_eq!(model.requests.lock().unwrap().len(),2);
 }
 

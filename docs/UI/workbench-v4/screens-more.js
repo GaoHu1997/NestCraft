@@ -120,20 +120,26 @@
       <aside class="set-nav">
         <div class="set-user">${avatarHtml("md", "")}<div><b>${esc(g.profile.name)}</b><span>${esc(g.profile.email)}</span></div></div>
         <div class="set-nav-list">${SET_NAV.map(([k, label, ic]) => `<button class="s-item" aria-selected="${tab === k}" data-act="settings-tab" data-tab="${k}">${icon(ic, "ico-14")}${label}</button>`).join("")}</div>
-        <div class="set-nav-f"><span class="caption">设计演示 · UI-CR068-v2</span></div>
+        <div class="set-nav-f"><span class="caption">设计演示 · ${esc(window.CR091General?.version || "UI-CR085-v1")}</span></div>
       </aside>
       <section class="set-body">
         <button class="icon-btn settings-close" data-act="close-dialog" aria-label="关闭设置" title="关闭设置">${icon("x", "ico-18")}</button>
-        <div class="set-head"><div><h2>${esc((SET_NAV.find(x => x[0] === tab) || [])[1])}</h2><p class="caption">${esc(setSub(tab))}</p></div>${tab === "models" ? `<button class="icon-btn set-head-imagegen" data-act="imagegen-open" title="生图配置" aria-label="生图配置">${icon("image", "ico-18")}</button>` : ""}</div>
+        <div class="set-head"><div><h2>${esc((SET_NAV.find(x => x[0] === tab) || [])[1])}</h2></div>${tab === "models" ? `<div class="row set-head-actions"><button class="btn sm primary" data-act="provider-new">${icon("plus", "ico-14")}新增供应商</button><button class="icon-btn set-head-imagegen" data-act="imagegen-open" title="生图配置" aria-label="生图配置">${icon("image", "ico-18")}</button></div>` : ""}</div>
         <div class="set-scroll">${setContent(tab)}</div>
       </section>
     </div>`;
   }
   function setSub(tab) {
-    return { general: "数据存储、用户信息、代码样式与服务器默认值。", models: "供应商、密钥、端点与模型配置。", probe: "固定 19+1 针黑盒探针，检测中转掺水；P20 行为指纹给出「最像的已知候选」归因提示。", cli: "CLI 管理与 SDK 管理。", skills: "技能是过程性指令；启用不等于授权执行。", mcp: "MCP 服务器发现工具与资源。", tools: "内置工具与风险等级。" }[tab] || "";
+    return { general: "个人资料、外观与显示、会话与行为、主机默认值、数据与存储、关于。", models: "供应商、密钥、端点与模型配置。", probe: "固定 19+1 针黑盒探针，检测中转掺水；P20 行为指纹给出「最像的已知候选」归因提示。", cli: "CLI 管理与 SDK 管理。", skills: "技能是过程性指令；启用不等于授权执行。", mcp: "MCP 服务器发现工具与资源。", tools: "内置工具与风险等级。" }[tab] || "";
   }
 
   function setContent(tab) {
+    /* CR-091：通用页重构生效时优先接管；其它页仍走 CR-085 及既有实现。 */
+    const c91 = window.CR091General && window.CR091General.content(tab);
+    if (c91 != null) return c91;
+    return window.CR085Settings ? window.CR085Settings.content(tab) : legacySetContent(tab);
+  }
+  function legacySetContent(tab) {
     const g = D.settings.general;
     if (tab === "general") {
       const current = store.avatarDraft || store.avatarStyle || "b";
@@ -1250,6 +1256,7 @@
     }
   };
 
+  Screens.cr085Legacy = { content: legacySetContent, providerModels, modelForm, probeSection };
   Screens.knowledgePage = knowledgePage;
   Screens.serversPage = serversPage;
   Screens.library = libraryPage;

@@ -17,9 +17,15 @@ window.AIPanel = (function () {
       const cli = D.settings.clis.find(item => item.id === m.cli)?.name || m.cli;
       return `<div class="cr037-break" role="note"><b>原生上下文断点</b><span>${esc(cli)} · ${esc(m.previousRef || "原引用缺失")} → ${esc(m.sessionRef)}</span><span>以上聊天记录保留。后续请求从新上下文开始。</span></div>`;
     }
-    const reasoning = (text, streaming, duration) => `<details class="msg-think"><summary><span class="mt-mark">✦</span><span>${streaming ? "思考中…" : "思考"}</span><span class="mt-meta">${duration ? "持续 " + esc(duration) : text.length + " 字"}</span></summary><div class="mt-body">${esc(text)}</div></details>`;
-    const copy = text => text && !m.streaming ? `<div class="msg-acts"><button type="button" class="msg-act" data-act="ai-copy" data-idx="${idx}" title="复制这条回复的正文">${icon("copy", "ico-13")}<span>复制</span></button></div>` : "";
+    const glyph = category => icon(category === "change" ? "edit" : category === "run" ? "terminal" : category === "explore" ? "search" : "tool", "ico-16");
+    const brain = '<svg class="message-brain" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4.5a3 3 0 0 0-5.7-1.3A3.6 3.6 0 0 0 3 8.5a4 4 0 0 0 0 7 3.6 3.6 0 0 0 3.3 5.3A3 3 0 0 0 12 19.5V4.5Zm0 0a3 3 0 0 1 5.7-1.3A3.6 3.6 0 0 1 21 8.5a4 4 0 0 1 0 7 3.6 3.6 0 0 1-3.3 5.3 3 3 0 0 1-5.7-1.3M6 8c2 0 3 1 3 3M5 16c2-1 4 0 4 2m9-10c-2 0-3 1-3 3m4 5c-2-1-4 0-4 2"/></svg>';
+    const reasoning = (text, streaming, duration) => `<details class="msg-think"><summary>${brain}<span>${streaming ? "思考中" : "思考"}</span>${duration != null ? `<span class="mt-meta">持续了 ${esc(typeof duration === "number" ? MessagePresentation.formatMessageDuration(duration) : duration)}</span>` : ""}</summary><div class="mt-body">${esc(text)}</div></details>`;
+    const copy = text => text && !m.streaming ? `<div class="msg-acts"><button type="button" class="msg-act" data-act="ai-copy" data-idx="${idx}" title="复制这条回复的正文">${icon("copy", "ico-16")}<span>复制</span></button></div>` : "";
     if (m.role === "user") return `<div class="msg user" data-ai-message-index="${idx}"><div class="msg-body"><div class="msg-user-block">${referenceMarkup(m.refs)}${esc(m.text || "")}${imageMarkup(m.images)}</div><div class="msg-time">${esc(m.time || "")}</div></div></div>`;
+    if (m.role === "subagent") {
+      const agent = MessagePresentation.presentAgent(m.sourceLabel);
+      return `<div class="msg assistant"><details class="message-proto-agent"><summary><span class="message-agent-dots ${agent.type === "Explore" ? "explore" : ""}" aria-hidden="true">•••</span><span class="message-agent-type ${agent.type === "Explore" ? "explore" : ""}">${agent.type}</span><span class="message-agent-task">${esc(m.producerTask || "子智能体任务")}</span><span class="message-agent-status">${agent.status}</span></summary><div class="message-agent-detail"><div>${esc(m.producerId || "身份未记录")}</div><div>${esc(m.sourceLabel || "状态未知")}</div>${esc(m.content || "")}</div></details></div>`;
+    }
     const blocks = Array.isArray(m.blocks) ? m.blocks.slice() : [
       ...(m.thinking ? [{ type: "thinking", text: m.thinking, duration: m.thinkMs }] : []),
       ...(m.tools || []).map(tool => ({ type: "tool", name: tool.name, status: tool.state, args: tool.arg, result: tool.detail, exitCode: tool.exitCode })),
@@ -36,16 +42,29 @@ window.AIPanel = (function () {
     }
     const failed = b => b.status === "失败" || b.status === "failed" || b.status === "error" || b.isError || (Number.isInteger(b.exitCode) && b.exitCode !== 0);
     const stringifyToolValue = value => typeof value === "string" ? value : JSON.stringify(value, null, 2) ?? "";
-    const tool = b => {
-      const input = stringifyToolValue(b.command ?? b.args ?? "");
-      const parameters = b.command != null && b.args != null ? stringifyToolValue(b.args) : null;
+    const present = (b, index) => {
+      const raw = b.command != null ? { ...(b.args && typeof b.args === "object" ? b.args : {}), command: b.command } : b.args;
       const output = b.result ?? b.output;
-      return `<div class="tool chat-proto-tool"><b>${esc(b.name)}</b><span class="t-state ${failed(b) ? "fail" : ""}">${esc(b.status || "结果未返回")}${Number.isInteger(b.exitCode) ? " · 退出码 " + b.exitCode : ""}</span>${input || parameters || output != null ? `<details class="chat-tool-detail"><summary>${b.command != null || /^(bash|shell)$/i.test(b.name) ? "命令与输出" : output == null ? "输入参数" : "查看输入与输出"}</summary>${input ? `<pre>${esc(input)}</pre>` : ""}${parameters ? `<pre title="输入参数">${esc(parameters)}</pre>` : ""}${output != null ? `<pre>${esc(stringifyToolValue(output) || "（无输出）")}</pre>` : ""}</details>` : ""}</div>`;
+      return { part: b.part || "both", pair: { toolId: b.toolId || `prototype-${index}`, name: b.name || null, inputJson: raw == null ? null : typeof raw === "object" ? JSON.stringify(raw) : String(raw), result: output == null ? null : { content: stringifyToolValue(output), isError: failed(b) }, useMsg: { streaming: b.status === "running" || b.status === "运行中" }, resultMsg: Number.isInteger(b.exitCode) ? { exitCode: b.exitCode } : null } };
     };
-    const parts = children.map(entry => Array.isArray(entry) ? entry.length === 1 ? tool(entry[0]) : `<details class="chat-tool-group"><summary>${icon("chevronRight", "ico-12")}${entry.length} 条工具记录</summary>${entry.map(tool).join("")}</details>` : entry.type === "thinking" ? reasoning(entry.text || "", entry.status === "streaming", entry.duration) : entry.type === "text" ? `<div class="text">${format(entry.text || "")}</div>` : "").join("");
+    const tool = (b, index) => {
+      const item = present(b, index), summary = MessagePresentation.summarizeTools([item]);
+      const { command, inputText, parametersText } = MessagePresentation.presentToolInput(item.pair.inputJson);
+      const output = b.result ?? b.output;
+      return `<details class="chat-proto-tool"><summary>${glyph(summary.category)}<span>${esc(summary.text)}</span></summary><div class="chat-proto-tool-body"><div class="chat-proto-tool-meta">${esc(b.name || "工具")} · ${esc(b.status || "结果未返回")}${Number.isInteger(b.exitCode) ? " · 退出码 " + b.exitCode : ""}</div>${command != null ? `<pre>${esc(command)}</pre>` : inputText != null ? `<pre>${esc(inputText)}</pre>` : ""}${parametersText && parametersText !== "{}" ? `<pre title="输入参数">${esc(parametersText)}</pre>` : ""}${output != null ? `<pre>${esc(stringifyToolValue(output) || "（无输出）")}</pre>` : ""}</div></details>`;
+    };
+    const parts = children.map(entry => {
+      if (Array.isArray(entry)) {
+        if (entry.length === 1) return tool(entry[0], 0);
+        const summary = MessagePresentation.summarizeTools(entry.map(present));
+        return `<details class="chat-tool-group"><summary>${glyph(summary.category)}<span>${esc(summary.text)}</span></summary><div class="chat-proto-group-body">${entry.map(tool).join("")}</div></details>`;
+      }
+      return entry.type === "thinking" ? reasoning(entry.text || "", entry.status === "streaming", entry.duration) : entry.type === "text" ? `<div class="text">${format(entry.text || "")}</div>` : "";
+    }).join("");
     const approval = m.approval ? `<div class="approval"><b>${esc(m.approval.title)}</b><p>${esc(m.approval.detail)}</p>
       <div class="acts"><button class="btn primary" data-act="ai-approve" data-idx="${idx}">允许一次</button><button class="btn" data-act="ai-deny" data-idx="${idx}">拒绝</button><button class="btn ghost" data-act="ai-show-cmd" data-idx="${idx}">查看命令</button></div></div>` : "";
-    return `<div class="msg assistant" data-ai-message-index="${idx}"><div class="msg-body">${parts ? `<details class="chat-turn-process"><summary>${icon("chevronRight", "ico-12")}执行过程<span class="chat-process-status">${activity ? "进行中" : m.failed || blocks.some(failed) ? "有错误" : "已结束"}</span></summary><div class="chat-turn-process-body">${parts}</div></details>` : ""}${final ? `<div class="msg-time">${esc(m.time || "")}</div><div class="text">${format(final)}</div>` : ""}${approval}${window.OfficeAI ? OfficeAI.messageExtra(m) : ""}${copy(final)}</div></div>`;
+    const duration = typeof m.workMs === "number" && m.workMs >= 0 ? ` ${MessagePresentation.formatMessageDuration(m.workMs)}` : "";
+    return `<div class="msg assistant" data-ai-message-index="${idx}"><div class="msg-body">${parts ? `<details class="chat-turn-process" ${activity ? "open" : ""}><summary><span>${activity ? "工作中" : "已工作"}${duration}</span>${icon("chevronRight", "ico-16")}${m.failed || blocks.some(failed) ? '<span class="chat-process-status">有失败</span>' : ""}</summary><div class="chat-turn-process-body">${parts}</div></details>` : ""}${final ? `<div class="text">${format(final)}</div>` : ""}${approval}${window.OfficeAI ? OfficeAI.messageExtra(m) : ""}${copy(final)}</div></div>`;
   }
 
   /** 运行态：logo 粒子打散重组 + 工作中… + 运行时长（C56-06A） */
@@ -435,19 +454,19 @@ window.AIPanel = (function () {
       return rows.length ? `<div class="ai-menu-group">${label}</div>${rows.map(key === "box" ? provider : row).join("")}` : "";
     }).join("");
     return `<div class="ai-menu" id="ai-menu" role="dialog" aria-label="${at ? "引用" : slash ? "能力与指令" : "添加与指令"}" data-chat-overlay="${at ? "@" : slash ? "/" : "+"}">
-      ${add ? `<div class="ai-menu-tabs" role="tablist"><button role="tab" aria-selected="${store.aiMenuTab === "add"}" class="${store.aiMenuTab === "add" ? "on" : ""}" data-act="ai-menu-tab" data-tab="add">添加</button><button role="tab" aria-selected="${store.aiMenuTab === "cmd"}" class="${store.aiMenuTab === "cmd" ? "on" : ""}" data-act="ai-menu-tab" data-tab="cmd">指令</button></div>` : `<div class="ai-menu-q">${at ? "@" : "/"}<input id="ai-menu-q" data-act="ai-menu-q" value="${esc(store.aiMenuQuery || "")}" aria-label="${at ? "筛选引用" : "筛选指令"}" placeholder="${at ? "筛选文件、会话、知识" : "筛选 Skill / MCP / Tool"}"></div>`}
+      ${add ? "" : `<div class="ai-menu-q">${at ? "@" : "/"}<input id="ai-menu-q" data-act="ai-menu-q" value="${esc(store.aiMenuQuery || "")}" aria-label="${at ? "筛选引用" : "筛选指令"}" placeholder="${at ? "筛选文件、会话、知识" : "筛选 Skill / MCP / Tool"}"></div>`}
       <div class="ai-menu-list">
-        ${add && store.aiMenuTab === "add" ? `
-          <button class="menu-item" data-act="ai-pick" data-kind="file">引用文件或资料</button>
-          <button class="menu-item" data-act="ai-pick" data-kind="image" ${canAttachImages() ? "" : 'disabled title="当前通道暂不支持图片"'}>添加图片</button>
-        ` : ""}
-        ${add && store.aiMenuTab === "cmd" ? `
-          <button class="menu-item" data-act="ai-permission">权限</button>
-          <button class="menu-item" data-act="ai-model">模型</button>
-          <button class="menu-item" data-act="ai-pick" data-kind="command">能力与指令</button>
-          <button class="menu-item" disabled title="ZIP 导出未接入">下载日志</button>
-        ` : ""}
-        ${add ? "" : items.length ? items.filter(x => x.icon === "target").map(row).join("") + groups : '<div class="caption ai-menu-group">没有匹配</div>'}
+        ${add ? `
+          <div class="ai-menu-group">添加</div>
+          <button class="menu-item chat-menu-row-rich" data-act="ai-pick" data-kind="file"><span class="cmr-ico">${icon("file", "ico-14")}</span><span class="cmr-label">文件<span class="cmr-kw">file</span></span><span class="cmr-desc">插入本地文件完整路径</span></button>
+          <button class="menu-item chat-menu-row-rich" data-act="ai-pick" data-kind="image" ${canAttachImages() ? "" : 'disabled title="当前通道暂不支持图片"'}><span class="cmr-ico">${icon("image", "ico-14")}</span><span class="cmr-label">图片<span class="cmr-kw">image</span></span><span class="cmr-desc">${canAttachImages() ? "添加图片附件" : "当前通道不支持图片"}</span></button>
+          <button class="menu-item chat-menu-row-rich" data-act="ai-insert" data-text="/goal "><span class="cmr-ico">${icon("target", "ico-14")}</span><span class="cmr-label">目标<span class="cmr-kw">goal</span></span><span class="cmr-desc">/目标 命令，设置或查看长期任务目标</span></button>
+          <div class="ai-menu-group">指令</div>
+          <button class="menu-item chat-menu-row-rich" data-act="ai-permission"><span class="cmr-ico">${icon("shield", "ico-14")}</span><span class="cmr-label">权限<span class="cmr-kw">permission</span></span><span class="cmr-desc">切换权限预设</span></button>
+          <button class="menu-item chat-menu-row-rich" data-act="ai-model"><span class="cmr-ico">${icon("cpu", "ico-14")}</span><span class="cmr-label">模型<span class="cmr-kw">model</span></span><span class="cmr-desc">选择本会话使用的模型</span></button>
+          <button class="menu-item chat-menu-row-rich" data-act="ai-pick" data-kind="command"><span class="cmr-ico">${icon("command", "ico-14")}</span><span class="cmr-label">能力与指令<span class="cmr-kw">commands</span></span><span class="cmr-desc">进入 / 指令与技能列表</span></button>
+          <button class="menu-item chat-menu-row-rich" disabled title="ZIP 导出未接入"><span class="cmr-ico">${icon("download", "ico-14")}</span><span class="cmr-label">下载日志<span class="cmr-kw">export</span></span><span class="cmr-desc">不可用</span></button>
+        ` : (items.length ? items.filter(x => x.icon === "target").map(row).join("") + groups : '<div class="caption ai-menu-group">没有匹配</div>')}
       </div>
     </div>`;
   }
@@ -494,7 +513,7 @@ window.AIPanel = (function () {
       const list = isButler ? ((window.CR079 && CR079.platformPermissions) || []) : (D.ai.permissions || []);
       const current = isButler ? store.platformPermission : store.aiPermission;
       const act = isButler ? "ai-platform-perm-set" : "ai-perm-set";
-      const permTitle = isButler ? "大管家权限" : "权限模式";
+      const permTitle = isButler ? "助理权限" : "权限模式";
       return `<div class="ai-pop ai-pop-perm" id="ai-popup-perm" data-ai-popup="perm" role="dialog" aria-label="${permTitle}" tabindex="-1">
         <div class="pop-h">${permTitle}<button class="icon-btn" data-ai-popup-close="perm" aria-label="关闭权限选择">${icon("x", "ico-14")}</button></div>
         ${list.map(p => `<button class="menu-item perm ${current === p.name ? "on" : ""}" data-act="${act}" data-name="${esc(p.name)}" ${runtimeBusy() || p.available === false ? 'disabled aria-disabled="true"' : ""}>${icon(p.icon || "shield", "ico-14")}<span class="mi-main"><b>${esc(p.name)}</b><span>${esc(p.desc)}</span></span>${current === p.name ? `<span class="check">${icon("check", "ico-14")}</span>` : ""}</button>`).join("") || '<div class="drop-empty">没有可用的权限模式。</div>'}
@@ -607,7 +626,7 @@ window.AIPanel = (function () {
           <div class="ai-hat" role="group" aria-label="运行与工作区">
             <div class="ai-hat-seg" role="tablist" aria-label="运行通道">
               <button type="button" class="ai-hat-opt ${!platformRunner ? "on" : ""}" data-act="ai-runner-set" data-id="cli" ${busy ? "disabled" : ""} title="CLI 进程：由已安装的 CLI 作答，支持原生续接">${icon("terminal", "ico-13")}CLI</button>
-              <button type="button" class="ai-hat-opt ${platformRunner ? "on" : ""}" data-act="ai-runner-set" data-id="platform" ${busy ? "disabled" : ""} title="大管家：平台主代理直接调用已配置模型作答">${icon("bot", "ico-13")}大管家</button>
+              <button type="button" class="ai-hat-opt ${platformRunner ? "on" : ""}" data-act="ai-runner-set" data-id="platform" ${busy ? "disabled" : ""} title="助理：平台主代理直接调用已配置模型作答">${icon("sparkles", "ico-13")}助理</button>
             </div>
             <span class="ai-hat-spacer"></span>
             ${store.gitBranch ? `<div class="ai-hat-branch-wrap"><button type="button" class="ai-hat-branch" data-act="ai-branch" aria-haspopup="menu" aria-expanded="${store.aiBranchMenu ? "true" : "false"}" title="当前分支：${esc(store.gitBranch)}（点击查看其它分支）">${icon("branch", "ico-13")}<span class="ellipsis">${esc(store.gitBranch)}</span>${icon("chevronDown", "ico-12")}</button>${store.aiBranchMenu ? `<div class="ai-branch-menu" role="menu" aria-label="选择分支">${(store.gitBranches || []).map(b => `<button type="button" class="ai-branch-item ${b === store.gitBranch ? "on" : ""}" role="menuitem" data-act="ai-branch-pick" data-branch="${esc(b)}">${b === store.gitBranch ? icon("check", "ico-12") : '<span class="ai-branch-dot"></span>'}<span class="ellipsis">${esc(b)}</span></button>`).join("")}</div>` : ""}</div>` : ""}
@@ -621,7 +640,7 @@ window.AIPanel = (function () {
           <div class="ai-tools"><span class="ai-leading-controls">
             <button class="ai-chip icon-only" data-act="ai-menu-open" data-tab="add" title="添加" aria-label="添加">${icon("plus")}</button>
             ${!platformRunner ? anchorSlot("cli", `<button class="ai-chip cli" id="ai-anchor-cli" data-ai-anchor="cli" data-act="ai-cli" aria-haspopup="dialog" aria-controls="ai-popup-cli" aria-expanded="${store.aiPop === "cli"}" ${cliDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : platformRunner ? "平台会话不使用 CLI；可用操作由平台工具白名单决定" : cliDisabled ? "没有可用 CLI" : "切换 CLI：" + esc(cli.name)}" aria-label="切换 CLI：${esc(cli.name)}">${cliLogo(cli.id, 16)}</button>`) : ""}
-            ${anchorSlot("perm", `<button class="ai-chip perm" id="ai-anchor-perm" data-ai-anchor="perm" data-act="ai-permission" aria-haspopup="dialog" aria-controls="ai-popup-perm" aria-expanded="${store.aiPop === "perm"}" ${permDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : platformRunner ? "大管家运行权限（平台工具白名单与运行策略）" : "权限模式"}" aria-label="权限模式">${icon("shield")}${esc(platformRunner ? store.platformPermission : store.aiPermission)}</button>`)}
+            ${anchorSlot("perm", `<button class="ai-chip perm" id="ai-anchor-perm" data-ai-anchor="perm" data-act="ai-permission" aria-haspopup="dialog" aria-controls="ai-popup-perm" aria-expanded="${store.aiPop === "perm"}" ${permDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : platformRunner ? "助理运行权限（平台工具白名单与运行策略）" : "权限模式"}" aria-label="权限模式">${icon("shield")}${esc(platformRunner ? store.platformPermission : store.aiPermission)}</button>`)}
             </span><span class="ai-send-group">${anchorSlot("model", `<button class="ai-chip model" id="ai-anchor-model" data-ai-anchor="model" data-act="ai-model" aria-haspopup="dialog" aria-controls="ai-popup-model" aria-expanded="${store.aiPop === "model"}" ${modelDisabled ? 'disabled aria-disabled="true"' : ""} title="${busy ? "运行中配置已锁定" : modelUnavailable ? "当前通道没有可用模型，点击查看原因" : !usableModel(cm) ? "当前模型失效，请重新选择" : "选择模型：" + esc(D.ai.modelCatalog.current.provider + " · " + cm.name + " " + CR074.effortLabel(D.ai.modelCatalog.current.level))}" aria-label="选择模型"><span class="ai-model-name">${esc(D.ai.modelCatalog.current.provider)} · ${esc(cm.name)}${cm.available === false ? "（不可用）" : ""}</span><span class="ai-model-effort">${esc(CR074.efforts(cm).length ? CR074.effortLabel(D.ai.modelCatalog.current.level) : "默认")}</span>${icon("chevronUp", "ico-12")}</button>`)}
             <button class="ai-send" data-act="ai-send" title="${sendLabel}" aria-label="${sendLabel}" ${sendDisabled ? "disabled" : ""}>${icon(stop ? "stop" : "arrowUp", "ico-18")}</button></span>
           </div>

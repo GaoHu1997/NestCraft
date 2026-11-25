@@ -1,0 +1,17 @@
+import assert from 'node:assert/strict';
+import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
+import {transformSync} from 'esbuild';
+const out='docs/tmp/cr085-feat014-tests';mkdirSync(out,{recursive:true});
+const code=transformSync(readFileSync('src/modules/settings/modelManagement.ts','utf8'),{loader:'ts',format:'esm',target:'es2021'}).code;
+const m=await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
+const results=[];
+const check=(name,fn)=>{fn();results.push({name,passed:true});console.log('PASS '+name);};
+check('密钥首尾掩码与Unicode字符不拆分',()=>{assert.equal(m.maskKey('demo-not-a-real-key-tail'),'demo••••tail');assert.equal(m.maskKey('ab'),'a••••b');assert.equal(m.maskKey('😀尾'),'😀••••尾');assert.equal(m.maskKey('x'),'••••');});
+check('排序保留原对象、草稿和选中身份且不修改原数组',()=>{const a={id:'a',draft:'未保存'},b={id:'b'},items=[a,b];const moved=m.moveItem(items,0,1);assert.deepEqual(items,[a,b]);assert.equal(moved[1],a);assert.equal(moved[1].draft,'未保存');assert.equal(m.moveItem(items,0,-1),items);});
+check('插入线上下方向与相邻拖动换算',()=>{assert.equal(m.dropIndex(0,1,false),0);assert.equal(m.dropIndex(0,1,true),1);assert.equal(m.dropIndex(2,0,false),0);assert.equal(m.dropIndex(2,0,true),1);});
+check('协议菜单默认向下、底部向上和窄屏夹取',()=>{const v={width:390,height:844};assert.equal(m.anchoredMenu({top:100,bottom:120,right:500},160,v).top,124);const up=m.anchoredMenu({top:800,bottom:820,right:500},160,v);assert.equal(up.top,636);assert.equal(up.left+up.width,382);assert.equal(m.anchoredMenu({top:1,bottom:20,right:30},300,{width:190,height:100}).top,8);});
+const base={text:true,vision:null,imageGen:false}, hit={text:true,vision:true,imageGen:false,modalitySource:'vendor'};
+check('可信模态回填、来源回显',()=>{assert.deepEqual(m.resolvedModalities(base,hit),{text:true,vision:true,imageGen:false,modalitySource:'vendor'});});
+check('未知模态保持、手改保护、显式不支持生效',()=>{assert.equal(m.resolvedModalities(base,{...hit,modalitySource:null}),base);const manual={...base,vision:false,modalityManual:true};assert.equal(m.resolvedModalities(manual,hit),manual);assert.equal(m.resolvedModalities(base,{...hit,vision:null}).vision,null);assert.equal(m.resolvedModalities(base,{...hit,vision:false}).vision,false);});
+writeFileSync(`${out}/frontend-result.json`,JSON.stringify({tests:results.length,results},null,2));
+console.log(`${results.length} frontend helper tests passed`);

@@ -14,16 +14,22 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 
 // ---------- Skill ----------
+#[path = "cr085_skills.rs"]
+mod cr085_skills;
+
 
 #[tauri::command]
 pub fn skill_list(app: tauri::AppHandle) -> Result<Vec<SkillEntry>, String> {
     let skills_dir = crate::storage_layout::category("skills")?;
     std::fs::create_dir_all(&skills_dir).map_err(|e| e.to_string())?;
-    // 目录扫描 + DB 状态
+    let _lock = cr085_skills::lock()?;
+    // 目录扫描 + DB 状态；始终先技能锁，再数据库锁。
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
+    cr085_skills::recover(&skills_dir, conn)?;
     let mut out = Vec::new();
     for ent in std::fs::read_dir(&skills_dir).map_err(|e| e.to_string())?.flatten() {
+        if ent.file_name().to_string_lossy().starts_with('.') { continue; }
         let path = ent.path();
         let skill_md = path.join("SKILL.md");
         if !path.is_dir() || !skill_md.exists() {
@@ -44,6 +50,7 @@ pub fn skill_list(app: tauri::AppHandle) -> Result<Vec<SkillEntry>, String> {
             )
             .map(|v| v != 0)
             .unwrap_or(true);
+        let description = conn.query_row("SELECT description FROM capability WHERE kind='skill' AND name=?1", [&name], |r| r.get::<_, Option<String>>(0)).ok().flatten().or(description);
         out.push(SkillEntry {
             builtin: false,
             description,
@@ -62,37 +69,28 @@ pub fn skill_list(app: tauri::AppHandle) -> Result<Vec<SkillEntry>, String> {
 pub struct SkillDraft {
     pub name: String,
     pub description: String,
-    pub content: String, // SKILL.md 正文
+    pub content: String,
+    #[serde(default)]
+    pub original_name: Option<String>,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub full_content: bool,
 }
 
 #[tauri::command]
 pub fn skill_save(app: tauri::AppHandle, draft: SkillDraft) -> Result<(), String> {
-    let name = draft.name.trim().to_string();
-    if name.is_empty() {
-        return Err("技能名称不能为空".into());
-    }
-    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-        return Err("技能名称只能包含字母、数字、连字符和下划线".into());
-    }
-    let dir = crate::storage_layout::category("skills")?.join(&name);
-    if !dir.exists() {
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    }
-    let skill_md = dir.join("SKILL.md");
-    if skill_md.exists() {
-        return Err("同名技能已存在".into());
-    }
-    let body = format!("# {}\n\ndescription: {}\n\n---\n\n{}", name, draft.description, draft.content);
-    std::fs::write(&skill_md, body).map_err(|e| e.to_string())?;
+    let _ = app;
+    let name = cr085_skills::slug(&draft.name)?;
+    if draft.content.trim().is_empty() { return Err("技能正文不能为空".into()); }
+    let display = draft.display_name.as_deref().unwrap_or(&name).trim();
+    if display.is_empty() { return Err("技能显示名称不能为空".into()); }
+    let body = if draft.full_content { draft.content.clone() } else { format!("# {}\n\ndescription: {}\n\n---\n\n{}", display, draft.description, draft.content) };
+    let _lock = cr085_skills::lock()?;
+    let root = crate::storage_layout::category("skills")?;
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
-    conn.execute(
-        "INSERT OR IGNORE INTO capability (id, kind, name, description, sourceRef, risk, enabled, builtin, createdAt)
-         VALUES (?1,'skill',?2,?3,?4,'low',1,0,?5)",
-        rusqlite::params![new_id("cap"), name, draft.description, skill_md.to_string_lossy(), now_ms()],
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(())
+    cr085_skills::save(&root, conn, cr085_skills::Edit { name: &name, original: draft.original_name.as_deref(), display, description: &draft.description, content: &body })
 }
 
 #[tauri::command]
@@ -129,8 +127,13 @@ pub fn skill_set_enabled(name: String, enabled: bool) -> Result<(), String> {
 
 #[tauri::command]
 pub fn skill_read(app: tauri::AppHandle, name: String) -> Result<String, String> {
-    let p = crate::storage_layout::category("skills")?.join(&name).join("SKILL.md");
-    std::fs::read_to_string(&p).map_err(|e| e.to_string())
+    let _lock = cr085_skills::lock()?;
+    let name = cr085_skills::slug(&name)?;
+    let root = crate::storage_layout::category("skills")?;
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    cr085_skills::recover(&root, conn)?;
+    std::fs::read_to_string(root.join(&name).join("SKILL.md")).map_err(|e| e.to_string())
 }
 
 // ---------- CR-059 F1/F2：Skill 文件夹导入与跨 agent 扫描 ----------
@@ -268,6 +271,7 @@ pub fn skill_import_folder(
     }
     let skills_root = crate::storage_layout::category("skills")?;
     std::fs::create_dir_all(&skills_root).map_err(|e| e.to_string())?;
+    let _lock = cr085_skills::lock()?;
     let target = skills_root.join(&final_slug);
     if target.exists() {
         return Err(format!("同名技能已存在：{final_slug}"));
@@ -281,7 +285,7 @@ pub fn skill_import_folder(
     let copy_result = (|| -> Result<(), String> {
         while let Some(dir) = stack.pop() {
             for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten() {
-                let meta = match entry.metadata() {
+                let meta = match std::fs::symlink_metadata(entry.path()) {
                     Ok(m) => m,
                     Err(_) => { skipped.push(entry.path().to_string_lossy().to_string()); continue; }
                 };
@@ -386,12 +390,14 @@ pub fn skill_scan_sources(app: tauri::AppHandle) -> Result<Vec<SkillScanGroup>, 
 // ---------- Tool（内置只读注册表） ----------
 
 /// CR-059：pub(crate) 供 ai_tools 单测校验「注册表 ↔ 工具目录」两侧不漂移。
-pub(crate) const BUILTIN_TOOLS: [(&str, &str, &str, &str); 22] = [
+pub(crate) const BUILTIN_TOOLS: [(&str, &str, &str, &str); 34] = [
     ("fs.read", "读取项目内文件", "low", "read"),
     ("knowledge.list", "列出项目已授权知识库", "low", "read"),
     ("knowledge.search", "在已授权知识库内检索", "low", "read"),
     ("knowledge.read", "读取知识库笔记正文", "low", "read"),
     ("knowledge.read_many", "批量读取知识库笔记", "low", "read"),
+    ("knowledge.links", "查询笔记出链与反向链接（只读）", "low", "read"),
+    ("knowledge.graph", "展开知识图谱邻域（只读）", "low", "read"),
     ("ssh-exec", "在服务器上执行命令（需连接、授权与逐次审批）", "high", "exec"),
     // CR-059：内置工作台工具集（MCP 服务器 workbench；与 ai_tools.rs 工具目录一致）
     ("workbench.get_context", "AI 获取当前会话绑定的项目上下文", "low", "config"),
@@ -408,12 +414,25 @@ pub(crate) const BUILTIN_TOOLS: [(&str, &str, &str, &str); 22] = [
     ("workbench.save_server", "AI 新建/更新服务器主机配置（密钥只入受管密钥文件）", "medium", "config"),
     // CR-059 G4：生图（多模型有序、失败顺延；随 workbench MCP 注入）
     ("workbench.generate_image", "AI 生成图片（按配置顺序尝试生图模型，失败自动顺延）", "medium", "config"),
+    // CR-086：技能正文读取（CLI 通道与平台 runtime 共用；无 name 时列出技能）
+    ("workbench.read_skill", "AI 读取已启用技能的正文（任务匹配时先读再执行）", "low", "config"),
     // CR-054 / STORY-073：AI 请求打开工作台右栏（只读预览，不获得额外权限）
     ("workbench.open_panel", "AI 请求打开右侧预览面板（文件/需求/知识/办公文件）", "low", "config"),
     // CR-059 二期：查询 ssh_exec 高风险命令的跨进程审批结论
     ("workbench.ssh_exec_status", "AI 查询服务器命令审批结论与执行结果", "low", "config"),
     // CR-069 / STORY-091：派发工作给受管执行（只建批次与任务，不执行、不推进状态）
     ("workbench.dispatch_work", "AI 派发编码类工作给受管执行（只建批次与任务，不启动执行、不代表完成）", "medium", "config"),
+    // CR-093：AI 本地与联网搜索工具
+    ("fs.grep", "AI 在授权本地目录内按正则检索文件内容（只读）", "low", "read"),
+    ("fs.glob", "AI 在授权本地目录内按文件名/路径 glob 查找（只读）", "low", "read"),
+    ("web.search", "AI 联网搜索（默认免 key 抓取，可配 Tavily）", "low", "read"),
+    ("web.fetch", "AI 抓取网页并转为 Markdown 正文", "low", "read"),
+    // CR-092 / FEAT-026：个人记忆工具（scope 由 projectId 派生；global 或 project:<id>）
+    ("workbench.memory_search", "AI 检索个人记忆（只读，返回摘要不含原文对话）", "low", "read"),
+    ("workbench.memory_save", "AI 写入一条长期有用记忆（自动去重合并，≤1KB）", "medium", "config"),
+    ("workbench.memory_list", "AI 列出记忆条目（可按 kind/status 过滤）", "low", "read"),
+    ("workbench.memory_forget", "AI 软删除一条记忆", "medium", "config"),
+    ("workbench.profile_get", "AI 读取用户画像摘要与结构化字段", "low", "read"),
 ];
 
 #[tauri::command]
@@ -694,7 +713,11 @@ fn collect_scan_item(
         .and_then(Value::as_object)
         .map(|map| map.keys().cloned().collect())
         .unwrap_or_default();
-    let error = if transport == "unsupported" {
+    let error = if let Some(error) = cfg.get("_parseError").and_then(Value::as_str) {
+        Some(error.to_string())
+    } else if cfg.get("args").map(|v| !v.is_array() || v.as_array().unwrap().iter().any(|x| !x.is_string())).unwrap_or(false) {
+        Some("args 必须为字符串数组".into())
+    } else if transport == "unsupported" {
         Some("SSE / WebSocket 传输本版不支持".into())
     } else if transport == "stdio" && command.is_none() {
         Some("缺少 command".into())
@@ -717,52 +740,9 @@ fn collect_scan_item(
     }
 }
 
-/// 极简 TOML 解析：[mcp_servers.<name>] 段内的 command/args/url 键。
-/// 只覆盖 Codex 配置的实际结构，不做通用 TOML 支持；无法解析的段落跳过并给出原因。
-fn parse_codex_mcp_servers(text: &str) -> Vec<(String, serde_json::Value)> {
-    let mut out: Vec<(String, serde_json::Value)> = Vec::new();
-    let mut current: Option<(String, serde_json::Value)> = None;
-    let flush = |current: &mut Option<(String, serde_json::Value)>, out: &mut Vec<(String, serde_json::Value)>| {
-        if let Some(entry) = current.take() { out.push(entry); }
-    };
-    for raw in text.lines() {
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') { continue; }
-        if line.starts_with('[') {
-            flush(&mut current, &mut out);
-            let header = line.trim_start_matches('[').trim_end_matches(']');
-            if let Some(rest) = header.strip_prefix("mcp_servers.") {
-                let name = rest.trim().trim_matches('"').to_string();
-                if !name.is_empty() && !name.contains('.') {
-                    current = Some((name, serde_json::json!({ "transport": "stdio" })));
-                }
-            }
-            continue;
-        }
-        let Some((name, cfg)) = current.as_mut() else { continue };
-        let _ = name;
-        let Some((key, value)) = line.split_once('=') else { continue };
-        let key = key.trim();
-        let value = value.trim();
-        let unquote = |v: &str| v.trim().trim_matches('"').trim_matches('\'').to_string();
-        match key {
-            "command" => { cfg["command"] = serde_json::json!(unquote(value)); }
-            "url" => { cfg["url"] = serde_json::json!(unquote(value)); cfg["transport"] = serde_json::json!("http"); }
-            "args" => {
-                let inner = value.trim_start_matches('[').trim_end_matches(']');
-                let args: Vec<serde_json::Value> = inner.split(',')
-                    .map(str::trim)
-                    .filter(|v| !v.is_empty())
-                    .map(|v| serde_json::json!(unquote(v)))
-                    .collect();
-                cfg["args"] = serde_json::Value::Array(args);
-            }
-            _ => {}
-        }
-    }
-    flush(&mut current, &mut out);
-    out
-}
+#[path = "cr085_mcp_toml.rs"]
+mod cr085_mcp_toml;
+fn parse_codex_mcp_servers(text: &str) -> Vec<(String, serde_json::Value)> { cr085_mcp_toml::parse(text) }
 
 /// 只读扫描其他 agent 的 MCP 配置（不含登录态与令牌正文）。
 #[tauri::command]
@@ -967,6 +947,8 @@ fn parse_tools(result: &serde_json::Value) -> Vec<McpToolInfo> {
                 .map(|t| McpToolInfo {
                     description: t.get("description").and_then(|d| d.as_str()).map(|s| s.to_string()),
                     name: t.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string(),
+                    // CR-086：保留 inputSchema，平台 runtime 直接复用；旧缓存缺省为 None。
+                    input_schema: t.get("inputSchema").cloned(),
                 })
                 .filter(|t| !t.name.is_empty())
                 .collect()
@@ -1248,6 +1230,307 @@ async fn mcp_http_tools(app: &tauri::AppHandle, server_id: &str, url: &str, auth
     let bearer = mcp_http_bearer(app, server_id, auth_mode)?;
     let url = url.to_string();
     tokio::task::spawn_blocking(move || mcp_http_discover(&url, bearer.as_deref(), allow_insecure_local_tls)).await.map_err(|e| e.to_string())?
+}
+
+/// CR-086：解析技能源文件路径。
+/// 数据根迁移后旧记录仍保存原数据根的绝对路径，直接 canonicalize 会落到受管目录之外；
+/// 此时按 `…/skills/<相对路径>` 在当前受管 skills 根下回退解析，不静默接受任意路径。
+fn resolve_skill_path(source: &str, root: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    if let Ok(path) = std::fs::canonicalize(source) {
+        if path.starts_with(root) {
+            return Ok(path);
+        }
+    }
+    let raw = std::path::Path::new(source);
+    let components: Vec<_> = raw.components().collect();
+    let Some(index) = components
+        .iter()
+        .rposition(|c| c.as_os_str().to_string_lossy().eq_ignore_ascii_case("skills"))
+    else {
+        return Err("技能源文件不在受管技能目录内".into());
+    };
+    let relative: std::path::PathBuf = components[index + 1..].iter().collect();
+    if relative.as_os_str().is_empty() {
+        return Err("技能源文件路径不完整".into());
+    }
+    std::fs::canonicalize(root.join(&relative)).map_err(|_| "技能源文件不可读（可能未随数据根迁移）".to_string())
+}
+
+/// CR-086：读取已启用技能正文；路径必须落在受管 skills 目录内并有大小上限。
+/// CLI 通道（workbench MCP 的 read_skill）与平台 runtime 共用这一份实现。
+pub(crate) fn read_skill_text(conn: &rusqlite::Connection, name: &str) -> Result<String, String> {
+    let (source, enabled): (Option<String>, i64) = conn
+        .query_row(
+            "SELECT sourceRef, enabled FROM capability WHERE kind='skill' AND name=?1",
+            [name],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|_| format!("技能不存在：{name}"))?;
+    if enabled == 0 {
+        return Err(format!("技能已停用：{name}"));
+    }
+    let source = source.ok_or("技能缺少源文件")?;
+    let root = crate::storage_layout::category("skills").map_err(|e| e.to_string())?;
+    let root = std::fs::canonicalize(&root).map_err(|e| e.to_string())?;
+    let path = resolve_skill_path(&source, &root)?;
+    if !path.starts_with(&root) {
+        return Err("技能源文件不在受管技能目录内".into());
+    }
+    let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    if meta.len() > 256 * 1024 {
+        return Err("技能正文超过 256KB 上限".into());
+    }
+    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
+/// CR-086：平台系统提示里的技能清单（名称 + 描述截断）；正文由 read_skill 按需读取。
+pub(crate) fn skill_briefs(conn: &rusqlite::Connection) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let Ok(mut stmt) = conn
+        .prepare("SELECT name, COALESCE(description,'') FROM capability WHERE kind='skill' AND enabled=1 ORDER BY name")
+    else {
+        return out;
+    };
+    if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) {
+        for (name, description) in rows.flatten() {
+            out.push((name, description.chars().take(240).collect()));
+        }
+    }
+    out
+}
+
+// ---------- CR-086：平台 runtime 读取与调用 MCP 工具 ----------
+
+/// 已启用 MCP 服务器缓存清单里的一条工具（不启动进程，只读 toolsJson）。
+#[derive(Debug, Clone)]
+pub(crate) struct McpCachedTool {
+    pub server_id: String,
+    pub server_name: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub input_schema: Option<serde_json::Value>,
+}
+
+/// CR-086：平台 runtime 可见的 MCP 工具。只读发现缓存；未发现过工具的服务器由调用方决定是否刷新。
+pub(crate) fn mcp_cached_tools(conn: &rusqlite::Connection) -> Vec<McpCachedTool> {
+    let mut out = Vec::new();
+    let Ok(mut stmt) = conn.prepare("SELECT id, name, toolsJson FROM mcp_server WHERE enabled=1 ORDER BY name") else {
+        return out;
+    };
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, Option<String>>(2)?,
+        ))
+    });
+    let Ok(rows) = rows else { return out };
+    for row in rows.flatten() {
+        let (server_id, server_name, tools_json) = row;
+        let tools: Vec<McpToolInfo> = tools_json
+            .as_deref()
+            .and_then(|raw| serde_json::from_str(raw).ok())
+            .unwrap_or_default();
+        for tool in tools {
+            out.push(McpCachedTool {
+                server_id: server_id.clone(),
+                server_name: server_name.clone(),
+                name: tool.name,
+                description: tool.description,
+                input_schema: tool.input_schema,
+            });
+        }
+    }
+    out
+}
+
+/// 从 MCP 结果提取可读文本：优先 content[].text，否则返回 result/error 的 JSON。
+fn mcp_result_text(value: &serde_json::Value) -> String {
+    let Some(result) = value.get("result") else {
+        return value
+            .get("error")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({"error": "unknown"}))
+            .to_string();
+    };
+    if let Some(items) = result.get("content").and_then(|c| c.as_array()) {
+        let text: Vec<String> = items
+            .iter()
+            .filter_map(|i| i.get("text").and_then(|t| t.as_str()).map(str::to_string))
+            .collect();
+        if !text.is_empty() {
+            return text.join("\n");
+        }
+    }
+    result.to_string()
+}
+
+async fn read_json_line_until(
+    stdout: &mut tokio::io::BufReader<tokio::process::ChildStdout>,
+    id: i64,
+    secs: u64,
+) -> Result<serde_json::Value, String> {
+    use tokio::io::AsyncBufReadExt;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(secs);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err("MCP 响应超时".into());
+        }
+        let mut line = String::new();
+        let n = tokio::time::timeout(remaining, stdout.read_line(&mut line))
+            .await
+            .map_err(|_| "MCP 响应超时".to_string())?
+            .map_err(|e| e.to_string())?;
+        if n == 0 {
+            return Err("MCP 服务器已退出".into());
+        }
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+            if v.get("id").and_then(|i| i.as_i64()) == Some(id) {
+                return Ok(v);
+            }
+        }
+    }
+}
+
+/// stdio MCP：一次独立短会话 initialize → initialized → tools/call → 退出。
+async fn mcp_stdio_call(
+    command: &str,
+    args: &[String],
+    env: &std::collections::BTreeMap<String, String>,
+    tool: &str,
+    arguments: serde_json::Value,
+) -> Result<String, String> {
+    use tokio::io::AsyncBufReadExt;
+    let mut cmd = tokio::process::Command::new(crate::util::resolve_command(command));
+    cmd.args(args);
+    for (k, v) in env.iter() {
+        cmd.env(k, v);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    let mut child = cmd
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| format!("MCP 进程启动失败：{}", e))?;
+    let mut stdin = child.stdin.take().ok_or("MCP stdin 不可用")?;
+    let mut stdout = tokio::io::BufReader::new(child.stdout.take().ok_or("MCP stdout 不可用")?);
+    send_msg(&mut stdin, rpc(1, "initialize", serde_json::json!({
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": { "name": "agent-workbench", "version": "0.1.0" }
+    })))
+    .await?;
+    let init = read_json_line_until(&mut stdout, 1, 10).await;
+    let init = match init {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = child.kill().await;
+            return Err(e);
+        }
+    };
+    if let Some(err) = init.get("error") {
+        let _ = child.kill().await;
+        return Err(format!("MCP 初始化错误：{}", err));
+    }
+    let _ = send_msg(
+        &mut stdin,
+        serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"}).to_string(),
+    )
+    .await;
+    send_msg(&mut stdin, rpc(2, "tools/call", serde_json::json!({
+        "name": tool,
+        "arguments": arguments
+    })))
+    .await?;
+    let value = read_json_line_until(&mut stdout, 2, 120).await;
+    let _ = child.kill().await;
+    Ok(mcp_result_text(&value?))
+}
+
+/// HTTP MCP：initialize → initialized → tools/call，沿用服务端下发会话头。
+fn mcp_http_call(
+    url: &str,
+    bearer: Option<&str>,
+    allow_insecure_local_tls: bool,
+    tool: &str,
+    arguments: serde_json::Value,
+) -> Result<String, String> {
+    if !is_allowed_mcp_http_url(url) {
+        return Err("HTTP MCP地址必须是HTTPS或本机loopback".into());
+    }
+    let agent = mcp_http_agent(allow_insecure_local_tls, url);
+    let init = rpc(1, "initialize", serde_json::json!({
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": { "name": "agent-workbench", "version": "0.1.0" }
+    }));
+    let (session, text) = mcp_http_rpc(&agent, url, bearer, None, &init)?;
+    let value = mcp_http_payload(&text)?;
+    if let Some(error) = value.get("error") {
+        return Err(format!("MCP初始化错误：{}", error));
+    }
+    if let Some(session) = session.as_deref() {
+        let initialized = serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"}).to_string();
+        let _ = mcp_http_rpc(&agent, url, bearer, Some(session), &initialized);
+    }
+    let call = rpc(2, "tools/call", serde_json::json!({"name": tool, "arguments": arguments}));
+    let (_, text) = mcp_http_rpc(&agent, url, bearer, session.as_deref(), &call)?;
+    Ok(mcp_result_text(&mcp_http_payload(&text)?))
+}
+
+/// CR-086：平台 runtime 调用指定 MCP 服务器上的工具。
+/// stdio 每次调用使用独立短会话，调用结束即退出；HTTP 每次新建会话头。
+pub(crate) async fn mcp_call_tool(
+    app: &tauri::AppHandle,
+    server_id: &str,
+    tool: &str,
+    arguments: serde_json::Value,
+) -> Result<String, String> {
+    let (transport, command, args, env, url, auth_mode, tls) = {
+        let guard = db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        conn.query_row(
+            "SELECT transport, command, argsJson, envJson, url, authMode, allowInsecureLocalTls FROM mcp_server WHERE id=?1 AND enabled=1",
+            [server_id],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Option<String>>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                    r.get::<_, Option<String>>(3)?,
+                    r.get::<_, Option<String>>(4)?,
+                    r.get::<_, Option<String>>(5)?.unwrap_or_else(|| "oauth".into()),
+                    r.get::<_, Option<i64>>(6)?.unwrap_or(0) != 0,
+                ))
+            },
+        )
+        .map_err(|_| "MCP 服务器不存在或未启用".to_string())?
+    };
+    match transport.as_str() {
+        "stdio" => {
+            let command = command.ok_or("stdio 服务器缺少启动命令")?;
+            let args_v: Vec<String> = serde_json::from_str(&args.unwrap_or_default()).unwrap_or_default();
+            let env_v: std::collections::BTreeMap<String, String> =
+                serde_json::from_str(&env.unwrap_or_default()).unwrap_or_default();
+            mcp_stdio_call(&command, &args_v, &env_v, tool, arguments).await
+        }
+        "http" => {
+            let url = url.ok_or("http 服务器缺少 URL")?;
+            let bearer = mcp_http_bearer(app, server_id, &auth_mode)?;
+            let tool = tool.to_string();
+            tokio::task::spawn_blocking(move || mcp_http_call(&url, bearer.as_deref(), tls, &tool, arguments))
+                .await
+                .map_err(|e| e.to_string())?
+        }
+        other => Err(format!("未知传输类型：{}", other)),
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1643,6 +1926,26 @@ mod oauth_tests {
         let tools = mcp_http_discover(&url, Some(&token), allow_insecure_local_tls).expect("真实 MCP 工具发现应成功");
         assert!(!tools.is_empty(), "真实 MCP 应返回至少一个工具");
         println!("真实 MCP 工具数={} 首个={}", tools.len(), tools[0].name);
+    }
+
+    /// CR-086：数据根迁移后旧绝对路径按受管 skills 根回退解析；越界路径仍拒绝。
+    #[test]
+    fn skill_path_rebases_after_data_root_migration() {
+        let base = std::env::temp_dir().join(format!("cr086-skill-{}", crate::models::new_id("t")));
+        let root = base.join("data").join("skills");
+        let skill_dir = root.join("imagegen");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), "# demo").unwrap();
+        let root = std::fs::canonicalize(&root).unwrap();
+        let old = base.join("old-root").join("skills").join("imagegen").join("SKILL.md");
+        let resolved = resolve_skill_path(&old.to_string_lossy(), &root).expect("应按 skills 段回退");
+        assert!(resolved.starts_with(&root));
+        assert!(resolved.ends_with("SKILL.md"));
+        let outside = base.join("elsewhere").join("SKILL.md");
+        std::fs::create_dir_all(outside.parent().unwrap()).unwrap();
+        std::fs::write(&outside, "x").unwrap();
+        assert!(resolve_skill_path(&outside.to_string_lossy(), &root).is_err(), "无 skills 段的路径不得回退");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

@@ -24,6 +24,31 @@
 
 /* ---------- 消息流 ---------- */
 .chat-msgs { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 12px 14px 8px; display: flex; flex-direction: column; gap: 14px; }
+/* 消息流外层：承载「回到底部」浮动按钮；不改动滚动容器自身，保持父级 flex 布局等价。 */
+.chat-msgs-wrap { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+/* 回到底部：相对外层绝对定位，不在滚动内容中，不随内容滚走；点击滚到底。 */
+.chat-scroll-bottom {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 13px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface, var(--paper));
+  color: var(--ink-2, var(--ink));
+  font-size: 11.5px;
+  line-height: 1;
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+  transform: translateX(-50%);
+}
+.chat-scroll-bottom:hover { border-color: var(--accent); color: var(--accent); }
+.chat-scroll-bottom:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .chat-msg { display: flex; gap: 9px; align-items: flex-start; min-width: 0; }
 .chat-msg.user { flex-direction: row; }
 .chat-who { width: 24px; height: 24px; border-radius: 7px; flex: 0 0 auto; display: grid; place-items: center; font-size: 9.5px; font-weight: 700; }
@@ -85,6 +110,22 @@
 .chat-md code { font-family: Consolas, 'Cascadia Mono', 'JetBrains Mono', monospace; font-size: 12px; background: var(--pre-bg); border: 1px solid var(--line-soft); border-radius: 4px; padding: 0 4px; }
 .chat-md pre { background: var(--pre-bg); border: 1px solid var(--line-soft); border-radius: 6px; padding: 9px 11px; overflow-x: auto; margin: 8px 0; }
 .chat-md pre code { background: transparent; border: none; padding: 0; line-height: 1.6; }
+.chat-md .chat-code-block { border: 1px solid var(--line-soft); border-radius: 8px; margin: 10px 0; background: var(--pre-bg); overflow: hidden; }
+.chat-md .chat-code-block > pre { margin: 0; border: 0; border-radius: 0; background: transparent; padding: 10px 12px; }
+.chat-md .chat-code-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line-soft); font-size: 11px; color: var(--muted); }
+.chat-md .chat-code-lang { text-transform: lowercase; letter-spacing: .02em; }
+.chat-md .chat-code-actions { display: inline-flex; gap: 4px; }
+.chat-md .chat-code-btn { font: inherit; font-size: 11px; color: var(--muted); background: transparent; border: 1px solid var(--line-soft); border-radius: 5px; padding: 1px 7px; cursor: pointer; }
+.chat-md .chat-code-btn:hover { color: var(--ink); border-color: var(--line-strong, var(--line-soft)); }
+.chat-md .chat-code-btn.on { color: var(--primary); border-color: var(--primary); }
+.chat-md .chat-code-block > pre.chat-code-wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-md .chat-code-block > pre.chat-code-wrap > code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-turn-files { margin: 4px 0 12px; border: 1px solid var(--line-soft); border-radius: 10px; padding: 6px 10px; }
+.chat-turn-files > summary { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); cursor: pointer; list-style: none; }
+.chat-turn-files > summary::-webkit-details-marker { display: none; }
+.chat-turn-files-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chat-turn-file { font: inherit; font-size: 12px; color: var(--ink-2); background: var(--surface-3, transparent); border: 1px solid var(--line-soft); border-radius: 6px; padding: 2px 8px; cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-turn-file:hover { color: var(--primary); border-color: var(--primary); }
 .chat-md blockquote { margin: 8px 0; padding: 2px 12px; border-left: 3px solid var(--accent-line); color: var(--muted); }
 .chat-md table { border-collapse: collapse; margin: 8px 0; font-size: 12px; width: 100%; }
 .chat-md th, .chat-md td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; }
@@ -379,7 +420,7 @@
 .chat-ref-group { padding: 4px 4px 2px; }
 .chat-ref-group-title { font-size: 12px; color: var(--muted); font-weight: 500; padding: 4px 8px 3px; }
 .chat-ref-row { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; text-align: left; border: none; background: transparent; padding: 5px 8px; border-radius: 6px; cursor: pointer; font: 13px/1.5 var(--font-title); color: var(--ink); }
-.chat-ref-row:hover { background: var(--hover-bg); }
+.chat-ref-row:hover, .chat-ref-row:focus { background: var(--hover-bg); }
 .chat-ref-row.dir { color: var(--muted); cursor: default; }
 .chat-ref-row .name { flex: 0 0 auto; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-ref-row .sub { flex: 1 1 auto; min-width: 0; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -397,8 +438,15 @@
 .chat-menu { position: absolute; bottom: calc(100% + 6px); left: 0; min-width: max(100%, 220px); max-width: 320px; max-height: 300px; overflow-y: auto; z-index: 30; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow-md); padding: 4px; }
 .chat-menu-group { font-size: 12px; color: var(--muted); font-weight: 500; padding: 6px 8px 3px; }
 .chat-menu-row { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; text-align: left; border: none; background: transparent; padding: 6px 8px; border-radius: 6px; cursor: pointer; font: 13px/1.5 var(--font-title); color: var(--ink); }
-.chat-menu-row:hover { background: var(--hover-bg); }
+.chat-menu-row:hover, .chat-menu-row:focus { background: var(--hover-bg); }
 .chat-menu-row.sel { background: var(--nav-active-bg); color: var(--nav-active-ink); }
+.chat-menu-section-head { padding: 8px 10px 2px; font-size: 11px; font-weight: 600; color: var(--muted); }
+.chat-menu-row-rich { gap: 10px; padding: 8px 10px; }
+.chat-menu-row-ico { flex: 0 0 auto; display: inline-flex; align-items: center; color: var(--muted); }
+.chat-menu-row-label { flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 6px; font-size: 13px; color: var(--ink); }
+.chat-menu-row-kw { font-size: 11px; color: var(--muted-2, var(--muted)); }
+.chat-menu-row-desc { margin-left: auto; flex: 1 1 auto; min-width: 0; text-align: right; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-menu-row-rich:disabled .chat-menu-row-desc { color: var(--muted-2, var(--muted)); }
 .chat-menu-hint { padding: 10px 8px; font-size: 12px; color: var(--muted); line-height: 1.6; }
 .chat-badge { flex: 0 0 auto; font-size: 10px; line-height: 1; padding: 2px 5px; border-radius: 4px; background: var(--purple-bg); color: var(--purple); }
 .chat-config-pop { position: fixed; inset: auto; z-index: 65; margin: 0; box-sizing: border-box; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; animation: none; transform: none; padding: 6px; background: var(--surface, var(--paper)); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow-pop, var(--shadow-md)); }
@@ -505,6 +553,11 @@
 /* 回复操作行：默认淡出，鼠标进入消息或键盘聚焦时可见 */
 .chat-msg-actions { display: flex; gap: 6px; margin-top: 6px; opacity: 0; transition: opacity .14s ease; }
 .chat-msg.assistant:hover .chat-msg-actions, .chat-msg-actions:focus-within { opacity: 1; }
+/* 用户消息编辑动作：悬停/键盘聚焦时可见（无 hover 设备常显）。 */
+.chat-msg.user:hover .chat-msg-actions-user, .chat-msg-actions-user:focus-within { opacity: 1; }
+.chat-msg-actions-user { justify-content: flex-end; }
+/* 终止错误的重试动作需常显，便于直接操作。 */
+.chat-msg-actions-static { opacity: 1; }
 .chat-msg-action { display: inline-flex; align-items: center; gap: 4px; padding: 3px 7px; border: 1px solid var(--line-soft); border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 10.5px; cursor: pointer; }
 .chat-msg-action:hover { color: var(--ink); border-color: var(--line); background: var(--hover-bg); }
 @media (hover: none) { .chat-msg-actions { opacity: 1; } }

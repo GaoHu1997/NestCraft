@@ -224,6 +224,8 @@ export const updateProject = (id: string, name: string, rootUri?: string, icon?:
     ...(tags === undefined ? {} : { tags }),
   });
 export const pickProjectDirectory = () => invoke<string | null>("pick_project_directory");
+/** 打开系统文件选择器（多选、任意类型），返回所选文件的绝对路径；取消返回空数组。只返回路径，不上传。 */
+export const pickLocalFiles = () => invoke<string[]>("pick_local_files");
 export const readRequirements = (projectId: string) =>
   invoke<RequirementNode[]>("read_requirements", { projectId });
 export interface RequirementSource {
@@ -406,6 +408,8 @@ export interface Provider {
   id: string;
   name: string;
   protocol: "anthropic" | "openai";
+  apiMode?: "Chat" | "Responses" | "Anthropic";
+  sortOrder?: number;
   disabled: boolean;
   headersJson: string | null;
   fingerprintJson: string | null;
@@ -468,6 +472,8 @@ export interface ModelCandidate {
 
 export interface ProviderDraft {
   id?: string;
+  createId?: string;
+  apiMode?: "Chat" | "Responses" | "Anthropic";
   name: string;
   protocol: "anthropic" | "openai";
   disabled: boolean;
@@ -499,6 +505,11 @@ export interface ProviderDraft {
 
 export const providerList = () => invoke<Provider[]>("provider_list");
 export const providerSave = (draft: ProviderDraft) => invoke<string>("provider_save", { draft });
+export const providerKeyReveal = (providerId: string, keyId: string) =>
+  invoke<string>("provider_key_reveal", { providerId, keyId });
+export const providerReorder = (ids: string[]) => invoke<void>("provider_reorder", { ids });
+export const providerModelsReorder = (providerId: string, ids: string[]) =>
+  invoke<void>("provider_models_reorder", { providerId, ids });
 export const providerDelete = (id: string) => invoke<void>("provider_delete", { id });
 export const providerSetDisabled = (id: string, disabled: boolean) =>
   invoke<void>("provider_set_disabled", { id, disabled });
@@ -522,6 +533,10 @@ export interface EffortResolution {
   /** vendor / knowledge / vendor+knowledge / none */
   source: string;
   note: string | null;
+  text: boolean | null;
+  vision: boolean | null;
+  imageGen: boolean | null;
+  modalitySource: string | null;
 }
 export const providerResolveEfforts = (providerId: string, modelIds: string[]) =>
   invoke<EffortResolution[]>("provider_resolve_efforts", { providerId, modelIds });
@@ -780,6 +795,13 @@ export interface SkillScanItem {
 export interface SkillScanGroup { agent: string; root: string; exists: boolean; items: SkillScanItem[] }
 export const skillScanSources = () => invoke<SkillScanGroup[]>("skill_scan_sources");
 export const toolList = () => invoke<ToolEntry[]>("tool_list");
+// CR-093：AI 本地与联网搜索——联网后端配置、本地授权目录
+export interface SearchConfig { backend: "default" | "tavily"; tavilyBaseUrl: string; hasTavilyKey: boolean; timeoutSec: number; maxResults: number; webFetchEnabled: boolean; }
+export const searchConfigGet = () => invoke<SearchConfig>("search_config_get");
+export const searchConfigSet = (input: { backend: "default" | "tavily"; tavilyBaseUrl?: string; tavilyKey?: string; timeoutSec?: number; maxResults?: number; webFetchEnabled?: boolean }) =>
+  invoke<void>("search_config_set", { backend: input.backend, tavilyBaseUrl: input.tavilyBaseUrl ?? null, tavilyKey: input.tavilyKey ?? null, timeoutSec: input.timeoutSec ?? null, maxResults: input.maxResults ?? null, webFetchEnabled: input.webFetchEnabled ?? null });
+export const searchAuthDirsGet = (projectId: string) => invoke<string[]>("search_auth_dirs_get", { projectId });
+export const searchAuthDirsSet = (projectId: string, dirs: string[]) => invoke<string[]>("search_auth_dirs_set", { projectId, dirs });
 export const toolSetEnabled = (name: string, enabled: boolean) =>
   invoke<void>("tool_set_enabled", { name, enabled });
 export const mcpList = () => invoke<McpServer[]>("mcp_list");

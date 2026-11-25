@@ -1,0 +1,66 @@
+/* CR-076 2026-11-25 user-image revision; adapted presentation colors and hierarchy.
+   Apache-2.0 attribution: message-zcode.LICENSE / message-zcode.NOTICE. */
+.ai-scroll {
+  --message-bg: #f8f8f8; --message-ink: #262626; --message-muted: rgba(38,38,38,.7); --message-faint: #999;
+  --message-line: rgba(13,13,13,.1); --message-code: rgba(13,13,13,.05); --message-card: #fff;
+  background: var(--message-bg); color: var(--message-ink); font-family: var(--font); container-type: inline-size;
+  padding: 24px 16px; gap: 24px;
+}
+html[data-theme="dark"] .ai-scroll { --message-bg: #161616; --message-ink: #f5f5f5; --message-muted: rgba(212,212,212,.6); --message-faint: #999; --message-line: rgba(255,255,255,.1); --message-code: rgba(255,255,255,.07); --message-card: #202020; }
+.ai-scroll > .msg { width: 100%; min-width: 0; }
+.ai-scroll .msg.assistant > .msg-body { max-width: 100%; width: 100%; }
+.ai-scroll .msg.assistant .text { font-family: var(--font); font-size: 16px; line-height: 28px; color: var(--message-ink); overflow-wrap: anywhere; }
+.ai-scroll .msg.assistant .text p { margin: 16px 0; }
+.ai-scroll .msg.assistant .text > :first-child { margin-top: 0; }
+.ai-scroll .msg.assistant .text > :last-child { margin-bottom: 0; }
+.ai-scroll .msg.assistant .text h1 { font-size: 24px; line-height: 34px; }
+.ai-scroll .msg.assistant .text h2 { font-size: 20px; line-height: 30px; }
+.ai-scroll .msg.assistant .text h3 { font-size: 18px; line-height: 28px; }
+.ai-scroll .msg.assistant .text h1, .ai-scroll .msg.assistant .text h2, .ai-scroll .msg.assistant .text h3 { font-weight: 700; margin: 32px 0 20px; }
+.ai-scroll .msg.assistant .text code { background: var(--message-code); border: 0; border-radius: 5px; padding: 2px 6px; font-size: 13px; font-family: var(--mono); }
+.ai-scroll .msg.assistant .text pre { background: var(--message-card); border: 1px solid var(--message-line); border-radius: 16px; margin: 20px 0; padding: 18px 20px; overflow: auto; max-width: 100%; }
+.ai-scroll .msg.assistant .text pre code { display: block; background: transparent; padding: 0; font-size: 13px; line-height: 22px; }
+.ai-scroll .msg.assistant .text table { width: 100%; border-collapse: separate; border-spacing: 0; border: 1px solid var(--message-line); border-radius: 16px; margin: 20px 0; font-size: 16px; }
+.ai-scroll .msg.assistant .text th, .ai-scroll .msg.assistant .text td { text-align: left; padding: 10px 16px; border: 0; border-bottom: 1px solid var(--message-line); }
+.ai-scroll .msg.assistant .text th { color: var(--message-faint); background: transparent; font-weight: 400; }
+.ai-scroll .msg.assistant .text tr:last-child td { border-bottom: 0; }
+.ai-scroll .chat-turn-process { margin: 0 0 24px; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.ai-scroll .chat-turn-process > summary { display: flex; align-items: center; gap: 8px; list-style: none; padding: 0 0 8px; margin: 0; border-bottom: 1px solid var(--message-line); color: var(--message-muted); font: 14px/24px var(--font); cursor: pointer; }
+.ai-scroll .chat-turn-process > summary::-webkit-details-marker { display: none; }
+.ai-scroll .chat-turn-process > summary > .ico { order: 0; flex: none; margin: 0; transition: none; }
+.ai-scroll .chat-turn-process[open] > summary > .ico { transform: rotate(90deg); }
+.ai-scroll .chat-process-status { font: inherit; margin-left: 8px; color: var(--message-muted); }
+.ai-scroll .chat-turn-process-body { display: flex; flex-direction: column; gap: 20px; border: 0; padding: 20px 0 0; margin: 0; }
+.ai-scroll .chat-tool-group, .ai-scroll .chat-proto-tool { border: 0; border-radius: 0; background: transparent; padding: 0; margin: 0; max-width: 100%; }
+.ai-scroll .chat-tool-group > summary, .ai-scroll .chat-proto-tool > summary { display: flex; align-items: center; gap: 8px; list-style: none; min-height: 24px; padding: 0; cursor: pointer; color: var(--message-muted); font: 14px/24px var(--font); }
+.ai-scroll .chat-tool-group > summary::-webkit-details-marker, .ai-scroll .chat-proto-tool > summary::-webkit-details-marker { display: none; }
+.ai-scroll .chat-proto-group-body { display: flex; flex-direction: column; gap: 12px; padding: 12px 0 0 24px; }
+.ai-scroll .chat-proto-tool-body { margin: 12px 0 0 24px; padding: 14px 16px; border: 1px solid var(--message-line); border-radius: 12px; background: var(--message-card); }
+.ai-scroll .chat-proto-tool-meta { color: var(--message-muted); font: 13px/22px var(--font); }
+.ai-scroll .chat-proto-tool-body pre { overflow: auto; max-height: 240px; margin: 10px 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/20px var(--mono); }
+.ai-scroll .msg-think { border: 0; margin: 0; border-radius: 0; background: transparent; }
+.ai-scroll .msg-think > summary { display: flex; align-items: center; gap: 8px; margin: 0; padding: 0; font: 14px/24px var(--font); color: var(--message-muted); }
+.ai-scroll .msg-think > summary > span:nth-child(2) { font-weight: 400; color: inherit; }
+.ai-scroll .msg-think > summary::after { display: none; }
+.ai-scroll .msg-think .mt-meta { font: inherit; color: var(--message-faint); }
+.ai-scroll .msg-think .mt-body { font: 14px/24px var(--font); padding: 12px 0 0 24px; margin: 0; border: 0; background: transparent; max-height: 240px; overflow: auto; }
+.ai-scroll .msg-acts { gap: 8px; margin-top: 16px; }
+.ai-scroll .msg-act { border: 0; border-radius: 6px; padding: 4px; min-width: 28px; min-height: 28px; font-size: 13px; color: var(--message-muted); }
+.ai-scroll .message-proto-agent { margin: 0; padding: 0; border: 0; }
+.ai-scroll .message-proto-agent > summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--message-muted); font: 16px/28px var(--font); cursor: pointer; list-style: none; }
+.ai-scroll .message-proto-agent > summary::-webkit-details-marker { display: none; }
+.ai-scroll .message-agent-dots { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; flex: none; border-radius: 6px; background: #666; color: white; font: 10px/18px var(--font); }
+.ai-scroll .message-agent-dots.explore { background: #5db9a8; }
+.ai-scroll .message-agent-type { color: var(--message-ink); }
+.ai-scroll .message-agent-type.explore { color: #5db9a8; }
+.ai-scroll .message-agent-task { color: var(--message-faint); overflow-wrap: anywhere; }
+.ai-scroll .message-agent-detail { margin: 12px 0 0 26px; color: var(--message-muted); font: 14px/24px var(--font); white-space: pre-wrap; max-height: 240px; overflow: auto; }
+@container (min-width: 960px) {
+  .ai-scroll .msg.assistant .text { font-size: 18px; line-height: 31.5px; }
+  .ai-scroll .chat-turn-process > summary,
+  .ai-scroll .chat-tool-group > summary,
+  .ai-scroll .chat-proto-tool > summary,
+  .ai-scroll .msg-think > summary,
+  .ai-scroll .message-proto-agent > summary { font-size: 16px; line-height: 28px; }
+}
+@media(min-width: 1100px) { .ai-workbench .ai-scroll { padding: 24px 56px; } }

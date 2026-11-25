@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>会话绑定状态 · BUG-003 设计（SC-069-08／09）</title>
+<style>
+/* BUG-003 设计资源：平台会话不适用 CLI 绑定横幅（SC-069-08）＋ CLI 首轮未完成原因文案（SC-069-09）。
+   独立静态设计稿，令牌取自现行 chat.css / theme-tokens 冻结值；不是第二业务原型入口，不代表正式软件。
+   软件对照证据另存 docs/Test/screenshots/bug003-software/。 */
+*{box-sizing:border-box}
+[hidden]{display:none !important}
+html,body{margin:0;min-height:100%}
+:root{
+  --base:#f5f6f7;--paper:#ffffff;--line:#e5e6eb;--line-soft:#eff0f3;
+  --ink:#1f2329;--muted:#646a73;
+  --accent:#2b6cf6;--accent-ink:#ffffff;--soft:#eef3ff;
+  --warn-bg:#fff8e6;--warn-line:#f0c27a;--warn-deep:#7f5500;
+  --danger-bg:#fef0ef;--danger-line:#f3b6b2;--danger-deep:#b12720;
+  --good-ink:#1f7a3f;--good-dot:#2ea44f;
+  --tag-bg:#f2f3f5;--tag-ink:#4e5969;
+  --msg-bg:#f7f8fa;--notice-bg:#f7f8fa;--notice-ink:#4e5969;--notice-line:#c9cdd4;
+  --radius-card:8px;--radius-ctl:6px;
+  --font-title:system-ui,-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+  color-scheme:light;
+}
+html[data-theme="dark"]{
+  color-scheme:dark;
+  --base:#17181a;--paper:#1f2022;--line:#2e3033;--line-soft:#33363a;
+  --ink:#e6e8ea;--muted:#9aa0a6;
+  --accent:#4f8bff;--accent-ink:#0b1220;--soft:#232a36;
+  --warn-bg:#2e2617;--warn-line:#5c4a24;--warn-deep:#f6d79b;
+  --danger-bg:#35201f;--danger-line:#6b3a37;--danger-deep:#ffb3ad;
+  --good-ink:#7fd39a;--good-dot:#48b96b;
+  --tag-bg:#26282b;--tag-ink:#b6bcc4;
+  --msg-bg:#232426;--notice-bg:#232426;--notice-ink:#c2c8cf;--notice-line:#3a3d42;
+}
+body{font:13px/1.6 var(--font-title);color:var(--ink);background:var(--base)}
+button{font:inherit;color:inherit;cursor:pointer;background:none;border:0;padding:0}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* 评审控制条（非产品 UI） */
+.review{border-bottom:1px solid var(--line);background:var(--paper);padding:10px 18px;display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;position:sticky;top:0;z-index:5}
+.review .rb-t{display:flex;align-items:baseline;gap:8px;margin-right:auto;min-width:0}
+.review .rb-t b{font-size:12px;padding:1px 7px;border-radius:4px;background:var(--soft);color:var(--accent);font-weight:600}
+.review .rb-t span{font-size:11.5px;color:var(--muted)}
+.review .chip{border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:11.5px;color:var(--ink)}
+.review .chip.on{background:var(--soft);border-color:var(--accent);color:var(--accent);font-weight:600}
+.review .note{font-size:11px;color:var(--muted);max-width:720px;flex-basis:100%}
+
+.stage{display:flex;flex-wrap:wrap;gap:20px;padding:18px;align-items:flex-start}
+.card{width:380px;flex:0 0 auto}
+.card h2{font-size:13px;margin:0 0 4px}
+.card h2 small{font-weight:400;color:var(--muted);font-size:11px;margin-left:6px}
+.card .lead{font-size:11.5px;color:var(--muted);margin:0 0 8px;min-height:34px}
+.canvas{border:1px solid var(--line);border-radius:var(--radius-card);background:var(--paper);overflow:hidden}
+.canvas .cap{padding:8px 12px;border-top:1px dashed var(--line);font-size:11px;color:var(--muted)}
+
+/* AI 侧栏局部 */
+.sidebar{display:flex;flex-direction:column;height:420px}
+.sb-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)}
+.sb-head .dot{width:8px;height:8px;border-radius:50%;background:var(--good-dot)}
+.sb-head b{font-size:12.5px}
+.sb-head .spacer{flex:1}
+.pill{font-size:10px;font-weight:600;border-radius:999px;padding:2px 8px;white-space:nowrap}
+.pill.freshPending{background:var(--warn-bg);color:var(--warn-deep)}
+.pill.blocked{background:var(--danger-bg);color:var(--danger-deep)}
+.sb-msgs{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px;min-height:0}
+.msg{max-width:92%}
+.msg .who{font-size:10.5px;color:var(--muted);margin-bottom:2px}
+.msg .bubble{background:var(--msg-bg);border-radius:var(--radius-card);padding:8px 10px}
+.msg.user{align-self:flex-end;text-align:right}
+.msg.user .bubble{background:var(--soft);text-align:left}
+.msg .meta{font-size:10px;color:var(--muted);margin-top:3px}
+
+.banner{border-top:1px solid var(--warn-line);background:var(--warn-bg);padding:10px 12px;display:flex;gap:8px;align-items:flex-start}
+.banner .ico{flex:0 0 auto;width:16px;height:16px;border-radius:4px;background:var(--warn-bg);border:1px solid var(--warn-line);color:var(--warn-deep);font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.banner .main{min-width:0;flex:1}
+.banner .title{font-size:12px;font-weight:600;color:var(--warn-deep)}
+.banner .reason{font-size:11px;color:var(--warn-deep);margin-top:2px}
+.banner .foot{display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;align-items:center}
+.banner .btn{font-size:11px;border:1px solid var(--warn-line);border-radius:var(--radius-ctl);padding:3px 10px;background:var(--paper);color:var(--warn-deep);font-weight:600}
+.banner .btn.primary{background:var(--warn-deep);border-color:var(--warn-deep);color:var(--paper)}
+
+.composer{border-top:1px solid var(--line);padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.composer textarea{width:100%;min-height:52px;resize:none;border:1px solid var(--line);border-radius:var(--radius-ctl);background:var(--paper);color:var(--ink);font:inherit;padding:8px}
+.composer.disabled textarea{opacity:.55;cursor:not-allowed}
+.composer .row{display:flex;gap:8px;align-items:center}
+.composer .send{margin-left:auto;border-radius:var(--radius-ctl);background:var(--accent);color:var(--accent-ink);padding:5px 14px;font-weight:600;font-size:12px}
+.composer.disabled .send{opacity:.5;cursor:not-allowed}
+.composer .foot{font-size:10.5px;color:var(--muted)}
+.banner~.composer{border-top:0}
+
+.legend{border-top:1px solid var(--line);background:var(--paper);padding:14px 18px;font-size:12px}
+.legend h3{font-size:12.5px;margin:0 0 6px}
+.legend table{border-collapse:collapse;width:100%;max-width:920px}
+.legend th,.legend td{border:1px solid var(--line);padding:5px 8px;text-align:left;font-size:11.5px;vertical-align:top}
+.legend th{background:var(--line-soft);font-weight:600}
+.legend code{font-size:11px;background:var(--line-soft);padding:1px 4px;border-radius:3px}
+</style>
+</head>
+<body>
+<div class="review">
+  <div class="rb-t"><b>BUG-003</b><span>会话绑定状态 · SC-069-08／09</span></div>
+  <button class="chip on" id="themeBtn" type="button">浅色 / 深色</button>
+  <div class="note">
+    依据：平台通道（<code>runner=platform</code>）不使用 CLI 原生线程，不应显示 CLI 绑定横幅；CLI 首轮未结算时原因改为可读的「尚无原生线程引用」。
+    本页只描述状态与文案，不代表正式软件已修复；软件改动前须先通过本稿。
+  </div>
+</div>
+
+<div class="stage">
+  <section class="card">
+    <h2>A · CLI 已续接<small>基准：修复前后一致</small></h2>
+    <p class="lead">有原生引用时不显示横幅、不显示常驻标签，输入可直接使用。</p>
+    <div class="canvas">
+      <div class="sidebar">
+        <div class="sb-head"><span class="dot"></span><b>AI 会话 · CLI</b><span class="spacer"></span></div>
+        <div class="sb-msgs">
+          <div class="msg user"><div class="who">你</div><div class="bubble">继续上一轮的分析。</div></div>
+          <div class="msg"><div class="who">Codex</div><div class="bubble">已回到原线程继续处理。</div><div class="meta">续接成功 · 无提示条</div></div>
+        </div>
+        <div class="composer"><textarea placeholder="继续输入…"></textarea><div class="row"><span class="foot">可直接发送</span><button class="send" type="button">发送</button></div></div>
+      </div>
+      <div class="cap">状态：binding=native；无横幅；输入可用。</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>B · 平台会话正常态<small>SC-069-08：修复目标</small></h2>
+    <p class="lead">平台通道按历史回放继续，不产生 CLI 绑定状态；首轮后第二轮仍可直接发送。</p>
+    <div class="canvas">
+      <div class="sidebar">
+        <div class="sb-head"><span class="dot"></span><b>AI 会话 · 大管家</b><span class="spacer"></span></div>
+        <div class="sb-msgs">
+          <div class="msg user"><div class="who">你</div><div class="bubble">帮我梳理这个项目的待办。</div></div>
+          <div class="msg"><div class="who">大管家</div><div class="bubble">已列出 3 项待办，并按优先级排序。</div><div class="meta">平台模型作答 · 上下文由历史回放</div></div>
+        </div>
+        <div class="composer"><textarea placeholder="继续输入…"></textarea><div class="row"><span class="foot">可直接发送</span><button class="send" type="button">发送</button></div></div>
+      </div>
+      <div class="cap">状态：runner=platform → 不派生绑定；无横幅、无标签、输入可用。</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>C · CLI 首轮未完成<small>SC-069-09：新原因码</small></h2>
+    <p class="lead">有历史但还没有任何原生线程引用（首轮中断或旧版本历史）；仍不静默重建。</p>
+    <div class="canvas">
+      <div class="sidebar">
+        <div class="sb-head"><span class="dot"></span><b>AI 会话 · CLI</b><span class="spacer"></span><span class="pill freshPending">待确认</span></div>
+        <div class="sb-msgs">
+          <div class="msg user"><div class="who">你</div><div class="bubble">先看看这个文件。</div></div>
+          <div class="msg"><div class="who">系统</div><div class="bubble">本轮未完成，未建立原生线程引用。</div></div>
+        </div>
+        <div class="banner" role="alert">
+          <span class="ico">!</span>
+          <div class="main">
+            <div class="title">上下文待确认重建</div>
+            <div class="reason">原因：尚无原生线程引用（首轮未完成或历史来自旧版本）。历史记录仍可查看；未发送草稿已保留。</div>
+            <div class="foot"><button class="btn primary" type="button">确认重建…</button><span class="foot">也可另建会话</span></div>
+          </div>
+        </div>
+        <div class="composer disabled"><textarea placeholder="草稿已保留" disabled>先看看这个文件。</textarea><div class="row"><span class="foot">确认后继续</span><button class="send" type="button" disabled>发送</button></div></div>
+      </div>
+      <div class="cap">状态：binding=freshPending；reasonCode=REF_NOT_ESTABLISHED。</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>D · CLI 已结算无引用<small>保留原文案</small></h2>
+    <p class="lead">轮次已结算但引用没有落成（如适配器未回报）；原因与出路保持不变。</p>
+    <div class="canvas">
+      <div class="sidebar">
+        <div class="sb-head"><span class="dot"></span><b>AI 会话 · CLI</b><span class="spacer"></span><span class="pill freshPending">待确认</span></div>
+        <div class="sb-msgs">
+          <div class="msg user"><div class="who">你</div><div class="bubble">继续。</div></div>
+          <div class="msg"><div class="who">系统</div><div class="bubble">上一轮已结束，但没有可续接的线程引用。</div></div>
+        </div>
+        <div class="banner" role="alert">
+          <span class="ico">!</span>
+          <div class="main">
+            <div class="title">上下文待确认重建</div>
+            <div class="reason">原因：引用缺失（历史无原生绑定）。历史记录仍可查看；未发送草稿已保留。</div>
+            <div class="foot"><button class="btn primary" type="button">确认重建…</button></div>
+          </div>
+        </div>
+        <div class="composer disabled"><textarea placeholder="草稿已保留" disabled>继续。</textarea><div class="row"><span class="foot">确认后继续</span><button class="send" type="button" disabled>发送</button></div></div>
+      </div>
+      <div class="cap">状态：binding=freshPending；reasonCode=REF_MISSING（不变）。</div>
+    </div>
+  </section>
+</div>
+
+<div class="legend">
+  <h3>状态与文案对照</h3>
+  <table>
+    <thead><tr><th>场景</th><th>派生状态</th><th>横幅标题</th><th>原因文案</th><th>主按钮</th></tr></thead>
+    <tbody>
+      <tr><td>CLI 有原生引用</td><td><code>native</code></td><td>不显示</td><td>—</td><td>—</td></tr>
+      <tr><td>平台通道（任意轮次）</td><td><code>null</code></td><td>不显示</td><td>—</td><td>—</td></tr>
+      <tr><td>CLI 无 turn 记录、无引用</td><td><code>freshPending</code></td><td>上下文待确认重建</td><td>尚无原生线程引用（首轮未完成或历史来自旧版本）</td><td>确认重建…</td></tr>
+      <tr><td>CLI 已结算、无引用</td><td><code>freshPending</code></td><td>上下文待确认重建</td><td>引用缺失（历史无原生绑定）</td><td>确认重建…</td></tr>
+      <tr><td>明确阻塞</td><td><code>blocked</code></td><td>原线程不可续接，已暂停发送</td><td>既有原因码文案</td><td>重建上下文…</td></tr>
+    </tbody>
+  </table>
+  <p style="margin:10px 0 0;color:var(--muted)">UI-SCROLL-001：本项只涉及横幅显隐与一行文案，不新增滚动容器；侧栏消息区沿用既有按需滚动行为。窄屏 390 下横幅按既有换行规则折行，输入区保持可达。</p>
+</div>
+
+<script>
+document.getElementById('themeBtn').addEventListener('click', () => {
+  const root = document.documentElement;
+  root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+});
+</script>
+</body>
+</html>

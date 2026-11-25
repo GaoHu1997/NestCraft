@@ -4,6 +4,7 @@ import type { ImageGenConfig } from "@/api";
 import { Field, useToast } from "@/components/ui";
 import { errMsg } from "./shared";
 import { SettingsDialog, SettingsIcon, SettingsSwitch } from "./SettingsDialog";
+import "./cr085-models.css";
 
 /**
  * CR-059 G4：生图配置（多模型有序、失败自动顺延、作为 generate_image 工具提供给 AI）。
@@ -49,7 +50,6 @@ export function SettingsImageGen({ onClose, onSaved }: { onClose: () => void; on
 
   return <SettingsDialog
     title="生图配置"
-    subtitle="多模型有序尝试 · 失败自动顺延 · 作为 generate_image 工具提供给 AI"
     busy={busy}
     width={620}
     onClose={onClose}
@@ -59,7 +59,6 @@ export function SettingsImageGen({ onClose, onSaved }: { onClose: () => void; on
     {error && <div className="set-note" role="alert">生图配置读取失败：{error}<button className="btn sm" onClick={load}>重试</button></div>}
     {config && <>
       <div className="row"><b>生图</b><span className="spacer" /><span className="set-caption">{config.enabled ? "已开启 · 工具已注册" : "已关闭 · 工具注销"}</span><SettingsSwitch checked={config.enabled} label="生图总开关" disabled={busy} onChange={enabled => patch({ enabled })} /></div>
-      <p className="set-caption">开启后向 AI 提供 <span className="mono">generate_image</span> 工具（随内置 workbench MCP 注入）；关闭即注销，所有入口拒绝生成。</p>
 
       <div className="set-imagegen-section"><b>生图模型（按顺序尝试，第一个失败自动用下一个）</b>
         <div className="set-imagegen-list">
@@ -89,7 +88,6 @@ export function SettingsImageGen({ onClose, onSaved }: { onClose: () => void; on
         {unused.length > 0 && <div className="set-imagegen-candidates"><span className="set-caption">候选（模态已标生图）：</span>
           {unused.map(c => <button key={c.key} className="set-chip" disabled={busy} title={c.supported ? c.modelId : "Anthropic 端点不提供 images 接口"} onClick={() => patch({ order: [...config.order, c.key] })}>{c.providerName} · {c.displayName}</button>)}
         </div>}
-        <p className="set-caption">失败顺延规则：单模型内先做参数降级（response_format → quality → size → n），仍失败才换下一个模型；鉴权/端点不支持等不可修复错误也继续下一个；全部失败时汇总各模型错误返回 AI。</p>
       </div>
 
       <div className="set-imagegen-section"><b>默认参数</b>
@@ -103,10 +101,8 @@ export function SettingsImageGen({ onClose, onSaved }: { onClose: () => void; on
 
       <div className="set-imagegen-section"><b>输出目录</b>
         <input className="input mono" value={config.outputDir} aria-label="输出目录" onChange={e => patch({ outputDir: e.target.value })} />
-        <p className="set-caption">相对应用数据目录；同名文件永不覆盖（自动加序号后缀）。</p>
       </div>
 
-      <div className="set-note"><SettingsIcon name="info" />协议：OpenAI 兼容 images（/images/generations，参考图走 /images/edits）；响应 b64_json 与 url 都支持。端点与密钥复用所选模型所属供应商的配置，不单独填写。</div>
     </>}
   </SettingsDialog>;
 }

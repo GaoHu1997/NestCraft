@@ -44,3 +44,18 @@ UI代理仅负责当前设计目录中的HTML挂载、独立侧栏脚本/CSS及�
 - [MessageList](../../src/modules/chat/MessageList.tsx) 以用户消息划分轮次，在轮内配对工具，交错结果按原位置展示。单条工具直接使用ToolBlock，连续2条及以上才套工具组details；当前显示降级只取静止、非streaming的真实assistant尾条，error另保留；工作/工具/system尾不向前找正文，不在过程内重复最终copy。已有copy闭包保留且只作用于该目标，绝不由此推导成功或retry/fork授权。完整目标级动作契约见[核对报告](../Test/REPORT-CR076-回复动作契约核对.md)，完整动作仍未接通。命令详情保持完整原始command，并在同一原生details内展示其他输入字段JSON（包括cwd、timeout、env、嵌套对象、数组、false/0/null），不按值过滤。无效JSON保留原文fallback；输出和退出码保持原始结果。内部计划行由视图过滤。滚动采用 [UI-CR049-v1](../UI/文档/UI-CR049-滚动条按需显示.md)。
 
 验证包括生产构建、CLI 合成帧与 SQLite 回读、原生 argv 和临时文件寿命、浏览器交互，以及同场景设计与软件动态对照。回退沿用既有消息表和旧附件兼容路径。
+
+### 2026-11-25 消息呈现纠正
+
+用户以四图明确要求代码先行后回填；本轮只属于FEAT-010，不修改输入运行栏、任务目标或后端。现行视觉见[消息v2](../UI/文档/UI-CR034-会话答复呈现与文件定位.md#2026-11-25-消息呈现-v2)，结果见[报告](../Test/REPORT-CR076-消息呈现纠正.md)。
+
+- [展示规则](../../src/modules/chat/messagePresentation.ts)是无IO、无持久化的纯投影：按明确工具身份分类；按toolId计调用，结果单側不再记执行；仅从输入字段和patch头取得修改文件并做词法去重。不检查磁盘、不从输出猜文件、不编成功。未知和失败保留提示。
+- 原buildBlocks/buildTurns负责真实顺序和紧邻配对，未替换。消息渲染按投影组织语义摘要与原生details；原始工具名、命令、non-command参数、output和exitCode均在原位可展开检查。保留旧附件、引用、文件定位及最终copy目标降级规则。
+- 工作总栏时长使用本轮用户到最后记录的时间跨度；悬停提示说明估算，不代表真实执行耗时。运行计时仅在可见页面开启，同轮用户手动折叠状态保持；没有有效时间值不显示假0秒。
+- [消息局部CSS](../../src/modules/chat/message-zcode.css)只作用chat-zcode-messages，移除旧轨道与彩色标签；正文／摘要分别定义宽窄阅读层级。Markdown仅新增table-scroll原生横向滚动wrapper，保持既有安全过滤和定位。邻接[许可](../../src/modules/chat/message-zcode.LICENSE)／[归属](../../src/modules/chat/message-zcode.NOTICE)保留。
+- 已有消息表、metaJson字段及事件契约复用，**DB无需变更**；本轮不接新权限、队列、任务执行或reply-level重试／分叉。回退限定移除新展示引用和恢复本轮呈现增量，不回退并行输入代码或历史数据。
+- 相关回归为纯展示13项、实际组件展开／折叠／浅深宽窄／交错信息／子智能体身份和实际滚动；完整像素与原生环境仍按报告列未验证，不能降低验收门槛。
+- 2026-11-25 输入菜单增量（对齐 DSH）：`+` 菜单改为「添加/指令」两段紧凑行（图标＋名称＋英文＋右侧说明、当前行高亮）；`+ 文件` 经新增 Rust `pick_local_files`（`OpenFileDialog` 多选、任意类型）取得**绝对路径**并插入输入框，不上传；`目标` 作为 `/goal` 命令插入 `/goal `；`@` 项目文件由 `fsListTree(depth6)` 平铺改为单层 `fsListDir` **逐层进入/返回上级**。数据契约新增只读命令返回 `Vec<String>` 绝对路径（不落盘），无 DB 迁移、无附件上传通道。见[报告](../Test/REPORT-CR076-输入菜单与目录.md)。
+- 2026-11-25 消息呈现增量：Markdown 代码块 DOM 后处理包 `.chat-code-block`（语言标签＋复制＋自动换行）；每轮从改文件类工具输入经 `changedInputPaths` 派生「本轮改动 N 文件」折叠摘要，点击走 `requestLocate`。均前端派生、只读工具输入，无新增数据契约。见[报告](../Test/REPORT-CR076-消息呈现第二批.md)。
+- 2026-11-25 消息呈现第三批（并行）：图片多图画廊（附件预览抽 `ImageGallery`，正文 Markdown 图片复用）；回到底部＋按 sessionKey 的 scrollTop 内存记忆；思考流式单行摘要；`MessageList` 新增可选 `sessionKey/onRetryTurn/onEditUserMessage`；ChatPanel 经既有 `api.chatSend` 实现编辑重发/错误重试（新回合追加，不替换历史），内存队列面板；新增只读 Rust `chat_action_status`（配额/待发/运行时退出无数据源时返回 null，UI 不显示）；`TurnNavigator` 右侧回合导航（接入 MessageList，`data-turn-id`+滚动高亮）。无 DB 迁移、无新依赖。见[报告](../Test/REPORT-CR076-消息呈现第三批-并行.md)。
+- 2026-11-25 未读点修复（B 方案）：`chat.rs` 在轮次结算后写 `session.unread`（成功→success、失败→failed；停止/持久化失败不改写），新增 `apply_session_unread`/`set_session_unread`；`ChatPanel` 正在查看则立即清空为已读；`db.rs` 注释补 success/failed。复用既有 `session.unread` 列，无迁移。见[报告](../Test/REPORT-CR076-会话未读修复.md)。

@@ -4,6 +4,7 @@ import type { ProbeAttribution, ProbeHistoryItem, ProbeItemState, ProbeProgressE
 import { useToast } from "@/components/ui";
 import { SettingsIcon } from "./SettingsDialog";
 import { errMsg } from "./shared";
+import "./cr085-models.css";
 
 // CR-058：模型检测探针（设置左栏「模型检测」页签；r4 十九针，r5 结果区置顶 + 历史改悬浮下拉；r5(CR-058 r5) 增 P20 行为指纹与归因面板）。
 // 固定 20 针、无探针选择入口；端点与密钥取自已保存供应商配置；历史保留最近 10 次。
@@ -263,23 +264,8 @@ export function SettingsModelProbe() {
   const progressPct = Math.round((doneCount / PENDING_SLOTS) * 100);
   const shown = report || viewing;
 
-  // 空闲态：结果区只写「待检测」，高度与进行中/已检测一致，状态切换不引起下方列表跳动。
-  const idleBlock = () => {
-    const target = provider && modelId
-      ? `${provider.name} · ${models.find(m => m.modelId === modelId)?.displayName || modelId}`
-      : provider ? `${provider.name}（未选模型）` : "尚未选择供应商";
-    return <div className="probe-result-top">
-      <span className="probe-result-title">待检测</span>
-      <span className="set-caption probe-result-note">{target}</span>
-    </div>;
-  };
-
   return <section className="set-section probe-section" aria-label="模型检测">
     <div className="probe-head">
-      <div>
-        <h3>模型检测</h3>
-        <p className="set-caption">固定 20 针黑盒探针 · 检测中转掺水（偷换模型 / 吞指令 / 裁历史 / 假流式）· P20 行为指纹给出「最像的已知候选」归因提示 · 结果仅本地展示，不改写配置</p>
-      </div>
       <div className="probe-hist-wrap" ref={historyRef}>
         <button className="btn sm" aria-expanded={historyOpen} onClick={openHistory}>
           <SettingsIcon name="history" />历史记录<SettingsIcon name={historyOpen ? "chevronUp" : "chevronDown"} />
@@ -312,7 +298,7 @@ export function SettingsModelProbe() {
       </select>
       <select className="select" aria-label="选择模型" value={modelId} disabled={!provider || running} onChange={e => { setProviderNotice(""); setModelId(e.target.value); setSlots(freshSlots()); setItems(EMPTY_ITEMS); setReport(null); setViewing(null); }}>
         <option value="" disabled>{provider ? "选择模型" : "先选择供应商"}</option>
-        {models.map(m => <option key={m.modelId} value={m.modelId}>{m.displayName || m.modelId} · {m.modelId}</option>)}
+        {models.map(m => <option key={m.modelId} value={m.modelId}>{m.displayName || m.modelId}</option>)}
       </select>
       <button className="btn sm primary" disabled={!providerId || !modelId || running || providerState === "error"} onClick={() => void run()}>{running ? "检测中…" : "开始检测"}</button>
       {viewing && <button className="btn sm" onClick={() => { setViewing(null); setItems(EMPTY_ITEMS); setSlots(freshSlots()); }}>退出历史回看</button>}
@@ -325,32 +311,19 @@ export function SettingsModelProbe() {
     {blockReason && <p className="set-caption probe-hint">{blockReason}</p>}
 
     {/* 结果区紧贴 20 针列表上方：空闲 → 进行中（进度）→ 完成 / 历史回看 */}
-    <div className={`probe-result ${running ? "running" : shown ? "done" : "idle"}`}>
-      {running && <>
-        <div className="probe-result-top">
-          <span className="probe-result-title">检测中</span>
-          <span className="set-caption probe-result-note">{runningLabel || "正在连接目标网关…"}</span>
-          <span className="probe-count mono">{doneCount}/{PENDING_SLOTS}</span>
-        </div>
-        <div className="probe-progress" role="progressbar" aria-valuemin={0} aria-valuemax={PENDING_SLOTS} aria-valuenow={doneCount}>
-          <span className="probe-progress-fill" style={{ width: `${progressPct}%` }} />
-        </div>
-      </>}
-      {!running && shown && <>
-        <div className="probe-result-top">
-          <span className="probe-result-title">已检测</span>
-          <span className="probe-score"><b>{shown.score}</b><span className="set-caption">/ 100</span></span>
-          <span className={gradeClass(shown.grade)}>{shown.grade}</span>
-          <span className="probe-tags">
-            <span className={`tag ${verdictTone(shown.verdict)}`}>真伪 · {shown.verdict}</span>
-            <span className="tag">渠道 · {shown.channel}</span>
-            <span className="tag">{fmtDuration(shown.durationMs)}</span>
-          </span>
-          {viewing && !report && <span className="tag gray">历史回看 · {fmtTime(viewing.createdAt)}</span>}
-        </div>
-        <p className="set-caption probe-result-summary">{shown.summary}</p>
-      </>}
-      {!running && !shown && idleBlock()}
+    <div className={`probe-result cr085-result ${running ? "running" : shown ? "done" : "idle"}`}>
+      <div className="cr085-result-grid">
+        {[
+          ["状态", running ? "检测中" : shown ? "已检测" : "待检测"],
+          ["评分", !running && shown ? `${shown.score} / 100` : "—"],
+          ["等级", !running && shown ? shown.grade : "—"],
+          ["真伪", !running && shown ? shown.verdict : "—"],
+          ["渠道", !running && shown ? shown.channel : "—"],
+          ["耗时", !running && shown ? fmtDuration(shown.durationMs) : "—"],
+        ].map(([label, value]) => <div key={label}><span className="cr085-result-label">{label}</span><b title={value}>{value}</b></div>)}
+      </div>
+      <div className="cr085-result-summary">{running ? `${runningLabel || "正在连接目标网关…"} · ${doneCount} / ${PENDING_SLOTS}` : shown?.summary || ""}</div>
+      {running && <div className="probe-progress cr085-probe-progress" role="progressbar" aria-valuemin={0} aria-valuemax={PENDING_SLOTS} aria-valuenow={doneCount}><span className="probe-progress-fill" style={{ width: `${progressPct}%` }} /></div>}
     </div>
 
     {/* r5：归因面板仅在完成/历史回看态渲染（待检测与运行中不出现，不影响结果区 108px 固定高度） */}

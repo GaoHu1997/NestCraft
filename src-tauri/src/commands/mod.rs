@@ -4,6 +4,7 @@ pub mod ai_tools;
 pub mod capabilities;
 pub mod dispatch;
 pub mod examples_seed;
+pub mod demo_seed;
 pub mod execution;
 pub mod chat;
 pub mod chat_binding;
@@ -13,6 +14,10 @@ pub mod gitcmd;
 pub mod gitconfig;
 pub mod kb_index;
 pub mod knowledge;
+// CR-092：个人记忆层（数据访问 / 业务 / 工具与命令）
+pub mod memory;
+pub mod memory_store;
+pub mod memory_tools;
 pub mod model_probe;
 pub mod platform_agent;
 pub(crate) mod platform_context;
@@ -29,6 +34,8 @@ pub mod weather;
 // CR-059：内置思考等级知识库（由 scripts/gen-think-kb.mjs 生成）
 pub mod think_kb;
 pub mod sdk;
+// CR-093：AI 本地与联网搜索工具（fs_grep/fs_glob/web_search/web_fetch）
+pub mod search_tools;
 pub mod servers;
 pub mod shell;
 pub mod smoke;

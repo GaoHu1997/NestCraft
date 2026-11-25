@@ -23,6 +23,7 @@ pub fn run() {
                 commands::fs::document::destroyed(window.label());
                 commands::knowledge::performance::close_window(window.label());
                 commands::knowledge::snapshot::close_window(window.label());
+                commands::knowledge::preview::close_window(window.label());
             }
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -36,12 +37,15 @@ pub fn run() {
         })
         .setup(|app| {
             let dir = storage_layout::root().map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
-            // 迁移来源按优先级：上次切换前的数据根 > 系统应用数据目录；move_if_absent 幂等不覆盖。
+            // 迁移来源按优先级：上次切换前的数据根 > 系统应用数据目录；合并式迁移幂等不覆盖。
+            // 启动同步段只迁核心数据（含数据库）；chat/<cli>-profiles 可达数 GB，放后台续传，
+            // 避免跨盘复制阻塞窗口消息循环、被系统判为「未响应」（BUG-001）。
+            let mut deferred = Vec::new();
             if let Some(previous) = storage_layout::previous_root() {
-                if previous != dir { storage_layout::migrate_legacy(&previous, &dir); }
+                if previous != dir { deferred.extend(storage_layout::migrate_on_startup(&previous, &dir)); }
             }
             if let Ok(legacy) = app.path().app_data_dir() {
-                storage_layout::migrate_legacy(&legacy, &dir);
+                deferred.extend(storage_layout::migrate_on_startup(&legacy, &dir));
             }
             for name in storage_layout::CATEGORIES { let _ = std::fs::create_dir_all(dir.join(name)); }
             commands::fs::document::save::initialize_recovery(dir.join("editor"))
@@ -60,12 +64,70 @@ pub fn run() {
                 let _ = std::fs::remove_file(dir.join("db").join("workbench-smoke.db-wal"));
             }
             db::init(&dir.join("db").join(db_file))?;
+            // CR-092：首启幂等创建内置「个人记忆库」（sourceKind='personal-memory'）与 memory/{画像,记忆,日志}。
+            if !smoke {
+                if let Ok(guard) = db::conn() {
+                    if let Some(conn) = guard.as_ref() {
+                        if let Err(error) = commands::memory::ensure_memory_library(conn, &dir) {
+                            eprintln!("[CR-092] 个人记忆库初始化失败：{error}");
+                        }
+                    }
+                }
+            }
             // CR-046：清理上次更新留下的旧版程序与未完成下载；保留已就绪的暂存包。
             updater::cleanup(app.handle());
             commands::sdk::seed_sdk_rows_pub()?;
             // CR-057：首次启动自动安装内置示例（编码 / 办公项目 + 知识库）。
             // 幂等且不覆盖：已安装则跳过；失败只记日志不阻塞启动，下次启动重试。
             // 冒烟模式跳过，保持冒烟库的确定性（冒烟夹具自建）。
+            // CR-089：模型放应用数据目录；缺失则首次启动联网下载（不打进安装包），完成后再建索引。
+            if !smoke {
+                if let Ok(data_dir) = app.path().app_data_dir() {
+                    commands::knowledge::semantic::set_model_root(data_dir.join("semantic-model"));
+                }
+                let semantic_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    use tauri::Emitter;
+                    if !commands::knowledge::semantic::model_available() {
+                        eprintln!("[CR-089] 本地语义模型未安装，开始首次下载（约 41MB）");
+                        let mut progress = |phase: &str, done: u64, total: u64| {
+                            let _ = semantic_handle.emit(
+                                "kb-semantic-progress",
+                                serde_json::json!({ "phase": phase, "done": done, "total": total }),
+                            );
+                        };
+                        let cancel = std::sync::atomic::AtomicBool::new(false);
+                        match commands::knowledge::semantic::install::install_runtime(&mut progress, &cancel) {
+                            Ok(dir) => eprintln!("[CR-089] 模型下载完成：{}", dir.display()),
+                            Err(error) => {
+                                eprintln!("[CR-089] 模型下载失败（检索仅用关键词）：{error}");
+                                let _ = semantic_handle.emit("kb-semantic-error", serde_json::json!({ "error": error }));
+                                return;
+                            }
+                        }
+                    }
+                    let libraries: Vec<String> = match crate::db::conn() {
+                        Ok(guard) => match guard.as_ref() {
+                            Some(conn) => conn.prepare("SELECT id FROM knowledge_library WHERE enabled=1")
+                                .and_then(|mut stmt| stmt.query_map([], |row| row.get::<_, String>(0))
+                                    .and_then(|rows| rows.collect::<Result<Vec<_>, _>>()))
+                                .unwrap_or_default(),
+                            None => Vec::new(),
+                        },
+                        Err(_) => Vec::new(),
+                    };
+                    for library in libraries {
+                        let cancel = std::sync::atomic::AtomicBool::new(false);
+                        let started = std::time::Instant::now();
+                        match commands::knowledge::semantic::rebuild_library_embeddings(&library, &cancel, &|done, total| {
+                            if total > 0 && done % 200 == 0 { eprintln!("[CR-089] 语义索引 {library}: {done}/{total}"); }
+                        }) {
+                            Ok(count) => eprintln!("[CR-089] 语义索引完成 {library}: {count} 块, {}ms", started.elapsed().as_millis()),
+                            Err(error) => eprintln!("[CR-089] 语义索引失败 {library}: {error}"),
+                        }
+                    }
+                });
+            }
             if !smoke {
                 match commands::examples_seed::ensure_seeded(app.handle()) {
                     Ok(report) => {
@@ -74,6 +136,10 @@ pub fn run() {
                         }
                     }
                     Err(error) => eprintln!("examples seed failed: {error}"),
+                }
+                // CR-083：首次启动预置 4 个演示样例项目（对齐项目管理设计稿）。幂等、不复活、不阻塞。
+                if let Err(error) = commands::demo_seed::ensure_seeded(app.handle()) {
+                    eprintln!("demo seed failed: {error}");
                 }
             }
             if smoke {
@@ -96,6 +162,9 @@ pub fn run() {
                 let _ = commands::smoke::seed_live_key_from_env();
                 let _ = commands::smoke::smoke_instrument(app.get_webview_window("main").unwrap());
             }
+            // 窗口与数据库就绪后再做后台续传，避免和启动同步段争 IO。
+            storage_layout::log_startup(&dir, "setup finished; window ready");
+            storage_layout::spawn_deferred_migration(dir.clone(), deferred);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -163,6 +232,11 @@ pub fn run() {
             commands::fs::fs_read_file,
             commands::fs::fs_write_file,
             commands::fs::fs_delete_file,
+            commands::fs::ops::fs_create_file,
+            commands::fs::ops::fs_create_dir,
+            commands::fs::ops::fs_rename,
+            commands::fs::ops::fs_delete_path,
+            commands::fs::ops::fs_path_exists,
             commands::fs::fs_search,
             commands::fs::performance::fs_perf_dir_page,
             commands::fs::performance::fs_perf_search_start,
@@ -181,6 +255,7 @@ pub fn run() {
             commands::fs::document::save::fs_perf_save_release_v2,
             commands::fs::app_data_ensure_dir,
             commands::fs::pick_project_directory,
+            commands::fs::pick_local_files,
             // Git
             commands::gitcmd::git_status,
             commands::gitcmd::git_stage,
@@ -220,6 +295,9 @@ pub fn run() {
             commands::weather::weather_refresh,
             commands::weather::weather_set_enabled,
             commands::providers::provider_save,
+            commands::providers::provider_key_reveal,
+            commands::providers::provider_reorder,
+            commands::providers::provider_models_reorder,
             commands::providers::provider_delete,
             commands::providers::provider_set_disabled,
             commands::providers::model_candidates,
@@ -259,6 +337,11 @@ pub fn run() {
             commands::capabilities::skill_scan_sources,
             commands::capabilities::tool_list,
             commands::capabilities::tool_set_enabled,
+            // CR-093：AI 本地与联网搜索（授权目录 + 联网后端配置）
+            commands::search_tools::search_auth_dirs_get,
+            commands::search_tools::search_auth_dirs_set,
+            commands::search_tools::search_config_get,
+            commands::search_tools::search_config_set,
             commands::capabilities::mcp_list,
             commands::capabilities::mcp_save,
             commands::capabilities::mcp_delete,
@@ -285,6 +368,8 @@ pub fn run() {
             commands::chat::chat_abort,
             commands::chat::chat_status,
             commands::chat::chat_approve_tool,
+            // 待发恢复 / 配额 / 运行时退出横幅（只读）
+            commands::chat::chat_action_status,
             // CR-037：侧栏原生续接——fresh 重建确认
             commands::chat_binding::chat_session_confirm_fresh,
             // 服务器
@@ -341,6 +426,36 @@ pub fn run() {
             commands::knowledge::kb_file_info,
             commands::knowledge::kb_read_file,
             commands::knowledge::kb_export_file,
+            // CR-084 FEAT-009: owner-only PDF ranges and local Office previews.
+            commands::knowledge::preview::kb_preview_open,
+            commands::knowledge::preview::kb_preview_read,
+            commands::knowledge::preview::kb_preview_close,
+            // CR-088 FEAT-009: derived wikilink index, backlinks and rename preview.
+            commands::knowledge::links::kb_links_backlinks,
+            commands::knowledge::links::kb_links_outgoing,
+            commands::knowledge::links::kb_links_resolve,
+            commands::knowledge::links::kb_links_rename_preview,
+            commands::knowledge::links::kb_links_rebuild,
+            // CR-089 FEAT-009: 图谱与内置知识工具（进程内只读）。
+            commands::knowledge::graph::kb_graph,
+            commands::knowledge::tools::kb_tool_search,
+            commands::knowledge::tools::kb_tool_read,
+            commands::knowledge::tools::kb_tool_links,
+            commands::knowledge::tools::kb_tool_graph,
+            commands::knowledge::tools::kb_tool_list,
+            // CR-092 FEAT-026：个人记忆命令（UI 记忆管理界面）
+            commands::memory_tools::memory_list_items,
+            commands::memory_tools::memory_get_item,
+            commands::memory_tools::memory_update_item,
+            commands::memory_tools::memory_delete_item,
+            commands::memory_tools::memory_get_profile,
+            commands::memory_tools::memory_update_profile,
+            commands::memory_tools::memory_stats,
+            commands::memory_tools::memory_ensure_library,
+            commands::memory_tools::memory_resediment_session,
+            // CR-089：语义模型状态与首次下载。
+            commands::knowledge::semantic::install::kb_semantic_model_state,
+            commands::knowledge::semantic::install::kb_semantic_install,
             // CR-055 FEAT-008: owner metadata tasks; not AI mutation tools.
             commands::knowledge::performance::kb_list_children,
             commands::knowledge::performance::kb_scan_start,

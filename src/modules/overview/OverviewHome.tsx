@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as api from "@/api";
 import { Icon } from "@/components/icons";
 import { Empty } from "@/components/ui";
@@ -6,9 +6,10 @@ import { dayInfo, isoWeek, pad2, sameDay, termOf, ymd } from "./calendar";
 import { UsageTab } from "./UsageTab";
 import "./overview.css";
 
-/* CR-078 / UI-CR078-v3：概览页 = 日程 / 用量 两个 Tab。
-   视觉与交互以 UI-CR078-v3 设计稿为准（docs/UI/workbench-v4/cr078.js）；
-   类名前缀 ov-（设计稿为 c078-），结构一致。 */
+/* CR-078 / UI-CR078-v8：概览页 = 日程 / 用量 两个 Tab。
+   视觉与交互以 UI-CR078-v8 设计稿为准（docs/UI/workbench-v4/cr078.js）；
+   类名前缀 ov-（设计稿为 c078-），结构一致。v8：移除天气与右侧日程新建，
+   日期详情改为参考图头部（竖排宜忌 + 大号公历日/农历/干支），选中描边独立覆盖日程条带。 */
 
 const EV_COLORS = ["blue", "green", "amber", "violet", "rose"] as const;
 
@@ -84,74 +85,10 @@ export function OverviewHome() {
 
 /* ==================== 日程 Tab ==================== */
 
-function WeatherBar() {
-  const [wx, setWx] = useState<api.WeatherResult | null>(null);
-  const [loading, setLoading] = useState(true);
-  const load = (refresh = false) => {
-    setLoading(true);
-    (refresh ? api.weatherRefresh() : api.weatherCurrent())
-      .then(setWx)
-      .catch(() => setWx({ kind: "unavailable", reason: "读取失败" }))
-      .finally(() => setLoading(false));
-  };
-  useEffect(() => { load(false); }, []);
-  const fmtTime = (ms: number) => { const d = new Date(ms); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
-  if (loading && !wx) {
-    return (
-      <div className="ov-day-h ov-weather" role="group" aria-label="当前位置天气">
-        <span className="ov-wx-ico is-muted"><Icon name="cloud" size={24} /></span>
-        <div className="ov-wx-main"><span className="ov-wx-text is-muted">读取中…</span></div>
-      </div>
-    );
-  }
-  if (!wx || wx.kind === "unavailable") {
-    return (
-      <div className="ov-day-h ov-weather" role="group" aria-label="当前位置天气">
-        <span className="ov-wx-ico is-muted"><Icon name="cloud" size={24} /></span>
-        <div className="ov-wx-main"><b className="is-dash">—</b><span className="ov-wx-text is-muted">天气不可用</span></div>
-        <div className="ov-wx-meta"><span>{wx?.kind === "unavailable" ? "无网络或定位失败" : ""}</span>
-          <span className="ov-wx-note"><button className="ov-wx-retry" type="button" onClick={() => load(true)}>重试</button></span></div>
-      </div>
-    );
-  }
-  if (wx.kind === "disabled") {
-    return (
-      <div className="ov-day-h ov-weather" role="group" aria-label="当前位置天气">
-        <span className="ov-wx-ico is-muted"><Icon name="cloud" size={24} /></span>
-        <div className="ov-wx-main"><b className="is-dash">—</b><span className="ov-wx-text is-muted">天气已关闭</span></div>
-        <div className="ov-wx-meta"><span>设置 · 通用 · 天气</span></div>
-      </div>
-    );
-  }
-  const w = wx.weather;
-  return (
-    <div className="ov-day-h ov-weather" role="group" aria-label="当前位置天气" title={w.degraded ?? undefined}>
-      <span className={`ov-wx-ico ${w.cached ? "is-muted" : ""}`}><WeatherGlyph code={w.code} /></span>
-      <div className="ov-wx-main"><b>{Math.round(w.temp)}°</b><span className="ov-wx-text">{w.text}</span></div>
-      <div className="ov-wx-meta">
-        <span className="ov-wx-loc"><Icon name="globe" size={12} />{w.city}</span>
-        <span>{Math.round(w.low)}° / {Math.round(w.high)}°</span>
-        <span className="ov-wx-note">{w.degraded ?? `更新 ${fmtTime(w.updatedAt)}`}</span>
-      </div>
-    </div>
-  );
-}
+const LUNAR_MONTHS = ["正", "二", "三", "四", "五", "六", "七", "八", "九", "十", "冬", "腊"];
+const LUNAR_DAYS = ["初一", "初二", "初三", "初四", "初五", "初六", "初七", "初八", "初九", "初十", "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十", "廿一", "廿二", "廿三", "廿四", "廿五", "廿六", "廿七", "廿八", "廿九", "三十"];
 
-const WX_GLYPH: Record<string, string> = {
-  sunny: "M12 7.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9zM12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6",
-  cloudy: "M7 18h10a4 4 0 0 0 .5-8 5.5 5.5 0 0 0-10.6 1.4A3.3 3.3 0 0 0 7 18z",
-  overcast: "M6 17h12a3.5 3.5 0 0 0 .3-7 6 6 0 0 0-11.4 1.2A3 3 0 0 0 6 17zM8 20h8",
-  rain: "M7 15h10a4 4 0 0 0 .5-8 5.5 5.5 0 0 0-10.6 1.4A3.3 3.3 0 0 0 7 15zM9 18l-1 2.5M13 18l-1 2.5M17 18l-1 2.5",
-  snow: "M7 15h10a4 4 0 0 0 .5-8 5.5 5.5 0 0 0-10.6 1.4A3.3 3.3 0 0 0 7 15zM9 19h.01M13 21h.01M17 19h.01",
-  storm: "M7 14h10a4 4 0 0 0 .5-8 5.5 5.5 0 0 0-10.6 1.4A3.3 3.3 0 0 0 7 14zM13 15l-2 3.5h3l-2 3.5",
-};
-function WeatherGlyph({ code }: { code: string }) {
-  return (
-    <svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d={WX_GLYPH[code] ?? WX_GLYPH.cloudy} />
-    </svg>
-  );
-}
+function almTerms(v: string): string[] { return (v || "—").split(/[、\s]+/).filter(Boolean); }
 
 function ScheduleTab() {
   const [view, setView] = useState(() => { const n = new Date(); return `${n.getFullYear()}-${pad2(n.getMonth() + 1)}`; });
@@ -159,11 +96,31 @@ function ScheduleTab() {
   const [dayTab, setDayTab] = useState<"events" | "todo">("events");
   const [events, setEvents] = useState<api.ScheduleEvent[]>([]);
   const [todos, setTodos] = useState<api.ScheduleTodo[]>([]);
-  const [form, setForm] = useState<{ start: string; end: string } | null>(null);
+  const [form, setForm] = useState<{
+    id?: string; start: string; end: string; title?: string; allDay?: boolean;
+    startTime?: string; endTime?: string; color?: string; note?: string;
+  } | null>(null);
   const [formErr, setFormErr] = useState("");
+  const [editingTodoId, setEditingTodoId] = useState<string | null>(null);
+  const todoCancelRef = useRef(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerYear, setPickerYear] = useState(() => new Date().getFullYear());
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setPickerOpen(false); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [pickerOpen]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const range = useMemo(() => monthRange(view), [view]);
+
+  /* v6：新建与编辑共用同一弹窗；编辑时回填原日程并以同一 id 保存（后端 save_event 按 id upsert）。 */
+  const openNew = (start: string, end: string = start) => { setFormErr(""); setForm({ start, end }); };
+  const openEdit = (e: api.ScheduleEvent) => {
+    setFormErr("");
+    setForm({ id: e.id, start: e.startDate, end: e.endDate, title: e.title, allDay: e.allDay, startTime: e.startTime, endTime: e.endTime, color: e.color, note: e.note });
+  };
 
   const reload = () => {
     setLoading(true);
@@ -192,7 +149,7 @@ function ScheduleTab() {
     const note = String(fd.get("note") ?? "").trim();
     const startTime = allDay ? "" : String(fd.get("startTime") ?? "");
     const endTime = allDay ? "" : String(fd.get("endTime") ?? "");
-    api.scheduleEventSave({ id: `ev_${Date.now()}`, title, startDate: start, endDate: end, allDay, startTime, endTime, note, color, createdAt: 0, updatedAt: 0 })
+    api.scheduleEventSave({ id: form?.id ?? `ev_${Date.now()}`, title, startDate: start, endDate: end, allDay, startTime, endTime, note, color, createdAt: 0, updatedAt: 0 })
       .then(() => { setForm(null); setFormErr(""); reload(); })
       .catch((err) => setFormErr(String(err instanceof Error ? err.message : err)));
   };
@@ -207,6 +164,15 @@ function ScheduleTab() {
   };
   const toggleTodo = (t: api.ScheduleTodo) => {
     api.scheduleTodoSave({ ...t, done: !t.done }).then(() => reload()).catch(() => {});
+  };
+  /* v6：待办行内编辑（Enter / 失焦保存，Esc 取消；空值不覆盖）。 */
+  const beginEditTodo = (id: string) => { todoCancelRef.current = false; setEditingTodoId(id); };
+  const commitTodo = (t: api.ScheduleTodo, title: string) => {
+    setEditingTodoId(null);
+    if (todoCancelRef.current) { todoCancelRef.current = false; return; }
+    const v = title.trim();
+    if (!v || v === t.title) return;
+    api.scheduleTodoSave({ ...t, title: v }).then(() => reload()).catch((err) => setError(String(err instanceof Error ? err.message : err)));
   };
   const deleteEvent = (ev: api.ScheduleEvent) => {
     if (!window.confirm(`删除日程「${ev.title}」？此操作不可撤销。`)) return;
@@ -223,17 +189,43 @@ function ScheduleTab() {
     <div className="ov-schedule">
       <section className="card ov-cal-card" aria-label="月日历">
         <div className="ov-cal-h">
-          <div className="row">
-            <button className="btn icon sm" aria-label="上一年" onClick={() => shift(-12)}><Icon name="chevronLeft" size={14} /><Icon name="chevronLeft" size={14} /></button>
-            <button className="btn icon sm" aria-label="上月" onClick={() => shift(-1)}><Icon name="chevronLeft" size={14} /></button>
-            <b className="ov-cal-title">{range.first.getFullYear()}年{range.first.getMonth() + 1}月</b>
-            <button className="btn icon sm" aria-label="下月" onClick={() => shift(1)}><Icon name="chevronRight" size={14} /></button>
-            <button className="btn icon sm" aria-label="下一年" onClick={() => shift(12)}><Icon name="chevronRight" size={14} /><Icon name="chevronRight" size={14} /></button>
-            <button className="btn sm" onClick={goToday}>本月</button>
+          <div className="ov-cal-nav">
+            <button className="ov-nav-btn" aria-label="上一年" title="上一年" onClick={() => shift(-12)}>«</button>
+            <button className="ov-nav-btn" aria-label="上月" title="上月" onClick={() => shift(-1)}>‹</button>
+            <button className={`ov-cal-title ${pickerOpen ? "open" : ""}`} aria-haspopup="true" aria-expanded={pickerOpen} onClick={() => { setPickerYear(range.first.getFullYear()); setPickerOpen((v) => !v); }}>
+              {range.first.getFullYear()}年{range.first.getMonth() + 1}月
+            </button>
+            <button className="ov-nav-btn" aria-label="下月" title="下月" onClick={() => shift(1)}>›</button>
+            <button className="ov-nav-btn" aria-label="下一年" title="下一年" onClick={() => shift(12)}>»</button>
+            <button className="btn sm ov-today-btn" onClick={() => { setPickerOpen(false); goToday(); }}>今天</button>
           </div>
-          <button className="btn primary sm" onClick={() => { setFormErr(""); setForm({ start: selected, end: selected }); }}>
+          <button className="btn primary sm" onClick={() => openNew(selected)}>
             <Icon name="plus" size={14} />新建日程
           </button>
+          {pickerOpen && (
+            <>
+              <div className="ov-picker-mask" onClick={() => setPickerOpen(false)} />
+              <div className="ov-picker" role="dialog" aria-label="选择年月">
+                <div className="ov-picker-h">
+                  <button className="ov-nav-btn" aria-label="上一年" onClick={() => setPickerYear((y) => y - 1)}>‹</button>
+                  <b>{pickerYear}年</b>
+                  <button className="ov-nav-btn" aria-label="下一年" onClick={() => setPickerYear((y) => y + 1)}>›</button>
+                </div>
+                <div className="ov-picker-grid">
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map((mm) => {
+                    const now = new Date();
+                    const active = pickerYear === range.first.getFullYear() && mm === range.first.getMonth() + 1;
+                    const current = pickerYear === now.getFullYear() && mm === now.getMonth() + 1;
+                    return (
+                      <button key={mm} className={active ? "is-active" : current ? "is-current" : ""} onClick={() => { setView(`${pickerYear}-${pad2(mm)}`); setPickerOpen(false); }}>
+                        {mm}月
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          )}
         </div>
         <div className="ov-cal-grid" role="grid" aria-rowcount={7} aria-colcount={8}>
           <div className="ov-cal-wh" role="columnheader">周</div>
@@ -273,18 +265,22 @@ function ScheduleTab() {
                       <button
                         className="ov-cell-add"
                         aria-label={`在 ${k} 新建日程`}
-                        onClick={(e) => { e.stopPropagation(); setFormErr(""); setForm({ start: k, end: k }); }}
+                        onClick={(e) => { e.stopPropagation(); openNew(k); }}
                       ><Icon name="plus" size={12} /></button>
                     </div>
                   );
                 })}
-                <div className="ov-week-lanes" aria-hidden="true">
+                <div className="ov-week-lanes">
                   {shown.map((s) => (
                     <span
                       key={s.e.id + s.from}
                       className={`ov-band c-${s.e.color} ${s.head ? "head" : ""} ${s.tail ? "tail" : ""}`}
                       style={{ ["--from" as string]: String(s.from), ["--span" as string]: String(s.to - s.from + 1), ["--lane" as string]: String(s.lane) }}
-                      title={`${s.e.title} · ${s.e.startDate}${s.e.startDate !== s.e.endDate ? " 至 " + s.e.endDate : ""}`}
+                      title={`${s.e.title} · ${s.e.startDate}${s.e.startDate !== s.e.endDate ? " 至 " + s.e.endDate : ""}（点击编辑）`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => { const ev = events.find((x) => x.id === s.e.id); if (ev) openEdit(ev); }}
+                      onKeyDown={(e) => { if (e.key === "Enter") { const ev = events.find((x) => x.id === s.e.id); if (ev) openEdit(ev); } }}
                     >
                       {s.head || s.to - s.from < 2 ? s.e.title : ""}
                     </span>
@@ -302,23 +298,19 @@ function ScheduleTab() {
       </section>
 
       <aside className="card ov-day" aria-label="日期详情">
-        <WeatherBar />
         <div className="ov-day-b">
-          <div className="ov-day-title"><h3>{selected}</h3><span className="tag blue">{dayTone}</span></div>
-          <div className="ov-almanac">
-            <div className="ov-alm-row"><span>农历</span><b>{selInfo.lunar.leap ? "闰" : ""}{["正","二","三","四","五","六","七","八","九","十","十一","十二"][selInfo.lunar.lm - 1]}月{["初一","初二","初三","初四","初五","初六","初七","初八","初九","初十","十一","十二","十三","十四","十五","十六","十七","十八","十九","二十","廿一","廿二","廿三","廿四","廿五","廿六","廿七","廿八","廿九","三十"][selInfo.lunar.ld - 1]}</b></div>
-            <div className="ov-alm-row"><span>干支</span><b>{selInfo.gz.year}年 {selInfo.gz.month}月 {selInfo.gz.day}日</b></div>
-            <div className="ov-alm-row"><span>生肖</span><b>{selInfo.gz.zodiac}</b></div>
-            <div className="ov-alm-row"><span>值日</span><b>{selInfo.gz.value}日</b></div>
-            {selInfo.festivals.length > 0 && (
-              <div className="ov-alm-row"><span>节日</span><b>{selInfo.festivals.map((f) => <span key={f.name} className={`ov-fest is-${f.kind}`}>{f.name}</span>)}</b></div>
-            )}
-            {selInfo.workOff && <div className="ov-alm-row"><span>调休</span><b><span className="ov-off">{selInfo.workOff}</span></b></div>}
+          <div className="ov-date-header" aria-label="所选日期黄历">
             <div className="ov-alm-yj">
-              <div><span>宜</span><p>{selInfo.good || "—"}</p></div>
-              <div><span>忌</span><p>{selInfo.bad || "—"}</p></div>
+              <div><span>宜</span><p title={selInfo.good || "—"}>{almTerms(selInfo.good).map((t, i) => <i key={i}>{t}</i>)}</p></div>
+              <div><span>忌</span><p title={selInfo.bad || "—"}>{almTerms(selInfo.bad).map((t, i) => <i key={i}>{t}</i>)}</p></div>
+            </div>
+            <div className="ov-date-main">
+              <span className="ov-date-number">{selDate.getDate()}</span>
+              <b className="ov-date-lunar">{selInfo.lunar.leap ? "闰" : ""}{LUNAR_MONTHS[selInfo.lunar.lm - 1]}月{LUNAR_DAYS[selInfo.lunar.ld - 1]}</b>
+              <span className="ov-date-cycle">{selInfo.gz.year}{selInfo.gz.zodiac}年 {selInfo.gz.month}月 {selInfo.gz.day}日</span>
             </div>
           </div>
+          <div className="ov-date-notes"><time dateTime={selected}>{selected}</time><span className="tag blue">{dayTone}</span><span>{selInfo.gz.value}日</span>{selInfo.festivals.map((f, i) => <span key={i} className={`ov-fest is-${f.kind}`}>{f.name}</span>)}{selInfo.workOff && <span className="ov-off">{selInfo.workOff}</span>}</div>
           <div className="ov-day-tabs" role="tablist" aria-label="当天事项">
             <button className={`ov-day-tab ${dayTab === "events" ? "active" : ""}`} role="tab" aria-selected={dayTab === "events"} onClick={() => setDayTab("events")}>
               <Icon name="calendar" size={14} />日程 <span>{eventsOn.length}</span>
@@ -326,11 +318,6 @@ function ScheduleTab() {
             <button className={`ov-day-tab ${dayTab === "todo" ? "active" : ""}`} role="tab" aria-selected={dayTab === "todo"} onClick={() => setDayTab("todo")}>
               <Icon name="check" size={14} />待办 <span>{todos.filter((t) => !t.done).length}</span>
             </button>
-            {dayTab === "events" && (
-              <button className="btn xs ov-day-add" onClick={() => { setFormErr(""); setForm({ start: selected, end: selected }); }}>
-                <Icon name="plus" size={12} />新增
-              </button>
-            )}
           </div>
           {error && <div className="nc-error" role="alert">{error}</div>}
           {dayTab === "events" ? (
@@ -344,6 +331,7 @@ function ScheduleTab() {
                       <b>{e.title}</b>
                       <small>{e.allDay ? "全天" : `${e.startTime} – ${e.endTime}`}{e.startDate !== e.endDate ? ` · ${e.startDate} 至 ${e.endDate}` : ""}{e.note ? ` · ${e.note}` : ""}</small>
                     </span>
+                    <button className="ov-ev-edit" aria-label={`编辑日程 ${e.title}`} onClick={() => openEdit(e)}><Icon name="edit" size={12} /></button>
                     <button className="ov-ev-del" aria-label={`删除日程 ${e.title}`} onClick={() => deleteEvent(e)}><Icon name="trash" size={12} /></button>
                   </div>
                 ))}
@@ -354,10 +342,28 @@ function ScheduleTab() {
                 {todos.length === 0
                   ? <Empty title={loading ? "加载中…" : "没有待办"} />
                   : todos.map((t) => (
-                    <label key={t.id} className={`ov-todo ${t.done ? "done" : ""}`}>
+                    <div key={t.id} className={`ov-todo ${t.done ? "done" : ""}`}>
                       <input type="checkbox" checked={t.done} onChange={() => toggleTodo(t)} />
-                      <span>{t.title}</span>
-                    </label>
+                      {editingTodoId === t.id ? (
+                        <input
+                          className="input ov-todo-edit"
+                          autoFocus
+                          defaultValue={t.title}
+                          maxLength={80}
+                          aria-label="编辑待办"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
+                            else if (e.key === "Escape") { todoCancelRef.current = true; e.currentTarget.blur(); }
+                          }}
+                          onBlur={(e) => commitTodo(t, e.target.value)}
+                        />
+                      ) : (
+                        <>
+                          <span className="ov-todo-text">{t.title}</span>
+                          <button className="ov-todo-edit-btn" aria-label={`编辑待办 ${t.title}`} onClick={() => beginEditTodo(t.id)}><Icon name="edit" size={12} /></button>
+                        </>
+                      )}
+                    </div>
                   ))}
               </div>
               <form className="ov-todo-new" onSubmit={addTodo}>
@@ -371,10 +377,10 @@ function ScheduleTab() {
 
       {form && (
         <div className="ov-form-mask" onClick={() => setForm(null)}>
-          <div className="ov-form card" role="dialog" aria-modal="true" aria-label="新建日程" onClick={(e) => e.stopPropagation()}>
-            <div className="card-h"><h3>新建日程</h3><button className="btn icon sm" aria-label="关闭" onClick={() => setForm(null)}><Icon name="close" size={14} /></button></div>
+          <div className="ov-form card" role="dialog" aria-modal="true" aria-label={form.id ? "编辑日程" : "新建日程"} onClick={(e) => e.stopPropagation()}>
+            <div className="card-h"><h3>{form.id ? "编辑日程" : "新建日程"}</h3><button className="btn icon sm" aria-label="关闭" onClick={() => setForm(null)}><Icon name="close" size={14} /></button></div>
             <form className="ov-form-b" onSubmit={saveEvent}>
-              <label className="ov-f-row"><span>标题</span><input className="input" name="title" maxLength={80} required autoFocus placeholder="日程标题" /></label>
+              <label className="ov-f-row"><span>标题</span><input className="input" name="title" maxLength={80} required autoFocus defaultValue={form.title ?? ""} placeholder="日程标题" /></label>
               <div className="ov-f-row"><span>日期</span>
                 <div className="row">
                   <input className="input" name="start" type="date" defaultValue={form.start} required />
@@ -384,21 +390,21 @@ function ScheduleTab() {
               </div>
               <div className="ov-f-row"><span>时间</span>
                 <div className="row wrap">
-                  <label className="ov-radio"><input type="radio" name="allday" value="1" defaultChecked />全天</label>
-                  <label className="ov-radio"><input type="radio" name="allday" value="0" />具体时间</label>
-                  <TimeInputs />
+                  <label className="ov-radio"><input type="radio" name="allday" value="1" defaultChecked={form.allDay !== false} />全天</label>
+                  <label className="ov-radio"><input type="radio" name="allday" value="0" defaultChecked={form.allDay === false} />具体时间</label>
+                  <TimeInputs allDay={form.allDay !== false} startTime={form.startTime} endTime={form.endTime} />
                 </div>
               </div>
               <div className="ov-f-row"><span>颜色</span>
                 <div className="ov-swatches" role="radiogroup" aria-label="颜色">
                   {EV_COLORS.map((c, i) => (
                     <label key={c} className={`ov-sw c-${c}`} title={c}>
-                      <input type="radio" name="color" value={c} defaultChecked={i === 0} /><i />
+                      <input type="radio" name="color" value={c} defaultChecked={form.color ? c === form.color : i === 0} /><i />
                     </label>
                   ))}
                 </div>
               </div>
-              <label className="ov-f-row"><span>备注</span><textarea className="input textarea" name="note" rows={2} maxLength={200} placeholder="可选" /></label>
+              <label className="ov-f-row"><span>备注</span><textarea className="input textarea" name="note" rows={2} maxLength={200} defaultValue={form.note ?? ""} placeholder="可选" /></label>
               {formErr && <p className="ov-form-err" role="alert">{formErr}</p>}
               <div className="row between">
                 <span className="caption">保存后立即出现在月历</span>
@@ -415,9 +421,9 @@ function ScheduleTab() {
   );
 }
 
-/** 具体时间输入：随「全天 / 具体时间」单选启用。 */
-function TimeInputs() {
-  const [allDay, setAllDay] = useState(true);
+/** 具体时间输入：随「全天 / 具体时间」单选启用；编辑时回填原时间。 */
+function TimeInputs({ allDay: initialAllDay = true, startTime, endTime }: { allDay?: boolean; startTime?: string; endTime?: string }) {
+  const [allDay, setAllDay] = useState(initialAllDay);
   useEffect(() => {
     const handler = (e: Event) => {
       const v = (e.target as HTMLInputElement).value;
@@ -428,9 +434,9 @@ function TimeInputs() {
   }, []);
   return (
     <>
-      <input className="input ov-time" name="startTime" type="time" defaultValue="09:00" disabled={allDay} />
+      <input className="input ov-time" name="startTime" type="time" defaultValue={startTime || "09:00"} disabled={allDay} />
       <span className="muted">–</span>
-      <input className="input ov-time" name="endTime" type="time" defaultValue="10:00" disabled={allDay} />
+      <input className="input ov-time" name="endTime" type="time" defaultValue={endTime || "10:00"} disabled={allDay} />
     </>
   );
 }

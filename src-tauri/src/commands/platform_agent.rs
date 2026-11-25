@@ -60,6 +60,21 @@ pub(crate) struct ToolCall {
     pub arguments: String,
 }
 
+/// CR-086：平台 runtime 可见的工具。内置目录、MCP 缓存工具与技能读取共用同一形态，
+/// 名称是运行时字符串（MCP 工具名由服务器与工具名拼成），因此不沿用静态 ToolDef。
+#[derive(Clone)]
+pub(crate) struct PlatformTool {
+    pub name: String,
+    pub description: String,
+    pub schema: Value,
+}
+
+impl From<crate::commands::ai_tools::ToolDef> for PlatformTool {
+    fn from(d: crate::commands::ai_tools::ToolDef) -> Self {
+        Self { name: d.name.to_string(), description: d.description.to_string(), schema: d.schema }
+    }
+}
+
 /// 对话消息（含工具角色）。
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) enum ChatMsg {
@@ -167,7 +182,7 @@ pub(crate) fn build_platform_body(
     effort: Option<&str>,
     effort_map: &EffortMap,
     messages: &[ChatMsg],
-    tools: &[crate::commands::ai_tools::ToolDef],
+    tools: &[PlatformTool],
     stream: bool,
 ) -> Result<Value, String> {
     let mut body = match protocol {
@@ -507,8 +522,9 @@ pub(crate) fn parse_stream_lines(
 // 发送分派与单轮执行（LLD-CR069 §4）
 // ---------------------------------------------------------------------------
 
-/// CR-069：平台主代理可见工具。此清单是唯一来源；模型无法扩展。
-/// 首版 13 项：dispatch_work 随 STORY-091 灰度，不在本清单（LLD §5.1）。
+/// CR-069 首版 13 项基线（历史）。CR-086 起平台 runtime 直接使用工作台工具目录全部启用项，
+/// 并追加 MCP 缓存工具与技能读取；本常量仅保留给历史测试断言，不再参与可见性过滤。
+#[allow(dead_code)]
 pub(crate) const PLATFORM_TOOL_ALLOWLIST: [&str; 13] = [
     "get_context",
     "list_projects",
@@ -551,15 +567,45 @@ fn business_tools_enabled(conn: &rusqlite::Connection)->bool {
     crate::commands::dispatch::ai_tools_enabled_from_setting(value.flatten())
 }
 
-/// 生成模型可见工具定义：白名单 ∩ 当前 capability 启用集（每轮重读）。
-fn platform_tool_defs(conn: &rusqlite::Connection) -> Vec<crate::commands::ai_tools::ToolDef> {
-    if !business_tools_enabled(conn) {return Vec::new();}
-    crate::commands::ai_tools::workbench_tools()
-        .into_iter()
-        .filter(|d| PLATFORM_TOOL_ALLOWLIST.contains(&d.name))
-        .filter(|d| crate::commands::ai_tools::tool_enabled(conn, d.registry_id))
-        .collect()
+/// CR-086：MCP 工具名 `mcp__<server>__<tool>`，server 名净化到可作函数名的字符集。
+fn mcp_tool_name(server_name: &str, tool: &str) -> String {
+    let safe: String = server_name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .collect();
+    format!("mcp__{}__{}", safe, tool)
 }
+
+/// 生成模型可见工具定义（每轮重读）：工作台目录全部启用项 + MCP 缓存工具 + 技能读取。
+/// CR-086：不再按固定白名单过滤——平台持有的能力与 CLI 通道同源。
+fn platform_tool_defs(conn: &rusqlite::Connection) -> Vec<PlatformTool> {
+    if !business_tools_enabled(conn) {return Vec::new();}
+    let mut defs: Vec<PlatformTool> = crate::commands::ai_tools::workbench_tools()
+        .into_iter()
+        .filter(|d| crate::commands::ai_tools::tool_enabled(conn, d.registry_id))
+        .map(PlatformTool::from)
+        .collect();
+    for cached in crate::commands::capabilities::mcp_cached_tools(conn) {
+        defs.push(PlatformTool {
+            name: mcp_tool_name(&cached.server_name, &cached.name),
+            description: format!("[MCP {}] {}", cached.server_name, cached.description.unwrap_or_default()),
+            schema: cached
+                .input_schema
+                .unwrap_or_else(|| json!({"type": "object", "additionalProperties": true})),
+        });
+    }
+    defs
+}
+
+/// CR-086：把平台工具名解析回 MCP 服务器与原始工具名。
+fn resolve_mcp_tool(conn: &rusqlite::Connection, full_name: &str) -> Option<(String, String)> {
+    crate::commands::capabilities::mcp_cached_tools(conn)
+        .into_iter()
+        .find(|t| mcp_tool_name(&t.server_name, &t.name) == full_name)
+        .map(|t| (t.server_id, t.name))
+}
+
+
 
 struct ToolOutcome {
     content: String,
@@ -684,7 +730,7 @@ pub async fn send_platform(app: tauri::AppHandle,payload: SendPayload,channel: t
         let guard=crate::db::conn()?;let conn=guard.as_ref().ok_or("db not initialized")?;
         (resolve_platform_turn(conn,&app,&session)?,context_runtime::Prepared::load(conn,session.clone(),prompt)?,platform_tool_defs(conn))
     };
-    defs.extend(crate::commands::platform_context::tool_defs());
+    defs.extend(crate::commands::platform_context::tool_defs().into_iter().map(PlatformTool::from));
     let data_dir=crate::storage_layout::root().map_err(|e| e.to_string())?;
     if let Err(error)=context_runtime::prepare(&turn,&mut prepared,&defs,&abort).await {
         send_usage(&channel,prepared.usage);
@@ -696,12 +742,14 @@ pub async fn send_platform(app: tauri::AppHandle,payload: SendPayload,channel: t
     }
     let ctx=crate::commands::ai_tools::ToolContext {project_id:session.project_id.clone(),data_dir,execution_feature_id:session.feature_id.clone()};
     let _=channel.send(json!({"type":"sessionStats","sessionId":session.id}));
+    // CR-086：MCP 调用需要 AppHandle（HTTP 凭据与进程解析），在 spawn 前克隆。
+    let app_for_tools=app.clone();
     tokio::spawn(async move {
         let mut messages=prepared.messages();
         prepared.base_len=messages.len();
         let mut outcome=StreamOutcome::default();
         outcome.usage=prepared.usage;
-        let result=run_tool_loop_context(&turn,&ctx,&mut messages,&channel,&abort,&mut outcome,Some(&mut prepared)).await;
+        let result=run_tool_loop_context(&turn,&ctx,&mut messages,&channel,&abort,&mut outcome,Some(&mut prepared),Some(&app_for_tools)).await;
         if let Err(error)=&result {close_pending_pairs(&mut messages,&mut outcome,error);}
         let persist={
             match crate::db::conn() {
@@ -730,7 +778,7 @@ fn send_usage(channel: &tauri::ipc::Channel<Value>,usage: Option<(i64,i64,i64)>)
     if let Some((i,o,c))=usage {let _=channel.send(json!({"type":"usage","inputTokens":i,"outputTokens":o,"cacheReadTokens":c}));}
 }
 
-fn budgeted_body(turn: &PlatformTurn, messages: &[ChatMsg], defs: &[crate::commands::ai_tools::ToolDef],
+fn budgeted_body(turn: &PlatformTurn, messages: &[ChatMsg], defs: &[PlatformTool],
     budget: &crate::commands::platform_context::ContextBudget) -> Result<Value,String> {
     // Anthropic必须回放合法input对象；非法原参数仍保存在tool_use与错误结果中。
     let mut wire=messages.to_vec();
@@ -771,7 +819,7 @@ async fn wait_for_abort(rx: &mut tokio::sync::watch::Receiver<bool>) {
 }
 
 /// 阻塞读取只更新内存；取消时封闭Channel，后台读超时后退出，不再写DB或发事件。
-async fn request_model_captured(turn: &PlatformTurn, messages: &[ChatMsg], defs: &[crate::commands::ai_tools::ToolDef],
+async fn request_model_captured(turn: &PlatformTurn, messages: &[ChatMsg], defs: &[PlatformTool],
     channel: Option<&tauri::ipc::Channel<Value>>, abort: &tokio::sync::watch::Receiver<bool>,
     budget: &crate::commands::platform_context::ContextBudget) -> Result<ModelReply,ModelFailure> {
     let body=budgeted_body(turn,messages,defs,budget).and_then(|b|{budget.check(&b)?;Ok(b)});
@@ -886,7 +934,7 @@ async fn request_model_captured(turn: &PlatformTurn, messages: &[ChatMsg], defs:
 }
 
 /// 保留客户端测试入口；生产调用显式传模型预算。
-async fn request_model(turn: &PlatformTurn,messages: &[ChatMsg],defs: &[crate::commands::ai_tools::ToolDef],
+async fn request_model(turn: &PlatformTurn,messages: &[ChatMsg],defs: &[PlatformTool],
     channel: &tauri::ipc::Channel<Value>,abort: &tokio::sync::watch::Receiver<bool>) -> Result<ModelReply,String> {
     request_model_captured(turn,messages,defs,Some(channel),abort,&crate::commands::platform_context::ContextBudget::from_model(None,None))
         .await.map_err(|f|f.message)
@@ -895,7 +943,7 @@ async fn request_model(turn: &PlatformTurn,messages: &[ChatMsg],defs: &[crate::c
 /// 工具循环入口保留既有行为测试；生产平台轮次使用带上下文的同一实现。
 async fn run_tool_loop(turn: &PlatformTurn,ctx: &crate::commands::ai_tools::ToolContext,messages: &mut Vec<ChatMsg>,
     channel: &tauri::ipc::Channel<Value>,abort: &tokio::sync::watch::Receiver<bool>,outcome: &mut StreamOutcome) -> Result<(),String> {
-    run_tool_loop_context(turn,ctx,messages,channel,abort,outcome,None).await
+    run_tool_loop_context(turn,ctx,messages,channel,abort,outcome,None,None).await
 }
 
 fn merge_reply(outcome: &mut StreamOutcome, reply: &ModelReply) {
@@ -949,14 +997,15 @@ fn with_platform_connection<T>(database: Option<&std::sync::Arc<std::sync::Mutex
 
 async fn run_tool_loop_context(turn: &PlatformTurn,ctx: &crate::commands::ai_tools::ToolContext,messages: &mut Vec<ChatMsg>,
     channel: &tauri::ipc::Channel<Value>,abort: &tokio::sync::watch::Receiver<bool>,outcome: &mut StreamOutcome,
-    context: Option<&mut context_runtime::Prepared>) -> Result<(),String> {
-    run_tool_loop_database(turn,ctx,messages,channel,abort,outcome,context,None).await
+    context: Option<&mut context_runtime::Prepared>, app: Option<&tauri::AppHandle>) -> Result<(),String> {
+    run_tool_loop_database(turn,ctx,messages,channel,abort,outcome,context,None,app).await
 }
 
 /// 唯一循环实现；隔离连接仅用于上下文工具测试，不是可由模型选择的运行配置。
 async fn run_tool_loop_database(turn: &PlatformTurn,ctx: &crate::commands::ai_tools::ToolContext,messages: &mut Vec<ChatMsg>,
     channel: &tauri::ipc::Channel<Value>,abort: &tokio::sync::watch::Receiver<bool>,outcome: &mut StreamOutcome,
-    mut context: Option<&mut context_runtime::Prepared>, database: Option<&std::sync::Arc<std::sync::Mutex<rusqlite::Connection>>>) -> Result<(),String> {
+    mut context: Option<&mut context_runtime::Prepared>, database: Option<&std::sync::Arc<std::sync::Mutex<rusqlite::Connection>>>,
+    app: Option<&tauri::AppHandle>) -> Result<(),String> {
     let budget=context.as_ref().map(|c|c.budget.clone()).unwrap_or_else(||crate::commands::platform_context::ContextBudget::from_model(None,None));
     let mut total=0usize;
     let mut call_ids=std::collections::BTreeSet::new();
@@ -969,7 +1018,7 @@ async fn run_tool_loop_database(turn: &PlatformTurn,ctx: &crate::commands::ai_to
             with_platform_connection(database,|conn|{c.verify(conn)?;c.refresh_projection(messages);Ok(())})?;
         }
         let mut defs=with_platform_connection(database,|conn|Ok(platform_tool_defs(conn)))?;
-        if context.is_some() {defs.extend(crate::commands::platform_context::tool_defs());}
+        if context.is_some() {defs.extend(crate::commands::platform_context::tool_defs().into_iter().map(PlatformTool::from));}
         let body=budgeted_body(turn,messages,&defs,&budget)?;
         let captured=request_model_captured(turn,messages,&defs,Some(channel),abort,&budget).await;
         // 每次已进入生成调用恰一次闭合；工具数量和外层done不参与计数。
@@ -1015,9 +1064,12 @@ async fn run_tool_loop_database(turn: &PlatformTurn,ctx: &crate::commands::ai_to
         for call in reply.tool_calls {
             if *abort.borrow() {outcome.aborted=true;close_pending_pairs(messages,outcome,"发送已停止");return Err("发送已停止".into());}
             let internal=context.is_some() && crate::commands::platform_context::CONTEXT_TOOLS.contains(&call.name.as_str());
-            let allowed=internal || PLATFORM_TOOL_ALLOWLIST.contains(&call.name.as_str());
+            // CR-086：可见性以本轮下发的工具定义为准（内置目录 + MCP），不再用固定白名单。
+            let allowed=internal || defs.iter().any(|d|d.name==call.name);
             let enabled=internal || (allowed && with_platform_connection(database,|conn|Ok(
-                business_tools_enabled(conn) && crate::commands::ai_tools::workbench_tools().into_iter().find(|d|d.name==call.name).is_some_and(|d|crate::commands::ai_tools::tool_enabled(conn,d.registry_id))
+                business_tools_enabled(conn)
+                    && (crate::commands::ai_tools::workbench_tools().into_iter().find(|d|d.name==call.name).is_some_and(|d|crate::commands::ai_tools::tool_enabled(conn,d.registry_id))
+                        || resolve_mcp_tool(conn,&call.name).is_some())
             ))?);
             let key=format!("{round}:{}:{}",call.name,call.arguments);
             let duplicate=is_side_effect_tool(&call.name) && !executed.insert(key);
@@ -1039,6 +1091,14 @@ async fn run_tool_loop_database(turn: &PlatformTurn,ctx: &crate::commands::ai_to
                     with_platform_connection(database,|conn|context.as_deref_mut().ok_or("上下文不存在")?.tool(conn,&call.name,&args,&body))
                 });
                 match result {Ok(v)=>ToolOutcome{content:v.to_string(),is_error:false},Err(e)=>ToolOutcome{content:e,is_error:true}}
+            } else if let Some((server_id,tool_name))=with_platform_connection(database,|conn|Ok(resolve_mcp_tool(conn,&call.name)))? {
+                // CR-086：MCP 工具走独立短会话调用；失败作为工具错误回填，不中断整轮。
+                let args=serde_json::from_str::<Value>(&call.arguments).unwrap_or_else(|_|json!({}));
+                let outcome=match app {
+                    Some(app)=>crate::commands::capabilities::mcp_call_tool(app,&server_id,&tool_name,args).await,
+                    None=>Err("当前运行环境不支持 MCP 调用".into()),
+                };
+                match outcome {Ok(text)=>ToolOutcome{content:text,is_error:false},Err(e)=>ToolOutcome{content:e,is_error:true}}
             } else {execute_tool_safely(ctx,&call)};
             if let Some(c)=context.as_deref() {
                 if let Err(error)=with_platform_connection(database,|conn|c.verify(conn)) {result=ToolOutcome{content:error,is_error:true};}
@@ -1256,14 +1316,14 @@ mod tests {
             },
             ChatMsg::Tool { call_id: "call_1".into(), content: "ctx".into(), is_error: false },
         ];
-        let a = build_platform_body("anthropic", "m", None, &empty_efforts(), &messages, &[tool.clone()], false).unwrap();
+        let a = build_platform_body("anthropic", "m", None, &empty_efforts(), &messages, &[PlatformTool::from(tool.clone())], false).unwrap();
         assert_eq!(a["tools"][0]["name"], json!("get_context"));
         // Anthropic：system 在顶层，messages[0] 是 assistant 的 tool_use，[1] 是工具结果
         assert_eq!(a["messages"][0]["content"][0]["type"], json!("tool_use"));
         assert_eq!(a["messages"][1]["content"][0]["type"], json!("tool_result"));
         assert_eq!(a["messages"][1]["content"][0]["tool_use_id"], json!("call_1"));
 
-        let o = build_platform_body("openai", "gpt-x", None, &empty_efforts(), &messages, &[tool], false).unwrap();
+        let o = build_platform_body("openai", "gpt-x", None, &empty_efforts(), &messages, &[PlatformTool::from(tool)], false).unwrap();
         assert_eq!(o["tools"][0]["type"], json!("function"));
         assert_eq!(o["messages"][1]["tool_calls"][0]["function"]["name"], json!("get_context"));
         assert_eq!(o["messages"][1]["content"], Value::Null);
@@ -1448,16 +1508,17 @@ mod tests {
         conn
     }
 
-    /// T-090-01：platform_tool_defs 返回 白名单 ∩ 启用集，且全部在白名单内。
+    /// CR-086：platform_tool_defs 返回工作台目录全部启用项 + 技能读取，不再按固定白名单裁剪。
     #[test]
-    fn t090_01_tool_defs_are_allowlist_and_enabled_intersection() {
+    fn cr086_tool_defs_cover_full_catalog_and_read_skill() {
         let conn = capability_conn();
         let defs = platform_tool_defs(&conn);
         assert!(!defs.is_empty());
-        for d in &defs {
-            assert!(PLATFORM_TOOL_ALLOWLIST.contains(&d.name), "{} 不在白名单却返回", d.name);
-        }
-        // 停用一个白名单内工具后不再返回（T-090-03）
+        assert!(defs.iter().any(|d| d.name == "generate_image"), "生图工具必须对平台 runtime 可见");
+        assert!(defs.iter().any(|d| d.name == "create_project"), "写类工具随目录开放");
+        assert!(defs.iter().any(|d| d.name == "read_skill"), "必须提供技能正文读取");
+        assert_eq!(defs.iter().filter(|d| d.name == "get_context").count(), 1, "不得重复");
+        // 停用后从清单消失，其余不受影响（T-090-03 语义保留）
         conn.execute(
             "INSERT INTO capability (kind, name, enabled) VALUES ('tool', 'workbench.get_context', 0)",
             [],
@@ -1466,9 +1527,17 @@ mod tests {
         let defs = platform_tool_defs(&conn);
         assert!(!defs.iter().any(|d| d.name == "get_context"), "停用后必须从清单消失");
         assert!(defs.iter().any(|d| d.name == "fs_read"), "其余工具不受影响");
+        assert!(defs.iter().any(|d| d.name == "generate_image"), "停用单个工具不影响生图");
     }
 
-    /// T-090-02 / T-091-14：白名单不含任何禁止项与执行引擎控制工具。
+    /// CR-086：MCP 工具名必须可预测地命名空间化，便于回解到服务器。
+    #[test]
+    fn cr086_mcp_tool_names_are_namespaced() {
+        assert_eq!(mcp_tool_name("obsidian mcp", "search"), "mcp__obsidian_mcp__search");
+        assert_eq!(mcp_tool_name("mcp-obsidian", "search"), "mcp__mcp-obsidian__search");
+    }
+
+    /// 历史基线：CR-069 首版白名单常量保持不变（CR-086 起不再参与可见性过滤）。
     #[test]
     fn t090_02_allowlist_excludes_forbidden_tools() {
         let forbidden = [
@@ -1704,7 +1773,7 @@ mod tests {
             api_key: "mock-key".into(), model_id: "mock-model".into(),
             effort: None, efforts: EffortMap::new(), extra_headers: Vec::new(),
         };
-        let defs = [new_tool_def("fs_read", "workbench.fs_read", "读取项目内文件")];
+        let defs = [PlatformTool::from(new_tool_def("fs_read", "workbench.fs_read", "读取项目内文件"))];
         let channel = tauri::ipc::Channel::<Value>::new(|_| Ok(()));
         let (_, abort_rx) = tokio::sync::watch::channel(false);
         let messages = vec![ChatMsg::User("读一下 a.txt".into())];

@@ -1,6 +1,6 @@
 [package]
 name = "agent-workbench"
-version = "0.0.5"
+version = "0.0.6"
 description = "个人 Agent 工作台"
 authors = ["Agent Workbench"]
 edition = "2021"
@@ -24,6 +24,11 @@ uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
 walkdir = "2"
+# CR-093：AI 搜索工具——ripgrep 库 crate（内容/文件名检索，MIT/Unlicense）+ HTML→Markdown（Apache-2.0）
+ignore = "0.4"
+globset = "0.4"
+regex = "1"
+htmd = "0.6"
 russh = "0.45"
 russh-sftp = "2"
 base64 = "0.22"
@@ -32,8 +37,13 @@ ureq = { version = "2", features = ["json"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 sha2 = "0.10"
 flate2 = "1"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 async-trait = "0.1"
 tantivy = "=0.26.0"
+# CR-089：本地中文语义嵌入（ort 运行时动态加载 onnxruntime.dll，不污染构建产物）
+ort = { version = "=2.0.0-rc.15", features = ["ndarray", "load-dynamic"] }
+tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
+ndarray = "0.17"
 
 [dev-dependencies]
 # Existing transitive log package; only explicit measurement diagnostics use this API.

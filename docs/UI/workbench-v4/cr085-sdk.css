@@ -1,0 +1,93 @@
+/* UI-CR085-SDK-v1 · FEAT-015：沿用栖造品牌令牌与官方 CLI 资产。
+ * UI-SCROLL-001：继承 base.css + scrollbar.js 的透明轨道/固定宽度/700ms；无 hover 唤醒。
+ */
+.s85-content { min-width: 0; color: var(--ink); }
+.s85-content button { -webkit-tap-highlight-color: transparent; font-family:inherit; color:inherit; }
+.s85-content button:disabled { cursor: not-allowed; opacity: .55; }
+.s85-content button:focus-visible, .s85-content [tabindex]:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.s85-content .s85-tabs { margin-bottom: 16px; }
+.s85-cli-list, .s85-sdk-list { display: grid; gap: 10px; min-width: 0; }
+.s85-cli-card, .s85-sdk-card { border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); min-width: 0; }
+.s85-cli-head { display: flex; gap: 10px; align-items: center; padding: 12px 14px; min-height: 64px; }
+.s85-cli-heading { display: flex; align-items: center; flex: 1; gap: 12px; min-width: 0; text-align: left; }
+.s85-cli-heading:disabled { opacity: 1 !important; cursor: default !important; }
+.s85-heading-copy { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.s85-heading-copy b { font-size: 13px; font-weight: 600; line-height: 1.5; color: var(--ink); }
+.s85-heading-copy > span { font-size: 11px; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; }
+.s85-cli-body { display: grid; gap: 14px; padding: 14px; background: var(--surface-2); border-top: 1px solid var(--line-soft); border-radius: 0 0 var(--r-md) var(--r-md); }
+.s85-content .route-card { min-width: 0; }
+.s85-content .route-bar { padding: 8px 10px; }
+.s85-content .route-tabs { min-width: 0; gap: 5px; }
+.s85-content .route-tab { min-height: 28px; }
+.s85-content .route-tab-wrap:focus-within .route-x { opacity: 1; pointer-events: auto; }
+.s85-content .route-detail { gap: 12px; }
+.s85-content .chips { gap: 6px; }
+.s85-model-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(140px, .55fr); gap: 12px; }
+.s85-field { min-width: 0; }
+.s85-field > label, .s85-registry > label { display: block; font-size: 12px; line-height: 1.5; font-weight: 500; color: var(--ink-2); margin-bottom: 6px; }
+.s85-field > .select { width: 100%; max-width: 100%; min-width: 0; }
+.s85-field > .select:disabled { background: var(--surface-3); color: var(--muted); cursor: not-allowed; }
+.s85-content .select[aria-invalid="true"] { border-color: var(--danger); }
+.s85-follow, .s85-feedback, .s85-status { color: var(--muted); font-size: 11.5px; line-height: 1.6; }
+.s85-follow { overflow-wrap: anywhere; }
+.s85-feedback { margin-top: 6px; overflow-wrap: anywhere; }
+.s85-feedback.error { color: var(--danger); }
+.s85-cli-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.s85-sdk-pane { display: flex; flex-direction: column; gap: 14px; position: relative; min-width: 0; min-height: 440px; }
+.s85-registry { min-width: 0; }
+.s85-registry-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.s85-registry-controls .input { flex: 1 1 180px; min-width: 0; width: auto; }
+.s85-registry-controls .btn { flex-shrink: 0; }
+.s85-sdk-head { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 72px; padding: 12px 14px; text-align: left; border-radius: var(--r-md); }
+.s85-sdk-head:hover { background: var(--surface-2); }
+.s85-logo { display: grid; place-items: center; flex: 0 0 30px; }
+.s85-sdk-status { display: flex; align-items: flex-end; justify-content: center; flex-direction: column; gap: 3px; flex-shrink: 0; }
+.s85-sdk-status .tag { width: auto; font: 10.5px/1.5 var(--font); }
+.s85-version { color: var(--ink-2); white-space: nowrap; font-size: 11px; }
+.s85-loading { color: var(--primary); font-size: 11px; }
+.s85-sdk-body { display: grid; gap: 12px; background: var(--surface-2); border-top: 1px solid var(--line-soft); border-radius: 0 0 var(--r-md) var(--r-md); padding: 14px; }
+.s85-target-row { display: flex; align-items: flex-end; gap: 10px; }
+.s85-target-row > .s85-field { flex: 1; }
+.s85-target-row > .btn { height: 32px; flex-shrink: 0; }
+.s85-sdk-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.s85-sdk-actions .btn { min-height: 32px; }
+.s85-path { overflow: auto; white-space: pre; max-width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); color: var(--ink-2); font-size: 11px; }
+/* 右下记录区在设置正文内定位；长内容继续原生滚动，不占用或改写正文编辑区。 */
+.s85-record-dock { position: sticky; bottom: -12px; z-index: 5; align-self: flex-end; display: flex; flex-direction: column-reverse; align-items: flex-end; gap: 8px; width: min(600px, 100%); max-width: 100%; margin-top: auto; padding-top: 8px; pointer-events: none; }
+.s85-record-trigger, .s85-record-panel { pointer-events: auto; }
+.s85-record-trigger { background: var(--surface); border-color: var(--line-strong); box-shadow: var(--shadow-card); min-height: 34px; }
+.s85-record-trigger > span { background: var(--surface-3); border-radius: 4px; min-width: 18px; text-align: center; font-size: 10px; }
+.s85-record-panel { width: 100%; border: 1px solid var(--line-strong); border-radius: var(--r-md); background: var(--surface); box-shadow: var(--shadow-pop); }
+.s85-record-title { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.s85-record-title b { font-size: 12px; font-weight: 600; }
+.s85-record-title > span { flex: 1; font-size: 10.5px; color: var(--muted); }
+.s85-record-title > .icon-btn { width: 26px; height: 26px; }
+.s85-record-layout { display: grid; grid-template-columns: minmax(160px, .85fr) minmax(0, 1.15fr); height: 228px; min-height: 0; }
+.s85-record-list { overflow: auto; min-height: 0; border-right: 1px solid var(--line); padding: 4px; }
+.s85-record-item { display: grid; gap: 4px; padding: 8px; width: 100%; border: 1px solid transparent; border-radius: var(--r-sm); text-align: left; font-size: 11px; }
+.s85-record-item:hover { background: var(--surface-2); }
+.s85-record-item.on { background: var(--primary-soft); border-color: var(--primary-line); }
+.s85-record-item > span:first-child { overflow-wrap: anywhere; line-height: 1.5; }
+.s85-record-item > span:last-child { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.s85-record-item time { font: 10px/1.5 var(--mono); color: var(--muted); }
+.s85-record-state { font-size: 10px; font-weight: 500; }
+.s85-record-state.running { color: var(--primary); }
+.s85-record-state.success { color: var(--success); }
+.s85-record-state.error { color: var(--danger); }
+.s85-record-log { margin: 0; padding: 12px; min-height: 0; min-width: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-2); font-size: 10.5px; line-height: 1.8; }
+.s85-record-empty { padding: 24px 12px; color: var(--muted); font-size: 12px; text-align: center; }
+@media (max-width: 720px) {
+  .s85-model-grid { grid-template-columns: minmax(0, 1fr); }
+  .s85-sdk-head { gap: 8px; padding: 10px; flex-wrap: wrap; }
+  .s85-sdk-head > .s85-heading-copy { flex-basis: calc(100% - 66px); }
+  .s85-sdk-head > .s85-sdk-status { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; margin-left: 38px; flex: 1; }
+  .s85-sdk-head > .ico { margin-left: auto; }
+  .s85-cli-head { padding: 10px; gap: 8px; }
+  .s85-cli-body, .s85-sdk-body { padding: 10px; }
+  .s85-record-dock { bottom: -10px; }
+  .s85-record-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: 106px minmax(0, 1fr); height: 290px; max-height: 48dvh; }
+  .s85-record-list { border-right: 0; border-bottom: 1px solid var(--line); }
+  .s85-record-item { grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 6px; }
+  .s85-record-title { padding: 6px 8px; }
+}
+@media (prefers-reduced-motion: reduce) { .s85-content * { transition: none; } }

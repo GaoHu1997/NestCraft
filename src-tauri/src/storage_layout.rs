@@ -2,6 +2,7 @@
 //! 默认是安装目录的 data；设置里改位置后写入 storage-root.txt，下次启动和后续写入都走新位置。
 
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -95,57 +96,123 @@ fn read_pointer() -> Result<Option<PathBuf>, String> {
     Ok(Some(path))
 }
 
-/// 把旧的应用数据目录按类别搬进 data。目标已存在则保留，不覆盖。
-pub fn migrate_legacy(legacy: &Path, root: &Path) {
+/// 启动时同步迁移的核心类别（体量小，数据库必须在其中完成）。
+/// 大类 `chat/<cli>-profiles`（可达数 GB）不在这里搬，交给后台续传。
+fn migrate_core(legacy: &Path, root: &Path) {
     if legacy == root { return; }
     let _ = fs::create_dir_all(root);
-    move_if_absent(&legacy.join("skills"), &root.join("skills"));
-    move_if_absent(&legacy.join("avatar"), &root.join("avatar"));
-    move_if_absent(&legacy.join("examples"), &root.join("examples"));
-    move_if_absent(&legacy.join("editor-operations"), &root.join("editor"));
-    move_if_absent(&legacy.join("kb-recycle"), &root.join("recycle"));
-    move_if_absent(&legacy.join("kb-index"), &root.join("index"));
-    move_if_absent(&legacy.join("smoke"), &root.join("logs").join("smoke"));
+    merge_path(&legacy.join("skills"), &root.join("skills"));
+    merge_path(&legacy.join("avatar"), &root.join("avatar"));
+    merge_path(&legacy.join("examples"), &root.join("examples"));
+    merge_path(&legacy.join("editor-operations"), &root.join("editor"));
+    merge_path(&legacy.join("kb-recycle"), &root.join("recycle"));
+    merge_path(&legacy.join("kb-index"), &root.join("index"));
+    merge_path(&legacy.join("smoke"), &root.join("logs").join("smoke"));
     let _ = fs::create_dir_all(root.join("secrets"));
-    move_if_absent(&legacy.join("secrets.json"), &root.join("secrets").join("secrets.json"));
-    move_if_absent(&legacy.join("server-secrets.json"), &root.join("secrets").join("server-secrets.json"));
-    move_if_absent(&legacy.join("git-credentials"), &root.join("git").join("git-credentials"));
-    move_if_absent(&legacy.join("office-demo"), &root.join("office").join("office-demo"));
-    move_if_absent(&legacy.join("generated-images"), &root.join("generated-images"));
+    merge_path(&legacy.join("secrets.json"), &root.join("secrets").join("secrets.json"));
+    merge_path(&legacy.join("server-secrets.json"), &root.join("secrets").join("server-secrets.json"));
+    merge_path(&legacy.join("git-credentials"), &root.join("git").join("git-credentials"));
+    merge_path(&legacy.join("office-demo"), &root.join("office").join("office-demo"));
+    merge_path(&legacy.join("generated-images"), &root.join("generated-images"));
+    let _ = fs::create_dir_all(root.join("db"));
+    for name in ["workbench.db", "workbench.db-wal", "workbench.db-shm", "workbench-smoke.db", "workbench-smoke.db-wal", "workbench-smoke.db-shm"] {
+        merge_path(&legacy.join(name), &root.join("db").join(name));
+    }
+}
+
+/// 待后台续传的 CLI 会话线程存储：`<legacy>/<cli>-profiles` → `<root>/chat/<cli>-profiles`。
+/// 单目录可达数 GB，跨盘复制耗时以分钟计，不能放在启动同步路径上。
+pub fn deferred_profile_pairs(legacy: &Path, root: &Path) -> Vec<(PathBuf, PathBuf)> {
+    if legacy == root { return Vec::new(); }
+    let mut pairs = Vec::new();
     if let Ok(entries) = fs::read_dir(legacy) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with("-profiles") {
-                move_if_absent(&entry.path(), &root.join("chat").join(name));
+            if name.ends_with("-profiles") && entry.path().is_dir() {
+                pairs.push((entry.path(), root.join("chat").join(name)));
             }
         }
     }
-    let _ = fs::create_dir_all(root.join("db"));
-    for name in ["workbench.db", "workbench.db-wal", "workbench.db-shm", "workbench-smoke.db", "workbench-smoke.db-wal", "workbench-smoke.db-shm"] {
-        move_if_absent(&legacy.join(name), &root.join("db").join(name));
+    pairs
+}
+
+/// 启动迁移入口：只在主线程同步迁核心数据，返回需要后台续传的会话存储。
+/// 同步部分不含 `chat/<cli>-profiles`，避免大目录复制阻塞窗口消息循环（BUG-001）。
+pub fn migrate_on_startup(legacy: &Path, root: &Path) -> Vec<(PathBuf, PathBuf)> {
+    if legacy == root { return Vec::new(); }
+    let started = std::time::Instant::now();
+    migrate_core(legacy, root);
+    let pending = deferred_profile_pairs(legacy, root);
+    log_startup(
+        root,
+        &format!(
+            "sync migrate from {} finished in {} ms; deferred profile dirs: {}",
+            legacy.display(),
+            started.elapsed().as_millis(),
+            pending.len()
+        ),
+    );
+    pending
+}
+
+/// 启动全量同步迁移（含会话存储）。启动路径已改为 `migrate_on_startup` + 后台续传，
+/// 本函数保留给测试与需要一次做完的调用方。
+pub fn migrate_legacy(legacy: &Path, root: &Path) {
+    if legacy == root { return; }
+    migrate_core(legacy, root);
+    for (from, to) in deferred_profile_pairs(legacy, root) {
+        merge_path(&from, &to);
     }
 }
 
-fn move_if_absent(from: &Path, to: &Path) {
-    if !from.exists() || to.exists() { return; }
-    if let Some(parent) = to.parent() { let _ = fs::create_dir_all(parent); }
-    if fs::rename(from, to).is_err() {
-        let _ = copy_tree(from, to);
-    }
+/// 后台续传会话存储：不阻塞窗口；中途退出后，下次启动会继续补齐未复制完的文件。
+pub fn spawn_deferred_migration(root: PathBuf, pending: Vec<(PathBuf, PathBuf)>) {
+    if pending.is_empty() { return; }
+    std::thread::spawn(move || {
+        let started = std::time::Instant::now();
+        for (from, to) in &pending {
+            let one = std::time::Instant::now();
+            merge_path(from, to);
+            log_startup(
+                &root,
+                &format!("deferred migrate {} -> {} finished in {} ms", from.display(), to.display(), one.elapsed().as_millis()),
+            );
+        }
+        log_startup(
+            &root,
+            &format!("deferred migrate all finished in {} ms ({} dirs)", started.elapsed().as_millis(), pending.len()),
+        );
+    });
 }
 
-fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
+/// 合并式迁移：源不存在跳过；目标已存在跳过（不覆盖）；目录递归逐项合并。
+/// 与「目标目录存在就整目录跳过」不同，中断后再执行会补齐缺失文件（BUG-001 半份数据）。
+pub fn merge_path(from: &Path, to: &Path) {
+    if !from.exists() { return; }
     if from.is_file() {
-        if let Some(parent) = to.parent() { fs::create_dir_all(parent)?; }
-        fs::copy(from, to)?;
-        return Ok(());
+        if to.exists() { return; }
+        if let Some(parent) = to.parent() { let _ = fs::create_dir_all(parent); }
+        if fs::rename(from, to).is_err() {
+            let _ = fs::copy(from, to);
+        }
+        return;
     }
-    fs::create_dir_all(to)?;
-    for entry in fs::read_dir(from)? {
-        let entry = entry?;
-        copy_tree(&entry.path(), &to.join(entry.file_name()))?;
+    if let Some(parent) = to.parent() { let _ = fs::create_dir_all(parent); }
+    if fs::create_dir_all(to).is_err() { return; }
+    let Ok(entries) = fs::read_dir(from) else { return; };
+    for entry in entries.flatten() {
+        merge_path(&entry.path(), &to.join(entry.file_name()));
     }
-    Ok(())
+}
+
+/// 启动期日志：追加到 `<root>/logs/startup.log`，记录迁移耗时与结果，失败不影响启动。
+pub fn log_startup(root: &Path, line: &str) {
+    let dir = root.join("logs");
+    let _ = fs::create_dir_all(&dir);
+    let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(dir.join("startup.log")) {
+        let _ = writeln!(file, "{stamp} {line}");
+    }
 }
 
 #[cfg(test)]
@@ -195,6 +262,51 @@ mod tests {
         assert_eq!(fs::read_to_string(root.join("db/workbench.db")).unwrap(), "db-bytes");
         let _ = fs::remove_dir_all(&legacy);
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn migrate_on_startup_defers_profiles_and_resumes_partial_copy() {
+        let legacy = temp_dir("defer-legacy");
+        let root = temp_dir("defer-root");
+        fs::create_dir_all(legacy.join("skills/demo")).unwrap();
+        fs::write(legacy.join("skills/demo/SKILL.md"), "skill").unwrap();
+        fs::create_dir_all(legacy.join("codex-profiles/sess-a")).unwrap();
+        fs::write(legacy.join("codex-profiles/sess-a/thread.json"), "a").unwrap();
+        fs::write(legacy.join("codex-profiles/sess-b.json"), "b").unwrap();
+
+        let pending = migrate_on_startup(&legacy, &root);
+        assert_eq!(pending.len(), 1, "会话存储进后台待迁清单");
+        assert!(root.join("skills/demo/SKILL.md").is_file(), "核心数据同步迁完");
+        assert!(!root.join("chat/codex-profiles").exists(), "会话存储不在启动同步路径");
+
+        // 模拟上次迁移中途退出：目标只落了部分文件。
+        fs::create_dir_all(root.join("chat/codex-profiles/sess-a")).unwrap();
+        fs::write(root.join("chat/codex-profiles/sess-a/thread.json"), "a").unwrap();
+        for (from, to) in migrate_on_startup(&legacy, &root) {
+            merge_path(&from, &to);
+        }
+        assert_eq!(fs::read_to_string(root.join("chat/codex-profiles/sess-a/thread.json")).unwrap(), "a");
+        assert!(root.join("chat/codex-profiles/sess-b.json").is_file(), "中断后缺失文件被续传补齐");
+        let _ = fs::remove_dir_all(&legacy);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn merge_path_resumes_without_overwriting_existing_files() {
+        let from = temp_dir("merge-from");
+        let to = temp_dir("merge-to");
+        fs::create_dir_all(from.join("d")).unwrap();
+        fs::write(from.join("d/keep.txt"), "old").unwrap();
+        fs::write(from.join("d/missing.txt"), "new").unwrap();
+        fs::create_dir_all(to.join("d")).unwrap();
+        fs::write(to.join("d/keep.txt"), "current").unwrap();
+
+        merge_path(&from, &to);
+
+        assert_eq!(fs::read_to_string(to.join("d/keep.txt")).unwrap(), "current", "已有文件不覆盖");
+        assert_eq!(fs::read_to_string(to.join("d/missing.txt")).unwrap(), "new", "缺失文件补齐");
+        let _ = fs::remove_dir_all(&from);
+        let _ = fs::remove_dir_all(&to);
     }
 
     #[test]

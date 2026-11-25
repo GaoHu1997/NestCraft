@@ -110,6 +110,42 @@ fn migrate(conn: &Connection) -> Result<(), String> {
             UNIQUE (libraryId, relativeUri)
         );
 
+        -- CR-088：派生双链索引（可删可重建，事实来源仍是 Markdown 文件）
+        CREATE TABLE IF NOT EXISTS kb_link (
+            libraryId TEXT NOT NULL,
+            sourceNoteId TEXT NOT NULL,
+            sourcePath TEXT NOT NULL,
+            sourceRevision TEXT NOT NULL,
+            ordinal INTEGER NOT NULL,
+            rawTarget TEXT NOT NULL,
+            name TEXT NOT NULL,
+            targetPath TEXT,
+            targetNoteId TEXT,
+            heading TEXT,
+            state TEXT NOT NULL,
+            snippet TEXT NOT NULL,
+            PRIMARY KEY (libraryId, sourceNoteId, ordinal)
+        );
+        CREATE INDEX IF NOT EXISTS kb_link_target ON kb_link(libraryId, targetNoteId);
+        CREATE INDEX IF NOT EXISTS kb_link_source ON kb_link(libraryId, sourceNoteId);
+
+        -- CR-089：本地语义向量（int8，派生数据，可删可重建）
+        CREATE TABLE IF NOT EXISTS kb_embed (
+            libraryId TEXT NOT NULL,
+            noteId TEXT NOT NULL,
+            chunkKey TEXT NOT NULL,
+            sourcePath TEXT NOT NULL,
+            revision TEXT NOT NULL,
+            modelId TEXT NOT NULL,
+            modelVersion TEXT NOT NULL,
+            dim INTEGER NOT NULL,
+            vector BLOB NOT NULL,
+            preview TEXT NOT NULL,
+            updatedAt INTEGER NOT NULL,
+            PRIMARY KEY (libraryId, noteId, chunkKey)
+        );
+        CREATE INDEX IF NOT EXISTS kb_embed_library ON kb_embed(libraryId, noteId);
+
         -- 项目-知识库授权（无记录即拒绝）
         CREATE TABLE IF NOT EXISTS project_library_grant (
             projectId TEXT NOT NULL,
@@ -216,7 +252,7 @@ fn migrate(conn: &Connection) -> Result<(), String> {
             modelId TEXT,
             effort TEXT,
             draft TEXT NOT NULL DEFAULT '',
-            unread TEXT,                       -- none|green|red|yellow
+            unread TEXT,                       -- none|success|failed|green|red|yellow
             createdAt INTEGER NOT NULL,
             updatedAt INTEGER NOT NULL,
             -- CR-069：会话运行通道。'cli' 走既有 CLI 进程；'platform' 由平台主代理作答。
@@ -287,6 +323,7 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     migrate_cr058_model_probe(conn)?;
     // CR-059：密钥协议与模型范围、模型排序、生图配置（DB-CR059）。
     migrate_cr059_model_config(conn)?;
+    migrate_cr085_provider_metadata(conn)?;
     // CR-059 / BUG-CR059-01 二期：跨进程待审批命令（DB-CR059 §5.1）。
     migrate_cr059_pending_approval(conn)?;
     // CR-072：项目管理／知识库／服务器扩展字段（DB-CR072）。纯增量、幂等。
@@ -297,6 +334,8 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     crate::commands::execution::ensure_schema(conn)?;
     // CR-032 / FEAT-004/005 基线：双向同步共同基线、批次与目标写入日志（DB-CR032 的 M0 子集）。
     crate::commands::sync::ensure_schema(conn)?;
+    // CR-092 / FEAT-026：个人记忆派生表 memory_item / memory_profile（DB-FEAT-026）。纯新增、幂等。
+    crate::commands::memory_store::ensure_schema(conn)?;
     // CR-047：重启后回收过期租约，把可能已中断的运行置为 blocked，不自动重跑。
     crate::commands::execution::recover_interrupted(conn, now_ms_static())?;
 
@@ -496,10 +535,24 @@ fn migrate_cr058_model_probe(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
-/// CR-059：模型配置与生图（DB-CR059）。全部为幂等 ALTER / CREATE，可重复执行。
-/// - provider_key：协议（决定请求端点）、模型范围、范围来源、探测时间
-/// - model：排序序号
-/// - image_gen_config：单行生图配置（有序模型列表 + 默认参数）
+/// CR-085：供应商精确API模式与排序，兼容迁移且仅首次回填。
+fn migrate_cr085_provider_metadata(conn: &Connection) -> Result<(), String> {
+    let cols: Vec<String> = conn.prepare("PRAGMA table_info(provider)").map_err(|e| e.to_string())?
+        .query_map([], |r| r.get(1)).map_err(|e| e.to_string())?
+        .collect::<Result<_, _>>().map_err(|e| e.to_string())?;
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    if !cols.iter().any(|c| c == "apiMode") {
+        tx.execute_batch("ALTER TABLE provider ADD COLUMN apiMode TEXT NOT NULL DEFAULT ''; UPDATE provider SET apiMode=CASE WHEN protocol='anthropic' THEN 'Anthropic' ELSE 'Chat' END;")
+            .map_err(|e| e.to_string())?;
+    }
+    if !cols.iter().any(|c| c == "sortOrder") {
+        tx.execute_batch("ALTER TABLE provider ADD COLUMN sortOrder INTEGER NOT NULL DEFAULT 0; UPDATE provider SET sortOrder=(SELECT COUNT(*) FROM provider p2 WHERE p2.createdAt<provider.createdAt OR (p2.createdAt=provider.createdAt AND p2.id<provider.id));")
+            .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())
+}
+
+/// CR-059：模型配置与生图（DB-CR059）。幂等 ALTER / CREATE。
 fn migrate_cr059_model_config(conn: &Connection) -> Result<(), String> {
     let key_cols: Vec<String> = conn.prepare("PRAGMA table_info(provider_key)").map_err(|e| e.to_string())?
         .query_map([], |row| row.get::<_, String>(1)).map_err(|e| e.to_string())?.filter_map(Result::ok).collect();

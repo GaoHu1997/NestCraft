@@ -138,6 +138,45 @@ html[data-theme='dark'] .chat-attachment-dialog.chat-img-zoom {
   cursor: pointer;
 }
 .chat-attachment-dialog .chat-attachment-preview-close:focus-visible { outline: 2px solid var(--chat-preview-focus); outline-offset: 3px; }
+/* 多图画廊：上一张/下一张按钮与 i/N 计数；单图时不渲染这些节点。 */
+.chat-attachment-dialog .chat-gallery-nav {
+  position: absolute;
+  top: 50%;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: .5px solid var(--chat-preview-close-stroke);
+  border-radius: 999px;
+  background: var(--chat-preview-surface);
+  color: var(--chat-preview-ink);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  transform: translateY(-50%);
+  opacity: .9;
+}
+.chat-attachment-dialog .chat-gallery-nav:hover { opacity: 1; }
+.chat-attachment-dialog .chat-gallery-nav:focus-visible { outline: 2px solid var(--chat-preview-focus); outline-offset: 3px; }
+.chat-attachment-dialog .chat-gallery-nav.prev { left: 18px; }
+.chat-attachment-dialog .chat-gallery-nav.next { right: 18px; }
+.chat-attachment-dialog .chat-gallery-count {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  z-index: 1;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--chat-preview-surface);
+  color: var(--chat-preview-ink);
+  font-size: 12px;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+  opacity: .9;
+  transform: translateX(-50%);
+}
 .chat-attachment-dialog .chat-attachment-preview-menu {
   position: fixed;
   z-index: 2;

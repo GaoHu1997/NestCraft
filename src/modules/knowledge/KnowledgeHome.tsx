@@ -5,15 +5,28 @@ import * as api from "@/api";
 import type { KnowledgeLibrary, LibraryGrant, Project } from "@/api";
 import { Confirm, Empty, Field, Modal, useToast } from "@/components/ui";
 import { useApp } from "@/store/app";
+import { MemoryPane } from "@/modules/memory/MemoryPane";
 import "./knowledge.css";
 
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-/** BUG-013 / UI-CR036-v4：库卡片与按库管理项目多选授权；权限仍由原 IPC 判定。 */
+/** BUG-013 / UI-CR036-v4：库卡片与按库管理项目多选授权；权限仍由原 IPC 判定。
+    FEAT-026 / STORY-109：知识库页新增「记忆」页签，挂载个人记忆管理界面。 */
 export function Home() {
-  return <HomeView />;
+  const [section, setSection] = useState<"libraries" | "memory">("libraries");
+  return (
+    <div className="kb-page">
+      <div className="kb-page-tabs" role="tablist" aria-label="知识库页面">
+        <button type="button" role="tab" aria-selected={section === "libraries"} onClick={() => setSection("libraries")}>知识库</button>
+        <button type="button" role="tab" aria-selected={section === "memory"} onClick={() => setSection("memory")}>记忆</button>
+      </div>
+      <div className="kb-page-body">
+        {section === "libraries" ? <HomeView /> : <MemoryPane />}
+      </div>
+    </div>
+  );
 }
 
 function HomeView() {

@@ -16,10 +16,12 @@ pub mod guard;
 pub mod resources;
 #[path = "fs_document.rs"]
 pub mod document;
+#[path = "fs_ops.rs"]
+pub mod ops;
 
 /// 校验 target 必须位于 root 之下（canonicalize 后前缀匹配）。
 /// 相对路径按 root 解析；target 或其父目录不存在时按词法解析（不逃逸即可）。
-fn ensure_under(root: &Path, target: &Path) -> Result<PathBuf, String> {
+pub(crate) fn ensure_under(root: &Path, target: &Path) -> Result<PathBuf, String> {
     let root_c = std::fs::canonicalize(root).map_err(|e| format!("目录不可访问：{}", e))?;
     let target_abs = if target.is_absolute() { target.to_path_buf() } else { root.join(target) };
     let target_c = match std::fs::canonicalize(&target_abs) {
@@ -291,9 +293,80 @@ pub fn app_data_ensure_dir(_app: tauri::AppHandle, rel: String) -> Result<String
     Ok(canonical.to_string_lossy().to_string())
 }
 
+/// 系统文件选择器（多选、任意类型），返回所选文件的绝对路径列表；取消返回空数组。
+/// 只返回路径字符串，不读取、不复制、不上传文件内容——调用方按需把路径写入输入框。
+#[tauri::command]
+pub async fn pick_local_files() -> Result<Vec<String>, String> {
+    #[cfg(windows)]
+    {
+        use base64::Engine;
+        let script = r#"
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+Add-Type -AssemblyName System.Windows.Forms
+$dialog = New-Object System.Windows.Forms.OpenFileDialog
+$dialog.Title = '选择本地文件'
+$dialog.Multiselect = $true
+$dialog.CheckFileExists = $true
+$dialog.RestoreDirectory = $true
+try {
+    if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+        ConvertTo-Json -InputObject @($dialog.FileNames) -Compress
+    } else {
+        [Console]::WriteLine('[]')
+    }
+} finally { $dialog.Dispose() }
+"#;
+        let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+        let windows = std::env::var_os("SystemRoot").ok_or("Windows 系统目录不可用")?;
+        let exe = Path::new(&windows).join("System32/WindowsPowerShell/v1.0/powershell.exe");
+        let mut command = tokio::process::Command::new(exe);
+        command.args(["-NoProfile", "-STA", "-NonInteractive", "-EncodedCommand", &encoded])
+            .stdin(std::process::Stdio::null()).kill_on_drop(true);
+        command.creation_flags(0x08000000);
+        let output = tokio::time::timeout(std::time::Duration::from_secs(600), command.output()).await
+            .map_err(|_| "文件选择超时，请重试".to_string())?
+            .map_err(|_| "无法打开系统文件选择器".to_string())?;
+        if !output.status.success() { return Err("系统文件选择器执行失败".into()); }
+        parse_file_choices(&output.stdout)
+    }
+    #[cfg(not(windows))]
+    { Err("当前平台未接入系统文件选择器".into()) }
+}
+
+#[cfg(any(windows, test))]
+fn parse_file_choices(bytes: &[u8]) -> Result<Vec<String>, String> {
+    if bytes.len() > 1_048_576 { return Err("文件选择结果过长".into()); }
+    let text = std::str::from_utf8(bytes).map_err(|_| "文件选择结果编码无效".to_string())?;
+    let value: Vec<String> = serde_json::from_str(text.trim_start_matches('\u{feff}').trim())
+        .map_err(|_| "文件选择结果无效".to_string())?;
+    let mut out = Vec::with_capacity(value.len());
+    for path in value {
+        let p = PathBuf::from(&path);
+        if !p.is_absolute() { return Err("文件选择结果不是绝对路径".into()); }
+        if !p.is_file() { return Err("选择的文件不可访问".into()); }
+        out.push(path);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_choices_reject_relative_and_non_files_but_keep_existing() {
+        assert_eq!(parse_file_choices(b"[]\r\n").unwrap(), Vec::<String>::new());
+        assert!(parse_file_choices(br#"["relative/file.txt"]"#).is_err());
+        assert!(parse_file_choices(br#"["C:/definitely/not/here.txt"]"#).is_err());
+        assert!(parse_file_choices(b"not-json").is_err());
+        let file = std::env::temp_dir().join(crate::models::new_id("picker-file"));
+        std::fs::write(&file, b"x").unwrap();
+        let bytes = serde_json::to_vec(&vec![file.to_string_lossy().to_string()]).unwrap();
+        assert_eq!(parse_file_choices(&bytes).unwrap().len(), 1);
+        std::fs::remove_file(file).unwrap();
+    }
 
     #[test]
     fn directory_choice_handles_cancellation_and_rejects_invalid_output() {

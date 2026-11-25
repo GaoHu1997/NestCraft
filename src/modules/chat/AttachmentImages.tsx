@@ -30,8 +30,28 @@ export async function readImage(file: File): Promise<AttachmentMeta> {
   return { name: file.name, mime: file.type, byteSize: file.size, imageBase64: src.slice(src.indexOf(",") + 1) };
 }
 
-export function AttachmentImages({ attachments, onRemove }: { attachments: AttachmentMeta[]; onRemove?: (index: number) => void }) {
-  const [preview, setPreview] = useState<{ src: string; name: string; back: HTMLElement } | null>(null);
+/** 画廊条目：src 为最终可展示地址，name 用于替代文本与保存文件名。 */
+export interface GalleryItem {
+  src: string;
+  name: string;
+}
+
+/**
+ * 受控图片预览画廊（单图/多图共用）：
+ * - 从 attachment 预览抽出，正文 Markdown 图片与附件图片复用同一 UI；
+ * - 多图时提供 ‹ › 切换、i/N 计数与键盘 ArrowLeft/ArrowRight；
+ * - 保留复制/保存右键菜单、关闭按钮与 Esc 关闭，关闭后焦点回到原图。
+ */
+export function ImageGallery(props: {
+  items: GalleryItem[];
+  index: number;
+  onIndexChange: (index: number) => void;
+  onClose: () => void;
+  /** 关闭后焦点回到的原触发元素。 */
+  origin?: HTMLElement | null;
+  ariaLabel?: string;
+}) {
+  const { items, onIndexChange, onClose } = props;
   const dialog = useRef<HTMLDialogElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const menuElement = useRef<HTMLDivElement>(null);
@@ -39,32 +59,35 @@ export function AttachmentImages({ attachments, onRemove }: { attachments: Attac
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const composing = useRef(false);
   const keyboardComposing = useRef(false);
-  const hasAttachments = attachments.length > 0;
+  const originRef = useRef<HTMLElement | null>(props.origin ?? null);
+  originRef.current = props.origin ?? null;
+  const count = items.length;
+  const safeIndex = count ? Math.min(Math.max(props.index, 0), count - 1) : 0;
+  const current = items[safeIndex];
   const toast = useToast();
+
+  // 挂载即打开模态；卸载时关闭并把焦点还给原图（仅当焦点仍属于本弹层/已落到 body 时）。
   useEffect(() => {
-    if (!hasAttachments) {
-      setMenu(null);
-      setPreview(null);
-      return;
-    }
     const previewDialog = dialog.current;
-    if (!preview || !previewDialog) return;
+    if (!previewDialog) return;
     if (!previewDialog.open) previewDialog.showModal();
     const button = closeButton.current;
     if (button?.isConnected && previewDialog.contains(button)) button.focus({ preventScroll: true });
     return () => {
       const active = document.activeElement;
-      const ownsFocus = active === document.body || active === preview.back || (active !== null && previewDialog.contains(active));
+      const ownsFocus = active === document.body || active === originRef.current || (active !== null && previewDialog.contains(active));
       if (previewDialog.open) previewDialog.close();
       composing.current = false;
       keyboardComposing.current = false;
-      // Caller keys isolate sessions. Never refocus a removed, hidden or inert origin, or steal another view's focus.
-      const origin = preview.back;
-      if (ownsFocus && origin.isConnected && !origin.closest("[hidden], [inert]") && origin.getClientRects().length && getComputedStyle(origin).visibility === "visible") {
+      const origin = originRef.current;
+      if (ownsFocus && origin && origin.isConnected && !origin.closest("[hidden], [inert]") && origin.getClientRects().length && getComputedStyle(origin).visibility === "visible") {
         origin.focus({ preventScroll: true });
       }
     };
-  }, [preview, hasAttachments]);
+    // 仅在挂载/卸载时开关一次，索引切换只替换图片不重建弹层。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useLayoutEffect(() => {
     const list = menuElement.current;
     if (!menu || !list) return;
@@ -78,6 +101,7 @@ export function AttachmentImages({ attachments, onRemove }: { attachments: Attac
     window.addEventListener("resize", position);
     return () => window.removeEventListener("resize", position);
   }, [menu]);
+
   const focusClose = () => {
     const button = closeButton.current;
     if (dialog.current?.open && button?.isConnected) button.focus({ preventScroll: true });
@@ -88,8 +112,12 @@ export function AttachmentImages({ attachments, onRemove }: { attachments: Attac
   };
   const close = () => {
     setMenu(null);
-    setPreview(null);
+    onClose();
   };
+  const step = (dir: number) => {
+    if (count > 1) onIndexChange((safeIndex + dir + count) % count);
+  };
+
   const onPreviewKeyDown = (event: KeyboardEvent<HTMLDialogElement>) => {
     // Keep shortcuts local, but let composition and native button/IME editing retain their default behavior.
     event.stopPropagation();
@@ -118,11 +146,20 @@ export function AttachmentImages({ attachments, onRemove }: { attachments: Attac
         const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : index < 0 ? (event.key === "ArrowDown" ? 0 : items.length - 1) : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
         items[next]?.focus(); // Native focus reveals the active item in a short menu viewport.
       }
-    } else if (event.key === "Tab") {
+      return;
+    }
+    // 画廊多图键盘切换（菜单关闭时生效）。
+    if (count > 1 && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+      event.preventDefault();
+      step(event.key === "ArrowRight" ? 1 : -1);
+      return;
+    }
+    if (event.key === "Tab") {
       event.preventDefault();
       focusClose();
     }
   };
+
   const save = (src: string, name: string) => {
     const link = document.createElement("a");
     link.href = src;
@@ -145,42 +182,72 @@ export function AttachmentImages({ attachments, onRemove }: { attachments: Attac
       toast("复制图片失败", "warn");
     }
   };
+  if (!current) return null;
+  return createPortal(<dialog ref={dialog} className="chat-img-zoom chat-attachment-dialog" aria-label={props.ariaLabel ?? "图片预览"}
+    onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; keyboardComposing.current = false; }}
+    onKeyDown={onPreviewKeyDown} onKeyUp={event => { keyboardComposing.current = false; event.stopPropagation(); }}
+    onCancel={event => { event.preventDefault(); if (composing.current || keyboardComposing.current) return; if (menu) closeMenu(); else close(); }}>
+    <div className="chat-attachment-preview-stage">
+      <div className="chat-attachment-preview-mask" aria-hidden="true" onClick={close} />
+      <img className="chat-attachment-preview-image" src={current.src} alt={current.name} tabIndex={0}
+        aria-haspopup="menu" aria-expanded={!!menu} aria-controls={menu ? menuId : undefined}
+        onClick={event => { if (menu) closeMenu(); event.currentTarget.focus({ preventScroll: true }); }}
+        onContextMenu={event => { event.preventDefault(); event.stopPropagation(); if (!composing.current) setMenu({ x: event.clientX, y: event.clientY }); }} />
+      {count > 1 && <>
+        <button type="button" className="chat-gallery-nav prev" aria-label="上一张" onClick={event => { event.preventDefault(); event.stopPropagation(); step(-1); }}>‹</button>
+        <button type="button" className="chat-gallery-nav next" aria-label="下一张" onClick={event => { event.preventDefault(); event.stopPropagation(); step(1); }}>›</button>
+        <div className="chat-gallery-count" aria-live="polite">{safeIndex + 1} / {count}</div>
+      </>}
+      <button ref={closeButton} type="button" className="chat-attachment-preview-close" autoFocus aria-label="关闭"
+        onClick={event => { if (!event.detail && (composing.current || keyboardComposing.current)) return; close(); }}>
+        <svg width={16} height={16} viewBox="0 0 16 16" fill="none" strokeWidth={1} aria-hidden="true" focusable="false"><path d="M2.5 2.5L13.5 13.5" stroke="currentColor" /><path d="M13.5 2.5L2.5 13.5" stroke="currentColor" /></svg>
+      </button>
+      {menu && <div ref={menuElement} id={menuId} className="chat-attachment-preview-menu" role="menu" aria-label="图片操作"
+        style={{ left: menu.x, top: menu.y }} onContextMenu={event => { event.preventDefault(); event.stopPropagation(); closeMenu(); }}>
+        <div className="chat-attachment-preview-menu-viewport" role="presentation">
+          <button type="button" role="menuitem" tabIndex={-1} onClick={event => { if (!event.detail && (composing.current || keyboardComposing.current)) return; closeMenu(); void copy(current.src); }}><Icon name="copy" size={14} /><span>复制图片</span></button>
+          <button type="button" role="menuitem" tabIndex={-1} onClick={event => { if (!event.detail && (composing.current || keyboardComposing.current)) return; closeMenu(); save(current.src, current.name); }}><Icon name="download" size={14} /><span>保存图片</span></button>
+        </div>
+      </div>}
+    </div>
+  </dialog>, document.body);
+}
+
+export function AttachmentImages({ attachments, onRemove }: { attachments: AttachmentMeta[]; onRemove?: (index: number) => void }) {
+  const [preview, setPreview] = useState<{ index: number; back: HTMLElement } | null>(null);
+  const hasAttachments = attachments.length > 0;
+  // 只收集可展示的图片项，并记录其在原附件数组中的位置，保持缩略图原始顺序。
+  const imageItems = attachments.reduce<{ index: number; attachment: AttachmentMeta; src: string }[]>((acc, attachment, index) => {
+    const src = imageSource(attachment);
+    if (src) acc.push({ index, attachment, src });
+    return acc;
+  }, []);
+  useEffect(() => {
+    if (!hasAttachments) setPreview(null);
+  }, [hasAttachments]);
   if (!attachments.length) return null;
-  const singleImage = !onRemove && attachments.filter(imageSource).length === 1;
+  const singleImage = !onRemove && imageItems.length === 1;
+  const galleryItems: GalleryItem[] = imageItems.map(item => ({ src: item.src, name: item.attachment.name }));
   return <>
     <div className={onRemove ? "chat-composer-images" : "chat-message-images"}>
       {attachments.map((attachment, index) => {
-        const src = imageSource(attachment);
-        if (!src) return <div className="chat-attachment" key={`${attachment.name}-${index}`}>{attachment.name} · 附件元信息{onRemove && <button type="button" className="chat-chip-x" onClick={() => onRemove(index)} aria-label={`移除附件 ${attachment.name}`}><Icon name="x" size={12} /></button>}</div>;
+        const item = imageItems.find(candidate => candidate.index === index);
+        if (!item) return <div className="chat-attachment" key={`${attachment.name}-${index}`}>{attachment.name} · 附件元信息{onRemove && <button type="button" className="chat-chip-x" onClick={() => onRemove(index)} aria-label={`移除附件 ${attachment.name}`}><Icon name="x" size={12} /></button>}</div>;
+        const galleryIndex = imageItems.indexOf(item);
         return <div className={onRemove ? "chat-draft-image" : "chat-message-image"} key={`${attachment.name}-${index}`}>
-          <ImageThumbnail src={src} name={attachment.name} single={singleImage} onOpen={back => setPreview({ src, name: attachment.name, back })} />
+          <ImageThumbnail src={item.src} name={attachment.name} single={singleImage} onOpen={back => setPreview({ index: galleryIndex, back })} />
           {onRemove && <button type="button" className="chat-image-remove" onClick={() => onRemove(index)} title="移除图片" aria-label={`移除图片 ${attachment.name}`}><Icon name="x" size={12} /></button>}
         </div>;
       })}
     </div>
-    {preview && createPortal(<dialog ref={dialog} className="chat-img-zoom chat-attachment-dialog" aria-label="图片放大"
-      onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; keyboardComposing.current = false; }}
-      onKeyDown={onPreviewKeyDown} onKeyUp={event => { keyboardComposing.current = false; event.stopPropagation(); }}
-      onCancel={event => { event.preventDefault(); if (composing.current || keyboardComposing.current) return; if (menu) closeMenu(); else close(); }}>
-      <div className="chat-attachment-preview-stage">
-        <div className="chat-attachment-preview-mask" aria-hidden="true" onClick={close} />
-        <img className="chat-attachment-preview-image" src={preview.src} alt={preview.name} tabIndex={0}
-          aria-haspopup="menu" aria-expanded={!!menu} aria-controls={menu ? menuId : undefined}
-          onClick={event => { if (menu) closeMenu(); event.currentTarget.focus({ preventScroll: true }); }}
-          onContextMenu={event => { event.preventDefault(); event.stopPropagation(); if (!composing.current) setMenu({ x: event.clientX, y: event.clientY }); }} />
-        <button ref={closeButton} type="button" className="chat-attachment-preview-close" autoFocus aria-label="关闭"
-          onClick={event => { if (!event.detail && (composing.current || keyboardComposing.current)) return; close(); }}>
-          <svg width={16} height={16} viewBox="0 0 16 16" fill="none" strokeWidth={1} aria-hidden="true" focusable="false"><path d="M2.5 2.5L13.5 13.5" stroke="currentColor" /><path d="M13.5 2.5L2.5 13.5" stroke="currentColor" /></svg>
-        </button>
-        {menu && <div ref={menuElement} id={menuId} className="chat-attachment-preview-menu" role="menu" aria-label="图片操作"
-          style={{ left: menu.x, top: menu.y }} onContextMenu={event => { event.preventDefault(); event.stopPropagation(); closeMenu(); }}>
-          <div className="chat-attachment-preview-menu-viewport" role="presentation">
-            <button type="button" role="menuitem" tabIndex={-1} onClick={event => { if (!event.detail && (composing.current || keyboardComposing.current)) return; closeMenu(); void copy(preview.src); }}><Icon name="copy" size={14} /><span>复制图片</span></button>
-            <button type="button" role="menuitem" tabIndex={-1} onClick={event => { if (!event.detail && (composing.current || keyboardComposing.current)) return; closeMenu(); save(preview.src, preview.name); }}><Icon name="download" size={14} /><span>保存图片</span></button>
-          </div>
-        </div>}
-      </div>
-    </dialog>, document.body)}
+    {preview && galleryItems.length > 0 && <ImageGallery
+      items={galleryItems}
+      index={Math.min(preview.index, galleryItems.length - 1)}
+      onIndexChange={next => setPreview(prev => (prev ? { ...prev, index: next } : prev))}
+      onClose={() => setPreview(null)}
+      origin={preview.back}
+      ariaLabel="图片预览"
+    />}
   </>;
 }
 

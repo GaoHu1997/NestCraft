@@ -20,6 +20,8 @@
 - [STORY-013：文件/Git 页签与 AI 分支上下文](../Story/STORY-013-文件Git页签与AI分支上下文.md)
 - [STORY-033：Git 管理正式实现](../Story/STORY-033-Git管理正式实现.md)
 - [STORY-034：编码区正式实现](../Story/STORY-034-编码区正式实现.md)
+- 关联 [CR-090 编码区文件操作与代码导航](../../PRD/CR-090-编码区文件操作与代码导航.md)／[STORY-101](../Story/STORY-101-编码区文件树操作.md)～[STORY-103](../Story/STORY-103-编码区定义跳转与面包屑.md)（文件树操作、页签与打开交互、定义跳转与面包屑；第一版基于符号索引，不含实现类跳转与完整 LSP）
+- 关联 [CR-094 多语言代码阅读导航](../../PRD/CR-094-多语言代码阅读导航.md)／[STORY-110](../Story/STORY-110-多语言符号索引适配层.md)～[STORY-112](../Story/STORY-112-继承gutter标记与语言标识.md)（Java/C#/Python 语法索引适配层、接口↔实现／父类型跳转、继承 gutter 与语言标识；路线 A 不接 LSP，精度可损且界面可见标注；仅需求，待设计 UI-CR094-v1，未实现）
 - [STORY-085：Git 管理面板按参考图重构](../Story/STORY-085-Git管理面板按参考图重构.md)
 
 ## 关联与证据

@@ -18,6 +18,10 @@ node_modules/
 src-tauri/target/
 src-tauri/dist/
 src-tauri/gen/schemas/
+# CR-084：本机 Office 转换运行时（由 scripts/prepare-office-runtime.mjs 生成，不入库）
+src-tauri/office/
+# CR-089：本地语义模型与 onnxruntime（由 scripts/prepare-semantic-model.mjs 生成，不入库）
+src-tauri/semantic/
 
 # 本地发布产物（GitHub Actions 在 CI 内重新生成）
 dist-release/
@@ -30,6 +34,7 @@ mockbin/*.cmd
 .tmp-chrome*/
 .tmp-cx-home/
 .tmp-realcli/
+.tmp-cr085/
 
 # 操作系统与编辑器临时文件
 .DS_Store

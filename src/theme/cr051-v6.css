@@ -245,3 +245,26 @@ html[data-theme='dark'] .cr51-upload-error { background: #331d1d; color: #ff7b76
 .icon-pop-f .caption { margin-right: auto; min-width: 0; }
 /* 窄屏由组件内联给出左右边距，这里不再强制 100% 宽（会覆盖锚定宽度）。 */
 @media (max-width: 520px) { .icon-pop { max-width: calc(100vw - 24px); } }
+
+/* CR-091：头像弹窗宿主（top layer），使设置弹窗内也能正常显示在设置之上。 */
+.cr51-avatar-host {
+  position: fixed; inset: 0; width: 100vw; height: 100vh;
+  max-width: none; max-height: none; margin: 0; padding: 0; border: 0;
+  background: transparent; overflow: visible;
+}
+.cr51-avatar-host::backdrop { background: transparent; }
+.cr51-avatar-host .cr51-modal-mask { z-index: 0; }
+
+/* CR-091：设置 → 通用「头像」字段的小入口。 */
+.g-avatar-btn {
+  position: relative; width: 40px; height: 40px; padding: 0; border: 1px solid var(--line);
+  border-radius: 11px; background: var(--surface); display: grid; place-items: center; cursor: pointer;
+}
+.g-avatar-btn:hover { border-color: var(--line-strong); background: var(--surface-2); }
+.g-avatar-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--primary-soft); }
+.g-avatar-badge {
+  position: absolute; right: -4px; bottom: -4px; width: 17px; height: 17px; border-radius: 50%;
+  background: var(--surface); border: 1px solid var(--line); color: var(--muted);
+  display: grid; place-items: center; opacity: 0; transition: opacity .12s ease;
+}
+.g-avatar-btn:hover .g-avatar-badge, .g-avatar-btn:focus-visible .g-avatar-badge { opacity: 1; }

@@ -8,10 +8,12 @@ let requestId = '', ordinal = 0, stream: Generator<{ html: string; limited: bool
 function* frames(tokens: TokensList): Generator<{ html: string; limited: boolean }> {
   let pending = '', bytes = 0;
   for (const token of tokens) {
-    const html = token.raw.length <= 16 * 1024
+    const oversized = token.raw.length > 16 * 1024;
+    const html = !oversized
       ? marked.parser(Object.assign([token], { links: tokens.links }) as TokensList, { async: false })
       : '';
-    const size = html ? weight(html) : Number.POSITIVE_INFINITY;
+    // Space/definition tokens legitimately emit no HTML. Only oversized raw tokens force fallback.
+    const size = oversized ? Number.POSITIVE_INFINITY : weight(html);
     if (size > 16 * 1024 || (html.match(/</g)?.length ?? 0) > 128) {
       if (pending) { yield { html: pending, limited: false }; pending = ''; bytes = 0; }
       // A giant paragraph/table/fence is not a bounded HTML batch. Preserve its complete raw text,
