@@ -196,15 +196,7 @@ window.CR099 = (() => {
           <div class="c95-card-f"><span class="spacer"></span><button type="button" class="btn primary" data-c95="search-save">保存搜索配置</button></div>
         </div>
       </section>
-      <section class="c95-card">
-        <div class="c95-card-h"><b>本地搜索授权目录</b><span class="caption">fs_grep／fs_glob 只在当前项目已授权目录内搜索。</span></div>
-        <div class="c95-card-b">
-          ${s.granted.map((g, gi) => `<div class="c95-grant">
-            <div class="c95-grant-h"><b>${esc(g.project)}</b><span class="caption">${g.dirs.length} 个目录</span></div>
-            ${g.dirs.map((d, di) => `<div class="c95-grant-row"><span class="mono">${esc(d)}</span><button type="button" class="c95-text-btn c95-muted" data-c95="grant-remove" data-g="${gi}" data-d="${di}">移除</button></div>`).join("") || `<p class="caption">该项目尚未授权任何目录。</p>`}
-          </div>`).join("")}
-        </div>
-      </section>
+      <p class="caption">本地搜索默认搜索当前会话的项目根目录，无需在此授权；项目外目录请在 AI 侧栏「搜索授权」中按会话添加。</p>
     </div>`;
   }
 

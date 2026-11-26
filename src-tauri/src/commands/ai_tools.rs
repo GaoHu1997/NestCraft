@@ -30,6 +30,9 @@ pub struct ToolContext {
     /// CR-047：执行会话绑定的唯一 Feature；普通会话为空。
     /// 非空时，工作台需求写入只能落在该 Feature 子树内。
     pub execution_feature_id: Option<String>,
+    /// CR-104：调用方会话 id；本地搜索按会话读取额外授权目录与权限档位。
+    /// 平台会话由宿主直接传入；CLI 会话经 `--session-id` 传入。
+    pub session_id: Option<String>,
 }
 
 /// 解析 `--app-mcp-stdio` 模式参数。返回 None 表示不是该模式。
@@ -44,6 +47,7 @@ fn parse_stdio_args_inner(args: &[String]) -> Result<ToolContext, String> {
     let mut data_dir: Option<PathBuf> = None;
     let mut project_id: Option<String> = None;
     let mut execution_feature_id: Option<String> = None;
+    let mut session_id: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -59,12 +63,16 @@ fn parse_stdio_args_inner(args: &[String]) -> Result<ToolContext, String> {
                 i += 1;
                 execution_feature_id = args.get(i).cloned().filter(|v| !v.trim().is_empty());
             }
+            "--session-id" => {
+                i += 1;
+                session_id = args.get(i).cloned().filter(|v| !v.trim().is_empty());
+            }
             _ => {}
         }
         i += 1;
     }
     let data_dir = data_dir.ok_or("缺少 --app-data-dir 参数，无法定位应用数据目录")?;
-    Ok(ToolContext { project_id, data_dir, execution_feature_id })
+    Ok(ToolContext { project_id, data_dir, execution_feature_id, session_id })
 }
 
 /// stdio 主循环：初始化数据库后逐行处理 JSON-RPC，直到 stdin 关闭。
@@ -188,8 +196,9 @@ fn schema_obj(props: Value, required: &[&str]) -> Value {
 }
 
 /// 13 个工作台业务工具 + 6 个原有内置工具（BUG-CR059-01）+ 1 个右栏请求工具（CR-054／STORY-073）
-/// + 1 个派发工具（CR-069／STORY-091：只建批次与任务，不执行、不推进状态）。
-const TOOL_COUNT: usize = 34;
+/// + 1 个派发工具（CR-069／STORY-091：只建批次与任务，不执行、不推进状态）
+/// + 2 个服务器连接工具（CR-105：ssh_connect / ssh_disconnect）。
+const TOOL_COUNT: usize = 36;
 
 pub(crate) fn workbench_tools() -> [ToolDef; TOOL_COUNT] {
     [
@@ -455,7 +464,7 @@ pub(crate) fn workbench_tools() -> [ToolDef; TOOL_COUNT] {
         ToolDef {
             name: "ssh_exec",
             registry_id: "ssh-exec",
-            description: "在已连接且已授权的服务器上执行命令。高风险命令立刻返回 {needsApproval:true, requestId}，必须在服务器工作台由用户批准后才会执行，AI 不得自行重试绕过审批。",
+            description: "在已连接且已授权的服务器上执行命令。主机未连接时先用 ssh_connect 建立连接（凭据由应用受管密钥提供，AI 不经手）。高风险命令立刻返回 {needsApproval:true, requestId}，必须在服务器工作台由用户批准后才会执行，AI 不得自行重试绕过审批。",
             schema: schema_obj(
                 json!({
                     "hostId": { "type": "string" },
@@ -464,6 +473,27 @@ pub(crate) fn workbench_tools() -> [ToolDef; TOOL_COUNT] {
                 &["hostId", "command"],
             ),
             risk: "high",
+        },
+        // CR-105：AI 侧连接/断开主机。凭据只走应用受管密钥文件，AI 不提供、不见密码。
+        ToolDef {
+            name: "ssh_connect",
+            registry_id: "workbench.ssh_connect",
+            description: "建立到指定服务器主机的 SSH 连接（凭据由应用受管密钥文件提供，AI 不经手密码/私钥）。已连接时幂等成功。连接成功后才能用 ssh_exec 执行命令；hostId 可先用 list_servers 查询。",
+            schema: schema_obj(
+                json!({ "hostId": { "type": "string" } }),
+                &["hostId"],
+            ),
+            risk: "medium",
+        },
+        ToolDef {
+            name: "ssh_disconnect",
+            registry_id: "workbench.ssh_disconnect",
+            description: "断开指定服务器主机的 SSH 连接。未连接时幂等成功。任务结束后建议断开不需要的长连接。",
+            schema: schema_obj(
+                json!({ "hostId": { "type": "string" } }),
+                &["hostId"],
+            ),
+            risk: "medium",
         },
         ToolDef {
             name: "ssh_exec_status",
@@ -677,6 +707,8 @@ pub const TOOL_LABELS: [(&str, &str); TOOL_COUNT] = [
     ("knowledge_read", "工作台·读知识"),
     ("knowledge_read_many", "工作台·批量读知识"),
     ("ssh_exec", "工作台·服务器命令"),
+    ("ssh_connect", "工作台·连接服务器"),
+    ("ssh_disconnect", "工作台·断开服务器"),
     ("ssh_exec_status", "工作台·审批结论"),
     // CR-054 / STORY-073：右栏请求
     ("open_panel", "工作台·打开预览面板"),
@@ -776,6 +808,8 @@ pub(crate) fn run_tool(ctx: &ToolContext, name: &str, args: &Value) -> Result<Va
         "knowledge_read" => tool_knowledge_read(ctx, args),
         "knowledge_read_many" => tool_knowledge_read_many(ctx, args),
         "ssh_exec" => tool_ssh_exec(args),
+        "ssh_connect" => crate::commands::servers::connect_ai_command_blocking(req_str(args, "hostId")?.trim()),
+        "ssh_disconnect" => crate::commands::servers::disconnect_ai_command_blocking(req_str(args, "hostId")?.trim()),
         "ssh_exec_status" => tool_ssh_exec_status(args),
         "open_panel" => tool_open_panel(args),
         "knowledge_links" => crate::commands::knowledge::tools::kb_tool_links(Some(with_project(ctx, args))),
@@ -1385,7 +1419,15 @@ fn tool_list_servers() -> Result<Value, String> {
             }))
         })
         .map_err(|e| e.to_string())?;
-    let servers: Vec<Value> = rows.filter_map(|r| r.ok()).collect();
+    let servers: Vec<Value> = rows.filter_map(|r| r.ok())
+        .map(|mut r| {
+            // CR-105：附带连接状态，AI 可据此先 ssh_connect 再 ssh_exec。
+            if let Some(id) = r.get("id").and_then(Value::as_str).map(str::to_string) {
+                r["connected"] = json!(crate::ssh::is_connected(&id));
+            }
+            r
+        })
+        .collect();
     Ok(json!({ "servers": servers }))
 }
 
@@ -1707,6 +1749,7 @@ mod tests {
             project_id: project.map(|s| s.to_string()),
             data_dir: db.dir.clone(),
             execution_feature_id: feature.map(|s| s.to_string()),
+            session_id: None,
         }
     }
 
@@ -1782,6 +1825,7 @@ mod tests {
             project_id: Some("p1".into()),
             data_dir: std::env::temp_dir(),
             execution_feature_id: Some("FEAT-011".into()),
+            session_id: None,
         };
         let mismatched = json!({
             "projectId": "p1",
@@ -1811,6 +1855,7 @@ mod tests {
             project_id: Some("p1".into()),
             data_dir: std::env::temp_dir(),
             execution_feature_id: None,
+            session_id: None,
         };
         let empty = json!({
             "projectId": "p1",

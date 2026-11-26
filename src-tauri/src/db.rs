@@ -257,7 +257,10 @@ fn migrate(conn: &Connection) -> Result<(), String> {
             updatedAt INTEGER NOT NULL,
             -- CR-069：会话运行通道。'cli' 走既有 CLI 进程；'platform' 由平台主代理作答。
             -- 旧库由 migrate_session_runner 补列并回填 'cli'，行为与升级前一致。
-            runner TEXT NOT NULL DEFAULT 'cli' CHECK (runner IN ('cli','platform'))
+            runner TEXT NOT NULL DEFAULT 'cli' CHECK (runner IN ('cli','platform')),
+            -- CR-104：会话权限档位（default/plan/agent/auto/full）；NULL 视为 default。
+            -- 旧库由 migrate_cr095_session_permission 补列，不批量回填。
+            permissionMode TEXT
         );
         CREATE TABLE IF NOT EXISTS message (
             id TEXT PRIMARY KEY,
@@ -315,6 +318,8 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     migrate_cr065_session_pin(conn)?;
     // CR-069：会话运行通道，旧记录默认 'cli'（DB-CR069）。
     migrate_session_runner(conn)?;
+    // CR-104：会话权限档位（默认 NULL＝default），供本地搜索范围按会话收紧（DB-CR104）。
+    migrate_cr095_session_permission(conn)?;
     // CR-070：平台摘要与精确回放（原 message 保留）。
     crate::commands::platform_context::migrate(conn)?;
     // CR-030-D1：知识切片与全文索引最小表集（FTS 虚表在库首次发布时创建，不在此建）。
@@ -659,6 +664,27 @@ fn migrate_session_runner(conn: &Connection) -> Result<(), String> {
          CREATE INDEX IF NOT EXISTS idx_session_runner ON session(projectId, runner, updatedAt);",
     )
     .map_err(|e| e.to_string())
+}
+
+/// CR-104：会话权限档位持久化。旧库补 `permissionMode TEXT`，历史记录保持 NULL（视为 default），
+/// 不按当前全局默认批量回填——避免替用户改写历史会话的权限事实。
+fn migrate_cr095_session_permission(conn: &Connection) -> Result<(), String> {
+    let column_exists = {
+        let mut statement = conn
+            .prepare("PRAGMA table_info(session)")
+            .map_err(|e| e.to_string())?;
+        let found = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .any(|name| name == "permissionMode");
+        found
+    };
+    if !column_exists {
+        conn.execute_batch("ALTER TABLE session ADD COLUMN permissionMode TEXT;")
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 /// CR-051：项目与知识库的可选显示字段 `icon TEXT` 与 r6 的 `icon_color TEXT`

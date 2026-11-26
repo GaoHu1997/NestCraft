@@ -371,7 +371,7 @@ fn filesystem_guard_reuses_knowledge_authority_and_blocks_private_app_data() {
     c.execute("INSERT INTO project VALUES('p1',?1)",[root.to_string_lossy().to_string()]).unwrap();
     c.execute("INSERT INTO knowledge_library VALUES('k',?1,1,1)",[root.to_string_lossy().to_string()]).unwrap();
     c.execute("INSERT INTO project_library_grant VALUES('p1','k',1,0)",[]).unwrap();
-    let ctx=crate::commands::ai_tools::ToolContext{project_id:Some("p1".into()),data_dir:data,execution_feature_id:None};
+    let ctx=crate::commands::ai_tools::ToolContext{project_id:Some("p1".into()),data_dir:data,execution_feature_id:None,session_id:None};
     let mut call=ToolCall{id:"r".into(),name:"fs_read".into(),arguments:json!({"path":"file.txt"}).to_string()};
     assert!(validate_platform_read(&c,&ctx,&call).is_err());
     c.execute("UPDATE project_library_grant SET readAllowed=1,revision=2",[]).unwrap();assert!(validate_platform_read(&c,&ctx,&call).is_ok());
@@ -406,7 +406,7 @@ fn mock_real_context_loop_compresses_restores_and_persists_both_protocols() {
         let database=Arc::new(Mutex::new(c));
         let mut messages=p.messages();p.base_len=messages.len();let initial=messages.len();
         let mut outcome=StreamOutcome::default();let (channel,events)=sink();
-        let ctx=crate::commands::ai_tools::ToolContext{project_id:None,data_dir:std::env::temp_dir(),execution_feature_id:None};
+        let ctx=crate::commands::ai_tools::ToolContext{project_id:None,data_dir:std::env::temp_dir(),execution_feature_id:None,session_id:None};
         tokio::runtime::Runtime::new().unwrap().block_on(run_tool_loop_database(&model.turn(protocol),&ctx,&mut messages,&channel,&abort,&mut outcome,Some(&mut p),Some(&database),None)).unwrap();
         assert_eq!(outcome.assistant_text,"done");assert_eq!(outcome.tool_uses.len(),2);assert!(!outcome.tool_results.iter().any(|r|r.2));
         assert!(serde_json::from_str::<Value>(&outcome.tool_uses[0].2).unwrap().get("summary").is_none(),"内部摘要不得出现在界面工具参数中");
@@ -453,7 +453,7 @@ fn mock_global_tool_switch_is_rechecked_before_execution_and_next_request() {
         }
     });
     let mut messages=p.messages();p.base_len=messages.len();let mut outcome=StreamOutcome::default();let (channel,_)=sink();
-    let ctx=crate::commands::ai_tools::ToolContext{project_id:None,data_dir:std::env::temp_dir(),execution_feature_id:None};
+    let ctx=crate::commands::ai_tools::ToolContext{project_id:None,data_dir:std::env::temp_dir(),execution_feature_id:None,session_id:None};
     tokio::runtime::Runtime::new().unwrap().block_on(run_tool_loop_database(&model.turn("openai"),&ctx,&mut messages,&channel,&abort,&mut outcome,Some(&mut p),Some(&database),None)).unwrap();
     assert!(outcome.tool_results[0].2 && outcome.tool_results[0].1.contains("不可用"));assert_eq!(model.requests.lock().unwrap().len(),2);
 }

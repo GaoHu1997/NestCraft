@@ -243,6 +243,7 @@ fn built_in_workbench_row(
     data_dir: &std::path::Path,
     project_id: Option<&str>,
     execution_feature_id: Option<&str>,
+    session_id: Option<&str>,
 ) -> McpRow {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("agent-workbench"));
     let mut args = vec![
@@ -258,6 +259,11 @@ fn built_in_workbench_row(
     if let Some(feature_id) = execution_feature_id {
         args.push("--execution-feature-id".to_string());
         args.push(feature_id.to_string());
+    }
+    // CR-104：会话 id 供本地搜索读取会话级授权目录与权限档位。
+    if let Some(sid) = session_id.filter(|s| !s.trim().is_empty()) {
+        args.push("--session-id".to_string());
+        args.push(sid.to_string());
     }
     McpRow {
         id: "builtin-workbench".into(),
@@ -277,10 +283,14 @@ fn merge_built_in_workbench(
     data_dir: &std::path::Path,
     project_id: Option<&str>,
     execution_feature_id: Option<&str>,
+    session_id: Option<&str>,
 ) -> Vec<McpRow> {
     let mut servers = servers;
     if !servers.iter().any(|s| s.name == "workbench") {
-        servers.insert(0, built_in_workbench_row(data_dir, project_id, execution_feature_id));
+        servers.insert(
+            0,
+            built_in_workbench_row(data_dir, project_id, execution_feature_id, session_id),
+        );
     }
     servers
 }
@@ -323,6 +333,7 @@ pub fn resolve(
             &dir,
             pid.as_deref(),
             feature.as_deref(),
+            Some(session_id),
         );
     }
     let has_provider = provider_id.map(|p| !p.is_empty()).unwrap_or(false);
@@ -675,7 +686,7 @@ mod tests {
     #[test]
     fn built_in_workbench_row_carries_stdio_command_and_context() {
         let dir = std::path::Path::new("D:/app-data");
-        let row = built_in_workbench_row(dir, Some("proj-1"), None);
+        let row = built_in_workbench_row(dir, Some("proj-1"), None, Some("sess-1"));
         assert_eq!(row.name, "workbench");
         assert_eq!(row.transport, "stdio");
         assert_eq!(row.auth_status, "unauthenticated");
@@ -686,9 +697,12 @@ mod tests {
         assert_eq!(row.args[2], "D:/app-data");
         assert_eq!(row.args[3], "--project-id");
         assert_eq!(row.args[4], "proj-1");
+        assert_eq!(row.args[5], "--session-id");
+        assert_eq!(row.args[6], "sess-1");
         // 未绑定项目时省略 --project-id
-        let row2 = built_in_workbench_row(dir, None, None);
+        let row2 = built_in_workbench_row(dir, None, None, None);
         assert!(!row2.args.iter().any(|a| a == "--project-id"));
+        assert!(!row2.args.iter().any(|a| a == "--session-id"));
     }
 
     /// CR-059：合并语义——注入置顶、开关关闭不注入、用户自配同名 workbench 优先。
@@ -700,14 +714,14 @@ mod tests {
             command: Some("node".into()), args: vec!["x.js".into()], env: BTreeMap::new(),
             url: None, auth_status: "unauthenticated".into(),
         };
-        let merged = merge_built_in_workbench(vec![user.clone()], dir, Some("p1"), None);
+        let merged = merge_built_in_workbench(vec![user.clone()], dir, Some("p1"), None, Some("s1"));
         assert_eq!(merged.len(), 2);
         assert_eq!(merged[0].name, "workbench", "内置服务器应置于清单首位");
         assert_eq!(merged[1].name, "user-mcp");
         // 用户已自配同名 workbench：用户配置优先，不重复注入
         let clash = McpRow { id: "m2".into(), name: "workbench".into(), transport: "stdio".into(),
             command: Some("node".into()), args: vec![], env: BTreeMap::new(), url: None, auth_status: "unauthenticated".into() };
-        let merged2 = merge_built_in_workbench(vec![clash], dir, None, None);
+        let merged2 = merge_built_in_workbench(vec![clash], dir, None, None, None);
         assert_eq!(merged2.len(), 1);
         assert_eq!(merged2[0].id, "m2");
     }
@@ -725,7 +739,7 @@ mod tests {
     #[test]
     fn claude_dispatch_includes_builtin_workbench_and_allows_it() {
         let dir = std::path::Path::new("D:/app-data");
-        let servers = vec![built_in_workbench_row(dir, Some("proj-1"), None)];
+        let servers = vec![built_in_workbench_row(dir, Some("proj-1"), None, Some("sess-1"))];
         let (payload, allowed) = claude_mcp_config(&servers, &|_| Ok(None)).unwrap();
         assert_eq!(allowed, vec!["mcp__workbench".to_string()]);
         let entry = &payload["mcpServers"]["workbench"];
@@ -742,7 +756,7 @@ mod tests {
     #[test]
     fn codex_dispatch_emits_workbench_toml_override() {
         let dir = std::path::Path::new("D:/app-data");
-        let servers = vec![built_in_workbench_row(dir, None, None)];
+        let servers = vec![built_in_workbench_row(dir, None, None, None)];
         let (overrides, envs) = codex_mcp_overrides(&servers, &|_| Ok(None)).unwrap();
         assert_eq!(overrides.len(), 1);
         let line = &overrides[0];

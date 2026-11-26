@@ -369,6 +369,9 @@ pub struct SessionMeta {
     /// CR-069：会话运行通道。'cli' 走既有 CLI 进程；'platform' 由平台主代理作答。
     #[serde(default = "default_runner")]
     pub runner: String,
+    /// CR-104：会话权限档位（default/plan/agent/auto/full）；NULL 按 default 解析。
+    #[serde(default)]
+    pub permission_mode: Option<String>,
 }
 
 fn default_runner() -> String { "cli".into() }

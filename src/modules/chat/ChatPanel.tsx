@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as api from "@/api";
 import type { AttachmentMeta, ChatEvent, ContextRef, ModelCandidate, SdkState, SessionBinding, SessionMeta } from "@/api";
 import { Confirm, Modal, useToast } from "@/components/ui";
+import { SessionSearchGrant } from "./SessionSearchGrant";
 import { MessageList, fromChatMessage, mkMsg } from "./MessageList";
 import type { OfficeFileRef, UiMessage } from "./MessageList";
 import { Composer, migrateComposerDraft, clearComposerDraft, restoreComposerDraft } from "./Composer";
@@ -244,6 +245,8 @@ function Panel(props: PanelProps) {
   const [cliCands, setCliCands] = useState<SdkState[]>([]);
   const [models, setModels] = useState<ModelCandidate[]>([]);
   const [permissionBySession, setPermissionBySession] = useState<Record<string, string>>({});
+  // CR-104：会话级搜索授权弹窗（默认项目根 + 本会话额外目录）。
+  const [searchGrantOpen, setSearchGrantOpen] = useState(false);
   const [sendMode, setSendMode] = useState<"queue" | "immediate">("queue");
   const [queued, setQueued] = useState(0);
   // 队列面板：镜像本次会话的待发队列（真实来源仍是 queues.current），并支持暂停。
@@ -1125,7 +1128,8 @@ function Panel(props: PanelProps) {
           // 引用已展开为受检会话正文；现后端没有session类型，不能仍发送不支持的引用。
         } else enriched.push(ref);
       }
-      const request: PendingSend = { sid: meta.id, text, refs: enriched.map(r => ({ ...r })), atts: atts.map(a => ({ ...a })), model: meta.modelId, cliId: meta.cliId ?? null, permissionId: permissionBySession[meta.id] ?? "default", scope: targetScope };
+      // CR-104：优先沿用本会话已持久化的权限档位，再回退到前端最近一次选择。
+      const request: PendingSend = { sid: meta.id, text, refs: enriched.map(r => ({ ...r })), atts: atts.map(a => ({ ...a })), model: meta.modelId, cliId: meta.cliId ?? null, permissionId: permissionBySession[meta.id] ?? meta.permissionMode ?? "default", scope: targetScope };
       const active = turns.current.get(meta.id);
       if ((active && !active.finished) || await api.chatStatus(meta.id)) {
         if (sendMode === "queue") {
@@ -1326,7 +1330,14 @@ function Panel(props: PanelProps) {
   const applyCfg = async (patch: { cliId?: string; providerId?: string; modelId?: string; effort?: string; permissionId?: string }) => {
     if (cfgLock.current || sendLock.current || executionLocked) { toast("当前会话仍有运行中的请求或子任务，配置已锁定；完成后再调整", "warn"); return; }
     if (patch.permissionId && curRef.current) {
-      setPermissionBySession(prev => ({ ...prev, [curRef.current!.id]: patch.permissionId! }));
+      const target = curRef.current;
+      const next = patch.permissionId;
+      setPermissionBySession(prev => ({ ...prev, [target.id]: next }));
+      // CR-104：权限档位随会话持久化，供本地搜索按「会话上的权限」收紧范围。
+      void api.chatSessionSetPermission(target.id, next).then(updated => {
+        if (curRef.current?.id === updated.id) { curRef.current = updated; setCur(updated); }
+        setSessions(prev => prev.map(s => s.id === updated.id ? updated : s));
+      }).catch(e => toast(String(e), "warn"));
       return;
     }
     // CR-037 / STORY-011 AC-05：非空会话（有消息或已有绑定）切 CLI 须确认后另建会话；后端亦拒绝原地改。
@@ -1478,7 +1489,7 @@ function Panel(props: PanelProps) {
         <span>正在编辑用户消息；发送后将以编辑后的文本作为新回合提交，原历史保留。</span>
         <button type="button" onClick={cancelEditUserMessage}>取消编辑</button>
       </div>}
-      <Composer scopeKey={`${scope}:${cur?.id ?? "new"}`} rootUri={props.rootUri} projectId={props.projectId} office={props.office} officeFiles={props.officeFiles} sessions={sessions} serverId={props.serverId} value={draft} streaming={running} disabled={composerLocked} editingMessage={!!editingMsg} runner={cur?.runner ?? runnerDraft} hat={{ branch: gitBranch, branches: gitBranches, worktree, platformAvailable: models.length > 0, locked: executionLocked || cfgBusy, onRunnerChange: next => { void switchRunner(next); }, onWorktreeChange: next => changeWorktree(next) }} cliId={cur ? cur.cliId : cliCands[0]?.id ?? null} onCreateGoal={text => { void createGoal(text); }} onOpenGoal={() => setGoalDraft("")} onChange={onDraftChange} onSend={async (text, refs, atts) => { const ok = await startSend(text, refs, atts); if (ok && editingMsgRef.current) { editingMsgRef.current = null; setEditingMsg(null); } return ok; }} onStop={stopSend} renderControls={({ add, send }) => <ModelPicker addControl={add} sendControl={send} cliId={cur?.cliId ?? null} providerId={cur?.providerId ?? null} modelId={cur?.modelId ?? null} effort={cur?.effort ?? null} cliCandidates={cliCands} models={models} permissionId={(cur?.id && permissionBySession[cur.id] as any) || "default"} locked={executionLocked || cfgBusy} onChange={applyCfg} runner={cur?.runner ?? runnerDraft} platformAvailable={models.length > 0} onRunnerChange={next => { void switchRunner(next); }} platformPermission={platformPermission} onPlatformPermissionChange={setPlatformPermission} />} onSessionSearch={async (q: string) => (await api.chatSessionsPage({ ...(props.projectId ? { projectId: props.projectId } : {}), ...(props.serverId ? { serverId: props.serverId } : {}), ...(q.trim() ? { keyword: q.trim() } : {}), limit: 20 })).items} />
+      <Composer scopeKey={`${scope}:${cur?.id ?? "new"}`} rootUri={props.rootUri} projectId={props.projectId} office={props.office} officeFiles={props.officeFiles} sessions={sessions} serverId={props.serverId} value={draft} streaming={running} disabled={composerLocked} editingMessage={!!editingMsg} runner={cur?.runner ?? runnerDraft} hat={{ branch: gitBranch, branches: gitBranches, worktree, platformAvailable: models.length > 0, locked: executionLocked || cfgBusy, onRunnerChange: next => { void switchRunner(next); }, onWorktreeChange: next => changeWorktree(next) }} cliId={cur ? cur.cliId : cliCands[0]?.id ?? null} onCreateGoal={text => { void createGoal(text); }} onOpenGoal={() => setGoalDraft("")} onOpenSearchGrant={() => setSearchGrantOpen(true)} onChange={onDraftChange} onSend={async (text, refs, atts) => { const ok = await startSend(text, refs, atts); if (ok && editingMsgRef.current) { editingMsgRef.current = null; setEditingMsg(null); } return ok; }} onStop={stopSend} renderControls={({ add, send }) => <ModelPicker addControl={add} sendControl={send} cliId={cur?.cliId ?? null} providerId={cur?.providerId ?? null} modelId={cur?.modelId ?? null} effort={cur?.effort ?? null} cliCandidates={cliCands} models={models} permissionId={((cur?.id ? (permissionBySession[cur.id] ?? cur.permissionMode) : null) as any) || "default"} locked={executionLocked || cfgBusy} onChange={applyCfg} runner={cur?.runner ?? runnerDraft} platformAvailable={models.length > 0} onRunnerChange={next => { void switchRunner(next); }} platformPermission={platformPermission} onPlatformPermissionChange={setPlatformPermission} />} onSessionSearch={async (q: string) => (await api.chatSessionsPage({ ...(props.projectId ? { projectId: props.projectId } : {}), ...(props.serverId ? { serverId: props.serverId } : {}), ...(q.trim() ? { keyword: q.trim() } : {}), limit: 20 })).items} />
       {goalDraft !== null && <Modal title="创建目标" onClose={() => setGoalDraft(null)} footer={<>
         <button type="button" className="btn" onClick={() => setGoalDraft(null)}>取消</button>
         <button type="submit" form="chat-goal-create" className="btn primary" disabled={!goalDraft.trim()}>创建目标</button>
@@ -1500,6 +1511,9 @@ function Panel(props: PanelProps) {
         onOk={() => void switchCliNewSession(cliSwitchTarget)}
         onCancel={() => setCliSwitchTarget(null)}
       />}
+      {searchGrantOpen && cur && <Modal title="搜索授权（本会话）" onClose={() => setSearchGrantOpen(false)}>
+        <SessionSearchGrant sessionId={cur.id} />
+      </Modal>}
       <StatsBar data={statsData} />
     </div>
   </div>;

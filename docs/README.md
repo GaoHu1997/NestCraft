@@ -1,5 +1,11 @@
 # 项目文档导航
 
+## CR-105：AI 服务器连接工具补全（2026-11-27，已实现，技术验证通过，待验收）
+
+用户反馈「服务器命令缺失，ai 现在不能访问到服务器内……补全一下服务器的相关工具」：AI 工具目录只有 `ssh_exec`，其前置「主机已在服务器工作台连接」无 AI 侧入口，AI 无法自主访问服务器。本次新增 `ssh_connect`／`ssh_disconnect`（凭据只走受管密钥文件，AI 不经手密码/私钥；连接/未连接均幂等），`list_servers` 附 `connected`，`ssh_exec` 描述补「先连接」指引；TOOL_COUNT 34→36、设置·工具目录、server 工具组、前端步骤标签同步；审批模型不变。**实现**：`servers.rs`（`connect_ai_command_blocking`／`disconnect_ai_command_blocking`，`host_auth` 抽出共享 `host_auth_from`）／`ai_tools.rs`／`capabilities.rs`／`tool_groups.rs`／`sessionRuntime.ts`。`cargo check --lib`、`cargo test --lib`（629 通过 0 失败）、`tsc` exit 0。**待验收**：真实远程主机端到端（connect → exec → 审批 → disconnect）。证据 [REPORT-CR105](Test/REPORT-CR105-服务器连接工具验证.md)。
+
+[需求](PRD/CR-105-AI服务器连接工具.md)／[方案](LLD/LLD-CR105-服务器连接工具.md)／[验证](Test/REPORT-CR105-服务器连接工具验证.md)／[需求汇总](需求汇总.md)
+
 ## CR-103：待发队列面板单行紧凑化＋可折叠（2026-11-26，已实现，技术验证通过，待验收）
 
 用户附截图反馈「待发队列太高了，需要更折叠后的高度一样」，澄清确认采用「每条消息单行紧凑」；同日追加「待发队列也需要可以折叠」，并明确「授权开发」后实现。每条排队消息固定单行截断省略（完整内容悬浮 title），「编辑／立即发送／删除」收进行内；引用/附件紧凑小标内联；编辑态仅该条目展开；列表限高约 5 行（待确认）自身滚动，按 UI-SCROLL-001 按需显示滚动条（真实共享机制 scrollbar.ts，滚动显示、停止 700ms 隐藏）；头部 ▾／▸ 可折叠，折叠仅保留头部一行（实测 32.5px），队列与暂停状态不受影响，默认展开、`SessionRuntime.queueFolded` 会话内记忆；面板总高不随消息长度变化（实测 90.0px 恒定）。**实现**：`ChatPanel.tsx`（`ChatQueuePanel`）／`chat-actions.css`／`sessionRuntime.ts`；`tsc` 与 `npm run build` exit 0，软件真实组件 **16/16**、0 JS 异常，设计稿（sha256 前16 74ca6be079d0eddc，v2）浅／深／窄 390 成对对照无未解决偏离。**待验收**：真实 Tauri/WebView2 全应用呈现、跨会话折叠记忆实机、悬浮 title 实机。证据 [REPORT-CR103](Test/REPORT-CR103-待发队列单行紧凑与折叠.md)；AC-CR103-01～06 挂 [STORY-062 CR-103 增量](Plan/Story/STORY-062-会话答复呈现与文件定位.md#cr-103增量待发队列面板单行紧凑化)。
@@ -63,6 +69,12 @@
 用户授权开发。为 AI 新增 4 个内置工具：本地 `fs_grep`/`fs_glob`（项目授权目录、ripgrep 的 ignore/globset/regex 库、路径防穿越、结果/大小上限）与联网 `web_search`（默认免 key 抓 DuckDuckGo、Bing 备用，设置可配 Tavily、失败回退）/`web_fetch`（HTML→Markdown via htmd，SSRF 防内网）。设置·搜索页管理联网后端与本地授权目录；密钥存受管文件。**验证：`cargo check --lib` exit 0；`cargo test --lib` 603 通过／0 失败／11 ignored（含 search_tools 5 项）；`npm run build` exit 0。未验证：真实联网抓取（DDG/Bing/Tavily 结果页结构）、真实 Tauri 窗口与 AI 会话端到端、SSRF DNS 重绑定。附带修复 knowledge.links/graph 补登记进内置工具注册表。**
 
 [需求](PRD/CR-093-AI本地与联网搜索工具.md)／[方案](LLD/LLD-CR093-AI搜索工具.md)／[UI](UI/文档/UI-CR093-设置搜索.md)／[调研](调研/RESEARCH-009-AI本地搜索工具与代码检索.md)／[验证](Test/REPORT-CR093-AI搜索工具验证.md)
+
+## CR-104：本地搜索授权会话化（2026-11-26，已实现，技术验证通过，待验收）
+
+用户反馈「本地搜索工具应按会话上的授权来，而不是单独授权」，并指定只读调研 PI-Desktop／ZCode／DSH Desktop。三个参考项目都默认以会话工作区为范围、只在越界时按会话授权，设置页没有搜索目录白名单。实现改为：`fs_grep`/`fs_glob` 默认搜索会话项目根（零配置）；额外目录存 `session:<id>` 作用域、仅本会话有效；`plan` 档位只搜项目根；越界返回可读错误并指向 AI 侧栏「搜索授权」；设置·搜索删除「本地搜索授权目录」整卡；`session.permissionMode` 持久化。**验证：`cargo check --lib` exit 0；`cargo test --lib` 629 通过／0 失败／11 ignored；搜索工具定向 7/7；`npm run build` exit 0。未验证：真实 Tauri 窗口、真实 CLI/平台会话内工具调用、真实库迁移与视觉对照。**
+
+[需求](PRD/CR-104-本地搜索授权会话化.md)／[方案](LLD/LLD-CR093-AI搜索工具.md)／[UI](UI/文档/UI-CR104-搜索授权会话化.md)／[数据](DB/DB-CR104-会话搜索授权与权限档位.md)／[调研](调研/RESEARCH-010-本地搜索工具授权机制对照.md)／[验证](Test/REPORT-CR104-本地搜索会话级授权验证.md)
 
 ## CR-089：知识库知识图谱与本地语义（2026-11-25，已实现，待验收）
 

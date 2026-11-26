@@ -861,6 +861,17 @@
     "ai-ref-remove": el => AIPanel.removeRef(Number(el.dataset.index)),
     "ai-permission": () => { store.aiPop = store.aiPop === "perm" ? null : "perm"; store.aiMenu = null; render(); },
     "ai-perm-set": el => { store.aiPermission = el.dataset.name; store.aiPop = null; toast("权限模式：" + el.dataset.name); render(); },
+    "ai-search-grant": () => { store.aiPop = store.aiPop === "searchgrant" ? null : "searchgrant"; store.aiMenu = null; render(); },
+    "ai-search-grant-add": () => {
+      const demo = "D:\\github\\shared-libs";
+      store.aiSearchDirs = Array.from(new Set([...(store.aiSearchDirs || []), demo]));
+      toast("已为本会话添加搜索目录（演示）");
+      render();
+    },
+    "ai-search-grant-remove": el => {
+      store.aiSearchDirs = (store.aiSearchDirs || []).filter(d => d !== el.dataset.dir);
+      render();
+    },
     "ai-cli": () => { store.aiPop = store.aiPop === "cli" ? null : "cli"; store.aiMenu = null; render(); },
     "ai-cli-set": el => { store.aiCli = el.dataset.id; store.aiPop = null; toast("已切换 CLI：" + el.dataset.id); render(); },
     "ai-model": () => { store.aiPop = store.aiPop === "model" ? null : "model"; store.aiMenu = null; store.aiTop = null; store.aiModelQuery = ""; render(); },

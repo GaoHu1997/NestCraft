@@ -168,6 +168,8 @@ fn session_row(row: &rusqlite::Row) -> rusqlite::Result<SessionMeta> {
         pinned_at: row.get(22)?,
         // CR-069：会话运行通道；列序见 SESSION_COLUMNS（pinnedAt=22，runner=23）。
         runner,
+        // CR-104：会话权限档位；列序见 SESSION_COLUMNS（permissionMode=24）。
+        permission_mode: row.get::<_, Option<String>>(24)?,
     })
 }
 
@@ -175,7 +177,7 @@ const SESSION_COLUMNS: &str = "s.id, s.projectId, s.serverId, s.title, s.cliId, 
     s.nativeThreadRef, s.nativeBindingRevision, s.nativeConfirmedTurnId, \
     (SELECT t.outcome FROM execution_session_turn t WHERE t.sessionId = s.id ORDER BY t.createdAt DESC, t.rowid DESC LIMIT 1), \
     (SELECT t.reasonCode FROM execution_session_turn t WHERE t.sessionId = s.id ORDER BY t.createdAt DESC, t.rowid DESC LIMIT 1), \
-    s.pinnedAt, s.runner";
+    s.pinnedAt, s.runner, s.permissionMode";
 
 // ---------- 会话 CRUD ----------
 
@@ -371,6 +373,26 @@ pub fn chat_session_get(id: String) -> Result<SessionMeta, String> {
         session_row,
     )
     .map_err(|e| e.to_string())
+}
+
+/// CR-104：把会话权限档位持久化到 session。档位语义沿用 CLI 既有白名单
+/// （default/plan/agent/auto/full）；未知值拒绝，不静默回落。
+#[tauri::command]
+pub fn chat_session_set_permission(id: String, permission_id: String) -> Result<SessionMeta, String> {
+    let next = permission_id.trim();
+    if !matches!(next, "default" | "plan" | "agent" | "auto" | "full") {
+        return Err(format!("未知会话权限档位：{next}"));
+    }
+    {
+        let guard = db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        conn.execute(
+            "UPDATE session SET permissionMode=?2 WHERE id=?1",
+            rusqlite::params![id, next],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    chat_session_get(id)
 }
 
 #[tauri::command]
@@ -783,8 +805,15 @@ pub async fn chat_send(
             ],
         )
         .map_err(|e| e.to_string())?;
-        conn.execute("UPDATE session SET updatedAt=?2 WHERE id=?1", rusqlite::params![session_id, now_ms()])
-            .map_err(|e| e.to_string())?;
+        // CR-104：本轮显式选择的权限档位随会话持久化，供本地搜索等工具按会话读取。
+        match permission_id.as_deref() {
+            Some(pid) if !pid.trim().is_empty() => conn.execute(
+                "UPDATE session SET updatedAt=?2, permissionMode=?3 WHERE id=?1",
+                rusqlite::params![session_id, now_ms(), pid.trim()],
+            ),
+            _ => conn.execute("UPDATE session SET updatedAt=?2 WHERE id=?1", rusqlite::params![session_id, now_ms()]),
+        }
+        .map_err(|e| e.to_string())?;
     }
 
     let session_id2 = session_id.clone();
@@ -2924,7 +2953,8 @@ mod tests {
                 nativeThreadRef TEXT, nativeBindingRevision INTEGER NOT NULL DEFAULT 0,
                 nativeConfirmedTurnId TEXT,
                 pinnedAt INTEGER NOT NULL DEFAULT 0,
-                runner TEXT NOT NULL DEFAULT 'cli'
+                runner TEXT NOT NULL DEFAULT 'cli',
+                permissionMode TEXT
              );
              CREATE TABLE message (id TEXT PRIMARY KEY, sessionId TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, metaJson TEXT, refsJson TEXT, gitContextJson TEXT, createdAt INTEGER NOT NULL);
              CREATE TABLE execution_session_turn (id TEXT PRIMARY KEY, sessionId TEXT NOT NULL, outcome TEXT, reasonCode TEXT, createdAt INTEGER NOT NULL);",

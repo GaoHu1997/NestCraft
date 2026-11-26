@@ -176,8 +176,7 @@ pub enum HostAuth {
     None,
 }
 
-fn host_auth(app: &tauri::AppHandle, host: &ServerHost) -> Result<HostAuth, String> {
-    let secrets = secrets_read(app);
+fn host_auth_from(secrets: &BTreeMap<String, String>, host: &ServerHost) -> Result<HostAuth, String> {
     if host.auth_type == "none" {
         return Ok(HostAuth::None);
     }
@@ -192,6 +191,16 @@ fn host_auth(app: &tauri::AppHandle, host: &ServerHost) -> Result<HostAuth, Stri
         let password = secrets.get(&host.id).cloned().unwrap_or_default();
         Ok(HostAuth::Password { password })
     }
+}
+
+fn host_auth(app: &tauri::AppHandle, host: &ServerHost) -> Result<HostAuth, String> {
+    host_auth_from(&secrets_read(app), host)
+}
+
+/// CR-105：数据目录版凭据读取（AI 工具进程无 AppHandle；与 GUI 同一受管密钥文件）。
+fn host_auth_at_dir(host: &ServerHost) -> Result<HostAuth, String> {
+    let dir = crate::storage_layout::root().map_err(|e| e.to_string())?;
+    host_auth_from(&secrets_read_at(&secrets_file_at(&dir)?), host)
 }
 
 fn find_host(app: &tauri::AppHandle, host_id: &str) -> Result<ServerHost, String> {
@@ -554,6 +563,75 @@ pub(crate) fn exec_ai_command_blocking(
         .build()
         .map_err(|e| format!("无法创建执行运行时：{e}"))?;
     runtime.block_on(ssh::exec_command(&conn, command, 30))
+}
+
+/// CR-105：AI 工具侧建立连接（无 AppHandle）。凭据只从受管密钥文件读取，AI 全程
+/// 不经手密码/私钥；连接写入本进程 SSH 连接表，随后 exec_ai_command_blocking 即可复用。
+/// 已连接时幂等返回。不登录交互、不接受 AI 提供的凭据。
+pub(crate) fn connect_ai_command_blocking(host_id: &str) -> Result<serde_json::Value, String> {
+    let row: Option<(String, String, i64, String, String)> = {
+        let guard = db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        conn.query_row(
+            "SELECT name, host, port, username, authType FROM server_host WHERE id=?1",
+            [host_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+    };
+    let Some((name, addr, port, username, auth_type)) = row else {
+        return Err(format!("主机不存在：{host_id}"));
+    };
+    if ssh::is_connected(host_id) {
+        return Ok(serde_json::json!({ "hostId": host_id, "name": name, "connected": true, "alreadyConnected": true }));
+    }
+    let host = ServerHost {
+        id: host_id.to_string(),
+        name,
+        host: addr.clone(),
+        port,
+        username,
+        auth_type,
+        group_tag: None,
+        connected: false,
+        os: None,
+        last_seen_at: None,
+        cpu_pct: None,
+        mem_pct: None,
+        disk_pct: None,
+    };
+    let auth = host_auth_at_dir(&host)?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("无法创建执行运行时：{e}"))?;
+    runtime.block_on(ssh::connect(host_id, &addr, port as u16, &host.username, &auth))?;
+    Ok(serde_json::json!({ "hostId": host_id, "name": host.name, "host": addr, "connected": true }))
+}
+
+/// CR-105：AI 工具侧断开连接（无 AppHandle）；未连接时幂等返回。
+pub(crate) fn disconnect_ai_command_blocking(host_id: &str) -> Result<serde_json::Value, String> {
+    let row: Option<(String, String, i64, String)> = {
+        let guard = db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        conn.query_row(
+            "SELECT name, host, port, username FROM server_host WHERE id=?1",
+            [host_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+    };
+    let Some((name, addr, port, username)) = row else {
+        return Err(format!("主机不存在：{host_id}"));
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("无法创建执行运行时：{e}"))?;
+    runtime.block_on(ssh::disconnect(host_id, &username, &addr, port as u16));
+    Ok(serde_json::json!({ "hostId": host_id, "name": name, "connected": false }))
 }
 
 /// 执行命令；高风险返回 needsApproval，用户确认后用 server_exec_approved。

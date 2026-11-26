@@ -89,6 +89,8 @@ export function Composer(props: {
   cliId?: string | null;
   onCreateGoal?: (text: string) => void;
   onOpenGoal?: () => void;
+  /** CR-104：打开当前会话的「搜索授权」弹窗（默认项目根 + 本会话额外目录）。 */
+  onOpenSearchGrant?: () => void;
 }) {
   const overlay = useChatOverlay();
   const draft = useSyncExternalStore(subscribe, () => getDraft(props.scopeKey));
@@ -222,6 +224,7 @@ export function Composer(props: {
         {(props.onCreateGoal || props.onOpenGoal) && <MenuRow icon={<Icon name="target" size={15} />} label="目标" keyword="goal" desc="/目标 命令，设置或查看长期任务目标" onClick={() => insertToken("/goal ")} />}
         <div className="chat-menu-section-head">指令</div>
         <MenuRow icon={<Icon name="shield" size={15} />} label="权限" keyword="permission" desc="切换权限预设" disabled={overlay.getTrigger("perm")?.disabled} onClick={() => overlay.open("perm")} />
+        <MenuRow icon={<Icon name="search" size={15} />} label="搜索授权" keyword="search" desc="为当前会话添加项目外的搜索目录" onClick={() => { overlay.close(true); props.onOpenSearchGrant?.(); }} />
         <MenuRow icon={<Icon name="cpu" size={15} />} label="模型" keyword="model" desc="选择本会话使用的模型" disabled={overlay.getTrigger("model")?.disabled} onClick={() => overlay.open("model")} />
         <MenuRow icon={<Icon name="command" size={15} />} label="能力与指令" keyword="commands" desc="进入 / 指令与技能列表" onClick={() => openMenu("/")} />
         <Unavailable name="下载日志" reason="ZIP 导出未接入" />

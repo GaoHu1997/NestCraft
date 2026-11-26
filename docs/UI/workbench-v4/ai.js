@@ -463,6 +463,7 @@ window.AIPanel = (function () {
           <button class="menu-item chat-menu-row-rich" data-act="ai-insert" data-text="/goal "><span class="cmr-ico">${icon("target", "ico-14")}</span><span class="cmr-label">目标<span class="cmr-kw">goal</span></span><span class="cmr-desc">/目标 命令，设置或查看长期任务目标</span></button>
           <div class="ai-menu-group">指令</div>
           <button class="menu-item chat-menu-row-rich" data-act="ai-permission"><span class="cmr-ico">${icon("shield", "ico-14")}</span><span class="cmr-label">权限<span class="cmr-kw">permission</span></span><span class="cmr-desc">切换权限预设</span></button>
+          <button class="menu-item chat-menu-row-rich" data-act="ai-search-grant"><span class="cmr-ico">${icon("search", "ico-14")}</span><span class="cmr-label">搜索授权<span class="cmr-kw">search</span></span><span class="cmr-desc">为当前会话添加项目外的搜索目录</span></button>
           <button class="menu-item chat-menu-row-rich" data-act="ai-model"><span class="cmr-ico">${icon("cpu", "ico-14")}</span><span class="cmr-label">模型<span class="cmr-kw">model</span></span><span class="cmr-desc">选择本会话使用的模型</span></button>
           <button class="menu-item chat-menu-row-rich" data-act="ai-pick" data-kind="command"><span class="cmr-ico">${icon("command", "ico-14")}</span><span class="cmr-label">能力与指令<span class="cmr-kw">commands</span></span><span class="cmr-desc">进入 / 指令与技能列表</span></button>
           <button class="menu-item chat-menu-row-rich" disabled title="ZIP 导出未接入"><span class="cmr-ico">${icon("download", "ico-14")}</span><span class="cmr-label">下载日志<span class="cmr-kw">export</span></span><span class="cmr-desc">不可用</span></button>
@@ -517,6 +518,20 @@ window.AIPanel = (function () {
       return `<div class="ai-pop ai-pop-perm" id="ai-popup-perm" data-ai-popup="perm" role="dialog" aria-label="${permTitle}" tabindex="-1">
         <div class="pop-h">${permTitle}<button class="icon-btn" data-ai-popup-close="perm" aria-label="关闭权限选择">${icon("x", "ico-14")}</button></div>
         ${list.map(p => `<button class="menu-item perm ${current === p.name ? "on" : ""}" data-act="${act}" data-name="${esc(p.name)}" ${runtimeBusy() || p.available === false ? 'disabled aria-disabled="true"' : ""}>${icon(p.icon || "shield", "ico-14")}<span class="mi-main"><b>${esc(p.name)}</b><span>${esc(p.desc)}</span></span>${current === p.name ? `<span class="check">${icon("check", "ico-14")}</span>` : ""}</button>`).join("") || '<div class="drop-empty">没有可用的权限模式。</div>'}
+      </div>`;
+    }
+    if (store.aiPop === "searchgrant") {
+      const root = store.projectRoot || "D:\\github\\AI_Delelovelop";
+      const dirs = store.aiSearchDirs || [];
+      return `<div class="ai-pop ai-pop-search" id="ai-popup-searchgrant" data-ai-popup="searchgrant" role="dialog" aria-label="搜索授权" tabindex="-1">
+        <div class="pop-h">搜索授权（本会话）<button class="icon-btn" data-ai-popup-close="searchgrant" aria-label="关闭搜索授权">${icon("x", "ico-14")}</button></div>
+        <div class="menu-hint">本地搜索默认包含当前项目根目录，无需授权；此处添加的目录仅本会话有效。</div>
+        <div class="menu-item" aria-disabled="true"><span class="mi-main"><b class="mono">${esc(root)}</b><span>项目根 · 默认包含，不可移除</span></span></div>
+        <div class="menu-sep"></div>
+        ${dirs.length ? dirs.map(d => `<div class="menu-item"><span class="mi-main"><b class="mono">${esc(d)}</b><span>本会话额外授权</span></span><button class="icon-btn" data-act="ai-search-grant-remove" data-dir="${esc(d)}" aria-label="移除该目录">${icon("trash", "ico-14")}</button></div>`).join("") : '<div class="drop-empty">尚未添加额外目录。</div>'}
+        <div class="menu-sep"></div>
+        <button class="menu-item" data-act="ai-search-grant-add">${icon("plus", "ico-14")}添加目录（仅本会话）</button>
+        <div class="menu-hint">规划模式会话只搜索项目根；需要项目外目录时在此添加。</div>
       </div>`;
     }
     if (store.aiPop === "model") {

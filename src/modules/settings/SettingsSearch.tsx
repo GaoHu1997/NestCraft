@@ -18,32 +18,18 @@ export function SettingsSearch() {
   const [maxResults, setMaxResults] = useState(10);
   const [webFetch, setWebFetch] = useState(true);
 
-  const [projects, setProjects] = useState<api.Project[]>([]);
-  const [pid, setPid] = useState("");
-  const [dirs, setDirs] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
-
   const loadConfig = useCallback(async () => {
     setLoading(true); setError("");
     try {
-      const [c, ps] = await Promise.all([api.searchConfigGet(), api.listProjects()]);
+      const c = await api.searchConfigGet();
       setBackend(c.backend === "tavily" ? "tavily" : "default");
       setBase(c.tavilyBaseUrl || "https://api.tavily.com");
       setHasKey(c.hasTavilyKey);
       setTimeoutSec(c.timeoutSec); setMaxResults(c.maxResults); setWebFetch(c.webFetchEnabled);
-      setProjects(ps);
-      setPid(prev => prev || ps[0]?.id || "");
     } catch (e) { setError(errMsg(e)); } finally { setLoading(false); }
   }, []);
 
   useEffect(() => { void loadConfig(); }, [loadConfig]);
-
-  useEffect(() => {
-    if (!pid) { setDirs([]); return; }
-    let alive = true;
-    api.searchAuthDirsGet(pid).then(d => { if (alive) setDirs(d); }).catch(() => { if (alive) setDirs([]); });
-    return () => { alive = false; };
-  }, [pid]);
 
   const save = async () => {
     if (saving) return;
@@ -52,24 +38,6 @@ export function SettingsSearch() {
       await api.searchConfigSet({ backend, tavilyBaseUrl: base, tavilyKey: key.trim() ? key : undefined, timeoutSec, maxResults, webFetchEnabled: webFetch });
       setKey(""); toast("搜索配置已保存"); await loadConfig();
     } catch (e) { toast(errMsg(e), "err"); } finally { setSaving(false); }
-  };
-
-  const addDir = async () => {
-    if (!pid) { toast("请先选择项目", "err"); return; }
-    setBusy(true);
-    try {
-      const picked = await api.pickProjectDirectory();
-      if (!picked) return;
-      const next = Array.from(new Set([...dirs, picked]));
-      setDirs(await api.searchAuthDirsSet(pid, next));
-    } catch (e) { toast(errMsg(e), "err"); } finally { setBusy(false); }
-  };
-
-  const removeDir = async (d: string) => {
-    if (!pid) return;
-    setBusy(true);
-    try { setDirs(await api.searchAuthDirsSet(pid, dirs.filter(x => x !== d))); }
-    catch (e) { toast(errMsg(e), "err"); } finally { setBusy(false); }
   };
 
   if (loading) return <p className="set-caption">加载搜索配置中…</p>;
@@ -92,21 +60,7 @@ export function SettingsSearch() {
       <div className="set-search-row"><span className="set-search-label">启用网页抓取 web_fetch</span><SettingsSwitch checked={webFetch} label="启用网页抓取" onChange={setWebFetch} /></div>
       <div className="set-search-row"><button className="btn primary" disabled={saving} onClick={() => void save()}>{saving ? "保存中…" : "保存搜索配置"}</button></div>
     </section>
-
-    <section className="card set-search-card">
-      <h3>本地搜索授权目录</h3>
-      <p className="set-caption">AI 的 fs_grep / fs_glob 只在当前项目已授权的目录内搜索（按项目/会话生效）。未授权时本地搜索工具会提示先授权。</p>
-      <div className="set-search-row">
-        <span className="set-search-label">项目</span>
-        <select className="set-search-input" value={pid} onChange={e => setPid(e.target.value)}>
-          {projects.length === 0 && <option value="">（暂无项目）</option>}
-          {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
-        <button className="btn sm" disabled={busy || !pid} onClick={() => void addDir()}>添加目录…</button>
-      </div>
-      {dirs.length === 0
-        ? <p className="set-caption">该项目尚未授权任何目录。</p>
-        : <ul className="set-search-dirs">{dirs.map(d => <li key={d}><span className="mono">{d}</span><button className="link-btn" disabled={busy} onClick={() => void removeDir(d)}>移除</button></li>)}</ul>}
-    </section>
+    {/* CR-104：本地搜索默认继承会话项目根，不再在此单独授权目录。 */}
+    <p className="set-caption">本地搜索默认搜索当前会话的项目根目录，无需在此授权；项目外目录请在 AI 侧栏「搜索授权」中按会话添加。</p>
   </div>;
 }

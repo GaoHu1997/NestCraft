@@ -591,6 +591,9 @@ const WORKBENCH_TOOL_LABELS: Record<string, string> = {
   knowledge_read: "工作台·读知识",
   knowledge_read_many: "工作台·批量读知识",
   ssh_exec: "工作台·服务器命令",
+  // CR-105：AI 侧连接/断开主机（与后端 TOOL_LABELS 一致）
+  ssh_connect: "工作台·连接服务器",
+  ssh_disconnect: "工作台·断开服务器",
   // CR-059 二期：审批结论查询
   ssh_exec_status: "工作台·审批结论",
   // CR-054 / STORY-073：右栏请求

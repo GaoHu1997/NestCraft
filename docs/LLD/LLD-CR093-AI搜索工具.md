@@ -13,10 +13,14 @@
 
 ## 2. 选定方案
 
-### 2.1 本地搜索（fs_grep / fs_glob）
+### 2.1 本地搜索（fs_grep / fs_glob）——CR-104 会话级授权
+
 - 遍历：`ignore` crate 的 `WalkBuilder`（ripgrep 同源，尊重 .gitignore、默认跳过隐藏/二进制）；`follow_links(false)` 防符号链接逃逸。
 - 内容匹配：`regex` crate（大小写可选）；文件名匹配：`globset`。
-- 范围：**项目授权目录**——`setting_default(scope=projectId, key='search.authDirs')` 的 JSON 数组；未授权时返回明确提示。可选 `path` 必须是授权目录内子路径（canonicalize 校验）。
+- **默认范围＝会话绑定项目的根目录**（`project.rootUri` canonical），无需任何前置授权；会话额外目录存在 `setting_default(scope='session:<sessionId>', key='search.extraDirs')`，仅本会话有效。
+- **权限档位收紧**：会话 `permissionMode='plan'` 时只保留项目根，额外目录不生效；`default/agent/auto/full` 使用项目根 + 额外目录。档位随 `session.permissionMode` 持久化（CR-104）。
+- 越界：`path` 为绝对路径且不在任何可用根内，返回「搜索范围外」错误并指向 AI 侧栏「搜索授权」；相对路径相对项目根解析，`..`/符号链接经 canonicalize + `starts_with` 前缀校验拒绝。
+- 结果附带 `searchRoots`（实际搜索根），便于模型与用户核对范围。
 - 上限：单文件 ≤ 4 MiB、结果数上限（grep 默认 200/上限 1000；glob 默认 500/上限 5000）、二进制跳过（首 8KB 含 NUL 判定）。
 
 ### 2.2 联网搜索（web_search）
@@ -34,15 +38,21 @@
 - 本地路径：只在授权目录内遍历；`path` 子路径 canonicalize 校验；不读应用数据目录（工具默认不指向）。
 - 密钥：只写入受管密钥文件；`search_config_get` 只返回 `hasTavilyKey` 布尔，不返回明文；不写日志。
 
-### 2.5 设置界面
-- 新增「设置 · 搜索」页签（`SettingsSearch.tsx`）：联网后端（默认/Tavily+地址+密钥）、超时、结果数、web_fetch 开关；本地授权目录（按项目选择、调用系统目录选择器添加/移除）。
-- 工具分组：`builtinToolCategory` 增加 `search` 组，设置·Tools 显示「搜索」分类。
-- 新增 Tauri 命令：`search_auth_dirs_get/set`、`search_config_get/set`（lib.rs 注册）。
+### 2.5 设置界面与入口（CR-104）
+- 「设置 · 搜索」页签只保留联网配置：后端（默认/Tavily+地址+密钥）、超时、结果数、web_fetch 开关；删除「本地搜索授权目录」整卡，底部一行说明指向会话授权入口。
+- AI 侧栏输入框「+」菜单 →「指令」新增「搜索授权」，打开会话级授权弹窗（`SessionSearchGrant.tsx`）：项目根只读展示、额外目录列表、添加（系统目录选择器）/移除、空态与规划模式提示。
+- 工具分组：`builtinToolCategory` 保留 `search` 组，设置·Tools 显示「搜索」分类。
+- Tauri 命令：`search_session_scope_get`、`search_session_dirs_add`、`search_session_dirs_remove`、`search_config_get/set`、`chat_session_set_permission`（lib.rs 注册）。
 
 ## 3. 变更文件
 
 - 新增：`src-tauri/src/commands/search_tools.rs`（工具+配置+密钥+2 组命令+单测）、`src/modules/settings/SettingsSearch.tsx`、`src/modules/settings/settings-search.css`。
 - 修改：`Cargo.toml`（ignore/globset/regex/htmd）、`commands/mod.rs`（声明模块）、`ai_tools.rs`（+4 ToolDef、+4 标签、+4 分发、TOOL_COUNT 25→29、同步测试断言）、`capabilities.rs`（BUILTIN_TOOLS 23→27）、`lib.rs`（注册 4 命令）、`src/api/index.ts`（SearchConfig 与 4 个接口）、`settings/index.tsx`（新增「搜索」页签）、`SettingsTool.tsx` + `capabilityHelpers.ts`（搜索分组）。
+
+### 3.1 CR-104 变更文件
+
+- 新增：`src/modules/chat/SessionSearchGrant.tsx`、`src/modules/chat/session-search-grant.css`。
+- 修改：`search_tools.rs`（`search_roots`/`start_under_root`/会话授权命令、规划模式收紧、`searchRoots` 结果）、`ai_tools.rs`（`ToolContext.session_id`、`--session-id`）、`dispatch.rs`（MCP 行传 `--session-id`）、`platform_agent.rs`（平台 ctx 带会话 id）、`db.rs`（`session.permissionMode` + 迁移）、`chat.rs`（列序、`chat_session_set_permission`、发送时持久化档位）、`models.rs`、`lib.rs`（命令注册）、`src/api/index.ts`、`src/modules/settings/SettingsSearch.tsx`（删授权卡片）、`src/modules/chat/ChatPanel.tsx`、`src/modules/chat/Composer.tsx`。
 
 ## 4. 验证方法
 
@@ -53,7 +63,15 @@
 
 ## 5. 未决项、假设与限制
 
-- **假设**：授权目录按项目存储即满足「对话时授权」（会话绑定项目）；如需严格会话级（同一项目多会话不同授权），后续可扩为 session 维度。
+- **CR-104 已取代原假设**：授权改为会话级——默认项目根、额外目录按 `session:<id>` 存储，规划模式只保留项目根；原「按项目存储即等价对话时授权」不再成立。
+- 会话权限档位目前只在前端显式选择/发送时写入 `session.permissionMode`；平台助理权限（readonly/limited/full）尚未持久化到同一字段，后续统一时需补迁移与 UI 证据。
 - SSRF 仅字面主机/私网黑名单，未做 DNS 解析防重绑定；生产如需可加 `resolve` 校验。
 - DuckDuckGo/Bing 结果页解析依赖当前 HTML 结构，随站点改版可能失效，需回归；合规上遵守目标站 ToS 与频率限制（限速需在后续加入）。
 - 未实测真实 Tavily/DuckDuckGo/Bing 网络请求与真实 Tauri 窗口视觉；本轮以编译与单测为技术验证基线。
+
+### 6.1 变更记录（CR-104）
+
+| 日期 | 变更 |
+| --- | --- |
+| 2026-11-26 | 本地搜索授权由「按项目白名单」改为「会话默认项目根 + 会话额外目录 + 规划模式收紧」；设置页删除授权卡片；新增 AI 侧栏搜索授权弹窗与 `session.permissionMode` 持久化。 |
+

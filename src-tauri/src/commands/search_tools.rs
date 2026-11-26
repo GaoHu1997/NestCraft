@@ -28,7 +28,7 @@ const K_TAVILY_BASE: &str = "search.web.tavily.baseUrl";
 const K_TIMEOUT: &str = "search.web.timeoutSec";
 const K_MAXRESULTS: &str = "search.web.maxResults";
 const K_WEBFETCH: &str = "search.webFetch.enabled";
-const K_AUTH_DIRS_PREFIX: &str = "search.authDirs"; // scope=projectId
+const K_SESSION_DIRS: &str = "search.extraDirs"; // scope=session:<sessionId>（CR-104 会话级授权）
 const SECRET_TAVILY: &str = "search.tavily";
 
 const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
@@ -84,55 +84,178 @@ fn resolve_project(ctx: &ToolContext, args: &Value) -> Result<String, String> {
         .ok_or_else(|| "会话未绑定项目且未提供 projectId".to_string())
 }
 
-fn load_auth_dirs(conn: &rusqlite::Connection, project_id: &str) -> Vec<PathBuf> {
-    setting_get(conn, project_id, K_AUTH_DIRS_PREFIX)
+fn scope_for_session(session_id: &str) -> String {
+    format!("session:{session_id}")
+}
+
+/// 校验并规范化一个可搜索目录：必须是存在的绝对目录。
+fn canonical_dir(raw: &str) -> Result<PathBuf, String> {
+    let t = raw.trim();
+    if t.is_empty() {
+        return Err("目录不能为空".into());
+    }
+    let p = Path::new(t);
+    if !p.is_absolute() {
+        return Err(format!("搜索目录必须是绝对路径：{t}"));
+    }
+    let c = std::fs::canonicalize(p).map_err(|_| format!("目录不可访问：{t}"))?;
+    if !c.is_dir() {
+        return Err(format!("不是目录：{t}"));
+    }
+    Ok(c)
+}
+
+/// 会话绑定项目的根目录（canonical）。项目不存在或不可访问时返回 None。
+fn project_root(conn: &rusqlite::Connection, project_id: &str) -> Option<PathBuf> {
+    let uri: String = conn
+        .query_row("SELECT rootUri FROM project WHERE id=?1", [project_id], |r| r.get(0))
+        .ok()?;
+    std::fs::canonicalize(&uri).ok().filter(|p| p.is_dir())
+}
+
+/// 会话级额外搜索目录（实时读取，目录不可访问时跳过）。
+fn session_extra_dirs(conn: &rusqlite::Connection, session_id: &str) -> Vec<PathBuf> {
+    setting_get(conn, &scope_for_session(session_id), K_SESSION_DIRS)
         .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
         .unwrap_or_default()
         .into_iter()
-        .map(PathBuf::from)
+        .filter_map(|d| std::fs::canonicalize(d).ok())
+        .filter(|p| p.is_dir())
         .collect()
 }
 
-// ---------- Tauri 命令：授权目录与配置 ----------
-
-/// 读取某项目已授权的本地搜索目录（绝对路径列表）。
-#[tauri::command]
-pub fn search_auth_dirs_get(project_id: String) -> Result<Vec<String>, String> {
-    let guard = db::conn()?;
-    let conn = guard.as_ref().ok_or("db not initialized")?;
-    Ok(load_auth_dirs(conn, &project_id)
-        .into_iter()
-        .map(|p| p.to_string_lossy().to_string())
-        .collect())
+/// 会话权限档位；历史记录 NULL 视为 default。
+fn session_permission_mode(conn: &rusqlite::Connection, session_id: Option<&str>) -> String {
+    session_id
+        .and_then(|sid| {
+            conn.query_row(
+                "SELECT permissionMode FROM session WHERE id=?1",
+                [sid],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .ok()
+            .flatten()
+        })
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or_else(|| "default".into())
 }
 
-/// 设置某项目的本地搜索授权目录（会校验为存在的绝对目录，去重、规范化为 canonical 绝对路径）。
-#[tauri::command]
-pub fn search_auth_dirs_set(project_id: String, dirs: Vec<String>) -> Result<Vec<String>, String> {
-    let guard = db::conn()?;
-    let conn = guard.as_ref().ok_or("db not initialized")?;
-    let mut out: Vec<String> = Vec::new();
-    for d in dirs {
-        let t = d.trim();
-        if t.is_empty() {
-            continue;
-        }
-        let p = Path::new(t);
-        if !p.is_absolute() {
-            return Err(format!("授权目录必须是绝对路径：{t}"));
-        }
-        let c = std::fs::canonicalize(p).map_err(|_| format!("目录不可访问：{t}"))?;
-        if !c.is_dir() {
-            return Err(format!("不是目录：{t}"));
-        }
-        let s = c.to_string_lossy().to_string();
-        if !out.contains(&s) {
-            out.push(s);
+/// 本轮可搜索的根目录集合：项目根 + 会话额外目录；规划（plan）档位只保留项目根。
+fn search_roots(
+    conn: &rusqlite::Connection,
+    ctx: &ToolContext,
+    project_id: &str,
+) -> Result<Vec<PathBuf>, String> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Some(root) = project_root(conn, project_id) {
+        roots.push(root);
+    }
+    if session_permission_mode(conn, ctx.session_id.as_deref()) != "plan" {
+        if let Some(sid) = ctx.session_id.as_deref() {
+            for dir in session_extra_dirs(conn, sid) {
+                if !roots.contains(&dir) {
+                    roots.push(dir);
+                }
+            }
         }
     }
+    if roots.is_empty() {
+        return Err(
+            "当前会话没有可搜索范围：请先选择项目，或在 AI 侧栏「搜索授权」中为本会话添加目录。"
+                .into(),
+        );
+    }
+    Ok(roots)
+}
+
+/// 在某个根下解析搜索起点；`sub` 为空取根本身。
+/// 返回 `Err("OUT_OF_SCOPE")` 表示该路径不在这个根内。
+fn start_under_root(root: &Path, sub: Option<&str>) -> Result<PathBuf, String> {
+    let root_c = std::fs::canonicalize(root)
+        .map_err(|_| format!("目录不可访问：{}", root.to_string_lossy()))?;
+    match sub {
+        None => Ok(root_c),
+        Some(sp) => {
+            let p = Path::new(sp);
+            let cand = if p.is_absolute() { p.to_path_buf() } else { root_c.join(p) };
+            let c = std::fs::canonicalize(&cand)
+                .map_err(|_| format!("路径不存在或不可访问：{sp}"))?;
+            if c.starts_with(&root_c) {
+                Ok(c)
+            } else {
+                Err("OUT_OF_SCOPE".into())
+            }
+        }
+    }
+}
+
+fn out_of_scope_error(sub: Option<&str>) -> String {
+    match sub {
+        Some(sp) => format!(
+            "搜索范围外：{sp}。默认范围仅包含当前项目根与会话已授权目录；如需搜索该目录，请在 AI 侧栏「搜索授权」中为本会话添加（仅本会话有效）。"
+        ),
+        None => "搜索范围外：该目录不在当前会话的可搜索范围内。".into(),
+    }
+}
+
+// ---------- Tauri 命令：会话授权目录与配置 ----------
+
+/// 读取某会话的搜索范围：项目根、额外目录、权限档位。
+#[tauri::command]
+pub fn search_session_scope_get(session_id: String) -> Result<Value, String> {
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    let project_id: Option<String> = conn
+        .query_row("SELECT projectId FROM session WHERE id=?1", [&session_id], |r| r.get(0))
+        .ok()
+        .flatten();
+    let root = project_id
+        .as_deref()
+        .and_then(|pid| project_root(conn, pid))
+        .map(|p| p.to_string_lossy().to_string());
+    let extra: Vec<String> = session_extra_dirs(conn, &session_id)
+        .into_iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+    Ok(json!({
+        "projectRoot": root,
+        "extraDirs": extra,
+        "permissionMode": session_permission_mode(conn, Some(&session_id)),
+    }))
+}
+
+/// 为某会话添加一个额外搜索目录（仅本会话有效；去重、canonical 化）。
+#[tauri::command]
+pub fn search_session_dirs_add(session_id: String, dir: String) -> Result<Vec<String>, String> {
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    let c = canonical_dir(&dir)?;
+    let mut dirs = session_extra_dirs(conn, &session_id);
+    if !dirs.contains(&c) {
+        dirs.push(c);
+    }
+    let out: Vec<String> = dirs.iter().map(|p| p.to_string_lossy().to_string()).collect();
     let json_v = serde_json::to_string(&out).map_err(|e| e.to_string())?;
-    setting_set(conn, &project_id, K_AUTH_DIRS_PREFIX, &json_v)?;
+    setting_set(conn, &scope_for_session(&session_id), K_SESSION_DIRS, &json_v)?;
     Ok(out)
+}
+
+/// 移除某会话的一个额外搜索目录。
+#[tauri::command]
+pub fn search_session_dirs_remove(session_id: String, dir: String) -> Result<Vec<String>, String> {
+    let guard = db::conn()?;
+    let conn = guard.as_ref().ok_or("db not initialized")?;
+    let target = std::fs::canonicalize(dir.trim())
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| dir.trim().to_string());
+    let dirs: Vec<String> = session_extra_dirs(conn, &session_id)
+        .into_iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .filter(|p| p != &target)
+        .collect();
+    let json_v = serde_json::to_string(&dirs).map_err(|e| e.to_string())?;
+    setting_set(conn, &scope_for_session(&session_id), K_SESSION_DIRS, &json_v)?;
+    Ok(dirs)
 }
 
 /// 读取联网搜索配置（不含密钥明文，只返回是否已配置）。
@@ -261,31 +384,34 @@ pub(crate) fn tool_fs_grep(ctx: &ToolContext, args: &Value) -> Result<Value, Str
         None => None,
     };
 
-    let guard = db::conn()?;
-    let conn = guard.as_ref().ok_or("db not initialized")?;
-    let dirs = load_auth_dirs(conn, &project_id);
-    if dirs.is_empty() {
-        return Err("尚未授权任何本地搜索目录。请到「设置 · 搜索」为该项目的授权目录，再重试。".into());
-    }
-    drop(guard);
+    let (roots, starts) = {
+        let guard = db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        let roots = search_roots(conn, ctx, &project_id)?;
+        let mut starts: Vec<(PathBuf, PathBuf)> = Vec::new();
+        let mut scope_miss = false;
+        let mut last_err: Option<String> = None;
+        for root in &roots {
+            match start_under_root(root, sub_path) {
+                Ok(start) => starts.push((root.clone(), start)),
+                Err(e) if e == "OUT_OF_SCOPE" => scope_miss = true,
+                Err(e) => last_err = Some(e),
+            }
+        }
+        if starts.is_empty() {
+            return Err(if scope_miss {
+                out_of_scope_error(sub_path)
+            } else {
+                last_err.unwrap_or_else(|| "没有可搜索的目录".into())
+            });
+        }
+        (roots, starts)
+    };
 
     let mut matches: Vec<Value> = Vec::new();
     let mut truncated = false;
-    'outer: for root in &dirs {
-        if !root.is_dir() {
-            continue;
-        }
-        let start = match sub_path {
-            Some(sp) => {
-                let cand = root.join(sp);
-                match std::fs::canonicalize(&cand) {
-                    Ok(c) if c.starts_with(std::fs::canonicalize(root).unwrap_or_else(|_| root.clone())) => c,
-                    _ => continue,
-                }
-            }
-            None => root.clone(),
-        };
-        let walker = ignore::WalkBuilder::new(&start)
+    'outer: for (root, start) in &starts {
+        let walker = ignore::WalkBuilder::new(start)
             .standard_filters(true)
             .follow_links(false)
             .build();
@@ -345,11 +471,11 @@ pub(crate) fn tool_fs_grep(ctx: &ToolContext, args: &Value) -> Result<Value, Str
         "matches": matches,
         "count": matches.len(),
         "truncated": truncated,
-        "authorizedDirs": dirs.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+        "searchRoots": roots.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
     }))
 }
 
-/// fs_glob：在项目授权目录内按文件名/相对路径 glob 匹配。
+/// fs_glob：在当前会话可搜索范围（项目根 + 会话额外目录）内按文件名/相对路径 glob 匹配。
 pub(crate) fn tool_fs_glob(ctx: &ToolContext, args: &Value) -> Result<Value, String> {
     let project_id = resolve_project(ctx, args)?;
     let pattern = args.get("pattern").and_then(Value::as_str).map(str::trim).unwrap_or("");
@@ -369,20 +495,15 @@ pub(crate) fn tool_fs_glob(ctx: &ToolContext, args: &Value) -> Result<Value, Str
         .map_err(|e| format!("glob 无效：{e}"))?;
     let matcher = glob.compile_matcher();
 
-    let guard = db::conn()?;
-    let conn = guard.as_ref().ok_or("db not initialized")?;
-    let dirs = load_auth_dirs(conn, &project_id);
-    if dirs.is_empty() {
-        return Err("尚未授权任何本地搜索目录。请到「设置 · 搜索」为该项目的授权目录，再重试。".into());
-    }
-    drop(guard);
+    let roots = {
+        let guard = db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        search_roots(conn, ctx, &project_id)?
+    };
 
     let mut files: Vec<Value> = Vec::new();
     let mut truncated = false;
-    'outer: for root in &dirs {
-        if !root.is_dir() {
-            continue;
-        }
+    'outer: for root in &roots {
         let walker = ignore::WalkBuilder::new(root)
             .standard_filters(true)
             .follow_links(false)
@@ -406,7 +527,12 @@ pub(crate) fn tool_fs_glob(ctx: &ToolContext, args: &Value) -> Result<Value, Str
             }
         }
     }
-    Ok(json!({ "files": files, "count": files.len(), "truncated": truncated }))
+    Ok(json!({
+        "files": files,
+        "count": files.len(),
+        "truncated": truncated,
+        "searchRoots": roots.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+    }))
 }
 
 // ---------- 联网搜索 ----------
@@ -749,5 +875,34 @@ mod tests {
     fn binary_detection() {
         assert!(is_probably_binary(&[0, 1, 2, 3]));
         assert!(!is_probably_binary(b"hello world"));
+    }
+
+    /// CR-104：默认项目根内可解析；绝对越界与 `..` 逃逸都返回 OUT_OF_SCOPE。
+    #[test]
+    fn start_under_root_keeps_inside_and_rejects_escape() {
+        let base = std::env::temp_dir().join(format!("dsh-search-{}", std::process::id()));
+        let root = base.join("root");
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("sub/a.txt"), "x").unwrap();
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+
+        let inside = start_under_root(&root, Some("sub")).unwrap();
+        assert!(inside.ends_with("sub"), "实际：{}", inside.display());
+        assert_eq!(start_under_root(&root, None).unwrap(), std::fs::canonicalize(&root).unwrap());
+
+        let abs = outside.to_string_lossy().to_string();
+        assert_eq!(start_under_root(&root, Some(abs.as_str())).unwrap_err(), "OUT_OF_SCOPE");
+        assert_eq!(start_under_root(&root, Some("../outside")).unwrap_err(), "OUT_OF_SCOPE");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// CR-104：越界错误必须指向会话级授权入口，不能回退到旧的「设置·搜索」文案。
+    #[test]
+    fn out_of_scope_message_points_to_session_grant() {
+        let msg = out_of_scope_error(Some("D:/elsewhere"));
+        assert!(msg.contains("搜索范围外"));
+        assert!(msg.contains("搜索授权"));
+        assert!(!msg.contains("设置 · 搜索"));
     }
 }

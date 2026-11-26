@@ -1,0 +1,8 @@
+/* CR-095：会话级搜索授权弹窗（复用 Modal 壳，只补内容排版）。 */
+.search-grant { display: flex; flex-direction: column; gap: 10px; min-height: 120px; }
+.search-grant-root { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px; background: var(--bg-soft, rgba(127, 127, 127, 0.08)); }
+.search-grant-root .mono { word-break: break-all; }
+.search-grant-list { display: flex; flex-direction: column; gap: 6px; }
+.search-grant-row { display: flex; align-items: center; gap: 8px; justify-content: space-between; padding: 6px 10px; border: 1px solid var(--line, rgba(127, 127, 127, 0.22)); border-radius: 8px; }
+.search-grant-row .mono { min-width: 0; word-break: break-all; }
+.search-grant-actions { display: flex; justify-content: flex-end; }

@@ -36,7 +36,7 @@ pub const TOOL_GROUPS: &[ToolGroup] = &[
         tools: &["memory_search", "memory_save", "memory_list", "memory_forget", "profile_get"],
     },
     ToolGroup { id: "search", label: "联网搜索", tools: &["web_search", "web_fetch"] },
-    ToolGroup { id: "server", label: "服务器", tools: &["list_servers", "save_server", "ssh_exec", "ssh_exec_status"] },
+    ToolGroup { id: "server", label: "服务器", tools: &["list_servers", "save_server", "ssh_connect", "ssh_disconnect", "ssh_exec", "ssh_exec_status"] },
     ToolGroup { id: "media", label: "生图", tools: &["generate_image"] },
     ToolGroup { id: "panel", label: "预览面板", tools: &["open_panel"] },
 ];

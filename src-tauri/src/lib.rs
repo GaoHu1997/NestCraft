@@ -349,9 +349,10 @@ pub fn run() {
             commands::capabilities::skill_scan_sources,
             commands::capabilities::tool_list,
             commands::capabilities::tool_set_enabled,
-            // CR-093：AI 本地与联网搜索（授权目录 + 联网后端配置）
-            commands::search_tools::search_auth_dirs_get,
-            commands::search_tools::search_auth_dirs_set,
+            // CR-093/CR-104：AI 本地与联网搜索（会话级授权 + 联网后端配置）
+            commands::search_tools::search_session_scope_get,
+            commands::search_tools::search_session_dirs_add,
+            commands::search_tools::search_session_dirs_remove,
             commands::search_tools::search_config_get,
             commands::search_tools::search_config_set,
             commands::capabilities::mcp_list,
@@ -370,6 +371,7 @@ pub fn run() {
             commands::chat::chat_sessions_page,
             commands::chat::chat_session_create,
             commands::chat::chat_session_get,
+            commands::chat::chat_session_set_permission,
             commands::chat::chat_session_update,
             commands::chat::chat_session_delete,
             commands::chat::chat_session_pin,

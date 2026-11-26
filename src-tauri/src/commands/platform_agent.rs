@@ -625,7 +625,7 @@ fn platform_tool_defs(conn: &rusqlite::Connection) -> Vec<PlatformTool> {
     defs
 }
 
-/// CR-095：按项目类型只注入默认工具组的完整 schema（MCP 缓存工具仍全给，避免误伤用户配置）。
+/// CR-104：按项目类型只注入默认工具组的完整 schema（MCP 缓存工具仍全给，避免误伤用户配置）。
 /// 旧 `platform_tool_defs` 保留为全量（测试与兼容路径）。
 fn platform_tool_defs_scoped(conn: &rusqlite::Connection, project_id: Option<&str>) -> Vec<PlatformTool> {
     if !business_tools_enabled(conn) {
@@ -811,7 +811,7 @@ pub async fn send_platform(app: tauri::AppHandle,payload: SendPayload,channel: t
         let guard=crate::db::conn()?;let conn=guard.as_ref().ok_or("db not initialized")?;
         if let Err(error)=prepared.accept(conn,&payload,&abort) {send_usage(&channel,prepared.usage);return Err(error);}
     }
-    let ctx=crate::commands::ai_tools::ToolContext {project_id:session.project_id.clone(),data_dir,execution_feature_id:session.feature_id.clone()};
+    let ctx=crate::commands::ai_tools::ToolContext {project_id:session.project_id.clone(),data_dir,execution_feature_id:session.feature_id.clone(),session_id:Some(session.id.clone())};
     let _=channel.send(json!({"type":"sessionStats","sessionId":session.id}));
     // CR-086：MCP 调用需要 AppHandle（HTTP 凭据与进程解析），在 spawn 前克隆。
     let app_for_tools=app.clone();
@@ -1753,6 +1753,7 @@ mod tests {
             project_id: None,
             data_dir: std::env::temp_dir(),
             execution_feature_id: None,
+            session_id: None,
         }
     }
 
@@ -1991,6 +1992,7 @@ mod tests {
             project_id: None,
             data_dir: std::env::temp_dir(),
             execution_feature_id: None,
+            session_id: None,
         };
         let (_, abort_rx) = tokio::sync::watch::channel(false);
         let channel = tauri::ipc::Channel::<Value>::new(|_| Ok(()));

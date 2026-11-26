@@ -800,8 +800,13 @@ export interface SearchConfig { backend: "default" | "tavily"; tavilyBaseUrl: st
 export const searchConfigGet = () => invoke<SearchConfig>("search_config_get");
 export const searchConfigSet = (input: { backend: "default" | "tavily"; tavilyBaseUrl?: string; tavilyKey?: string; timeoutSec?: number; maxResults?: number; webFetchEnabled?: boolean }) =>
   invoke<void>("search_config_set", { backend: input.backend, tavilyBaseUrl: input.tavilyBaseUrl ?? null, tavilyKey: input.tavilyKey ?? null, timeoutSec: input.timeoutSec ?? null, maxResults: input.maxResults ?? null, webFetchEnabled: input.webFetchEnabled ?? null });
-export const searchAuthDirsGet = (projectId: string) => invoke<string[]>("search_auth_dirs_get", { projectId });
-export const searchAuthDirsSet = (projectId: string, dirs: string[]) => invoke<string[]>("search_auth_dirs_set", { projectId, dirs });
+// CR-104：本地搜索改为会话级授权——默认项目根，额外目录仅本会话有效。
+export interface SearchSessionScope { projectRoot: string | null; extraDirs: string[]; permissionMode: string }
+export const searchSessionScopeGet = (sessionId: string) => invoke<SearchSessionScope>("search_session_scope_get", { sessionId });
+export const searchSessionDirsAdd = (sessionId: string, dir: string) => invoke<string[]>("search_session_dirs_add", { sessionId, dir });
+export const searchSessionDirsRemove = (sessionId: string, dir: string) => invoke<string[]>("search_session_dirs_remove", { sessionId, dir });
+export const chatSessionSetPermission = (sessionId: string, permissionId: string) =>
+  invoke<SessionMeta>("chat_session_set_permission", { id: sessionId, permissionId });
 export const toolSetEnabled = (name: string, enabled: boolean) =>
   invoke<void>("tool_set_enabled", { name, enabled });
 export const mcpList = () => invoke<McpServer[]>("mcp_list");
@@ -865,6 +870,8 @@ export interface SessionMeta {
   binding?: SessionBinding | null;
   /** CR-069：会话运行通道；cli=外部 CLI 进程作答，platform=平台主代理直答。缺省按 cli 处理。 */
   runner?: "cli" | "platform";
+  /** CR-104：会话权限档位（default/plan/agent/auto/full）；缺省按 default 处理。 */
+  permissionMode?: string | null;
 }
 
 /** CR-037：binding.state = native（已绑定原线程）| fresh（已确认重建）| freshPending（待确认）| blocked（不可续接）。 */
