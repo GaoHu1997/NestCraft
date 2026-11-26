@@ -231,7 +231,8 @@ html[data-theme="dark"] .c078-legend i.l4 { background: #4fd1c5; }
 .c078-bar i:last-child { border-radius: 2px 2px 0 0; }
 
 .c078-line { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
-.c078-line polyline { fill: none; stroke: var(--violet); stroke-width: 2.2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+/* v11：命中率改平滑曲线（Catmull-Rom → 三次贝塞尔），path 必须 fill:none，否则会被填成色块。 */
+.c078-line path { fill: none; stroke: var(--violet); stroke-width: 2.2; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; }
 .c078-chart-x { grid-column: 2; grid-row: 2; position: relative; font-size: 10px; color: var(--muted); }
 .c078-chart-x span { position: absolute; transform: translateX(-50%); }
 .c078-chart-x span:first-child { transform: none; }
@@ -239,12 +240,14 @@ html[data-theme="dark"] .c078-legend i.l4 { background: #4fd1c5; }
 
 /* 排行 */
 .c078-rank { display: grid; gap: 2px; padding: 6px 8px 10px; margin: 0; list-style: none; }
-.c078-rank-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 10px; border-radius: var(--r-md); }
+/* v11：序号与图标整行垂直居中，并统一到 20px 居中列，避免左侧标记贴着第一行、上下不齐。 */
+.c078-rank-row { display: flex; align-items: center; gap: 10px; padding: 10px 10px; border-radius: var(--r-md); }
 .c078-rank-row:hover { background: var(--surface-2); }
-.c078-rank-n { flex: 0 0 auto; width: 18px; font-size: 12px; font-weight: 650; color: var(--muted); text-align: center; padding-top: 3px; }
-.c078-rank-row .cli-logo { flex: 0 0 auto; margin-top: 1px; }
+.c078-rank-n { flex: 0 0 auto; width: 20px; line-height: 20px; font-size: 12px; font-weight: 650; color: var(--muted); text-align: center; }
+.c078-rank-ic { flex: 0 0 auto; width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; }
+.c078-rank-row .cli-logo { margin-top: 0; }
 .c078-src { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; color: var(--violet); }
-.c078-prov-dot { flex: 0 0 auto; width: 12px; height: 12px; margin-top: 4px; border-radius: 3px; background: hsl(calc(var(--i) * 47 + 150) 45% 50%); }
+.c078-prov-dot { flex: 0 0 auto; width: 12px; height: 12px; border-radius: 3px; background: hsl(calc(var(--i) * 47 + 150) 45% 50%); }
 .c078-rank-main { flex: 1 1 auto; min-width: 0; display: grid; gap: 5px; }
 .c078-rank-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .c078-rank-top b { font-size: 13px; font-weight: 550; }

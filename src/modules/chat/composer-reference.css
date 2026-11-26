@@ -1,5 +1,9 @@
 /* CR-076 / InputBar 0.2.2-rc.5 surface values; MIT attribution: ./chat-dock.LICENSE.
-   Only composer text, card and existing toolbar chrome are scoped here; controls and scrolling stay native. */
+   Only composer text, card and existing toolbar chrome are scoped here; controls and scrolling stay native.
+
+   CR-096 R4（UI-CR096-v1）：卡片由 28px 大圆角 + 外描边阴影收敛为 12px 圆角 + 1px 边框，
+   并去掉 padding-top:8px —— 该内边距让卡片白底在帽子（ComposerHat）上方露出，
+   形成用户反馈的“帽子顶部白条”。帽子作为卡片第一个区域贴顶，灰底由 composer-hat.css 负责。 */
 .chat-composer-wrap .chat-composer {
   --chat-composer-fill: rgb(255, 255, 255);
   --chat-composer-stroke: rgba(0, 0, 0, .1);
@@ -11,13 +15,19 @@
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding-top: 8px;
+  /* CR-096 R4：原 gap:12px 会在帽子与输入区之间再留 12px 白，
+     与“帽子灰底贴卡片顶、分隔线后紧接输入区”的基准不符。
+     改为 gap:0，由各区域自身内边距/外边距提供层次（见下方 .chat-ta / .chat-tools /
+     .chat-chips / .chat-composer-images）。 */
+  gap: 0;
+  padding-top: 0;
   container-type: inline-size;
-  border: 0;
-  border-radius: 28px;
+  border: 1px solid var(--chat-composer-stroke);
+  border-radius: 12px;
   background: var(--chat-composer-fill);
-  box-shadow: 0 0 0 .5px var(--chat-composer-stroke), 0 4px 16px rgba(0, 0, 0, .03), 0 0 24px rgba(0, 0, 0, .03);
+  box-shadow: none;
+  /* 裁切帽子上角：帽子是卡片第一个子区域，圆角由卡片负责。 */
+  overflow: hidden;
 }
 
 [data-theme='dark'] .chat-composer-wrap .chat-composer {
@@ -31,12 +41,13 @@
 }
 
 .chat-composer-wrap .chat-composer:focus-within {
-  box-shadow: 0 0 0 .5px var(--chat-composer-stroke), 0 4px 16px rgba(0, 0, 0, .03), 0 0 24px rgba(0, 0, 0, .03);
+  /* CR-074 保持：聚焦不引入蓝框或额外阴影，边界不跳动。 */
+  border-color: var(--chat-composer-stroke);
+  box-shadow: none;
 }
 
-@supports (corner-shape: superellipse(1.5)) {
-  .chat-composer-wrap .chat-composer { corner-shape: superellipse(1.5); }
-}
+/* CR-096 R4：12px 圆角下取消超椭圆 corner-shape——它会改变帽子顶角的裁切形状，
+   与“帽子随卡片圆角一体裁切”的设计不一致。 */
 
 .chat-composer-wrap .chat-composer > .chat-ta {
   box-sizing: border-box;
@@ -44,11 +55,19 @@
   margin-right: 4px;
   min-height: 36px;
   max-height: 336px;
-  padding: 4px 8px 0 14px;
+  /* CR-096 R4：卡片去掉 padding-top:8px 后，输入区由自身内边距保留与帽子的呼吸感
+     （帽下分隔线到文字 10px），保持 CR-076 的 14px 行首与右侧 8px 不变。 */
+  padding: 10px 8px 0 14px;
   font: 14px/24px var(--font);
   color: var(--chat-composer-plus-ink);
   caret-color: var(--chat-composer-send-fill);
 }
+
+/* CR-096 R4：gap 归零后，帽子之外的其余子区域由自身 margin 维持原有 12px 层次，
+   避免引用 chips、图片行、错误行、错误条与上方区域贴死。 */
+.chat-composer-wrap .chat-composer > .chat-chips,
+.chat-composer-wrap .chat-composer > .chat-composer-images,
+.chat-composer-wrap .chat-composer > .chat-composer-error { margin-top: 8px; }
 
 /* The textarea is also the scrollport: its 4px inset plus 8px padding keeps the text column.
    Preserve CR-074's existing outline:none; only rebind the focused caret to business blue. */
@@ -66,7 +85,8 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
-  padding: 2px 8px 6px;
+  /* CR-096 R4：gap 归零后，工具条自身保留与输入区的 8px 间距（原由 flex gap 提供）。 */
+  padding: 8px 8px 6px;
   min-width: 0;
 }
 

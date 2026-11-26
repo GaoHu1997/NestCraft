@@ -183,6 +183,10 @@ function createFixture() {
     { id: "PRV-LOCAL", name: "本地网关", protocol: "openai", disabled: false, headersJson: null, fingerprintJson: null,
       keys: [{ id: "KEY-LOCAL-01", alias: "演示", masked: MASK, enabled: true, protocol: "", models: [], scopeSource: null, probedAt: null }], endpoints: [{ id: "EP-LOCAL-01", protocol: "openai", baseUrl: "https://local.demo.invalid/v1", enabled: true }],
       models: [model("PRV-LOCAL", "local-qwen-72b", "Qwen 72B", 32000, false, false)] },
+    // CR-099：停用供应商折叠路径需要一条停用夹具，否则软件侧无法验证折叠。
+    { id: "PRV-BACKUP", name: "备用直连", protocol: "anthropic", disabled: true, headersJson: null, fingerprintJson: null,
+      keys: [], endpoints: [{ id: "EP-BACKUP-01", protocol: "anthropic", baseUrl: "", enabled: false }],
+      models: [] },
   ];
   const provider = (id: string) => lookup(providers, id, p => p.id, "供应商");
   function candidates(): ModelCandidate[] {
@@ -1183,6 +1187,45 @@ let avatarImage: { path: string; hash: string } | null = null;
 
   on("provider_list", () => copy(providers));
   on("model_candidates", () => candidates());
+  /* CR-099：模型检测在隔离预览里必须可跑通，否则无法验证「归因只显示指纹结论」。
+     这里返回纯合成结果：不联网、不读真实配置；顺序与 Rust 侧 PROBE_NAMES 一致。 */
+  const PROBE_NAMES = [
+    "连通与鉴权握手", "模型回显与跨档偷换", "响应 Schema 与 ID 规范", "SSE 真流式与假首字",
+    "网关响应头指纹", "System 金丝雀服从", "隐藏注入与套壳嗅探", "多轮记忆保持",
+    "Stop 序列截断", "Max Tokens 硬截断", "原生工具调用验真", "Strict JSON Schema",
+    "动态逻辑与防背题", "并发混池快照", "识图多模态验真", "Responses 协议探测",
+    "输入 Token 对账", "流式输出对账", "长前缀缓存命中", "行为指纹与归因",
+  ];
+  const probeHistory: unknown[] = [];
+  on("model_probe_history_list", () => copy(probeHistory));
+  on("model_probe_run", a => {
+    const pid = text(a.providerId, "providerId"), mid = text(a.modelId, "modelId");
+    const p = provider(pid);
+    const items = PROBE_NAMES.map((n, i) => ({
+      code: `P${i + 1}`, name: n,
+      status: i === 5 ? "fail" : i === 3 || i === 18 ? "warn" : "pass",
+      ms: 40 + i * 7,
+      note: i === 5 ? "System 金丝雀丢失（仿真）" : i === 3 ? "首真字偏慢（仿真）" : i === 18 ? "缓存命中 0%（仿真）" : "合成通过",
+    }));
+    const report = {
+      type: "report", historyId: uid("PROBE"), providerId: pid, providerName: p.name,
+      modelId: mid, modelDisplayName: mid, protocol: p.protocol,
+      score: 61, grade: "C", verdict: "存疑", channel: "聚合中转（合成）",
+      summary: "合成检测结果：金丝雀与流式存在疑点。", durationMs: 5200, items,
+      attribution: {
+        consistency: "mismatch", claimedFamily: "magpie",
+        candidates: [
+          { name: "glm-5.3-flash（基线 2026-11-18）", family: "glm", distance: 0.12 },
+          { name: "deepseek-v4.1-flash（基线 2026-11-19）", family: "deepseek", distance: 0.19 },
+          { name: "qwen3.8-flash（基线 2026-11-18）", family: "qwen", distance: 0.27 },
+        ],
+        note: "合成夹具：数字偏好偏离声称家族。",
+      },
+      createdAt: STAMP,
+    };
+    probeHistory.unshift(report);
+    return report;
+  });
   on("provider_save", a => {
     const d = object(a.draft, "draft") as unknown as ProviderDraft;
     const existing = d.id ? provider(text(d.id, "id")) : undefined, n = name(d.name); unique(providers, n, p => p.name, existing);
@@ -1512,6 +1555,37 @@ let avatarImage: { path: string; hash: string } | null = null;
     knowledgeFile(enabledLibrary(str(a, "id")), str(a, "noteId"));
     return { cancelled: true, exported: false }; // 不弹真实 Save As，不创建 Blob/链接、不下载原件或假附件。
   });
+  // CR-097：目录分页、预览与受管组件状态。预览层不伪造 PDF/Office 正文：
+  // PDF 直接报不可用，Office 报 CONVERTER_UNAVAILABLE，用于验证状态卡与降级文案。
+  on("kb_list_children", a => {
+    const l = enabledLibrary(str(a, "libraryId"));
+    const parentId = text(a.parentId, "parentId", true, 500);
+    const nodes = noteTree(l.id);
+    const find = (list: NoteNode[], id: string): NoteNode | undefined => {
+      for (const node of list) { if (node.noteId === id) return node; const hit = node.children.length ? find(node.children, id) : undefined; if (hit) return hit; }
+      return undefined;
+    };
+    const parent = parentId ? find(nodes, parentId) : undefined;
+    if (parentId && (!parent || !parent.isDir)) fail("父目录不存在");
+    const children = parent ? parent.children : nodes;
+    const items = children.map(node => ({
+      id: node.noteId, noteId: node.noteId, title: node.title, relativeUri: node.relativeUri, isDir: node.isDir,
+      sizeBytes: String(node.isDir ? 0 : knowledgeInfo(l, node.noteId).sizeBytes),
+      sourceRevision: "fnv1a64:0000000000000000", hasChildren: node.children.length > 0,
+    }));
+    return { items, directoryRevision: "fnv1a64:0000000000000000", nextCursor: null, complete: true, scanState: "ready", taskId: null, error: null };
+  });
+  on("kb_preview_open", a => {
+    const l = enabledLibrary(str(a, "libraryId"));
+    const file = knowledgeFile(l, str(a, "noteId"));
+    if (/\.pdf$/i.test(file.relativeUri)) fail("FORMAT_UNSUPPORTED: 隔离预览不提供真实 PDF 字节");
+    fail("CONVERTER_UNAVAILABLE: 未找到本机文档转换组件");
+  });
+  on("kb_preview_read", () => fail("SOURCE_CHANGED: 隔离预览不提供 PDF 字节"));
+  on("kb_preview_close", () => null);
+  on("kb_office_state", () => ({ installed: false, dir: "D:\\NestCraft\\data\\office\\LibreOffice", version: "26.2.7", error: "" }));
+  on("kb_office_prepare", () => ({ installed: true, dir: "D:\\NestCraft\\data\\office\\LibreOffice", version: "26.2.7" }));
+
   on("kb_search", a => searchNotes(strings(a.libIds, "libIds"), str(a, "query")));
   on("kb_grants", a => {
     const pid = a.projectId == null ? null : projectById(str(a, "projectId")).id;

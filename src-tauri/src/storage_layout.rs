@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 
 pub const CATEGORIES: &[&str] = &[
     "db", "knowledge", "recycle", "index", "examples", "chat", "skills", "mcp", "secrets", "avatar", "logs", "editor", "git",
-    "office", "generated-images",
+    "office", "semantic-model", "generated-images",
 ];
 
 /// 本次进程实际使用的数据根：启动时确定一次，运行期间切换位置只在下次启动生效，

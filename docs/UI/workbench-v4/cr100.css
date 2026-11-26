@@ -1,0 +1,93 @@
+/* UI-CR100-v1（设计稿）：AI 侧栏按实际容器宽度适配。
+   仅设计原型，不改正式软件。继承 CR-096 的字号/灰帽/圆角/轮次浮框，不覆盖其取值。
+
+   问题：软件侧栏宽度固定 320～620px（默认 372），而大多数紧凑样式按整窗视口断点触发，
+   宽窗口里的窄侧栏仍用宽版布局，出现运行栏挤压、正文缩进偏大、浮层越界。
+
+   本稿的统一做法：以面板自身的 inline-size 作为查询基准，而不是整窗宽度。
+   UI-SCROLL-001：不给任何容器加 overflow:hidden 禁用滚动；长内容一律在自身区域内换行或滚动。 */
+
+/* ---------- 1. 面板作为容器查询基准 ---------- */
+.ai-panel {
+  container-type: inline-size;
+  container-name: ai-panel;
+}
+
+/* ---------- 2. 运行栏：允许收缩，窄栏降级分支 chip ---------- */
+.ai-hat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+.ai-hat-seg { flex: 0 0 auto; }
+.ai-hat-spacer { flex: 1 1 auto; min-width: 0; }
+/* 分支 chip 是唯一可牺牲宽度的一段：超长分支名按可用空间省略，不挤掉右侧 worktree。 */
+.ai-hat-branch-wrap { flex: 0 1 auto; min-width: 0; }
+.ai-hat-branch { max-width: 100%; min-width: 0; }
+.ai-hat-branch .ellipsis { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-hat-worktree { flex: 0 0 auto; white-space: nowrap; }
+
+/* ---------- 3. 消息区：窄栏收敛内边距与缩进，字号保持 CR-096 的 12.5px ---------- */
+.ai-scroll, .wb-scroll { min-width: 0; }
+
+@container ai-panel (max-width: 480px) {
+  .ai-scroll, .wb-scroll { padding-left: 16px; padding-right: 16px; }
+  .chat-proto-tool-body { padding-left: 12px; }
+  .chat-proto-tool pre {
+    max-width: 100%;
+    padding: 10px 12px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .ai-composer-wrap .ai-composer > .ai-tools,
+  .ai-composer-wrap .ai-leading-controls,
+  .ai-composer-wrap .ai-tools > .ai-send-group { gap: 8px; }
+  .ai-composer-wrap .ai-tools > .ai-send-group { flex: 1 1 auto; }
+}
+
+/* 最窄档（320）：分支只留图标与省略名，正文再收一档。 */
+@container ai-panel (max-width: 372px) {
+  .ai-hat { gap: 6px; padding-left: 8px; padding-right: 8px; }
+  .ai-hat-branch .ellipsis { display: none; }
+  .ai-hat-branch { padding-left: 6px; padding-right: 6px; }
+  .ai-scroll, .wb-scroll { padding-left: 12px; padding-right: 12px; }
+  .chat-proto-tool-body { padding-left: 8px; }
+  .ai-composer-wrap .ai-composer > textarea { padding-left: 10px; padding-right: 6px; }
+  /* 模型 chip 允许压缩到可读下限，发送按钮不参与收缩。 */
+  .ai-composer-wrap .ai-send-group .ai-chip.model { flex: 1 1 auto; min-width: 56px; }
+  .ai-composer-wrap .ai-tools > .ai-send-group { flex: 1 1 auto; min-width: 0; }
+}
+
+/* ---------- 4. 浮层：宽度受面板约束，不越出侧栏 ---------- */
+/* 弹层由 ai-anchors.js 按真实锚点定位；这里只限制最大尺寸，
+   坐标仍由既有 flip/clamp 逻辑计算，不新增第二套定位。 */
+.ai-menu { max-width: min(424px, calc(100cqw - 16px)); max-height: min(450px, 70cqh); }
+.ai-branch-menu { max-width: min(320px, calc(100cqw - 16px)); }
+
+/* ---------- 5. 长内容不撑破面板 ---------- */
+.ai-scroll .msg.assistant .text pre,
+.ai-scroll .msg.assistant .text table,
+.wb-scroll .msg.assistant .text pre,
+.wb-scroll .msg.assistant .text table { max-width: 100%; }
+.ai-scroll .msg.assistant .text pre { overflow-x: auto; }
+.ai-scroll .msg.assistant .text pre code { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* 错误卡：原始 JSON 必须换行，不允许出现横向溢出。 */
+.ai-scroll .chat-card.error,
+.chat-msg-error {
+  max-width: 100%;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* ---------- 6. 轮次刻度：窄栏缩到不压正文（CR-096 的 288px 容器在此收窄） ---------- */
+@container ai-panel (max-width: 480px) {
+  .c96-turnnav { width: 32px; }
+}
+
+/* 工作台保持现有 860px 居中基准，不因侧栏规则改变。 */
+.wb-composer > .ai-plan-dock { max-width: 860px; }

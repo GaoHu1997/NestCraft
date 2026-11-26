@@ -34,3 +34,12 @@
 2026-11-25 设置中心精简与配置交互补正，复用本Feature的 STORY-077，各Story增量为**设计中（待评审，无本轮正式编码授权）**；历史实现与验收保持。
 
 [需求](../../PRD/CR-085-设置中心精简与配置交互补正.md)／[UI-CR085-v1](../../UI/文档/UI-CR085-设置中心精简与交互补正.md)／[方案](../../LLD/LLD-CR085-设置中心交互调整方案.md)／[设计验证](../../Test/REPORT-CR085-设置中心设计验证.md)。正式执行只允许本Feature的AC，须登记UI-SCROLL-001与源hash，不跨Feature实现。
+
+
+## CR-099增量
+
+2026-11-26 设置中心评审二轮（SDK 与 CLI 两块），复用本Feature的 [STORY-077](../Story/STORY-077-CLI与SDK管理评审调整.md#cr-095增量)；状态为**已实现，技术验证通过，待验收**（2026-11-26 用户「需要实现」授权），历史实现与验收保持。
+
+范围：CLI 模型下拉为空时的可解释原因（AC-CR099-09）与权限挡位按 CLI 采用已验证定义、去掉未核验灰项（AC-CR099-10）。**已同批落地**：`chat.rs::validate_permission` 白名单扩为 Claude/Codex 五档、Grok 三档，`spawn_cli` 同步给出参数映射（Claude `plan/acceptEdits/auto/bypassPermissions`；Codex `read-only|workspace-write+danger-full-access` 与 `approval_policy`；Grok `--always-approve`）。单测逐 CLI 断言。
+
+[需求](../../PRD/CR-099-设置中心评审二轮与能力管理合并.md)／[UI-CR099-v1](../../UI/文档/UI-CR099-设置评审二轮与能力管理.md)／[设计验证](../../Test/REPORT-CR099-设置评审二轮设计验证.md)。

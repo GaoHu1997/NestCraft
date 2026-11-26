@@ -34,12 +34,13 @@ const frontCodes = reasonBlock ? [...reasonBlock[1].matchAll(/^\s*([A-Z_]+):/gm)
 const missingFront = backendCodes.filter((c) => !frontCodes.includes(c));
 check("前端原因码与后端一致", missingFront.length === 0, missingFront.length ? `缺 ${missingFront.join(",")}` : `${frontCodes.length} 项一致`);
 
-// 4. 平台会话不派生绑定：复现 ChatPanel 的求值表达式
-const derive = (sessionRole, runner, binding) =>
-  sessionRole === "executor" || runner === "platform" ? null : binding ?? null;
+// 4. 平台会话不派生绑定：复现 ChatPanel 的求值表达式（BUG-004 追加运行态兜底）
+const derive = (sessionRole, runner, binding, running = false) =>
+  sessionRole === "executor" || runner === "platform" || running ? null : binding ?? null;
 check("平台会话忽略残留 binding", derive("ordinary", "platform", { state: "freshPending" }) === null);
 check("CLI 会话保留 binding", derive("ordinary", "cli", { state: "freshPending" })?.state === "freshPending");
 check("执行会话不派生", derive("executor", "cli", { state: "native" }) === null);
+check("运行中会话忽略残留 binding", derive("ordinary", "cli", { state: "freshPending" }, true) === null);
 
 // 5. 后端派生分支存在（文本级证据，不作为功能通过依据）
 check("derive_view 含 platform 早退", /runner == "platform"/.test(rs));

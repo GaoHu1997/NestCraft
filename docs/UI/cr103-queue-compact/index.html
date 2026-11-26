@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UI-CR103-v2 · 待发队列面板单行紧凑化＋可折叠</title>
+<style>
+:root{
+  --font:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+  --mono:ui-monospace,Consolas,"Cascadia Mono",monospace;
+}
+html[data-theme="light"]{
+  --base:#f6f7f8; --paper:#ffffff; --ink:#1f2328; --muted:#6a737d;
+  --line:#e4e7ea; --line-2:#d7dbe0; --line-soft:#eceff2;
+  --accent:#2563eb; --danger:#c6303e; --warn-deep:#9a5b10; --warn-bg:#fdf3e2;
+  --input-line:#d7dbe0;
+  --sb-thumb:#a4abb5;
+}
+html[data-theme="dark"]{
+  --base:#141719; --paper:#1d2126; --ink:#e6e8eb; --muted:#9aa3ad;
+  --line:#2c3238; --line-2:#3a4148; --line-soft:#333a41;
+  --accent:#7aa2f7; --danger:#ef6a76; --warn-deep:#e0a458; --warn-bg:#3a2f1c;
+  --input-line:#3a4148;
+  --sb-thumb:#7d8794;
+}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.65 var(--font);color:var(--ink);background:var(--base)}
+.wrap{max-width:1060px;margin:0 auto;padding:28px 20px 60px}
+h1{font-size:20px;margin:0 0 4px}
+h2{font-size:15px;margin:28px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+.sub{color:var(--muted);font-size:13px;margin:0 0 8px}
+.bar{display:flex;gap:8px;align-items:center;margin:12px 0 4px;flex-wrap:wrap}
+button.ctl{font:13px var(--font);padding:5px 12px;border-radius:6px;border:1px solid var(--line-2);background:var(--paper);color:var(--ink);cursor:pointer}
+button.ctl:hover{border-color:var(--accent);color:var(--accent)}
+.demo{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:18px 18px 14px;margin:10px 0}
+.muted{color:var(--muted)}
+.cap{font-size:12px;color:var(--muted);margin:14px 0 4px}
+.cap b{color:var(--ink);font-weight:600}
+
+/* 输入区示意（仅衬托队列面板位置，非本版范围） */
+.chat-input-demo{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;padding:9px 12px;color:var(--muted);font-size:13px;margin-top:6px}
+
+/* ============ 现状对照（将被本版替代） ============ */
+.q-old{border:1px solid var(--line);border-radius:8px;background:var(--base);overflow:hidden}
+.q-old-h{display:flex;justify-content:space-between;align-items:center;padding:6px 9px;border-bottom:1px solid var(--line-soft);font-size:11px;font-weight:600}
+.q-old-h .pz{border:1px solid var(--input-line);border-radius:6px;background:var(--paper);color:var(--ink);font-size:10.5px;padding:3px 9px}
+.q-old-item{padding:6px 9px;display:flex;flex-direction:column;gap:3px;border-bottom:1px solid var(--line-soft)}
+.q-old-text{font-size:11.5px}
+.q-old-meta{font-size:10px;color:var(--muted)}
+.q-old-acts{display:flex;gap:6px;justify-content:flex-end}
+.q-old-acts button{border:1px solid var(--input-line);border-radius:5px;background:var(--paper);color:var(--ink);font-size:10.5px;padding:3px 8px}
+.q-old-note{padding:5px 9px;font-size:10px;color:var(--muted);border-top:1px solid var(--line-soft)}
+
+/* ============ 新设计：单行紧凑队列（SC-103-01～04） ============ */
+.q-panel{border:1px solid var(--line);border-radius:8px;background:var(--base);overflow:hidden}
+.q-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 9px;border-bottom:1px solid var(--line-soft)}
+.q-head .q-hleft{display:flex;align-items:center;gap:4px;min-width:0;font-size:11px;font-weight:600}
+.q-fold{border:0;background:none;color:var(--muted);cursor:pointer;font-size:11px;line-height:1;padding:0 2px}
+.q-fold:hover{color:var(--accent)}
+.q-panel.folded .q-list,.q-panel.folded .q-note{display:none}
+.q-panel.folded .q-head{border-bottom:0}
+.q-head b{color:var(--warn-deep);font-variant-numeric:tabular-nums}
+.q-pause{border:1px solid var(--input-line);border-radius:6px;background:var(--paper);color:var(--ink);font-size:10.5px;line-height:1;padding:3px 9px;cursor:pointer}
+.q-pause.paused{border-color:var(--warn-deep);background:var(--warn-bg);color:var(--warn-deep)}
+.q-list{list-style:none;margin:0;padding:2px 0;max-height:130px;overflow-y:auto;overflow-x:hidden;
+  scrollbar-width:thin;scrollbar-color:transparent transparent}
+.q-list::-webkit-scrollbar{width:10px;background:transparent}
+.q-list::-webkit-scrollbar-thumb{border-radius:8px;border:3px solid transparent;background-color:transparent}
+.q-list.is-scrolling{scrollbar-color:var(--sb-thumb) transparent}
+.q-list.is-scrolling::-webkit-scrollbar-thumb{background-color:var(--sb-thumb)}
+.q-item{display:flex;align-items:center;gap:6px;padding:3px 9px;border-top:1px solid var(--line-soft);font-size:11.5px;line-height:1.7}
+.q-item:first-child{border-top:0}
+.q-meta{display:flex;gap:4px;flex:none;color:var(--muted);font-size:10px}
+.q-meta span{padding:0 5px;border-radius:999px;background:var(--warn-bg);color:var(--warn-deep);line-height:1.6}
+.q-text{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.q-acts{display:flex;gap:6px;flex:none}
+.q-acts button{border:1px solid var(--input-line);border-radius:5px;background:var(--paper);color:var(--ink);font-size:10.5px;line-height:1;padding:3px 8px;cursor:pointer}
+.q-acts button:hover{border-color:var(--accent);color:var(--accent)}
+.q-acts button.danger:hover{border-color:var(--danger);color:var(--danger)}
+.q-note{padding:5px 9px;font-size:10px;color:var(--muted);border-top:1px solid var(--line-soft)}
+/* 编辑态例外：仅该条目展开 */
+.q-item.editing{display:block;padding:6px 9px}
+.q-edit textarea{width:100%;min-height:44px;resize:vertical;border:1px solid var(--input-line);border-radius:6px;padding:5px 7px;font:11.5px/1.5 var(--font);color:var(--ink);background:var(--paper);outline:none}
+.q-edit textarea:focus{border-color:var(--accent)}
+.q-edit-acts{display:flex;gap:6px;justify-content:flex-end;margin-top:4px}
+.q-edit-acts button{border:1px solid var(--input-line);border-radius:5px;background:var(--paper);color:var(--ink);font-size:10.5px;padding:3px 8px;cursor:pointer}
+
+.narrow{max-width:390px}
+table.spec{border-collapse:collapse;width:100%;font-size:13px;margin:8px 0}
+table.spec td,table.spec th{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+table.spec th{background:var(--base);font-weight:600}
+.height-note{font:12px var(--mono);color:var(--muted);margin:4px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>待发队列面板单行紧凑化＋可折叠（UI-CR103-v2）</h1>
+  <p class="sub">2026-11-26 · 来源：用户附图「待发队列太高了，需要更折叠后的高度一样」，澄清确认采用「每条消息单行紧凑」；同日追加「待发队列也需要可以折叠」。本页为自包含设计稿（浅/深切换、390 窄档、列表滚动与折叠演示），仅设计演示，不接入真实执行。</p>
+  <div class="bar">
+    <button class="ctl" onclick="toggleTheme()">浅 / 深切换</button>
+    <button class="ctl" onclick="setNarrow()">侧栏 390</button>
+    <button class="ctl" onclick="setWide()">桌面全宽</button>
+    <span class="muted">关联：<b>CR-103</b> · Story 增量挂 <b>STORY-062</b>（输入区队列面板）· 滚动条适用 <b>UI-SCROLL-001</b>（列表限高区）</span>
+  </div>
+
+  <h2>现状对照（将被替代，仅留档）</h2>
+  <div class="demo">
+    <div class="q-old" id="old1">
+      <div class="q-old-h"><span>待发队列 1</span><button class="pz">暂停</button></div>
+      <div class="q-old-item">
+        <div class="q-old-text">开三个子代理 codex/claude/grok 分别给出 1-10 的一个随机数，统计给我</div>
+        <div class="q-old-meta">&nbsp;</div>
+        <div class="q-old-acts"><button>编辑</button><button>立即发送</button><button>删除</button></div>
+      </div>
+      <div class="q-old-note">队列仅保存在本机内存；关闭窗口或切换会话前请先发送或保存。后端暂无队列持久化。</div>
+    </div>
+    <p class="cap">现状问题：一条消息占 <b>全文行 + 元信息行 + 操作行</b> 约 3 行，全文随长度继续增高；多条消息成倍加高。</p>
+  </div>
+
+  <h2>SC-103-01 / SC-103-02 单条消息：单行紧凑（默认态）</h2>
+  <div class="demo" id="s1">
+    <div class="q-panel">
+      <div class="q-head"><span class="q-hleft"><button class="q-fold" aria-expanded="true" title="收起／展开队列" onclick="toggleFold(this)">▾</button><span>待发队列 <b>2</b></span></span><button class="q-pause" id="pauseBtn" onclick="togglePause()">暂停</button></div>
+      <ol class="q-list" id="list1">
+        <li class="q-item">
+          <span class="q-meta"><span>🔗2</span><span>📎1</span></span>
+          <span class="q-text" title="开三个子代理 codex/claude/grok 分别给出 1-10 的一个随机数，统计给我（引用：AGENTS.md、PRD-001；附件：截图.png）">开三个子代理 codex/claude/grok 分别给出 1-10 的一个随机数，统计给我（引用：AGENTS.md、PRD-001；附件：截图.png）</span>
+          <span class="q-acts"><button onclick="editItem(this)">编辑</button><button onclick="alert('演示：立即发送')">立即发送</button><button class="danger" onclick="alert('演示：删除')">删除</button></span>
+        </li>
+        <li class="q-item">
+          <span class="q-text" title="把上一条的统计结果整理成表格发到群里">把上一条的统计结果整理成表格发到群里</span>
+          <span class="q-acts"><button onclick="editItem(this)">编辑</button><button onclick="alert('演示：立即发送')">立即发送</button><button class="danger" onclick="alert('演示：删除')">删除</button></span>
+        </li>
+      </ol>
+      <div class="q-note">队列仅保存在本机内存；关闭窗口或切换会话前请先发送或保存。后端暂无队列持久化。</div>
+    </div>
+    <p class="height-note">面板高度 ≈ 头部 29px + 条目 26px/条 + 底注 24px + 边框（不随消息长度变化）</p>
+    <p class="cap">要点：全文<b>单行截断省略</b>（完整内容见悬浮 title）；引用/附件以 <b>🔗n / 📎n</b> 紧凑小标内联、仅在有内容时显示；操作按钮<b>同行右侧</b>；「已暂停」不再逐条标注，由头部按钮统一表达（代理细化默认值，待确认）。</p>
+  </div>
+
+  <h2>SC-103-03 暂停态 + 多条消息：列表限高滚动（UI-SCROLL-001）</h2>
+  <div class="demo" id="s2">
+    <div class="q-panel">
+      <div class="q-head"><span class="q-hleft"><button class="q-fold" aria-expanded="true" title="收起／展开队列" onclick="toggleFold(this)">▾</button><span>待发队列 <b>7</b></span></span><button class="q-pause paused" onclick="togglePause(this)">继续</button></div>
+      <ol class="q-list" id="list2">
+        <li class="q-item"><span class="q-text" title="第 1 条排队消息">第 1 条排队消息：整理今日构建日志</span><span class="q-acts"><button onclick="editItem(this)">编辑</button><button onclick="alert('演示：立即发送')">立即发送</button><button class="danger" onclick="alert('演示：删除')">删除</button></span></li>
+        <li class="q-item"><span class="q-text" title="第 2 条排队消息">第 2 条排队消息：把失败用例归档到 TEST 报告</span><span class="q-acts"><button onclick="editItem(this)">编辑</button><button onclick="alert('演示：立即发送')">立即发送</button><button class="danger" onclick="alert('演示：删除')">删除</button></span></li>
+        <li class="q-item"><span class="q-text" title="第 3 条排队消息">第 3 条排队消息：核对 0.0.6 发布资产哈希</span><span class="q-acts"><button onclick="editItem(this)">编辑</button><button onclick="alert('演示：立即发送')">立即发送</button><button class="danger" onclick="alert('演示：删除')">删除</button></span></li>
+        <li class="q-item"><span class="q-text" title="第 4 条排队消息">第 4 条排队消息：更新需求汇总 CR 索引</span><span class="q-acts"><button onclick="editItem(this)">编辑</button><button onclick="alert('演示：立即发送')">立即发送</button><button class="danger" onclick="alert('演示：删除')">删除</button></span></li>
+        <li class="q-item"><span class="q-text" title="第 5 条排队消息">第 5 条排队消息：回归队列暂停后恢复发送顺序</span><span class="q-acts"><button onclick="editItem(this)">编辑</button><button onclick="alert('演示：立即发送')">立即发送</button><button class="danger" onclick="alert('演示：删除')">删除</button></span></li>
+        <li class="q-item"><span class="q-text" title="第 6 条排队消息">第 6 条排队消息：这一条需要滚动才能看到，滚动条按需显示</span><span class="q-acts"><button onclick="editItem(this)">编辑</button><button onclick="alert('演示：立即发送')">立即发送</button><button class="danger" onclick="alert('演示：删除')">删除</button></span></li>
+        <li class="q-item"><span class="q-text" title="第 7 条排队消息">第 7 条排队消息：最后一条同样单行截断省略，不撑高面板</span><span class="q-acts"><button onclick="editItem(this)">编辑</button><button onclick="alert('演示：立即发送')">立即发送</button><button class="danger" onclick="alert('演示：删除')">删除</button></span></li>
+      </ol>
+      <div class="q-note">队列仅保存在本机内存；关闭窗口或切换会话前请先发送或保存。后端暂无队列持久化。</div>
+    </div>
+    <p class="cap">暂停时头部按钮为「继续」（暂停态）；列表限高约 <b>5 行</b>（代理细化默认值，待确认），超出部分<b>列表自身滚动</b>，滚动条按 UI-SCROLL-001 按需显示：初始隐藏、实际滚动时显示、停止约 700ms 后隐藏、悬停不单独唤醒；外部布局不跳动。可在此滚动上方列表体验。</p>
+  </div>
+
+  <h2>SC-103-04 编辑态例外：仅该条目展开</h2>
+  <div class="demo">
+    <div class="q-panel">
+      <div class="q-head"><span class="q-hleft"><button class="q-fold" aria-expanded="true" title="收起／展开队列" onclick="toggleFold(this)">▾</button><span>待发队列 <b>2</b></span></span><button class="q-pause">暂停</button></div>
+      <ol class="q-list">
+        <li class="q-item editing">
+          <div class="q-edit">
+            <textarea aria-label="编辑排队消息">开三个子代理 codex/claude/grok 分别给出 1-10 的一个随机数，统计给我</textarea>
+            <div class="q-edit-acts"><button onclick="alert('演示：保存')">保存</button><button onclick="alert('演示：取消')">取消</button></div>
+          </div>
+        </li>
+        <li class="q-item"><span class="q-text" title="把上一条的统计结果整理成表格发到群里">把上一条的统计结果整理成表格发到群里</span><span class="q-acts"><button>编辑</button><button>立即发送</button><button class="danger">删除</button></span></li>
+      </ol>
+      <div class="q-note">队列仅保存在本机内存；关闭窗口或切换会话前请先发送或保存。后端暂无队列持久化。</div>
+    </div>
+    <p class="cap">编辑中的条目临时展开为多行编辑框 + 保存／取消；其余条目保持单行。取消或保存后恢复单行。</p>
+  </div>
+
+  <h2>SC-103-05 折叠态：仅头部一行（默认收起演示，点 ▸ 展开）</h2>
+  <div class="demo">
+    <div class="q-panel folded">
+      <div class="q-head"><span class="q-hleft"><button class="q-fold" aria-expanded="false" title="展开队列" onclick="toggleFold(this)">▸</button><span>待发队列 <b>2</b></span></span><button class="q-pause">暂停</button></div>
+      <ol class="q-list">
+        <li class="q-item"><span class="q-text" title="开三个子代理 codex/claude/grok 分别给出 1-10 的一个随机数，统计给我">开三个子代理 codex/claude/grok 分别给出 1-10 的一个随机数，统计给我</span><span class="q-acts"><button>编辑</button><button>立即发送</button><button class="danger">删除</button></span></li>
+        <li class="q-item"><span class="q-text" title="把上一条的统计结果整理成表格发到群里">把上一条的统计结果整理成表格发到群里</span><span class="q-acts"><button>编辑</button><button>立即发送</button><button class="danger">删除</button></span></li>
+      </ol>
+      <div class="q-note">队列仅保存在本机内存；关闭窗口或切换会话前请先发送或保存。后端暂无队列持久化。</div>
+    </div>
+    <p class="cap">折叠时仅保留头部一行（高度 ≈ 29px），条目与底注隐藏但不销毁，队列与暂停状态不受影响；点 ▸ 或头部展开恢复。折叠／展开为<b>代理细化默认值</b>：默认展开（保持现行为），状态在会话内记忆（内存），实现前可推翻。</p>
+  </div>
+
+  <h2>规则摘要</h2>
+  <table class="spec">
+    <tr><th>编号</th><th>规则</th></tr>
+    <tr><td>R-CR103-1</td><td>每条排队消息固定单行：超宽截断省略，完整内容悬浮 title；行高与面板总高不随消息长度增长</td></tr>
+    <tr><td>R-CR103-2</td><td>「编辑／立即发送／删除」收进条目行右侧，删除为危险色，不再单独占行</td></tr>
+    <tr><td>R-CR103-3</td><td>引用/附件以紧凑小标内联（🔗n / 📎n），仅有内容时显示；「已暂停」不逐条重复（待确认默认值）</td></tr>
+    <tr><td>R-CR103-4</td><td>编辑态例外：仅该条目展开为编辑框 + 保存／取消，其余保持单行</td></tr>
+    <tr><td>R-CR103-5</td><td>列表限高约 5 行（待确认），超出列表自身滚动，适用 UI-SCROLL-001（静止隐藏、滚动显示、停止 700ms 隐藏、悬停不唤醒）</td></tr>
+    <tr><td>R-CR103-6</td><td>头部（待发队列 N + 暂停/继续）与底注保留不变；队列操作行为与内存口径不变</td></tr>
+    <tr><td>R-CR103-7</td><td>浅/深、侧栏 390 与工作台两布局单行不溢出、无横向滚动、动作可达</td></tr>
+    <tr><td>R-CR103-8</td><td>面板可折叠：头部左侧 ▾/▸ 切换，折叠时仅保留头部一行（≈29px），条目与底注隐藏不销毁，队列与暂停状态不受影响；默认展开，状态会话内记忆（待确认默认值）</td></tr>
+  </table>
+</div>
+<script>
+if(new URLSearchParams(location.search).get('theme')==='dark'){document.documentElement.dataset.theme='dark'}
+function setNarrow(){document.querySelectorAll('.demo').forEach(function(d){d.classList.add('narrow')})}
+function setWide(){document.querySelectorAll('.demo').forEach(function(d){d.classList.remove('narrow')})}
+if(new URLSearchParams(location.search).get('narrow')==='1'){setNarrow()}
+function toggleTheme(){
+  var h=document.documentElement;
+  h.dataset.theme=(h.dataset.theme==='dark')?'light':'dark';
+}
+function togglePause(btn){
+  var b=btn||document.getElementById('pauseBtn');
+  var paused=b.classList.toggle('paused');
+  b.textContent=paused?'继续':'暂停';
+}
+function toggleFold(btn){
+  var panel=btn.closest('.q-panel');
+  var folded=panel.classList.toggle('folded');
+  btn.textContent=folded?'▸':'▾';
+  btn.setAttribute('aria-expanded',String(!folded));
+  btn.title=folded?'展开队列':'收起／展开队列';
+}
+function editItem(btn){
+  var li=btn.closest('.q-item');
+  var text=li.querySelector('.q-text');
+  if(!text)return;
+  var t=text.title;
+  li.classList.add('editing');
+  li.innerHTML='<div class="q-edit"><textarea aria-label="编辑排队消息">'+t.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</textarea><div class="q-edit-acts"><button onclick="alert(\'演示：保存\')">保存</button><button onclick="alert(\'演示：取消\')">取消</button></div></div>';
+}
+// 列表限高滚动：UI-SCROLL-001 按需显示演示
+document.querySelectorAll('.q-list').forEach(function(list){
+  var timer=null;
+  list.addEventListener('scroll',function(){
+    list.classList.add('is-scrolling');
+    clearTimeout(timer);
+    timer=setTimeout(function(){list.classList.remove('is-scrolling')},700);
+  });
+});
+</script>
+</body>
+</html>

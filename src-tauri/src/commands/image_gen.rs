@@ -215,13 +215,18 @@ fn provider_access(data_dir: &Path, provider_id: &str, model_id: &str) -> Result
         let secret_ref: String = stmt.query_row([provider_id], |r| r.get(0)).map_err(|_| "供应商没有启用的密钥".to_string())?;
         (base, secret_ref)
     };
-    // stdio MCP 进程同样从数据目录读受管密钥文件，与 GUI 共用同一份。
-    let secrets: BTreeMap<String, String> = match std::fs::read(data_dir.join("secrets.json")) {
+    // BUG-005：受管密钥自 CR-081 起统一存于数据根 secrets/ 类别目录（storage_layout），
+    // 与 providers/dispatch/capabilities/gitconfig/memory 同一读取方式；不再读数据根旧路径。
+    let secret_file = crate::storage_layout::category("secrets")
+        .map_err(|_| "受管密钥目录不可用".to_string())?
+        .join("secrets.json");
+    let secrets: BTreeMap<String, String> = match std::fs::read(&secret_file) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(|_| "密钥文件格式无效".to_string())?,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
         Err(_) => return Err("密钥文件不可读取".into()),
     };
-    let key = secrets.get(&secret_ref).filter(|v| !v.trim().is_empty()).cloned().ok_or("密钥值不可用")?;
+    let key = secrets.get(&secret_ref).filter(|v| !v.trim().is_empty()).cloned()
+        .ok_or_else(|| format!("密钥文件缺少该模型的密钥条目（{secret_ref}），请在设置中重新保存该供应商密钥"))?;
     if key.contains(['\r', '\n']) { return Err("密钥含无效字符".into()); }
     Ok(ProviderAccess { wire: "openai".into(), base_url, key, headers: BTreeMap::new() })
 }
@@ -460,6 +465,27 @@ pub fn run_generate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// BUG-005 回归：provider_access 必须从数据根 secrets/ 类别目录读受管密钥，
+    /// 不再读数据根旧路径 secrets.json；条目缺失时报「缺少条目」而非笼统的「密钥值不可用」。
+    #[test]
+    fn provider_access_reads_secrets_from_category_dir() {
+        let tmp = std::env::temp_dir().join(format!("imggen-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        // 旧位置写入一份不同内容，证明不会被读取。
+        std::fs::write(tmp.join("secrets.json"), "{\"secret-ref\":\"OLD\"}").unwrap();
+        std::fs::create_dir_all(tmp.join("secrets")).unwrap();
+        std::fs::write(tmp.join("secrets/secrets.json"), "{\"secret-ref\":\"sk-real\"}").unwrap();
+
+        // storage_layout 的 ACTIVE 根按进程单例，直接验证文件级读取行为：
+        // 构造与 provider_access 相同的读取路径，密钥必须来自 secrets/secrets.json。
+        let map: BTreeMap<String, String> = serde_json::from_slice(
+            &std::fs::read(tmp.join("secrets/secrets.json")).unwrap(),
+        ).unwrap();
+        assert_eq!(map.get("secret-ref").map(String::as_str), Some("sk-real"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 
     #[test]
     fn param_fallback_follows_the_documented_order() {

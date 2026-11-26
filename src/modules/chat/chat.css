@@ -623,3 +623,32 @@ button.chat-agent-row:focus-visible { outline: 2px solid var(--primary-line); ou
 .chat-agent-readonly { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--line-soft); background: var(--panel-2); font-size: 11px; color: var(--muted); }
 .chat-agent-readonly .ui-icon { flex: 0 0 auto; color: var(--muted); }
 .chat-agent-readonly > span { flex: 1 1 auto; min-width: 0; line-height: 1.45; }
+
+/* ===== CR-102：流式重连提示（无色块一行摘要 + 折叠详情；设计基线 UI-CR102-v1） ===== */
+/* 无底色、无边框：摘要行仅中性文字与文字链；错误终态仍走 .chat-card.error，不在此着色 */
+.chat-retry-line { align-self: flex-start; max-width: 92%; min-width: 0; margin: 2px 0; }
+.chat-retry-line > summary {
+  display: inline-flex; align-items: baseline; gap: 7px; flex-wrap: wrap;
+  list-style: none; cursor: pointer; color: var(--muted); font-size: 13px; line-height: 1.6;
+}
+.chat-retry-line > summary::-webkit-details-marker { display: none; }
+.chat-retry-line > summary:hover .chat-retry-toggle { text-decoration: underline; }
+.chat-retry-line > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 4px; }
+.chat-retry-glyph { flex: 0 0 auto; font-size: 12px; animation: chat-spin .9s linear infinite; }
+.chat-retry-glyph.ok { color: var(--ok, #1a7f4b); animation: none; }
+.chat-retry-count { color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; }
+.chat-retry-toggle { color: var(--accent); font-size: 12px; }
+.chat-retry-detail { margin-top: 5px; padding-left: 10px; border-left: 2px solid var(--line-soft, var(--line)); }
+.chat-retry-detail pre {
+  margin: 0 0 5px; padding: 0; background: transparent; border: 0;
+  color: var(--muted); font: 12px/1.6 ui-monospace, Consolas, "Cascadia Mono", monospace;
+  white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
+  max-height: 170px; overflow: auto; overscroll-behavior: contain;
+}
+.chat-retry-copy {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  color: var(--accent); font-size: 12px; font-family: inherit;
+}
+.chat-retry-copy:hover { text-decoration: underline; }
+.chat-retry-copy:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 4px; }
+@media (prefers-reduced-motion: reduce) { .chat-retry-glyph { animation: none; } }

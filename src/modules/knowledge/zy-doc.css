@@ -123,6 +123,12 @@
 .zy-title-time .wiki-title { font-size: 20px; color: #333; }
 .zy-title-time .time { font-size: 12px; color: #888; margin-top: 2px; }
 .zy-view-actions, .fake-header-actions { display: flex; gap: 8px; }
+/* CR-097 / SC-097-04：阅读页操作组默认不可见、不接收指针；悬停或键盘聚焦（Tab 可达）时浮现。
+   不能用 visibility:hidden —— 那会让键盘用户永远聚焦不到，违背「键盘聚焦时显示」。 */
+.zy-view-actions { opacity: 0; pointer-events: none; transition: opacity .12s; }
+.zy-view-head:hover .zy-view-actions,
+.zy-view-head:focus-within .zy-view-actions { opacity: 1; pointer-events: auto; }
+@media (hover: none) { .zy-view-actions { opacity: 1; pointer-events: auto; } }
 .zy-icon-btn, .fake-header-actions button, .zy-primary {
   border: 1px solid #d9d9d9;
   background: #fff;

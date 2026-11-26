@@ -7,7 +7,7 @@
   <script>
     // 固定唯一公开入口；显式 design 参数只选择已登记的内部场景资源。
     const scene = new URLSearchParams(location.search).get('design');
-    const resources = { 'cr055-editor': 'performance-editor/index.html', 'cr055-knowledge': 'performance-knowledge/index.html', 'cr071-context': 'platform-context/index.html', 'cr084-preview': 'knowledge-preview/index.html', 'cr088-vault': 'knowledge-vault/index.html' };
+    const resources = { 'cr055-editor': 'performance-editor/index.html', 'cr055-knowledge': 'performance-knowledge/index.html', 'cr071-context': 'platform-context/index.html', 'cr084-preview': 'knowledge-preview/index.html', 'cr088-vault': 'knowledge-vault/index.html', 'memory-scopes': 'memory-manager/index.html' };
     location.replace(Object.prototype.hasOwnProperty.call(resources, scene) ? resources[scene] : 'workbench-v4/index.html');
   </script>
   <noscript><meta http-equiv="refresh" content="0; url=workbench-v4/index.html"></noscript>

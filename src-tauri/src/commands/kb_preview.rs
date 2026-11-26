@@ -249,20 +249,9 @@ fn file_url(path: &Path) -> Result<String, String> {
         else { out.push_str(&format!("%{b:02X}")); } }
     Ok(out)
 }
+/// CR-097：转换器定位统一到 `kb_office::soffice_path`（受管目录改为统一数据根）。
 fn soffice(resource: Option<&Path>) -> Result<PathBuf, String> {
-    if let Some(configured) = std::env::var_os("NESTCRAFT_SOFFICE") {
-        let path = PathBuf::from(configured);
-        if !path.is_absolute() || !path.is_file() { return Err("CONVERTER_UNAVAILABLE: 部署配置的转换器路径不可用".into()); }
-        return Ok(path);
-    }
-    let relative = Path::new("office/LibreOffice/program/soffice.exe");
-    let mut candidates = Vec::new();
-    if let Some(resource) = resource { candidates.push(resource.join(relative)); }
-    if let Ok(exe) = std::env::current_exe() { if let Some(dir) = exe.parent() { candidates.push(dir.join(relative)); } }
-    for var in ["ProgramFiles", "ProgramFiles(x86)"] { if let Some(dir) = std::env::var_os(var) { candidates.push(PathBuf::from(dir).join("LibreOffice/program/soffice.exe")); } }
-    if let Some(paths) = std::env::var_os("PATH") { for dir in std::env::split_paths(&paths) { candidates.push(dir.join("soffice.exe")); candidates.push(dir.join("soffice")); } }
-    candidates.into_iter().find(|path| path.is_absolute() && path.is_file())
-        .ok_or_else(|| "CONVERTER_UNAVAILABLE: 未找到本机文档转换组件".into())
+    crate::commands::kb_office::soffice_path(resource)
 }
 fn copy_source(source: &mut Source, destination: &Path, slot: &Slot) -> Result<(), String> {
     source.file.seek(SeekFrom::Start(0)).map_err(|_| "READ_FAILED")?;

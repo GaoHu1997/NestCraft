@@ -1,0 +1,47 @@
+/* CR-100 / UI-CR100-v1：AI 侧栏按实际容器宽度适配。
+   继承 CR-096（12.5px 正文、灰帽、12px 圆角、轮次浮框），只补窄栏档位。
+
+   为什么用容器查询：AI 侧栏宽度由 usePaneWidth 固定为 320～620px（默认 372），
+   而既有紧凑规则多按整窗视口断点触发。宽窗口里的窄侧栏因此仍使用宽版布局，
+   出现运行栏挤压、正文缩进过大、浮层越出侧栏。
+
+   UI-SCROLL-001：本文件不给任何容器加 overflow:hidden 禁用滚动；长内容在自身
+   区域内换行或滚动，滚动显隐仍由共享 scrollbar.ts 处理。 */
+
+/* ---------- 0. 查询基准：面板自身宽度（侧栏与工作台共用同一实例） ---------- */
+.chat-panel {
+  container-type: inline-size;
+  container-name: chat-panel;
+}
+
+/* ---------- 1. 运行栏：分支 chip 可牺牲宽度，worktree 与切换不挤丢 ---------- */
+.chat-hat { flex-wrap: nowrap; min-width: 0; }
+.chat-hat-branch-wrap { flex: 0 1 auto; min-width: 0; }
+.chat-hat-branch { max-width: 100%; min-width: 0; }
+
+/* ---------- 2. 窄栏（≤480px）：收敛消息内边距与工具缩进 ---------- */
+@container chat-panel (max-width: 480px) {
+  .chat-msgs.chat-zcode-messages { padding-left: 14px; padding-right: 14px; }
+  .chat-msgs.chat-zcode-messages .chat-tool-group-body { padding-left: 14px; }
+  .chat-msgs.chat-zcode-messages .chat-tool-detail pre { padding: 10px 12px; }
+  .chat-turn-nav { width: 32px; padding: 6px 2px; }
+}
+
+/* ---------- 3. 最窄档（≤372px）：只剩图标与省略名，控制不收缩 ---------- */
+@container chat-panel (max-width: 372px) {
+  .chat-hat { gap: 6px; padding-left: 8px; padding-right: 8px; }
+  .chat-hat-branch { max-width: 96px; }
+  .chat-msgs.chat-zcode-messages { padding-left: 12px; padding-right: 12px; }
+  .chat-msgs.chat-zcode-messages .chat-tool-group-body { padding-left: 10px; }
+  .chat-composer-wrap .chat-composer > .chat-ta { padding-left: 10px; }
+  .chat-composer-wrap .chat-composer .chat-controls-trailing > .chat-ctl-chip.model { min-width: 56px; }
+}
+
+/* ---------- 4. 浮层与长内容不越出侧栏 ---------- */
+.chat-model-pop { max-width: min(424px, calc(100cqw - 16px)); max-height: min(450px, 70cqh); }
+.chat-config-pop { max-width: min(424px, calc(100cqw - 16px)); }
+
+/* 错误卡与行内长串必须换行，避免原始 JSON 或长参数撑出面板。 */
+.chat-card.error { max-width: 100%; min-width: 0; overflow-wrap: anywhere; }
+.chat-msgs.chat-zcode-messages .chat-msg.assistant .chat-md pre { max-width: 100%; }
+.chat-msgs.chat-zcode-messages .chat-msg.assistant .chat-md table { max-width: 100%; }

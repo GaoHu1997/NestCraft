@@ -103,9 +103,11 @@ export function ProjectWorkspace(props: { projectId: string; tab: Tab; visible?:
         <button {...pwTabsOverflow.moreProps}><TabMoreIcon /></button>
       </div>
       <span className="spacer" />
-      <button className={`pw-ai-toggle ${aiVisible ? "on" : ""}`} aria-label="AI 侧栏" aria-pressed={aiVisible} title={aiVisible ? "收起 AI 侧栏" : "展开 AI 侧栏"} onClick={() => setAiVisible(!aiVisible)}>
+      {/* CR-096 R5：工作台页签已内含会话区，右上角不再显示 AI 侧栏开关（UI-CR096-v1）。
+          其它页签保持原行为。侧栏偏好不被改写，切回其它页签即恢复。 */}
+      {tab !== "workbench" && <button className={`pw-ai-toggle ${aiVisible ? "on" : ""}`} aria-label="AI 侧栏" aria-pressed={aiVisible} title={aiVisible ? "收起 AI 侧栏" : "展开 AI 侧栏"} onClick={() => setAiVisible(!aiVisible)}>
         <Icon name="aiBot" size={18} />
-      </button>
+      </button>}
       {pwTabsOverflow.dropdownOpen && <TabMoreDropdown anchorRef={pwTabsOverflow.moreRef} items={pwTabItems} onPick={key => changeTab(key as Tab)} onClose={pwTabsOverflow.closeDropdown} />}
     </div>
     <div className="pw-body">

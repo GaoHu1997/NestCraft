@@ -1,0 +1,261 @@
+/* UI-CR096-v1（设计稿）：AI 会话字号与聊天区视觉校正。
+   仅设计原型，不改正式软件。五项：R1 字号统一、R2 轮次概览浮框、R3 消息区背景、
+   R4 帽子灰底无白条、R5 工作台隐藏 AI 侧栏开关。
+   UI-SCROLL-001：本文件不新增常显滚动条，不给任何容器加 overflow:hidden 禁用滚动；
+   浮框容器与刻度条仍用原生滚动，静止透明、滚动时由共享 scrollbar.js 加 .scrollbar-active。 */
+
+/* ---------- R1：正文与用户气泡同为 12.5px ---------- */
+/* 设计基线：.msg .text 与 .msg-user-block 都是 12.5px（ai.css）。
+   但 message-reference.css（CR-076）把助手正文放大到 16px，并在 ≥960px 时升到 18px。
+   本版按用户要求收敛回 12.5px，用 .ai-scroll 前缀提高特异性以覆盖该资源，
+   且不使用 !important（避免后续增量无法再调整）。 */
+.ai-scroll .msg.assistant .text,
+.wb-scroll .msg.assistant .text,
+.msg-user-block {
+  font-size: 12.5px;
+  line-height: 1.75;
+}
+
+/* 标题按正文比例收敛：正文 12.5px 时层级仍可辨，且不超过正文 1.6 倍。 */
+.ai-scroll .msg.assistant .text h1,
+.wb-scroll .msg.assistant .text h1 { font-size: 16px; line-height: 1.45; }
+.ai-scroll .msg.assistant .text h2,
+.wb-scroll .msg.assistant .text h2 { font-size: 15px; line-height: 1.45; }
+.ai-scroll .msg.assistant .text h3,
+.wb-scroll .msg.assistant .text h3 { font-size: 14px; line-height: 1.45; }
+.ai-scroll .msg.assistant .text h4,
+.ai-scroll .msg.assistant .text h5,
+.ai-scroll .msg.assistant .text h6,
+.wb-scroll .msg.assistant .text h4,
+.wb-scroll .msg.assistant .text h5,
+.wb-scroll .msg.assistant .text h6 { font-size: 13px; line-height: 1.45; }
+.ai-scroll .msg.assistant .text h1,
+.ai-scroll .msg.assistant .text h2,
+.ai-scroll .msg.assistant .text h3,
+.ai-scroll .msg.assistant .text h4,
+.wb-scroll .msg.assistant .text h1,
+.wb-scroll .msg.assistant .text h2,
+.wb-scroll .msg.assistant .text h3,
+.wb-scroll .msg.assistant .text h4 {
+  margin: 16px 0 8px;
+  font-weight: 700;
+  color: var(--message-ink, var(--ink));
+}
+.ai-scroll .msg.assistant .text > :first-child,
+.wb-scroll .msg.assistant .text > :first-child { margin-top: 0; }
+.ai-scroll .msg.assistant .text p,
+.wb-scroll .msg.assistant .text p { margin: 10px 0; }
+
+/* 行内代码与代码块不大于正文；等宽字体在小字号下略收，保持对齐。 */
+.ai-scroll .msg.assistant .text code,
+.wb-scroll .msg.assistant .text code { font-size: 11.5px; }
+.ai-scroll .msg.assistant .text pre code,
+.wb-scroll .msg.assistant .text pre code { font-size: 12px; line-height: 20px; }
+.ai-scroll .msg.assistant .text table,
+.wb-scroll .msg.assistant .text table { font-size: 12px; }
+
+/* 工具/思考/子智能体等摘要行跟随正文尺度，避免正文与摘要反差过大。 */
+.ai-scroll .chat-turn-process > summary,
+.ai-scroll .chat-tool-group > summary,
+.ai-scroll .chat-proto-tool > summary,
+.ai-scroll .chat-proto-tool-meta,
+.ai-scroll .msg-think > summary,
+.ai-scroll .msg-think .mt-body,
+.ai-scroll .message-proto-agent > summary,
+.wb-scroll .chat-turn-process > summary,
+.wb-scroll .chat-tool-group > summary,
+.wb-scroll .msg-think > summary,
+.wb-scroll .message-proto-agent > summary { font-size: 12.5px; line-height: 1.75; }
+.ai-scroll .msg-working,
+.wb-scroll .msg-working { font-size: 11.5px; }
+.ai-scroll .msg-act,
+.wb-scroll .msg-act { font-size: 11px; }
+
+/* ---------- R3：消息区背景跟随面板 ---------- */
+/* message-reference.css 给 .ai-scroll 定义了 --message-bg:#f8f8f8（暗色 #161616），
+   形成与面板不同的“别色”。本版按用户要求回到面板底色：浅色白、暗色随主题。 */
+.ai-scroll {
+  --message-bg: var(--surface);
+  background: var(--surface);
+}
+html[data-theme="dark"] .ai-scroll {
+  --message-bg: var(--surface);
+  background: var(--surface);
+}
+.wb-scroll { background: var(--surface); }
+
+/* ---------- R4：帽子灰底、贴卡片顶、无白条 ---------- */
+/* 白条成因（两处叠加）：
+   1) chat-dock.css 用 `.ai-composer-wrap .ai-composer` 设 border-radius:28px + 外描边阴影，
+      大圆角在帽子上方露出卡片白底，并把帽子与卡片描边分离成两条边；
+   2) ai.css 的 .ai-composer 无 padding 规则，但卡片本身是白底，帽子未铺到顶。
+   本版：卡片圆角收 12px、去掉外描边改用常规边框；帽子作为卡片第一个区域贴顶、灰底铺满。 */
+.ai-composer-wrap .ai-composer,
+.ai-scroll .ai-composer,
+.wb-scroll .ai-composer {
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  box-shadow: none;
+  overflow: hidden;
+  padding-top: 0;
+}
+.ai-composer-wrap .ai-composer:focus-within {
+  border-color: var(--line-strong);
+  box-shadow: none;
+}
+/* 帽子是卡片顶部区域：灰底 + 只保留下边分隔线，上角交给卡片裁切。
+   灰底取 surface-3（比 surface-2 更明显一档），与图 2 的可见灰帽一致，白输入区仍可区分。 */
+.ai-composer > .ai-hat {
+  margin: 0;
+  padding: 6px 10px;
+  background: var(--surface-3);
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  min-height: 34px;
+}
+/* 帽子内部的分段控件与分支 chip 保持白底，与灰帽子形成层次（图 2 语言）。 */
+.ai-hat-seg,
+.ai-hat-branch {
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+}
+/* 输入区回到白底，和帽子形成“灰帽＋白输入”的一体卡片。 */
+.ai-composer > textarea {
+  background: var(--surface);
+}
+
+/* ---------- R2：轮次概览浮框放大为可读卡片 ---------- */
+/* 关键约束：本容器同时需要纵向滚动与横向溢出显示浮框，但 CSS 规范下
+   overflow-y:auto 会把 overflow-x:visible 计算成 auto，从而把浮框横向裁掉。
+   因此把浮框通道算进容器宽度：左内边距 4 + 浮框 240（含 20 内边距）+ 间隔 8 + 刻度 18 + 右内边距 4 ≈ 282px，
+   再留余量取 288px，使浮框完全落在容器内；pointer-events:none 不挡消息正文。 */
+.c96-turnnav {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  z-index: 6;
+  box-sizing: border-box;
+  width: 288px;
+  max-height: min(60vh, 460px);
+  padding: 6px 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  pointer-events: none;
+  background: transparent;
+  border: 0;
+  /* 不用 transform 做垂直居中：祖先含 transform 会让浮框的 position:fixed
+     退化为相对该祖先定位，导致浮框坐标被容器尺寸放大后飞出视口。
+     改用 margin-top 负值 + auto 高度适配（见下方 rule）。 */
+  transform: none;
+}
+/* 垂直居中替代方案：在允许的空间内上下留白，视觉上仍位于中段。
+   这里用 inset 定高 + margin auto 更稳妥，但会改变滚动容器行为；
+   故采用绝对定位 + 由 JS 侧不需要感知的方式：top:50% 配合 translate 会破坏 fixed。
+   最终选择：不垂直居中，改为贴顶部下方一段固定距离，并保留自身滚动。 */
+.c96-turnnav { top: 96px; }
+/* 单个刻度：命中区足够点击，只有它自己接收指针事件。 */
+.c96-turnnav-item {
+  position: relative;
+  flex: 0 0 auto;
+  align-self: flex-end;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 16px;
+  padding: 3px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  pointer-events: auto;
+}
+.c96-turnnav-tick {
+  display: block;
+  flex: 0 0 auto;
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--muted-2);
+  transition: width .12s ease, background-color .12s ease, opacity .12s ease;
+}
+.c96-turnnav-item.kind-user .c96-turnnav-tick { background: var(--primary); opacity: .5; }
+.c96-turnnav-item.kind-tool .c96-turnnav-tick { height: 2px; background: var(--line-strong); }
+.c96-turnnav-item:hover .c96-turnnav-tick,
+.c96-turnnav-item:focus-visible .c96-turnnav-tick {
+  width: 15px;
+  background: var(--muted);
+  opacity: 1;
+}
+.c96-turnnav-item:focus-visible { outline: none; }
+.c96-turnnav-item:focus-visible .c96-turnnav-tick { box-shadow: 0 0 0 2px var(--focus, var(--primary)); }
+.c96-turnnav-item.is-active .c96-turnnav-tick {
+  width: 16px;
+  height: 4px;
+  background: var(--primary);
+  opacity: 1;
+}
+
+/* 浮框卡片：12px 字号、232px 上限、两行摘要。
+   定位用 position:fixed —— 刻度容器本身是 overflow:auto 的窄条（可能仅一轮、高 28px），
+   若浮框相对容器定位，会被容器纵向裁掉顶部标题行。fixed 脱离容器裁剪，
+   位置由 cr096.js 在悬停/聚焦时按刻度按钮的真实屏幕坐标计算，并做视口内回落。 */
+.c96-turnnav-label {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: max-content;
+  max-width: 232px;
+  min-width: 120px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.55;
+  text-align: left;
+  white-space: normal;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .12);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity .1s ease;
+  z-index: 70;
+}
+.c96-turnnav-label .c96-turnnav-idx {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: .02em;
+}
+.c96-turnnav-label .c96-turnnav-summary {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+}
+.c96-turnnav-item:hover .c96-turnnav-label,
+.c96-turnnav-item:focus-visible .c96-turnnav-label {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* 窄屏：浮框不越出消息区左边界，改为贴刻度左内侧。 */
+@media (max-width: 720px) {
+  .c96-turnnav { width: 120px; right: 4px; }
+  .c96-turnnav-label { max-width: 200px; min-width: 104px; }
+}
+
+/* ---------- R5：工作台页签隐藏 AI 侧栏开关 ---------- */
+/* 与 workbench.css 的 body.wb-active .ai-toggle-btn 同义，这里覆盖软件内对应结构。 */
+body.wb-active .pw-ai-toggle,
+body.wb-active .ai-toggle-btn { display: none !important; }

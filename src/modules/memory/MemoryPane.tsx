@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/icons";
-import { memoryStats } from "@/api/memory";
+import { memoryStats, memoryEnsureLibrary } from "@/api/memory";
+import { listProjects } from "@/api";
 import type { MemoryStats } from "@/api/memory";
 import { MemoryList } from "./MemoryList";
 import { MemoryProfile } from "./MemoryProfile";
@@ -84,6 +85,11 @@ function StatsPanel({ stats, error, onRetry }: {
 
 export function MemoryPane() {
   const [tab, setTab] = useState<MemoryTab>("list");
+  const [scope, setScope] = useState("global");
+  const [editing, setEditing] = useState(false);
+  const [projects, setProjects] = useState<Array<{id:string;name:string}>>([]);
+  const [initError,setInitError] = useState<string|null>(null);
+  useEffect(()=>{let alive=true;listProjects().then(rows=>{if(alive)setProjects(rows);}).catch(e=>{if(alive)setInitError(errText(e));});memoryEnsureLibrary().then(()=>{if(alive)setRefreshToken(v=>v+1);}).catch(e=>{if(alive)setInitError(errText(e));});return ()=>{alive=false;};},[]);
   const [refreshToken, setRefreshToken] = useState(0);
   const [stats, setStats] = useState<MemoryStats | null>(null);
   const [statsError, setStatsError] = useState<string | null>(null);
@@ -93,14 +99,14 @@ export function MemoryPane() {
     const seq = ++statsSeq.current;
     setStatsError(null);
     try {
-      const next = await memoryStats(null);
+      const next = await memoryStats(scope);
       if (seq !== statsSeq.current) return;
       setStats(next);
     } catch (error) {
       if (seq !== statsSeq.current) return;
       setStatsError(errText(error));
     }
-  }, []);
+  }, [scope]);
 
   useEffect(() => {
     setStats(null);
@@ -110,10 +116,15 @@ export function MemoryPane() {
   useEffect(() => () => { statsSeq.current += 1; }, []);
 
   const refresh = () => {
+    if(editing && !window.confirm("刷新会放弃未保存的记忆编辑，继续？"))return;
+    setEditing(false);
     setRefreshToken(value => value + 1);
     if (tab === "stats") setStats(null);
   };
 
+  const switchScope=(next:string)=>{if(editing&&!window.confirm("切换范围会放弃未保存的编辑，继续？"))return;statsSeq.current++;setStats(null);setStatsError(null);setEditing(false);setScope(next);};
+  const switchTab=(next:MemoryTab)=>{if(editing&&!window.confirm("切换视图会放弃未保存的编辑，继续？"))return;setEditing(false);setTab(next);};
+  useEffect(()=>{const focus=()=>{if(!editing)setRefreshToken(v=>v+1);};window.addEventListener('focus',focus);return ()=>window.removeEventListener('focus',focus);},[editing]);
   return (
     <div className="memory-pane">
       <header className="memory-topbar">
@@ -125,15 +136,23 @@ export function MemoryPane() {
         </button>
       </header>
 
+      <div className="memory-toolbar memory-scope-toolbar">
+        <select className="memory-select" aria-label="记忆范围" value={scope} onChange={e=>switchScope(e.target.value)}>
+          <option value="global">个人记忆（跨项目通用）</option>
+          {projects.map(p=><option key={p.id} value={`project:${p.id}`}>{p.name}</option>)}
+        </select>
+        <span className="memory-hint">{scope==='global'?'同步到个人记忆知识库，跨项目通用。':'仅此项目可用，不进入个人通用记忆库。'}</span>
+      </div>
+      {initError&&<p className="memory-error" role="alert">{initError}</p>}
       <nav className="memory-tabs" role="tablist" aria-label="记忆视图">
-        <button className="memory-tab" role="tab" aria-selected={tab === "list"} onClick={() => setTab("list")}>记忆</button>
-        <button className="memory-tab" role="tab" aria-selected={tab === "profile"} onClick={() => setTab("profile")}>画像</button>
-        <button className="memory-tab" role="tab" aria-selected={tab === "stats"} onClick={() => setTab("stats")}>统计</button>
+        <button className="memory-tab" role="tab" aria-selected={tab === "list"} onClick={() => switchTab("list")}>记忆</button>
+        <button className="memory-tab" role="tab" aria-selected={tab === "profile"} onClick={() => switchTab("profile")}>画像</button>
+        <button className="memory-tab" role="tab" aria-selected={tab === "stats"} onClick={() => switchTab("stats")}>统计</button>
       </nav>
 
       <main className="memory-content" role="tabpanel">
-        {tab === "list" && <MemoryList refreshToken={refreshToken} onChanged={() => { void loadStats(); }} />}
-        {tab === "profile" && <MemoryProfile refreshToken={refreshToken} />}
+        {tab === "list" && <MemoryList key={scope} scope={scope} onEditingChange={setEditing} refreshToken={refreshToken} onChanged={() => { void loadStats(); }} />}
+        {tab === "profile" && <MemoryProfile key={scope} scope={scope} refreshToken={refreshToken} />}
         {tab === "stats" && (
           <StatsPanel
             stats={stats}

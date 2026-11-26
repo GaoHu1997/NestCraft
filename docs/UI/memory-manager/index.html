@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>记忆管理 · UI-FEAT-026-v1</title>
+<title>记忆管理 · UI-FEAT-026-v2</title>
 <style>
   :root{
     --bg:#f6f7f9; --panel:#ffffff; --text:#1c2026; --muted:#6b7280; --line:#e5e7eb;
@@ -66,10 +66,10 @@
   .stat .l{color:var(--muted);font-size:12px;margin-top:2px}
   textarea{width:100%;min-height:64px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);padding:8px;font:inherit}
   .hint{color:var(--muted);font-size:12px;margin:6px 0 0}
-  @media (max-width:520px){ .content{padding:12px} .topbar{padding:10px 12px} .profile-grid{grid-template-columns:1fr} .row-actions{opacity:1} }
+  @media (max-width:520px){ .content{padding:12px} .topbar{padding:10px 12px} .profile-grid{grid-template-columns:1fr} .row-actions{opacity:1} #scope{width:100%;flex:0 0 100%} }
 </style>
 </head>
-<body>
+<body><!-- 本页数据全部为合成演示，不表示用户实际画像或项目事实。 -->
 <div class="app">
   <header class="topbar">
     <span class="crumb">知识库 · <b>记忆</b></span>
@@ -78,7 +78,7 @@
     <button class="btn" id="toggleTheme">深色</button>
     <button class="btn primary" id="addBtn">＋ 新增记忆</button>
   </header>
-  <nav class="tabs">
+  <div class="toolbar" style="padding:12px 20px;margin:0"><select id="scope" aria-label="记忆范围"><option value="global">个人记忆（跨项目通用）</option><option value="project:a">项目 A</option><option value="project:b">项目 B</option></select><span class="hint" id="scopeHint">个人记忆同步到个人记忆知识库，所有项目可按需读取。</span></div><nav class="tabs">
     <div class="tab active" data-tab="list">记忆</div>
     <div class="tab" data-tab="profile">画像</div>
     <div class="tab" data-tab="stats">统计</div>
@@ -125,12 +125,16 @@
     {id:'m8',kind:'preference',content:'偏好用 pnpm 管理依赖（曾用 npm，已改）',importance:3,trust:'own',source:'message',sourceRef:'msg-0900',status:'superseded',supersededBy:'m9',at:'2026-11-18 09:00',memKey:'pkg-mgr'},
   ];
   const KIND_LABEL={fact:'事实',preference:'偏好',goal:'目标',event:'事件',decision:'决策',relation:'关系'};
-  const state={items:SEED.slice(),q:'',kind:'',status:'active',empty:false,pane:'list'};
+  SEED.forEach(i=>i.scope='global');
+  SEED.push({id:'pa',scope:'project:a',kind:'decision',content:'（合成）项目 A 使用 SQLite',importance:4,trust:'own',status:'active',source:'manual',sourceRef:'',at:'演示',memKey:'db'});
+  SEED.push({id:'pb',scope:'project:b',kind:'decision',content:'（合成）项目 B 使用 PostgreSQL',importance:4,trust:'own',status:'active',source:'manual',sourceRef:'',at:'演示',memKey:'db'});
+  const state={items:SEED.slice(),scope:'global',q:'',kind:'',status:'active',empty:false,pane:'list'};
   const $=s=>document.querySelector(s);
   function stars(n){return '★'.repeat(n)+'☆'.repeat(Math.max(0,5-n));}
   function renderList(){
     const box=$('#list'), empty=$('#listEmpty');
     let rows=state.items.filter(i=>{
+      if(i.scope!==state.scope)return false;
       if(state.status && i.status!==state.status) return false;
       if(state.kind && i.kind!==state.kind) return false;
       if(state.q && !i.content.includes(state.q)) return false;
@@ -142,7 +146,7 @@
       <div class="card" data-id="${i.id}">
         <div class="card head">
           <span class="badge ${i.kind}">${KIND_LABEL[i.kind]||i.kind}</span>
-          <span class="stars" title="重要度">${stars(i.importance)}</span>
+          <span class="badge">${i.scope==='global'?'个人记忆':'项目记忆'}</span><span class="stars" title="重要度">${stars(i.importance)}</span>
           ${i.status==='superseded'?'<span class="badge">已被取代</span>':''}
           ${i.trust==='external'?'<span class="badge" title="外部来源，低信任">外部</span>':''}
           <span class="row-actions">
@@ -157,13 +161,15 @@
   function renderProfile(){
     const fields=[['身份','独立开发者 / 产品负责人'],['常用技术栈','TypeScript · Rust · Tauri'],['沟通偏好','简洁直接、先结论'],['当前目标','打磨个人 Agent 工作台'],['工作环境','Windows · 便携版'],['偏好','高信息密度界面 · pnpm']];
     $('#profSummary').textContent='用户是一位独立开发者，正在打造可长期使用的个人 Agent 工作台。偏简洁高信息密度界面，前端偏好 TypeScript，依赖管理用 pnpm。';
+    if(state.scope!=='global'){ $('#profSummary').textContent='当前项目的约束与决定，不混入个人画像'; fields.splice(0,fields.length,['项目约束',state.items.filter(i=>i.scope===state.scope).map(i=>i.content).join('；')]); }
     $('#profGrid').innerHTML=fields.map(([k,v])=>`<div class="k">${k}</div><div>${v}</div>`).join('');
   }
   function renderStats(){
-    const total=state.items.length;
-    const byKind={}; state.items.forEach(i=>byKind[i.kind]=(byKind[i.kind]||0)+1);
-    const active=state.items.filter(i=>i.status==='active').length;
-    const sup=state.items.filter(i=>i.status==='superseded').length;
+    const items=state.items.filter(i=>i.scope===state.scope);
+    const total=items.length;
+    const byKind={}; items.forEach(i=>byKind[i.kind]=(byKind[i.kind]||0)+1);
+    const active=items.filter(i=>i.status==='active').length;
+    const sup=items.filter(i=>i.status==='superseded').length;
     const cards=[['总记忆数',total],['生效中',active],['已被取代',sup],...Object.entries(byKind).map(([k,v])=>[KIND_LABEL[k]||k,v])];
     $('#statsGrid').innerHTML=cards.map(([l,n])=>`<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
   }
@@ -175,6 +181,7 @@
     t.classList.add('active'); state.pane=t.dataset.tab;
     document.querySelector(`.pane[data-pane="${t.dataset.tab}"]`).classList.add('active');
   });
+  $('#scope').onchange=e=>{state.scope=e.target.value;state.empty=false;$('#scopeHint').textContent=state.scope==='global'?'个人记忆跨项目通用，并同步到个人记忆知识库。':'项目记忆仅当前项目可用，不进入通用个人知识库。';renderAll();};
   // 筛选/搜索
   $('#q').oninput=e=>{state.q=e.target.value.trim();renderList();};
   $('#kindFilter').onchange=e=>{state.kind=e.target.value;renderList();};
@@ -188,7 +195,7 @@
   });
   $('#toggleEmpty').onclick=()=>{state.empty=!state.empty;renderList();};
   $('#toggleTheme').onclick=()=>{document.body.classList.toggle('dark');$('#toggleTheme').textContent=document.body.classList.contains('dark')?'浅色':'深色';};
-  $('#addBtn').onclick=()=>{ const v=prompt('新增一条记忆（偏好/事实/目标…）'); if(v&&v.trim()){ state.items.unshift({id:'n'+Date.now(),kind:'fact',content:v.trim(),importance:3,trust:'own',source:'manual',sourceRef:'',status:'active',at:'刚刚',memKey:''}); state.status='active';renderAll(); } };
+  $('#addBtn').onclick=()=>{ const v=prompt('新增一条记忆（偏好/事实/目标…）'); if(v&&v.trim()){ state.items.unshift({id:'n'+Date.now(),scope:state.scope,kind:'fact',content:v.trim(),importance:3,trust:'own',source:'manual',sourceRef:'',status:'active',at:'刚刚',memKey:''}); state.status='active';renderAll(); } };
   // UI-SCROLL-001：滚动时显示，停止后隐藏
   document.querySelectorAll('.scroll-area').forEach(a=>{
     let t; a.addEventListener('scroll',()=>{ a.classList.add('scrolling'); clearTimeout(t); t=setTimeout(()=>a.classList.remove('scrolling'),700); });

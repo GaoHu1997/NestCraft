@@ -17,3 +17,11 @@
 - 验证结果：通过 —— `registry_and_tool_catalog_stay_in_sync` 通过（5 个 memory 工具与 catalog/BUILTIN_TOOLS 同步）、授权与预算逻辑随全量 607 通过 / 0 失败；`cargo check --all-targets` exit 0。
 - 验收结论：技术验证通过，待用户验收
 - 阻塞/下一步：无。
+
+## MEM-FIX-001 现行修复（2026-11-26）
+
+- 归属仍唯一FEAT-026，状态：本轮源码修复与技术验证完成，待真实便携版验收，历史完成声称不覆盖此次缺口。
+- 本次义务：[修复方案](../../LLD/LLD-FEAT-026-记忆范围与落盘修复.md) MEM-01～MEM-07，实际结果以[修复报告](../../Test/REPORT-MEMFIX001-记忆范围与落盘修复.md)为准。
+- 用户决定：个人通用(global)／项目隔离(project:<id>)，个人需要进入个人记忆库。不得默认全scope给AI。
+- 实现：分类路由与可信ctx；个人文件和索引镜像；三页签单scope和编辑/删除同步；既有project记录不自动提升个人。
+- UI准入（109适用）：UI-FEAT-026-v2，唯一入口 memory-scopes，设计先于代码；UI-SCROLL-001 v1 700ms沿用列表/画像/textarea。设计与实际组件截图均已查看；整个壳层/真实WebView2像素一致不作通过。

@@ -790,7 +790,7 @@ pub fn rebuild_library_embeddings(
         let conn = guard.as_ref().ok_or("db not initialized")?;
         let source: String = conn
             .query_row(
-                "SELECT sourceRef FROM knowledge_library WHERE id=?1 AND enabled=1 AND sourceKind='managed-directory'",
+                "SELECT sourceRef FROM knowledge_library WHERE id=?1 AND enabled=1 AND sourceKind IN ('managed-directory','personal-memory')",
                 [library_id],
                 |r| r.get(0),
             )
@@ -1158,11 +1158,44 @@ pub mod install {
 
     pub fn installed_root() -> std::path::PathBuf {
         MODEL_ROOT.get().cloned().unwrap_or_else(|| {
-            dirs::data_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join("NestCraft")
-                .join("semantic-model")
+            // CR-097：模型统一落在数据根下的 semantic-model，不再占用应用数据目录。
+            crate::storage_layout::category("semantic-model").unwrap_or_else(|_| {
+                dirs::data_dir()
+                    .unwrap_or_else(|| std::path::PathBuf::from("."))
+                    .join("NestCraft")
+                    .join("semantic-model")
+            })
         })
+    }
+
+    /// CR-097：把旧的应用数据目录模型幂等迁移到统一数据根。
+    /// 只补齐缺失文件，目标已存在且大小一致时跳过；任何失败都只记日志，不阻塞启动。
+    pub fn migrate_legacy_root(target: &std::path::Path) -> Vec<String> {
+        let mut notes = Vec::new();
+        let legacy = match dirs::data_dir() {
+            Some(dir) => dir.join("NestCraft").join("semantic-model"),
+            None => return notes,
+        };
+        if !legacy.is_dir() { return notes; }
+        if legacy == target { return notes; }
+        let entries = match std::fs::read_dir(&legacy) { Ok(entries) => entries, Err(_) => return notes };
+        let _ = std::fs::create_dir_all(target);
+        for entry in entries.flatten() {
+            let from = entry.path();
+            if !from.is_file() { continue; }
+            let name = match from.file_name() { Some(name) => name.to_os_string(), None => continue };
+            let to = target.join(&name);
+            let same = match (std::fs::metadata(&from), std::fs::metadata(&to)) {
+                (Ok(a), Ok(b)) => a.len() == b.len() && a.len() > 0,
+                _ => false,
+            };
+            if same { continue; }
+            match std::fs::copy(&from, &to) {
+                Ok(_) => notes.push(format!("已迁移 {} → {}", from.display(), to.display())),
+                Err(error) => notes.push(format!("迁移 {} 失败：{error}", from.display())),
+            }
+        }
+        notes
     }
 
     pub fn sha256_file(path: &std::path::Path) -> Result<String, String> {
@@ -1544,4 +1577,4 @@ pub mod install {
 
     }
 }
-pub use install::{installed_root, kb_semantic_install, kb_semantic_model_state, set_model_root};
+pub use install::{installed_root, kb_semantic_install, kb_semantic_model_state, migrate_legacy_root, set_model_root};

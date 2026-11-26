@@ -88,3 +88,7 @@ CREATE TABLE IF NOT EXISTS memory_profile (
 - 原文不复制进 `memory_item`（只存 `sourceRef`）；画像 `summary` 有界（≤2KB）。
 - 删除为软删（status=deleted），可重建派生数据；用户"彻底删除"由 UI 触发物理删对应行。
 - 索引与记忆表均本地；不做外部同步、不上传。
+
+## MEM-FIX-001（2026-11-26）
+
+无新表／无存量自动重分类。scope=global个人通用；project:<id>项目隔离。memKey仅同scope合并，主键相同不作为跨项目授权。memoryScope只用于抽取JSON路由，不增加memory_item列。Markdown为个人global镜像，来自本地数据库；项目保持独立记录。两者写改删同步，失败明确报DB是否已保存；索引为派生，可重建。旧project条目不推断为个人，用户在范围选择中可查看。

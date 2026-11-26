@@ -289,20 +289,24 @@ export function CliRoute(props: {
   </div>;
 }
 
-/** CLI 权限挡位（CR-085 AC-01）：按各 CLI 自身能力提供，与 AI 侧栏同源（cliCapabilities）。
- *  未核验的挡位保持可见但禁用，并给出原因；不借用其它 CLI 的档位。 */
+/** CLI 权限挡位（CR-099）：按各 CLI 自身能力提供，与 AI 侧栏同源（cliCapabilities）。
+ *  不可用的档位**不出现**，而不是留一个灰项——灰项既不可选又无解释。
+ *  档位与 Rust 侧 `validate_permission` 白名单、`spawn_cli` 参数映射保持一致。 */
 export const PERMISSION_OPTIONS = cliPermissionOptions("claude");
 
 export function PermissionSelect(props: { cliId: string; value: string; disabled: boolean; onChange: (value: string) => void }) {
   const options = cliPermissionOptions(props.cliId);
-  const known = options.some(option => option.id === props.value);
-  return <select className="select" aria-label={`${props.cliId} 权限模式`} value={props.value} disabled={props.disabled}
-    onChange={event => props.onChange(event.target.value)}>
-    {!known && props.value && <option value={props.value}>{props.value}（原权限已失效）</option>}
-    {options.map(option => <option key={option.id} value={option.id} disabled={!option.enabled}>
-      {option.name}{option.enabled ? "" : `（${option.desc}）`}
-    </option>)}
-  </select>;
+  const usable = options.filter(option => option.enabled);
+  const known = usable.some(option => option.id === props.value);
+  const current = usable.find(option => option.id === props.value);
+  return <>
+    <select className="select" aria-label={`${props.cliId} 权限模式`} value={props.value} disabled={props.disabled}
+      onChange={event => props.onChange(event.target.value)}>
+      {!known && props.value && <option value={props.value}>{props.value}（原权限已失效）</option>}
+      {usable.map(option => <option key={option.id} value={option.id}>{option.name}{option.risk ? "（高风险）" : ""}</option>)}
+    </select>
+    {current && <p className="set-caption cr099-perm-desc">{current.desc}</p>}
+  </>;
 }
 
 /** 首帧缓存 + 后台并发刷新（CR-059 D5）时单 CLI 的检测状态。 */

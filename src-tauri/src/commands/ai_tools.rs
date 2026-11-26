@@ -603,9 +603,10 @@ pub(crate) fn workbench_tools() -> [ToolDef; TOOL_COUNT] {
         ToolDef {
             name: "memory_search",
             registry_id: "workbench.memory_search",
-            description: "在个人记忆库（含项目记忆）中按关键词检索原子记忆，只读，返回摘要不含原文对话。",
+            description: "按需查个人记忆与当前项目记忆；个人跨项目通用，项目不可跨项目。返回摘要和scope。",
             schema: schema_obj(json!({
                 "query": { "type": "string" },
+                "scope": { "type": "string", "enum": ["personal","project"], "description": "省略读取个人和当前项目" },
                 "kind": { "type": "string", "enum": ["fact","preference","goal","event","decision","relation"] },
                 "limit": { "type": "integer", "minimum": 1, "maximum": 20 }
             }), &["query"]),
@@ -614,13 +615,13 @@ pub(crate) fn workbench_tools() -> [ToolDef; TOOL_COUNT] {
         ToolDef {
             name: "memory_save",
             registry_id: "workbench.memory_save",
-            description: "把一条关于用户的长期有用信息写入记忆（自动去重合并），content ≤1KB。kind 取 fact/preference/goal/event/decision/relation。",
+            description: "实际保存长期记忆，只有saved=true才能说记住。个人通用偏好scope=personal，本项目约束scope=project；content≤1KB。",
             schema: schema_obj(json!({
                 "content": { "type": "string" },
                 "kind": { "type": "string", "enum": ["fact","preference","goal","event","decision","relation"] },
                 "memKey": { "type": "string", "description": "可选稳定去重键" },
                 "importance": { "type": "integer", "minimum": 1, "maximum": 5 },
-                "scope": { "type": "string" }
+                "scope": { "type": "string", "enum": ["personal","project"], "description": "personal=跨项目个人；project=仅当前项目，不可指定其它项目ID" }
             }), &["content","kind"]),
             risk: "medium",
         },
@@ -632,7 +633,7 @@ pub(crate) fn workbench_tools() -> [ToolDef; TOOL_COUNT] {
                 "kind": { "type": "string" },
                 "status": { "type": "string", "enum": ["active","superseded","deleted"] },
                 "limit": { "type": "integer", "minimum": 1, "maximum": 20 },
-                "scope": { "type": "string" }
+                "scope": { "type": "string", "enum": ["personal","project"], "description": "personal=跨项目个人；project=仅当前项目，不可指定其它项目ID" }
             }), &[]),
             risk: "low",
         },
@@ -647,7 +648,7 @@ pub(crate) fn workbench_tools() -> [ToolDef; TOOL_COUNT] {
             name: "profile_get",
             registry_id: "workbench.profile_get",
             description: "读取用户画像摘要与结构化字段。",
-            schema: schema_obj(json!({ "scope": { "type": "string" } }), &[]),
+            schema: schema_obj(json!({ "scope": { "type": "string", "enum": ["personal","project"], "description": "personal=跨项目个人；project=仅当前项目，不可指定其它项目ID" } }), &[]),
             risk: "low",
         },
     ]
@@ -785,11 +786,11 @@ pub(crate) fn run_tool(ctx: &ToolContext, name: &str, args: &Value) -> Result<Va
         "web_search" => crate::commands::search_tools::tool_web_search(ctx, args),
         "web_fetch" => crate::commands::search_tools::tool_web_fetch(ctx, args),
         // CR-092 / FEAT-026：个人记忆工具（scope 由 projectId 派生；写类走 memory 业务层合并）
-        "memory_search" => crate::commands::memory_tools::tool_search(&with_project(ctx, args)),
-        "memory_save" => crate::commands::memory_tools::tool_save(&with_project(ctx, args)),
-        "memory_list" => crate::commands::memory_tools::tool_list(&with_project(ctx, args)),
-        "memory_forget" => crate::commands::memory_tools::tool_forget(&with_project(ctx, args)),
-        "profile_get" => crate::commands::memory_tools::tool_profile_get(&with_project(ctx, args)),
+        "memory_search" => crate::commands::memory_tools::run_tool(ctx, "memory_search", args),
+        "memory_save" => crate::commands::memory_tools::run_tool(ctx, "memory_save", args),
+        "memory_list" => crate::commands::memory_tools::run_tool(ctx, "memory_list", args),
+        "memory_forget" => crate::commands::memory_tools::run_tool(ctx, "memory_forget", args),
+        "profile_get" => crate::commands::memory_tools::run_tool(ctx, "profile_get", args),
         other => Err(format!("未知工具：{other}")),
     }
 }

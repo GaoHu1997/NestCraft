@@ -898,7 +898,8 @@ export type ChatEvent =
   | { type: "approvalRequest"; requestId: string; toolName: string; inputJson: string; risk: string }
   | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens: number }
   | { type: "subagent"; id: string; task: string; status: string; cli?: string | null; model?: string | null; durationMs?: number | null; tokens?: number | null; output?: string | null; parentId?: string | null; taskId?: string | null; content?: string | null; kind?: string | null; toolName?: string | null; isError?: boolean | null }
-  | { type: "retrying"; attempt: number; maxAttempts: number; delayMs: number; reason: string }
+  /** CR-102：detail 为内核/平台原始错误全文；delayMs 内核重连未知时为 null。 */
+  | { type: "retrying"; attempt: number; maxAttempts: number; delayMs: number | null; reason: string; detail?: string | null }
   | { type: "error"; message: string }
   /** CR-037：done 不再携带原 sessionRef；判定结果 + 脱敏指纹，前端据此更新绑定状态。 */
   | {

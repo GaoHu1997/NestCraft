@@ -71,33 +71,28 @@ function ProbeRows({ slots, items }: { slots: Slot[]; items: ProbeItemState[] })
   </div>;
 }
 
-/* CR-058 r5：P20 归因面板（结果区下方、逐针列表上方；仅完成/历史回看态渲染）。
-   一致性三态 + top-3「最像的已知候选」距离条；概率性提示，措辞不得出现实锤断言（AC-18）。 */
+/* CR-099：这一段只讲「指纹归因到哪个模型」。
+   用户明确要求移除整段「存在不通过项」并去掉独立框，因此这里只生成一行纯文本，
+   无边框、无底色、无阴影、无独立卡片。概率性措辞保留，不出现实锤断言。 */
 const ATTR_CONSISTENCY: Record<string, { label: string; tone: string }> = {
   match: { label: "与声称家族一致", tone: "good" },
   mismatch: { label: "与声称家族不一致", tone: "warn" },
   unknown: { label: "无法判定", tone: "gray" },
 };
-function AttributionPanel({ attr }: { attr: ProbeAttribution }) {
+function AttributionLine({ attr }: { attr: ProbeAttribution }) {
   const c = ATTR_CONSISTENCY[attr.consistency] || ATTR_CONSISTENCY.unknown;
-  const maxD = Math.max(0.001, ...attr.candidates.map(x => x.distance));
-  return <div className="probe-attr" aria-label="行为指纹归因">
-    <div className="probe-attr-head">
-      <span className="probe-attr-title">行为指纹归因</span>
-      <span className={`tag ${c.tone}`}>{c.label}</span>
-      <span className="set-caption probe-attr-claimed">声称家族 · <span className="mono">{attr.claimedFamily || "未知"}</span></span>
-      <span className="set-caption probe-attr-hint">最像的已知候选 · 概率性提示，不构成实锤</span>
-    </div>
-    <div className="probe-attr-list" role="list">
-      {attr.candidates.length ? attr.candidates.map((x, i) => <div className="probe-attr-cand" key={i} role="listitem">
-        <span className="a-rank mono">#{i + 1}</span>
-        <span className="a-name mono">{x.name}</span>
-        <span className="a-bar" aria-hidden="true"><span className={`a-bar-fill${i === 0 ? " top" : ""}`} style={{ width: `${Math.round((1 - x.distance / maxD) * 100)}%` }} /></span>
-        <span className="a-dist mono">d={x.distance.toFixed(2)}</span>
-      </div>) : <p className="set-caption probe-attr-empty">与所有已知候选都不像（基线库外）；无法判定，不指认。</p>}
-    </div>
-    {attr.note ? <p className="set-caption probe-attr-note">{attr.note}</p> : null}
-  </div>;
+  const top = attr.candidates[0];
+  const rest = attr.candidates.slice(1, 3);
+  return <p className="probe-attr-line" aria-label="指纹归因">
+    <b>指纹归因：</b>
+    {top
+      ? <>最像 <span className="mono">{top.name}</span>（d={top.distance.toFixed(2)}）</>
+      : <>与所有已知候选都不像（基线库外），不指认</>}
+    <span className={`tag ${c.tone}`}>{c.label}</span>
+    <span className="probe-attr-claimed">声称家族 <span className="mono">{attr.claimedFamily || "未知"}</span></span>
+    {rest.length ? <>；其余候选 {rest.map((x, i) => `#${i + 2} ${x.name} d=${x.distance.toFixed(2)}`).join("、")}</> : null}
+    ；概率性提示，不构成实锤。
+  </p>;
 }
 
 export function SettingsModelProbe() {
@@ -308,10 +303,13 @@ export function SettingsModelProbe() {
       <button className="btn sm" disabled={running} onClick={() => void loadProviders()}>重试</button>
     </div>}
     {providerNotice && <p className="set-caption probe-hint" role="status">{providerNotice}<button className="set-link" onClick={() => setProviderNotice("")}>知道了</button></p>}
-    {blockReason && <p className="set-caption probe-hint">{blockReason}</p>}
+    {/* CR-099：「检测进行中」这类提示不再插行——进度与状态已由结果区呈现，
+        否则点开始检测时整页位移。blockReason 仍保留：它是按钮不可点的原因，
+        且只在未开始检测时出现，不随检测状态插入。 */}
+    {blockReason && !running && <p className="set-caption probe-hint">{blockReason}</p>}
 
     {/* 结果区紧贴 20 针列表上方：空闲 → 进行中（进度）→ 完成 / 历史回看 */}
-    <div className={`probe-result cr085-result ${running ? "running" : shown ? "done" : "idle"}`}>
+    <div className={`probe-result cr085-result ${running ? "running" : shown ? "done" : "idle"}${!running && shown?.attribution ? " has-attribution" : ""}`}>
       <div className="cr085-result-grid">
         {[
           ["状态", running ? "检测中" : shown ? "已检测" : "待检测"],
@@ -323,11 +321,10 @@ export function SettingsModelProbe() {
         ].map(([label, value]) => <div key={label}><span className="cr085-result-label">{label}</span><b title={value}>{value}</b></div>)}
       </div>
       <div className="cr085-result-summary">{running ? `${runningLabel || "正在连接目标网关…"} · ${doneCount} / ${PENDING_SLOTS}` : shown?.summary || ""}</div>
+      {/* CR-099：归因作为结果区内的一行正文，不再是独立卡片。 */}
+      {!running && shown?.attribution ? <AttributionLine attr={shown.attribution} /> : null}
       {running && <div className="probe-progress cr085-probe-progress" role="progressbar" aria-valuemin={0} aria-valuemax={PENDING_SLOTS} aria-valuenow={doneCount}><span className="probe-progress-fill" style={{ width: `${progressPct}%` }} /></div>}
     </div>
-
-    {/* r5：归因面板仅在完成/历史回看态渲染（待检测与运行中不出现，不影响结果区 108px 固定高度） */}
-    {!running && shown?.attribution ? <AttributionPanel attr={shown.attribution} /> : null}
 
     <ProbeRows slots={slots} items={items} />
   </section>;

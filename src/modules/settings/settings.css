@@ -109,6 +109,11 @@ html[data-theme="dark"] .set-modal::backdrop, html[data-theme="dark"] .set-sub-d
 .set-pm-section > b, .set-pm-section > label { font-size: 12.5px; font-weight: 550; }
 .set-provider-foot { display: flex; align-items: center; gap: 10px; justify-content: flex-end; padding: 12px 16px; border-top: 1px solid var(--set-line-soft); background: var(--set-surface-2); }
 .set-provider-foot .set-caption { margin-right: auto; }
+/* CR-099：能力管理内的四个子页签，复用设置页签外观。 */
+.cr099-ability-tabs { margin-bottom: 14px; }
+/* CR-099：权限说明与模型空态原因，作为下拉下方的辅助行。 */
+.cr099-perm-desc { margin: 6px 0 0; }
+.cr099-model-empty { margin: 8px 0 0; }
 .set-key-list { border: 1px solid var(--set-line); border-radius: 6px; overflow: hidden; }
 .set-key-item { border-bottom: 1px solid var(--set-line-soft); }
 .set-key-item:last-child { border-bottom: 0; }

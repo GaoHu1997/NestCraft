@@ -74,16 +74,28 @@ pub fn run() {
                     }
                 }
             }
+            if !smoke {
+                let memory_root=dir.clone();
+                std::thread::spawn(move ||{
+                    if let Ok(guard)=db::conn() {if let Some(conn)=guard.as_ref() {
+                        if let Err(error)=commands::memory::sync_personal_at(conn,&memory_root) {eprintln!("[MEM-FIX-001] 个人记忆回填未完成：{error}");}
+                    }}
+                });
+            }
             // CR-046：清理上次更新留下的旧版程序与未完成下载；保留已就绪的暂存包。
             updater::cleanup(app.handle());
             commands::sdk::seed_sdk_rows_pub()?;
             // CR-057：首次启动自动安装内置示例（编码 / 办公项目 + 知识库）。
             // 幂等且不覆盖：已安装则跳过；失败只记日志不阻塞启动，下次启动重试。
             // 冒烟模式跳过，保持冒烟库的确定性（冒烟夹具自建）。
-            // CR-089：模型放应用数据目录；缺失则首次启动联网下载（不打进安装包），完成后再建索引。
+            // CR-089：模型缺失则首次启动联网下载（不打进安装包），完成后再建索引。
+            // CR-097：模型统一落在数据根 `<data>/semantic-model`，旧应用数据目录启动时幂等补齐。
             if !smoke {
-                if let Ok(data_dir) = app.path().app_data_dir() {
-                    commands::knowledge::semantic::set_model_root(data_dir.join("semantic-model"));
+                if let Ok(model_dir) = crate::storage_layout::category("semantic-model") {
+                    for note in commands::knowledge::semantic::migrate_legacy_root(&model_dir) {
+                        eprintln!("[CR-097] 语义模型迁移：{note}");
+                    }
+                    commands::knowledge::semantic::set_model_root(model_dir);
                 }
                 let semantic_handle = app.handle().clone();
                 std::thread::spawn(move || {
@@ -456,6 +468,9 @@ pub fn run() {
             // CR-089：语义模型状态与首次下载。
             commands::knowledge::semantic::install::kb_semantic_model_state,
             commands::knowledge::semantic::install::kb_semantic_install,
+            // CR-097：本机受管 Office 转换组件的状态与首次准备（下载 + 行政解包）
+            commands::kb_office::kb_office_state,
+            commands::kb_office::kb_office_prepare,
             // CR-055 FEAT-008: owner metadata tasks; not AI mutation tools.
             commands::knowledge::performance::kb_list_children,
             commands::knowledge::performance::kb_scan_start,

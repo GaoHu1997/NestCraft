@@ -150,3 +150,8 @@ html[data-theme='dark'] .memory-pane {
 @media (prefers-reduced-motion: reduce) {
   .memory-skeleton { animation: none; }
 }
+
+/* MEM-FIX-001 / v2：共享范围选择，保留正文滚动与原生占位。 */
+.memory-scope-toolbar { margin:0; padding:12px 20px; background:var(--mem-panel); border-bottom:1px solid var(--mem-line); }
+.memory-scope-toolbar .memory-select { max-width:100%; }
+@media(max-width:520px){.memory-scope-toolbar{padding:10px 12px;}.memory-scope-toolbar .memory-select{width:100%;flex:0 0 100%;}}

@@ -1,4 +1,6 @@
-/* UI-CR074-v1：六项会话评审。只用于原型，继承 UI-SCROLL-001，不改滚动宽度。 */
+/* UI-CR074-v1：六项会话评审。只用于原型，继承 UI-SCROLL-001，不改滚动宽度。
+   UI-CR101-v1（CR-101）：统计条改为「组级可见 + 字段级省略」，三组全无可信数据整条不渲染；
+   空态一律不输出容器，因此不再依赖 visibility:hidden 占位。 */
 .ai-composer textarea:focus, .ai-composer textarea:focus-visible { outline:none; box-shadow:none; caret-color:var(--primary); }
 .ai-composer:focus-within { border-color:var(--line-strong); box-shadow:none; }
 .msg-working { min-height:20px; gap:6px; }
@@ -38,6 +40,8 @@
 .ai-pop-model .level-labels button { color:var(--muted); font-size:10px; padding:3px 0; }
 .ai-pop-model .level-labels button[aria-pressed="true"] { color:var(--primary-strong); }
 .ai-stats { justify-content:center; flex-wrap:wrap; gap:8px 20px; font-size:11px; padding:8px 0 0; }
+/* CR-101：防御性空态——即使其它渲染路径产出空容器，也不留占位空白（不用零高度裁切、不禁滚）。 */
+.ai-stats:empty { display:none; }
 .ai-stats .s { gap:7px; white-space:nowrap; font-variant-numeric:tabular-nums; font-size:11px; }
 .ai-stats .ico { width:15px; height:15px; flex:0 0 auto; }
 .ai-stats .ai-context-ring { width:17px; height:17px; }

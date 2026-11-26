@@ -48,7 +48,7 @@
   color: var(--notice-ink);
 }
 
-/* ---------- 待发队列面板 ---------- */
+/* ---------- 待发队列面板（CR-103 单行紧凑＋可折叠） ---------- */
 
 .chat-queue-panel {
   margin: 0 0 6px;
@@ -66,6 +66,28 @@
   padding: 6px 9px;
   border-bottom: 1px solid var(--line-soft);
 }
+/* 折叠时仅保留头部一行：条目与底注隐藏不销毁，队列与暂停状态不受影响（CR-103 R-8） */
+.chat-queue-panel.folded .chat-queue-head { border-bottom: 0; }
+.chat-queue-panel.folded .chat-queue-list,
+.chat-queue-panel.folded .chat-queue-note { display: none; }
+
+.chat-queue-hleft {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.chat-queue-fold {
+  border: 0;
+  background: none;
+  padding: 0 2px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+.chat-queue-fold:hover { color: var(--accent); }
 
 .chat-queue-title {
   font-size: 11px;
@@ -90,45 +112,57 @@
 .chat-queue-pause:hover { border-color: var(--accent); color: var(--accent); }
 .chat-queue-pause.paused { border-color: var(--warn-line); background: var(--warn-bg); color: var(--warn-deep); }
 
+/* 列表限高约 5 行（CR-103 R-5）；滚动条按需显示沿用全局共享机制（scrollbar.ts + base.css），
+   这里只声明原生 overflow，静止透明、滚动时 .scrollbar-active 着色，停止 700ms 后隐藏。 */
 .chat-queue-list {
   list-style: none;
   margin: 0;
   padding: 2px 0;
+  max-height: 130px;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
+/* 单行条目：元信息小标 → 文本（截断省略）→ 行内操作（CR-103 R-1～3） */
 .chat-queue-item {
-  padding: 6px 9px;
+  padding: 3px 9px;
   border-top: 1px solid var(--line-soft);
   display: flex;
-  flex-direction: column;
-  gap: 3px;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  line-height: 1.7;
 }
 .chat-queue-item:first-child { border-top: 0; }
 
 .chat-queue-text {
-  font-size: 11.5px;
+  flex: 1;
+  min-width: 0;
   color: var(--ink);
-  white-space: pre-wrap;
-  word-break: break-word;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .chat-queue-meta {
   display: flex;
-  gap: 8px;
+  gap: 4px;
+  flex: none;
   font-size: 10px;
   color: var(--muted);
 }
 .chat-queue-tag {
-  padding: 0 6px;
+  padding: 0 5px;
   border-radius: 999px;
   background: var(--warn-bg);
   color: var(--warn-deep);
+  line-height: 1.6;
 }
 
 .chat-queue-actions {
   display: flex;
   gap: 6px;
-  justify-content: flex-end;
+  flex: none;
 }
 .chat-queue-actions > button {
   border: 1px solid var(--input-line);
@@ -142,6 +176,19 @@
 }
 .chat-queue-actions > button:hover { border-color: var(--accent); color: var(--accent); }
 .chat-queue-actions > button.danger:hover { border-color: var(--danger-line); color: var(--danger-deep); background: var(--danger-bg); }
+
+/* 编辑态例外：仅该条目临时展开，其余条目保持单行（CR-103 R-4） */
+.chat-queue-item.editing {
+  display: block;
+  padding: 6px 9px;
+}
+
+.chat-queue-note {
+  padding: 5px 9px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 10px;
+  color: var(--muted);
+}
 
 .chat-queue-edit {
   display: flex;
@@ -178,13 +225,6 @@
   cursor: pointer;
 }
 .chat-queue-edit-actions > button:hover { border-color: var(--accent); color: var(--accent); }
-
-.chat-queue-note {
-  padding: 5px 9px 6px;
-  border-top: 1px solid var(--line-soft);
-  font-size: 9.5px;
-  color: var(--muted);
-}
 
 /* ---------- 编辑消息提示条 ---------- */
 

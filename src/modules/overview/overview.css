@@ -176,6 +176,11 @@
 .ov-kpi .s { margin-top: 4px; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ov-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: stretch; }
 .ov-panel { min-width: 0; display: flex; flex-direction: column; }
+/* 卡片头：与设计稿 .card-h 一致（软件基础层未提供该类，导致标题贴边、右侧图例/计数换行）。
+   标题与右侧图例或计数同一行、统一 46px 头高与下分隔线；本作用域只影响用量页面板，不动弹窗。 */
+.ov-panel > .card-h { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 46px; padding: 0 16px; border-bottom: 1px solid var(--line-soft); flex-wrap: nowrap; }
+.ov-panel > .card-h > h3 { font-size: 14px; font-weight: 600; line-height: 1.4; display: flex; align-items: center; gap: 8px; flex: 0 0 auto; white-space: nowrap; }
+.ov-panel > .card-h > .sub { font-size: 12px; color: var(--muted); font-weight: 400; flex: 0 0 auto; }
 /* 同一行的面板等高：卡片体吸收余高，内容垂直居中，避免一侧短一截、底部不齐。 */
 .ov-panel > .card-b { flex: 1 1 auto; }
 .ov-legend { display: inline-flex; align-items: center; gap: 10px; font-size: 11px; color: var(--muted); flex-wrap: nowrap; overflow: hidden; min-width: 0; }
@@ -226,7 +231,8 @@ html[data-theme="dark"] .ov-legend i.l4 { background: #4fd1c5; }
 .ov-bar i:first-child { border-radius: 0 0 2px 2px; }
 .ov-bar i:last-child { border-radius: 2px 2px 0 0; }
 .ov-line { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
-.ov-line polyline { fill: none; stroke: var(--violet); stroke-width: 2.2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+/* v11：命中率改平滑曲线（Catmull-Rom → 三次贝塞尔），path 必须 fill:none，否则会被填成色块。 */
+.ov-line path { fill: none; stroke: var(--violet); stroke-width: 2.2; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; }
 .ov-chart-x { grid-column: 2; grid-row: 2; position: relative; font-size: 10px; color: var(--muted); }
 .ov-chart-x span { position: absolute; transform: translateX(-50%); }
 .ov-chart-x span:first-child { transform: none; }
@@ -234,12 +240,14 @@ html[data-theme="dark"] .ov-legend i.l4 { background: #4fd1c5; }
 
 /* 排行 */
 .ov-rank { display: grid; gap: 2px; padding: 6px 8px 10px; margin: 0; list-style: none; }
-.ov-rank-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 10px; border-radius: var(--r-md); }
+/* v11：序号与图标整行垂直居中，并统一到 20px 居中列，避免左侧标记贴着第一行、上下不齐。 */
+.ov-rank-row { display: flex; align-items: center; gap: 10px; padding: 10px 10px; border-radius: var(--r-md); }
 .ov-rank-row:hover { background: var(--surface-2); }
-.ov-rank-n { flex: 0 0 auto; width: 18px; font-size: 12px; font-weight: 650; color: var(--muted); text-align: center; padding-top: 3px; }
-.ov-rank-row .cli-logo { flex: 0 0 auto; margin-top: 1px; display: inline-flex; }
+.ov-rank-n { flex: 0 0 auto; width: 20px; line-height: 20px; font-size: 12px; font-weight: 650; color: var(--muted); text-align: center; }
+.ov-rank-ic { flex: 0 0 auto; width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; }
+.ov-rank-row .cli-logo { margin-top: 0; display: inline-flex; }
 .ov-src { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; color: var(--violet); }
-.ov-prov-dot { flex: 0 0 auto; width: 12px; height: 12px; margin-top: 4px; border-radius: 3px; }
+.ov-prov-dot { flex: 0 0 auto; width: 12px; height: 12px; border-radius: 3px; }
 .ov-rank-main { flex: 1 1 auto; min-width: 0; display: grid; gap: 5px; }
 .ov-rank-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .ov-rank-top b { font-size: 13px; font-weight: 550; }

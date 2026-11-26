@@ -232,10 +232,18 @@ fn legacy_messages(source: &[SourceMessage]) -> Result<Vec<ChatMsg>, String> {
     }
     if !calls.is_empty() {
         result.push(ChatMsg::Assistant { text: String::new(), tool_calls: calls });
+        // CR-099：被拒调用按 AC-02 不写 tool_use，只留错误结果；回放时跳过无对应 tool_use 的结果，
+        // 不让历史中的拒绝提示把整段上下文判为「孤立工具结果」。
+        let known: std::collections::BTreeSet<String> = result.iter().flat_map(|m| match m {
+            ChatMsg::Assistant { tool_calls, .. } => tool_calls.iter().map(|c| c.id.clone()).collect::<Vec<_>>(),
+            _ => Vec::new(),
+        }).collect();
         for m in source.iter().filter(|m| m.role == "tool_result") {
             let meta: Value = serde_json::from_str(m.meta_json.as_deref().unwrap_or("{}")).map_err(|_| "历史工具结果损坏".to_string())?;
+            let call_id = meta.get("toolId").and_then(Value::as_str).ok_or("历史工具结果缺少ID")?;
+            if !known.contains(call_id) { continue; }
             result.push(ChatMsg::Tool {
-                call_id: meta.get("toolId").and_then(Value::as_str).ok_or("历史工具结果缺少ID")?.into(),
+                call_id: call_id.into(),
                 content: m.content.clone(), is_error: meta.get("isError").and_then(Value::as_bool).unwrap_or(false),
             });
         }

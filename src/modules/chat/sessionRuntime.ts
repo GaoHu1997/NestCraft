@@ -88,6 +88,8 @@ export interface SessionRuntime {
   goalArmed: boolean;
   plan: SessionPlan;
   todoExpanded: boolean;
+  /** CR-103：待发队列面板折叠状态（会话内保持，内存） */
+  queueFolded: boolean;
   tasks: SessionTask[];
   steps: ChatStep[];
   subagents: SubagentRow[];
@@ -121,6 +123,17 @@ export interface SessionRuntime {
   toolStart: Map<string, number>;
   /** 本轮流式开始时间 */
   streamStart: number | null;
+  /**
+   * CR-101：本轮已接收输出的 token 估算（按码点密度累加，含思考与工具参数）。
+   * 这是实时流速的**分子**，只在流式过程中有意义；不是 provider 的权威计量。
+   */
+  liveEstimatedTokens: number;
+  /** CR-101：本轮实时流速采样器；每步一个新实例，终态清空。 */
+  liveSampler: StreamingRateSampler | null;
+  /** CR-101：由已结算步骤校准的 token 密度修正因子，钳在 0.5～2，无样本时为 1。 */
+  liveTokenScale: number;
+  /** CR-101：本轮首个输出增量的时间戳（仅用于判断是否已开始输出）。 */
+  liveStart: number | null;
   /** 绑定会话代次；stop/finish 后同轮迟到事件无效。 */
   generation: number;
   active: boolean;
@@ -141,6 +154,7 @@ function blank(): SessionRuntime {
     goalArmed: false,
     plan: emptyPlan(),
     todoExpanded: false,
+    queueFolded: false,
     tasks: [],
     steps: [],
     subagents: [],
@@ -161,6 +175,10 @@ function blank(): SessionRuntime {
     stepsOpen: true,
     toolStart: new Map(),
     streamStart: null,
+    liveEstimatedTokens: 0,
+    liveSampler: null,
+    liveTokenScale: 1,
+    liveStart: null,
     generation: 0,
     active: false,
     turnToolMs: 0,
@@ -303,6 +321,10 @@ export function markStreamStart(sid: string): number {
   rt.lastOutTokens = 0;
   rt.lastStreamMs = 0;
   rt.lastGenMs = 0;
+  // CR-101：新轮从零开始，不继承上一轮的实时流速中间态；密度因子保留（同一模型的密度稳定）。
+  rt.liveEstimatedTokens = 0;
+  rt.liveSampler = new StreamingRateSampler();
+  rt.liveStart = null;
   rt.toolStart.clear();
   if (rt.stepsDemo) rt.steps = [];
   rt.stepsDemo = false;
@@ -354,6 +376,181 @@ export function markStreamEnd(sid: string, outTokens: number) {
     rt.timingKnown = true;
     rt.streamStart = null;
   }
+  // CR-101：本轮闭合后用 provider 的权威 output tokens 校准 token 密度，
+  // 让下一轮的实时估算收敛到实际模型；随后立即停止刷新并清空中间态，
+  // 不冻结过期数字——闭合后的 TPS 只由权威测量（outputTps）提供。
+  if (rt.liveEstimatedTokens > 0 && outTokens > 0) {
+    const scale = outTokens / rt.liveEstimatedTokens;
+    rt.liveTokenScale = Math.min(MAX_MEASURED_SCALE, Math.max(MIN_MEASURED_SCALE, scale));
+  }
+  rt.liveEstimatedTokens = 0;
+  rt.liveSampler = null;
+  rt.liveStart = null;
+}
+
+/* ---------------- CR-101：生成中实时流速（有界滑动窗口估算） ----------------
+ * 口径参考 DSH 运行环境中已启用的统计行插件（dsh-token-total 的 StreamingRateSampler），
+ * 用它证明可行的三条规则保持读数诚实：
+ * 1. 分子只取「窗口内观察到的增长」，绝不用累计值——窗口开启前产生的文本不能被计入；
+ * 2. 窗口有下界（首块突发不读数）也有上界（不退化成整步平均）；
+ * 3. 发布值经过平滑，且只有真正增长的一帧才能推进窗口；重复帧不推进。
+ * 与 DSH 官方 settled 口径的区别：官方 decodeMs 是「首 token → 消息组装」，
+ * 这里额外要求官方没有的「生成中」读数，因此额外做了积压帧检测与重锚。
+ */
+
+/**
+ * DeepSeek 官方文本密度（api-docs.deepseek.com「Token 用量计算」）：
+ * 一个中文字符 ≈ 0.6 token，一个英文字符 ≈ 0.3 token。
+ * 按码点逐字取较密的一档，是保守侧；不使用「四字符一 token」的启发式（会低估中文）。
+ */
+const CJK_TOKENS_PER_CHAR = 0.6;
+const ASCII_TOKENS_PER_CHAR = 0.3;
+
+/** 发布实时读数的最短窗口；短于此首块突发会读成几百 tok/s。 */
+const MIN_STREAM_WINDOW_MS = 200;
+/** 实时读数允许跨越的最长窗口；超过即丢弃旧样本，避免退化成整步平均。 */
+const MAX_STREAM_WINDOW_MS = 2_000;
+/** 窗口内样本数上限，仅作无界增长的兜底。 */
+const MAX_WINDOW_SAMPLES = 512;
+/** 采样能分辨的最高速率（tokens/ms，即 1500 tok/s）；超过即判定为 UI 积压帧。 */
+const MAX_SAMPLED_TOKENS_PER_MS = 1.5;
+/** 合理性检查可判断的最短跨度；避免同帧两次观测把正常首块判成异常。 */
+const MIN_SLOPE_SPAN_MS = 50;
+/** 发布值的一阶低通时间常数。 */
+const SMOOTHING_TAU_MS = 1_000;
+/** 校准因子的上下界：单个不具代表性的样本不能把估算拉离官方密度。 */
+const MIN_MEASURED_SCALE = 0.5;
+const MAX_MEASURED_SCALE = 2;
+
+/** 一段文本在官方密度下的 token 先验估算。 */
+export function priorTokens(text: string): number {
+  let tokens = 0;
+  for (const character of text) {
+    tokens += (character.codePointAt(0) ?? 0) <= 0x7f ? ASCII_TOKENS_PER_CHAR : CJK_TOKENS_PER_CHAR;
+  }
+  return tokens;
+}
+
+/**
+ * 生成中实时解码速率的**有界滑动窗口**估算器。
+ *
+ * 三条规则（对应上面的注释）：分子只取窗口内增长；窗口上下界都有限；发布值平滑且只由增长帧推进。
+ * 所有状态变更都发生在 {@link observe}，{@link ratePerSecond} 只读——
+ * 这样渲染阶段的一次读取不会反过来决定下一次要发布什么。
+ */
+export class StreamingRateSampler {
+  /** 窗口内的 (时间, token) 观测，最旧在前。 */
+  private samples: { at: number; tokens: number }[] = [];
+  /**
+   * 最后发布的速度（tok/s）；窗口还没有可用跨度时为 null。
+   * 静默期保留上一次可测得的读数，而不是回落到整段平均后凭空跳一下。
+   */
+  private published: number | null = null;
+  /** 该读数的墙钟时间，用于计算平滑权重。 */
+  private publishedAt = 0;
+
+  /** 观测一次本轮当前的 token 估算值，并推进发布值。 */
+  observe(tokens: number, now: number): void {
+    const last = this.samples[this.samples.length - 1];
+    // 首次观测锚定窗口；估算值下降（重试、块被整体替换）也重新锚定——
+    // 否则会去测量流并没有产生的增长。锚定不发布，因为它还没有跨度。
+    if (last === undefined || tokens < last.tokens) {
+      this.samples = [{ at: now, tokens }];
+      return;
+    }
+    // 重复帧不携带信息：只会把窗口远端往前推，让读数无端向整段平均下沉。
+    if (tokens === last.tokens) return;
+    this.samples.push({ at: now, tokens });
+    // 窗口上界：超过一个窗口的样本离开，包括最前面的零锚点
+    // （它的跨度量的是等首 token 的时间，不是解码时间）。
+    while (this.samples.length > 1 && now - this.samples[0]!.at > MAX_STREAM_WINDOW_MS) {
+      this.samples.shift();
+    }
+    if (this.samples.length >= MAX_WINDOW_SAMPLES) {
+      this.samples.splice(0, this.samples.length - MAX_WINDOW_SAMPLES / 2);
+    }
+    const first = this.samples[0]!;
+    const span = now - first.at;
+    const grown = tokens - first.tokens;
+    // 斜率超过任何真实供应商的输出速度：这一帧携带的是窗口开启前就产生的数量
+    // （切回标签页、主线程卡顿都会批量推帧）。重新锚定而不发布，
+    // 让读数从真正到达的增量重新开始。此检查必须在下面的下界之前，
+    // 否则早到的积压帧会以「跨度不足、不读数」留在窗口里，由下一帧把积压读成速率。
+    if (grown > Math.max(span, MIN_SLOPE_SPAN_MS) * MAX_SAMPLED_TOKENS_PER_MS) {
+      this.samples = [{ at: now, tokens }];
+      return;
+    }
+    // 下界：跨度太短不可信，不发布，屏幕上已有的读数保持不变。
+    if (span < MIN_STREAM_WINDOW_MS) return;
+    const rate = grown / (span / 1_000);
+    if (this.published === null) {
+      this.published = rate;
+    } else {
+      const weight = Math.min(1, (now - this.publishedAt) / SMOOTHING_TAU_MS);
+      this.published += weight * (rate - this.published);
+    }
+    this.publishedAt = now;
+  }
+
+  /** 要显示的读数；从未测得时为 null，由调用方回落到权威结算值。 */
+  ratePerSecond(): number | null {
+    return this.published;
+  }
+
+  /** 估算的计价尺度变了：丢弃窗口，但保留已发布值（速度没变，只是单位变了）。 */
+  reset(): void {
+    this.samples = [];
+  }
+}
+
+/**
+ * CR-101：记录一段真实输出增量（正文或思考），按码点密度累加进本轮估算。
+ * 思考与工具调用参数同样计入，因为 provider 的 outputTokens 包含它们；
+ * 只算可见答复会让工具密集的步骤明显低于它自己的结算值。
+ */
+export function noteLiveDelta(sid: string, text: string) {
+  const rt = getRuntime(sid);
+  if (!text) return;
+  const tokens = priorTokens(text);
+  if (!(tokens > 0)) return;
+  if (rt.liveStart == null) rt.liveStart = Date.now();
+  rt.liveEstimatedTokens += tokens;
+  if (rt.liveSampler === null) rt.liveSampler = new StreamingRateSampler();
+}
+
+/** CR-101：工具调用参数属于输出 tokens，一并计入本轮估算。 */
+export function noteLiveToolArgs(sid: string, argsJson: string | undefined) {
+  if (!argsJson) return;
+  noteLiveDelta(sid, argsJson);
+}
+
+/**
+ * CR-101 R-CR101-8：按固定节拍采样一次，返回平滑后的实时速率。
+ * 只应在运行中调用；无采样器或样本不足时返回 null。
+ */
+export function tickLiveRate(sid: string, now = Date.now()): number | null {
+  const rt = getRuntime(sid);
+  const sampler = rt.liveSampler;
+  if (sampler === null) return null;
+  sampler.observe(rt.liveEstimatedTokens * rt.liveTokenScale, now);
+  return sampler.ratePerSecond();
+}
+
+export interface LiveTps {
+  /** 每秒输出速度（tok/s）。 */
+  tps: number;
+  /** true 表示由 token 密度估算，展示必须标注为估算。 */
+  estimated: boolean;
+}
+
+/**
+ * CR-101 R-CR101-9/10：当前要展示的实时速率。
+ * 未测得（新建会话、窗口刚重锚）返回 null，由展示层回落到权威结算值，绝不填 0。
+ */
+export function liveTps(rt: SessionRuntime): LiveTps | null {
+  const rate = rt.liveSampler?.ratePerSecond() ?? null;
+  if (rate == null || !Number.isFinite(rate) || rate <= 0) return null;
+  return { tps: rate, estimated: true };
 }
 
 /**

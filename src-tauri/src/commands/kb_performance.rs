@@ -96,7 +96,7 @@ pub fn recover_interrupted(conn: &Connection) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 pub(super) fn source_ref(conn: &Connection, library: &str) -> Result<String, String> {
-    conn.query_row("SELECT sourceRef FROM knowledge_library WHERE id=?1 AND enabled=1 AND sourceKind='managed-directory'", [library], |r| r.get(0))
+    conn.query_row("SELECT sourceRef FROM knowledge_library WHERE id=?1 AND enabled=1 AND sourceKind IN ('managed-directory','personal-memory')", [library], |r| r.get(0))
         .map_err(|_| "LIBRARY_UNAVAILABLE: 知识库不存在或已停用".into())
 }
 fn checked_source(conn: &Connection, library: &str, expected: &str) -> Result<(), String> {

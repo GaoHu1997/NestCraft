@@ -9,9 +9,13 @@ scripts/cr055-editor-evidence/
 # 临时调研、草稿与过程文件（规则见 AGENTS.md §3 / §10）
 docs/tmp/
 
-# 本地 Agent 技能与工具配置，不属于项目交付物
+# 本地 Agent 技能、工具配置与会话计划，不属于项目交付物
 .dsh/
 .skills/
+.zcode/
+
+# 本地 dev 临时验证挂载页（CR-102，仅本地使用，不进构建）
+/cr102-harness.html
 
 # 依赖与构建产物
 node_modules/

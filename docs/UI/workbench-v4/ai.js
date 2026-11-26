@@ -545,12 +545,21 @@ window.AIPanel = (function () {
   /* ---------------- 统计：输入框下方，弹层右对齐各自控件 ---------------- */
   function statPop(kind) {
     const s = D.ai.stats;
+    /* CR-101 R6/R12：详情与统计条同一判空口径；未知字段写「未上报」，不显示「—」冒充数值；
+       TPS 区分「生成中实时值」与「本轮闭合测量」，两种口径不并列、不混算。 */
+    const has = value => value != null && String(value).trim() !== '' && !/未知|未计|未上报|^—$/.test(String(value).trim());
+    const shown = value => has(value) ? esc(value) : "未上报";
+    const live = s.liveActive === true && has(s.liveTps);
+    const counts = [has(s.rounds) ? `${esc(s.rounds)} 轮` : "", has(s.steps) ? `${esc(s.steps)} 步` : ""].filter(Boolean).join(" ");
+    // CR-101：实时值始终是密度估算，统计条与详情统一带 `~` 前缀；权威结算值不带。
+    const liveText = live ? `~${String(s.liveTps).trim().replace(/^~+/, "")}` : "";
+    const speed = liveText ? esc(liveText) : has(s.tps) ? esc(s.tps) : "";
     if (kind === "session") return `<div class="ai-pop ai-pop-stat" role="dialog" aria-label="会话统计"><div class="pop-h">会话统计</div><div class="stat-rows">
-      <div><span>轮次</span><b>${s.rounds} 轮 ${esc(s.duration || "108 秒")}</b></div><div><span>模型用时</span><b>${esc(s.modelTime)}</b></div><div><span>工具调用用时</span><b>${esc(s.toolTime)}</b></div><div><span>首 token 平均（TTFT）</span><b>${esc(s.ttft)}</b></div><div><span>输出速度（TPS）</span><b>${esc(s.tps)}</b></div></div></div>`;
-    if (kind === "tokens") return `<div class="ai-pop ai-pop-stat" role="dialog" aria-label="Token 用量"><div class="pop-h">Token 用量 <span class="caption">${esc(s.tokens.total)}</span></div><div class="stat-rows">
-      <div><span>缓存命中</span><b>${esc(s.tokens.cacheHit)}</b></div><div><span>未缓存输入</span><b>${esc(s.tokens.uncached)}</b></div><div><span>缓存读取</span><b>${esc(s.tokens.cacheRead)}</b></div><div><span>输出</span><b>${esc(s.tokens.output)}</b></div></div></div>`;
-    return `<div class="ai-pop ai-pop-stat" role="dialog" aria-label="上下文"><div class="pop-h">上下文 <span class="caption">已用 ${esc(s.context.used)} · ${esc(s.context.detail)}</span></div><div class="stat-rows">
-      <div><span>系统提示词</span><b>${esc(s.context.system)}</b></div><div><span>工具定义</span><b>${esc(s.context.tools)}</b></div><div><span>对话消息</span><b>${esc(s.context.messages)}</b></div></div></div>`;
+      <div><span>轮次 / 执行步数</span><b>${counts || "未上报"}</b></div><div><span>模型用时</span><b>${shown(s.modelTime)}</b></div><div><span>工具调用用时</span><b>${shown(s.toolTime)}</b></div><div><span>首 token 平均（TTFT）</span><b>${shown(s.ttft)}</b></div><div><span>输出速度（TPS）</span><b>${speed ? `${speed}（${liveText ? "生成中实时估算" : "本轮闭合测量"}）` : "未上报"}</b></div></div></div>`;
+    if (kind === "tokens") return `<div class="ai-pop ai-pop-stat" role="dialog" aria-label="Token 用量"><div class="pop-h">Token 用量 <span class="caption">${shown(s.tokens.total)}</span></div><div class="stat-rows">
+      <div><span>缓存命中</span><b>${shown(s.tokens.cacheHit)}</b></div><div><span>未缓存输入</span><b>${shown(s.tokens.uncached)}</b></div><div><span>缓存读取</span><b>${shown(s.tokens.cacheRead)}</b></div><div><span>输出</span><b>${shown(s.tokens.output)}</b></div></div></div>`;
+    return `<div class="ai-pop ai-pop-stat" role="dialog" aria-label="上下文"><div class="pop-h">上下文 <span class="caption">${has(s.context.used) ? `已用 ${esc(s.context.used)} · ${shown(s.context.detail)}` : "未上报"}</span></div><div class="stat-rows">
+      <div><span>系统提示词</span><b>${shown(s.context.system)}</b></div><div><span>工具定义</span><b>${shown(s.context.tools)}</b></div><div><span>对话消息</span><b>${shown(s.context.messages)}</b></div></div></div>`;
   }
 
   function statWrap(kind, label, content) {

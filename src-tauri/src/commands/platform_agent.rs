@@ -37,6 +37,8 @@ pub(crate) struct PlatformTurn {
     pub efforts: EffortMap,
     /// 供应商自定义请求头（对齐 providers.rs 的 headersJson）
     pub extra_headers: Vec<(String, String)>,
+    /// CR-099：可选模拟客户端身份（仅追加身份头，不触碰凭证）
+    pub client_identity: Option<crate::commands::client_identity::ClientIdentity>,
 }
 
 /// 模型返回的规范化结果。
@@ -247,10 +249,19 @@ pub(crate) fn build_platform_body(
                     ChatMsg::Assistant { text, tool_calls } => {
                         let calls: Vec<Value> = tool_calls.iter()
                             .map(|c| json!({"id": c.id, "type": "function",
-                                            "function": {"name": c.name, "arguments": c.arguments}}))
+                                            "function": {"name": c.name, "arguments": normalized_tool_arguments(&c.arguments)}}))
                             .collect();
-                        let content = if text.is_empty() { Value::Null } else { json!(text) };
-                        msgs.push(json!({"role": "assistant", "content": content, "tool_calls": calls}));
+                        // CR-099：空 tool_calls 不回放成 []，严格端点会拒绝；无文本且无调用时用空串正文。
+                        let content = if text.is_empty() && !calls.is_empty() {
+                            Value::Null
+                        } else {
+                            json!(text)
+                        };
+                        let mut message = json!({"role": "assistant", "content": content});
+                        if !calls.is_empty() {
+                            message["tool_calls"] = Value::Array(calls);
+                        }
+                        msgs.push(message);
                     }
                     ChatMsg::Tool { call_id, content, .. } => {
                         msgs.push(json!({"role": "tool", "tool_call_id": call_id, "content": content}));
@@ -545,6 +556,22 @@ pub(crate) const PLATFORM_TOOL_ALLOWLIST: [&str; 13] = [
 const MAX_TOOL_ROUNDS: usize = 8;
 const MAX_TOOL_CALLS_PER_ROUND: usize = 8;
 const MAX_TOOL_CALLS_TOTAL: usize = 24;
+/// CR-099：同一工具同参数连续失败达到该次数后不再执行，直接回填「换方案」提示。
+const MAX_SAME_CALL_FAILURES: usize = 2;
+/// CR-099：连续多轮工具结果全部失败时提前结束，避免空转到累计上限。
+const MAX_ALL_ERROR_ROUNDS: usize = 3;
+
+/// CR-099：回放给模型的工具参数必须是合法 JSON 对象字符串。
+/// 模型未下发 arguments 时流式累积为空串；执行侧仍保留原始参数与错误结果，仅线上回放净化。
+fn normalized_tool_arguments(arguments: &str) -> String {
+    if arguments.trim().is_empty() {
+        return "{}".into();
+    }
+    match serde_json::from_str::<Value>(arguments) {
+        Ok(value) if value.is_object() => value.to_string(),
+        _ => "{}".into(),
+    }
+}
 
 /// 副作用工具同参数不重复执行；只读工具不去重（重复读取无害）。
 fn is_side_effect_tool(name: &str) -> bool {
@@ -559,6 +586,7 @@ fn is_side_effect_tool(name: &str) -> bool {
             | "generate_image"
             | "dispatch_work"
             | "compress_context"
+            | "memory_save"
     )
 }
 
@@ -583,6 +611,33 @@ fn platform_tool_defs(conn: &rusqlite::Connection) -> Vec<PlatformTool> {
     let mut defs: Vec<PlatformTool> = crate::commands::ai_tools::workbench_tools()
         .into_iter()
         .filter(|d| crate::commands::ai_tools::tool_enabled(conn, d.registry_id))
+        .map(PlatformTool::from)
+        .collect();
+    for cached in crate::commands::capabilities::mcp_cached_tools(conn) {
+        defs.push(PlatformTool {
+            name: mcp_tool_name(&cached.server_name, &cached.name),
+            description: format!("[MCP {}] {}", cached.server_name, cached.description.unwrap_or_default()),
+            schema: cached
+                .input_schema
+                .unwrap_or_else(|| json!({"type": "object", "additionalProperties": true})),
+        });
+    }
+    defs
+}
+
+/// CR-095：按项目类型只注入默认工具组的完整 schema（MCP 缓存工具仍全给，避免误伤用户配置）。
+/// 旧 `platform_tool_defs` 保留为全量（测试与兼容路径）。
+fn platform_tool_defs_scoped(conn: &rusqlite::Connection, project_id: Option<&str>) -> Vec<PlatformTool> {
+    if !business_tools_enabled(conn) {
+        return Vec::new();
+    }
+    let kind = project_id
+        .and_then(|pid| conn.query_row("SELECT type FROM project WHERE id=?1", [pid], |r| r.get::<_, String>(0)).ok())
+        .unwrap_or_default();
+    let allowed = crate::commands::tool_groups::allowed_tool_names(&kind);
+    let mut defs: Vec<PlatformTool> = crate::commands::ai_tools::workbench_tools()
+        .into_iter()
+        .filter(|d| crate::commands::ai_tools::tool_enabled(conn, d.registry_id) && allowed.contains(d.name))
         .map(PlatformTool::from)
         .collect();
     for cached in crate::commands::capabilities::mcp_cached_tools(conn) {
@@ -708,6 +763,19 @@ fn resolve_platform_turn(
         }
         extra_headers.push((name.clone(), value.clone()));
     }
+    // CR-099：模拟客户端身份。默认关闭；配置缺失或非法时按关闭处理，不阻断本轮请求。
+    let identity_raw: Option<String> = conn
+        .query_row(
+            "SELECT value FROM setting_default WHERE scope='global' AND key='chat.clientIdentity'",
+            [],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .ok()
+        .flatten();
+    let client_identity = crate::commands::client_identity::resolve(identity_raw.as_deref());
+    if let Some(identity) = client_identity {
+        extra_headers = crate::commands::client_identity::merge(&extra_headers, crate::commands::client_identity::headers(identity));
+    }
     Ok(PlatformTurn {
         session_id: session.id.clone(),
         project_id: session.project_id.clone(),
@@ -718,6 +786,7 @@ fn resolve_platform_turn(
         effort: session.effort.clone(),
         efforts,
         extra_headers,
+        client_identity,
     })
 }
 
@@ -728,9 +797,11 @@ pub async fn send_platform(app: tauri::AppHandle,payload: SendPayload,channel: t
     let prompt=crate::commands::chat::build_prompt(&app,&payload,session.project_id.as_deref())?;
     let (turn,mut prepared,mut defs)={
         let guard=crate::db::conn()?;let conn=guard.as_ref().ok_or("db not initialized")?;
-        (resolve_platform_turn(conn,&app,&session)?,context_runtime::Prepared::load(conn,session.clone(),prompt)?,platform_tool_defs(conn))
+        (resolve_platform_turn(conn,&app,&session)?,context_runtime::Prepared::load(conn,session.clone(),prompt)?,platform_tool_defs_scoped(conn, session.project_id.as_deref()))
     };
     defs.extend(crate::commands::platform_context::tool_defs().into_iter().map(PlatformTool::from));
+    // CR-099：system 能力目录与本轮实际下发的 tools 同源。
+    prepared.set_tool_names(&defs, true);
     let data_dir=crate::storage_layout::root().map_err(|e| e.to_string())?;
     if let Err(error)=context_runtime::prepare(&turn,&mut prepared,&defs,&abort).await {
         send_usage(&channel,prepared.usage);
@@ -780,14 +851,12 @@ fn send_usage(channel: &tauri::ipc::Channel<Value>,usage: Option<(i64,i64,i64)>)
 
 fn budgeted_body(turn: &PlatformTurn, messages: &[ChatMsg], defs: &[PlatformTool],
     budget: &crate::commands::platform_context::ContextBudget) -> Result<Value,String> {
-    // Anthropic必须回放合法input对象；非法原参数仍保存在tool_use与错误结果中。
+    // CR-099：两种协议都必须回放合法 input／arguments；非法原参数仍保存在 tool_use 与错误结果中。
     let mut wire=messages.to_vec();
-    if turn.protocol=="anthropic" {
-        for msg in &mut wire {
-            if let ChatMsg::Assistant {tool_calls,..}=msg {
-                for call in tool_calls {
-                    if serde_json::from_str::<Value>(&call.arguments).is_err() { call.arguments="{}".into(); }
-                }
+    for msg in &mut wire {
+        if let ChatMsg::Assistant {tool_calls,..}=msg {
+            for call in tool_calls {
+                call.arguments=normalized_tool_arguments(&call.arguments);
             }
         }
     }
@@ -1010,15 +1079,23 @@ async fn run_tool_loop_database(turn: &PlatformTurn,ctx: &crate::commands::ai_to
     let mut total=0usize;
     let mut call_ids=std::collections::BTreeSet::new();
     let mut executed=std::collections::HashSet::new();
+    // CR-099：同工具同参数连续失败次数与「整轮全部失败」轮数，用于提前止损。
+    let mut call_failures=std::collections::HashMap::<String,usize>::new();
+    let mut all_error_rounds=0usize;
     let turn_id=context.as_ref().map(|c|c.user_id.clone()).unwrap_or_else(||crate::models::new_id("stats-turn"));
     outcome.session_stats=Some(crate::commands::chat::stats::TurnStats::new(&turn.session_id,&turn_id));
     for round in 1..=MAX_TOOL_ROUNDS {
         if *abort.borrow() {outcome.aborted=true;close_pending_pairs(messages,outcome,"发送已停止");return Err("发送已停止".into());}
-        if let Some(c)=context.as_deref_mut() {
-            with_platform_connection(database,|conn|{c.verify(conn)?;c.refresh_projection(messages);Ok(())})?;
+        if let Some(c)=context.as_deref() {
+            with_platform_connection(database,|conn|c.verify(conn))?;
         }
-        let mut defs=with_platform_connection(database,|conn|Ok(platform_tool_defs(conn)))?;
+        let mut defs=with_platform_connection(database,|conn|Ok(platform_tool_defs_scoped(conn, turn.project_id.as_deref())))?;
         if context.is_some() {defs.extend(crate::commands::platform_context::tool_defs().into_iter().map(PlatformTool::from));}
+        // CR-099：工具启停或项目绑定可能在本轮变化，能力目录与本轮 tools 一起刷新后再投影消息。
+        if let Some(c)=context.as_deref_mut() {
+            c.set_tool_names(&defs, true);
+            with_platform_connection(database,|conn|{c.refresh_projection(messages);Ok(())})?;
+        }
         let body=budgeted_body(turn,messages,&defs,&budget)?;
         let captured=request_model_captured(turn,messages,&defs,Some(channel),abort,&budget).await;
         // 每次已进入生成调用恰一次闭合；工具数量和外层done不参与计数。
@@ -1055,12 +1132,23 @@ async fn run_tool_loop_database(turn: &PlatformTurn,ctx: &crate::commands::ai_to
         }
         if let Some(c)=context.as_deref() {with_platform_connection(database,|conn|c.verify(conn))?;}
         if reply.tool_calls.is_empty() {messages.push(ChatMsg::Assistant{text:reply.text,tool_calls:vec![]});return Ok(());}
-        if round>=MAX_TOOL_ROUNDS {return Err(format!("工具轮次已达上限 {MAX_TOOL_ROUNDS}；本轮未完成"));}
-        if reply.tool_calls.len()>MAX_TOOL_CALLS_PER_ROUND {return Err(format!("单轮工具调用超过 {MAX_TOOL_CALLS_PER_ROUND} 个"));}
+        if round>=MAX_TOOL_ROUNDS {
+            close_pending_pairs(messages,outcome,&format!("工具轮次已达上限 {MAX_TOOL_ROUNDS}"));
+            return Err(format!("工具轮次已达上限 {MAX_TOOL_ROUNDS}；本轮未完成"));
+        }
+        if reply.tool_calls.len()>MAX_TOOL_CALLS_PER_ROUND {
+            close_pending_pairs(messages,outcome,&format!("单轮工具调用超过 {MAX_TOOL_CALLS_PER_ROUND} 个"));
+            return Err(format!("单轮工具调用超过 {MAX_TOOL_CALLS_PER_ROUND} 个；本轮未完成"));
+        }
         total+=reply.tool_calls.len();
-        if total>MAX_TOOL_CALLS_TOTAL {return Err(format!("累计工具调用超过 {MAX_TOOL_CALLS_TOTAL} 次"));}
+        if total>MAX_TOOL_CALLS_TOTAL {
+            close_pending_pairs(messages,outcome,&format!("累计工具调用超过 {MAX_TOOL_CALLS_TOTAL} 次"));
+            return Err(format!("累计工具调用超过 {MAX_TOOL_CALLS_TOTAL} 次；本轮未完成，请缩小任务或更换可用工具后重试"));
+        }
         if reply.tool_calls.iter().any(|c|c.id.is_empty() || !call_ids.insert(c.id.clone())) {return Err("模型工具调用ID无效或重复".into());}
         messages.push(ChatMsg::Assistant{text:reply.text,tool_calls:reply.tool_calls.clone()});
+        let mut round_calls=0usize;
+        let mut round_errors=0usize;
         for call in reply.tool_calls {
             if *abort.borrow() {outcome.aborted=true;close_pending_pairs(messages,outcome,"发送已停止");return Err("发送已停止".into());}
             let internal=context.is_some() && crate::commands::platform_context::CONTEXT_TOOLS.contains(&call.name.as_str());
@@ -1071,8 +1159,11 @@ async fn run_tool_loop_database(turn: &PlatformTurn,ctx: &crate::commands::ai_to
                     && (crate::commands::ai_tools::workbench_tools().into_iter().find(|d|d.name==call.name).is_some_and(|d|crate::commands::ai_tools::tool_enabled(conn,d.registry_id))
                         || resolve_mcp_tool(conn,&call.name).is_some())
             ))?);
-            let key=format!("{round}:{}:{}",call.name,call.arguments);
+            let key=format!("round:{round}:{}:{}",call.name,call.arguments);
+            let repeat_key=format!("{}:{}",call.name,call.arguments);
             let duplicate=is_side_effect_tool(&call.name) && !executed.insert(key);
+            // CR-099：同一工具同参数已连续失败多次时不再重复执行，直接提示换方案。
+            let exhausted=call_failures.get(&repeat_key).copied().unwrap_or(0)>=MAX_SAME_CALL_FAILURES;
             if context.is_some() || (allowed && enabled && !duplicate) {
                 let input=visible_tool_input(&call);
                 let _=channel.send(json!({"type":"toolUse","toolId":call.id,"name":call.name,"inputJson":input}));
@@ -1084,6 +1175,8 @@ async fn run_tool_loop_database(turn: &PlatformTurn,ctx: &crate::commands::ai_to
             let mut result=if let Err(error)=source_check {ToolOutcome{content:error,is_error:true}}
             else if !allowed || !enabled {
                 ToolOutcome{content:format!("工具 {} 不可用（未在允许清单或已停用）",call.name),is_error:true}
+            } else if exhausted {
+                ToolOutcome{content:format!("工具 {} 使用相同参数已连续失败 {MAX_SAME_CALL_FAILURES} 次；请改变参数或换用其他方案，不要重复同一调用",call.name),is_error:true}
             } else if duplicate {
                 ToolOutcome{content:"相同调用已执行过，未重复执行；如需继续请改变参数或确认结果".into(),is_error:true}
             } else if internal {
@@ -1107,12 +1200,32 @@ async fn run_tool_loop_database(turn: &PlatformTurn,ctx: &crate::commands::ai_to
             let wire_content=if !internal {
                 context.as_deref_mut().map(|c|c.wire_result(&call.id,&result.content)).unwrap_or_else(||result.content.clone())
             } else {result.content.clone()};
+            // CR-099：被拒调用按 AC-02 不记录 tool_use（未执行），仅记录错误结果供前端提示；
+            // 回放侧过滤无 tool_use 的孤儿结果，避免旧库回退时报「孤立工具结果」。
             outcome.push_tool_result(call.id.clone(),result.content.clone(),result.is_error,None);
             let _=channel.send(json!({"type":"toolResult","toolId":call.id,"content":result.content,"isError":result.is_error}));
             messages.push(ChatMsg::Tool{call_id:call.id,content:wire_content,is_error:result.is_error});
+            if result.is_error {
+                *call_failures.entry(repeat_key).or_insert(0)+=1;
+                round_errors+=1;
+            } else {
+                call_failures.remove(&repeat_key);
+            }
+            round_calls+=1;
+        }
+        // CR-099：整轮工具全部失败时早期止损，不再空转到累计上限。
+        if round_calls>0 && round_errors==round_calls {
+            all_error_rounds+=1;
+            if all_error_rounds>=MAX_ALL_ERROR_ROUNDS {
+                close_pending_pairs(messages,outcome,"工具连续多轮全部失败");
+                return Err(format!("连续 {MAX_ALL_ERROR_ROUNDS} 轮工具调用全部失败；本轮未完成，请检查工具配置或换用其他做法"));
+            }
+        } else {
+            all_error_rounds=0;
         }
     }
-    Err("工具循环已达上限".into())
+    close_pending_pairs(messages,outcome,"工具循环已达上限");
+    Err("工具循环已达上限；本轮未完成".into())
 }
 
 #[cfg(test)]
@@ -1329,6 +1442,58 @@ mod tests {
         assert_eq!(o["messages"][1]["content"], Value::Null);
         assert_eq!(o["messages"][2]["role"], json!("tool"));
         assert_eq!(o["messages"][2]["tool_call_id"], json!("call_1"));
+    }
+
+    // ---------- CR-099：回放净化与空 tool_calls ----------
+
+    #[test]
+    fn cr099_empty_arguments_are_normalized_for_both_protocols() {
+        let messages = vec![
+            ChatMsg::System("s".into()),
+            ChatMsg::Assistant {
+                text: String::new(),
+                tool_calls: vec![ToolCall { id: "c1".into(), name: "get_context".into(), arguments: String::new() }],
+            },
+            ChatMsg::Tool { call_id: "c1".into(), content: "未执行".into(), is_error: true },
+        ];
+        let budget = crate::commands::platform_context::ContextBudget::from_model(None, None);
+        for protocol in ["openai", "anthropic"] {
+            let turn = PlatformTurn {
+                session_id: "s".into(), project_id: None, protocol: protocol.into(),
+                base_url: "https://example.com/v1".into(), api_key: "k".into(), model_id: "m".into(),
+                effort: None, efforts: empty_efforts(), extra_headers: vec![], client_identity: None,
+            };
+            let body = budgeted_body(&turn, &messages, &[], &budget).unwrap();
+            let text = body.to_string();
+            assert!(!text.contains(r#""arguments":"""#), "{protocol} 不得回放空参数串");
+            assert!(text.contains(r#""arguments":"{}""#) || text.contains(r#""input":{}"#), "{protocol} 应回放合法参数");
+        }
+    }
+
+    #[test]
+    fn cr099_invalid_arguments_are_normalized_not_dropped() {
+        assert_eq!(normalized_tool_arguments("{not json"), "{}");
+        assert_eq!(normalized_tool_arguments("   "), "{}");
+        assert_eq!(normalized_tool_arguments("[1,2]"), "{}");
+        assert_eq!(normalized_tool_arguments(r#"{"path":"a.txt"}"#), r#"{"path":"a.txt"}"#);
+    }
+
+    #[test]
+    fn cr099_empty_tool_calls_are_not_replayed() {
+        let messages = vec![
+            ChatMsg::System("s".into()),
+            ChatMsg::Assistant { text: "答".into(), tool_calls: vec![] },
+        ];
+        let o = build_platform_body("openai", "gpt-x", None, &empty_efforts(), &messages, &[], false).unwrap();
+        assert!(o["messages"][1].get("tool_calls").is_none(), "空 tool_calls 不应回放");
+        assert_eq!(o["messages"][1]["content"], json!("答"));
+
+        let empty_text = vec![
+            ChatMsg::System("s".into()),
+            ChatMsg::Assistant { text: String::new(), tool_calls: vec![] },
+        ];
+        let o = build_platform_body("openai", "gpt-x", None, &empty_efforts(), &empty_text, &[], false).unwrap();
+        assert_eq!(o["messages"][1]["content"], json!(""), "无文本且无调用时用空串正文");
     }
 
     // ---------- SSE 解析（T-089-20 ~ T-089-30） ----------
@@ -1737,7 +1902,7 @@ mod tests {
             session_id: "t".into(), project_id: None, protocol: "openai".into(),
             base_url: platform_chat_url(&base, "openai").unwrap(),
             api_key: "mock-key".into(), model_id: "mock-model".into(),
-            effort: None, efforts: EffortMap::new(), extra_headers: Vec::new(),
+            effort: None, efforts: EffortMap::new(), extra_headers: Vec::new(), client_identity: None,
         };
         let events: std::sync::Arc<std::sync::Mutex<Vec<String>>> = Default::default();
         let sink = events.clone();
@@ -1771,7 +1936,7 @@ mod tests {
             session_id: "t".into(), project_id: None, protocol: "anthropic".into(),
             base_url: platform_chat_url(&base, "anthropic").unwrap(),
             api_key: "mock-key".into(), model_id: "mock-model".into(),
-            effort: None, efforts: EffortMap::new(), extra_headers: Vec::new(),
+            effort: None, efforts: EffortMap::new(), extra_headers: Vec::new(), client_identity: None,
         };
         let defs = [PlatformTool::from(new_tool_def("fs_read", "workbench.fs_read", "读取项目内文件"))];
         let channel = tauri::ipc::Channel::<Value>::new(|_| Ok(()));
@@ -1802,7 +1967,7 @@ mod tests {
             session_id: "t".into(), project_id: None, protocol: "openai".into(),
             base_url: platform_chat_url(&base, "openai").unwrap(),
             api_key: "wrong-key".into(), model_id: "mock-model".into(),
-            effort: None, efforts: EffortMap::new(), extra_headers: Vec::new(),
+            effort: None, efforts: EffortMap::new(), extra_headers: Vec::new(), client_identity: None,
         };
         let channel = tauri::ipc::Channel::<Value>::new(|_| Ok(()));
         let (_, abort_rx) = tokio::sync::watch::channel(false);
@@ -1842,7 +2007,7 @@ mod tests {
         let turn = PlatformTurn {
             session_id: "t".into(), project_id: None, protocol: "openai".into(),
             base_url: String::new(), api_key: "mock-key".into(), model_id: "mock-model".into(),
-            effort: None, efforts: EffortMap::new(), extra_headers: Vec::new(),
+            effort: None, efforts: EffortMap::new(), extra_headers: Vec::new(), client_identity: None,
         };
 
         // T-090-05：工具调用 → 执行 → 文本作答；tool_use/tool_result 归档。
@@ -1922,11 +2087,11 @@ mod tests {
         let err = run(responses, &mut messages, &mut outcome, &turn).unwrap_err();
         assert!(err.contains("累计工具调用超过"), "实际错误：{err}");
 
-        // T-090-11：副作用工具同参数第二次不执行。
-        let args = r#"{"projectId":"p1","entityId":"STORY-0001","title":"t","content":"c","expectedDocumentHash":"h"}"#;
+        // T-090-11：副作用工具同参数第二次不执行（用默认组内可见的写类工具 memory_save）。
+        let args = r#"{"content":"偏好简洁界面","kind":"fact"}"#;
         let duplicate: Vec<Value> = serde_json::from_value(json!([
-            {"index":0,"id":"w1","function":{"name":"write_requirement_doc","arguments":args}},
-            {"index":1,"id":"w2","function":{"name":"write_requirement_doc","arguments":args}},
+            {"index":0,"id":"w1","function":{"name":"memory_save","arguments":args}},
+            {"index":1,"id":"w2","function":{"name":"memory_save","arguments":args}},
         ])).unwrap();
         let mut messages = vec![ChatMsg::User("写两次".into())];
         let mut outcome = StreamOutcome::default();
@@ -2011,6 +2176,7 @@ mod tests {
             effort: None,
             efforts: EffortMap::new(),
             extra_headers: Vec::new(),
+            client_identity: None,
         })
     }
 

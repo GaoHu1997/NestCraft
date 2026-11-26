@@ -57,3 +57,10 @@
 - 用户反馈「一轮后提示上下文待确认重建」。诊断确认：CLI 首轮在结算前中断（有 user 消息、无 `execution_session_turn`、无引用）时，`derive_view` 仍报 `REF_MISSING`，未区分「首轮未完成」。
 - 处理原则不变：**仍不静默 fresh**（CR-068 J11）。本增量只把原因文案说准，并补 `REF_NOT_ESTABLISHED` 原因码。
 - 2026-11-25 用户授权完整修复后已实现：`REF_NOT_ESTABLISHED` 原因码与文案、`derive_view` 无 turn 记录分支；后端定向 18/18、全量 541 通过，前端 tsc 与构建通过。**视觉与真实应用未验证**；AC-BUG003-02/03/04 技术验证通过、待验收。见 [BUG-003](../../PRD/BUG-003-会话被误判为待重建上下文.md#5-修复目标与验收标准)／[LLD-BUG003](../../LLD/LLD-BUG003-会话绑定判定修复.md)／[REPORT-BUG003](../../Test/REPORT-BUG003-会话绑定误判诊断.md#5-执行结果)。
+
+## BUG-004 增量：首轮运行中与首轮失败（2026-11-26，已实现，待验收）
+
+- 用户截图反馈：CLI 普通会话发出「派发三个子代理…」后立刻显示「上下文待确认重建」并锁输入。只读核对证实该轮当时仍在运行（codex 沙箱日志 13:56–14:00 持续写工具调用），库里只有 1 条 user、0 条 assistant、无引用、无 turn。
+- 根因：`derive_view`/`resolve_binding` 不看运行态；首轮 create 失败不写 turn 证据，会话永久停在 `REF_NOT_ESTABLISHED`，只能确认重建。
+- 2026-11-26 用户授权修复：运行中不派生绑定；首轮失败写 `CREATE_FAILED` 证据并放行直接重发；运行中禁止 `confirm_fresh`。设计先行 **UI-BUG004-v1**（SC-069-10／11）。
+- 验证：后端定向 20/20、全量见报告；`tsc` 与 `npm run build` exit 0；契约 17/17；设计稿 12/12。**真实 Tauri 窗口、真实 CLI 端到端未验证**；AC-BUG004-01～06 技术验证通过、待验收。见 [BUG-004](../../PRD/BUG-004-首轮运行中与首轮失败被误判待重建.md)／[LLD-BUG004](../../LLD/LLD-BUG004-首轮运行态与失败证据.md)／[REPORT-BUG004](../../Test/REPORT-BUG004-首轮运行态与失败重试验证.md)。

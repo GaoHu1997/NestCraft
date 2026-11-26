@@ -49,8 +49,12 @@ export interface UiMessage {
   producerTask?: string | null;
   /** 产生这条内容的 CLI；子智能体未单独上报时继承父轮 CLI。 */
   cli?: string | null;
-  /** CR-056：system 消息的 kind（context-breakpoint = 上下文断点卡）。 */
+  /** CR-056：system 消息的 kind（context-breakpoint = 上下文断点卡；retrying/recovered = 流式重连提示）。 */
   kind?: string | null;
+  /** CR-102：流式重连提示的结构化字段（仅 kind=retrying/recovered 使用）。 */
+  retryAttempt?: number | null;
+  retryMax?: number | null;
+  retryDetail?: string | null;
 }
 
 export interface OfficeFileRef {
@@ -631,7 +635,8 @@ export function MessageList(props: {
   };
 
   const turns = useMemo(() => buildTurns(buildBlocks(props.msgs)), [props.msgs]);
-  const navItems = useMemo<TurnNavItem[]>(() => turns.map((t, i) => ({ id: t.id, label: `第 ${i + 1} 轮 · ${(t.user?.content ?? "会话开始").replace(/\s+/g, " ").slice(0, 24)}`, kind: "user" as const })), [turns]);
+  /* CR-096 R2：概览卡片拆「第 N 轮」+ 摘要两行；摘要放宽到 40 字，超出由 CSS 两行省略。 */
+  const navItems = useMemo<TurnNavItem[]>(() => turns.map((t, i) => ({ id: t.id, title: `第 ${i + 1} 轮`, summary: (t.user?.content ?? "会话开始").replace(/\s+/g, " ").slice(0, 40), kind: "user" as const })), [turns]);
   const jumpToTurn = (id: string) => {
     const el = boxRef.current?.querySelector<HTMLElement>(`.chat-turn[data-turn-id="${typeof CSS !== "undefined" && CSS.escape ? CSS.escape(id) : id}"]`);
     el?.scrollIntoView({ block: "start", behavior: "smooth" });
@@ -683,13 +688,18 @@ export function MessageList(props: {
             const tail = turn.reply[turn.reply.length - 1];
             const final = !working && tail && !("pair" in tail) && tail.role === "assistant" && !!tail.content && !tail.streaming ? tail : null;
             const terminalError = tail && !("pair" in tail) && tail.role === "error" ? tail : null;
-            const process = final || terminalError ? turn.reply.slice(0, -1) : turn.reply;
+            // CR-102：重连提示/恢复留痕不进过程折叠——它们是用户必须看到的一行流程状态，
+            // 提升到回合主流程（过程折叠之后、最终答复/错误卡之前）。
+            const rawProcess = final || terminalError ? turn.reply.slice(0, -1) : turn.reply;
+            const flowNotes = rawProcess.filter((b): b is UiMessage => !("pair" in b) && (b.kind === "retrying" || b.kind === "recovered"));
+            const process = rawProcess.filter(b => !("pair" in b) && (b.kind === "retrying" || b.kind === "recovered") ? false : true);
             const endedAt = turn.reply.flatMap(block => "pair" in block ? [block.pair.useMsg?.createdAt, block.pair.resultMsg?.createdAt] : [block.createdAt]).filter((at): at is number => at != null && Number.isFinite(at));
             const hasProcess = process.some(block => "pair" in block || block.thinking || block.role === "subagent" || block.role === "assistant");
             const changedFiles = Array.from(new Set(turn.reply.flatMap(block => "pair" in block && classifyTool(block.pair.name) === "change" ? changedInputPaths(block.pair.inputJson) : [])));
             return <section className="chat-turn" key={turn.id} data-turn-id={turn.id}>
               {user && renderMessage(user, { onEdit: props.onEditUserMessage ? () => props.onEditUserMessage!(user.id, user.content) : undefined })}
               {hasProcess || working ? <ExecutionProcess blocks={process} working={working} visible={props.visible !== false} startedAt={turn.user?.createdAt} endedAt={endedAt.length ? Math.max(...endedAt) : undefined} renderMessage={renderMessage} /> : process.map(block => "pair" in block ? <ToolBlock key={toolKey(block)} {...block} /> : renderMessage(block))}
+              {flowNotes.map(b => renderMessage(b))}
               {changedFiles.length > 0 && <details className="chat-turn-files">
                 <summary><Icon name="file" size={13} /><span>本轮改动 {changedFiles.length} 个文件</span></summary>
                 <div className="chat-turn-files-list">{changedFiles.map(p => <button type="button" key={p} className="chat-turn-file" title={p} onClick={() => { if (canLocate) requestLocate({ kind: "file", path: p, projectId: props.projectId, rootUri: props.rootUri }); else navigator.clipboard?.writeText(p).catch(() => {}); }}>{p.split(/[\\/]/).pop()}</button>)}</div>
@@ -873,6 +883,43 @@ function MessageRow(props: {
             </div>
           )}
         </div>
+      </div>
+    );
+  }
+  // CR-102：流式重连提示（SC-102-01/02/04）——无色块一行摘要，完整原始错误默认折叠。
+  // 进行中不提供「立即重试」：内核重连发生在子进程流内部，手动重启等价打断重发（LLD-CR102 §4）。
+  if (m.role === "system" && (m.kind === "retrying" || m.kind === "recovered")) {
+    const recovered = m.kind === "recovered";
+    const attempt = m.retryAttempt ?? null;
+    const max = m.retryMax ?? null;
+    const count = attempt != null && max != null ? `${attempt}/${max}` : null;
+    return (
+      <div className="chat-msg">
+        <details className="chat-retry-line">
+          <summary>
+            <span className={`chat-retry-glyph${recovered ? " ok" : ""}`} aria-hidden>{recovered ? "✓" : "⟳"}</span>
+            <span className="chat-retry-text">
+              {recovered
+                ? <>途中上游中断，{attempt != null ? `已自动重试 ${attempt} 次后` : "已自动重试后"}恢复</>
+                : <>正在重试{count ? <b className="chat-retry-count">{count}</b> : null} · {m.content}</>}
+            </span>
+            <span className="chat-retry-toggle">详情</span>
+          </summary>
+          <div className="chat-retry-detail">
+            <pre>{m.retryDetail || m.content}</pre>
+            <button
+              type="button"
+              className="chat-retry-copy"
+              onClick={(e) => {
+                const btn = e.currentTarget;
+                navigator.clipboard?.writeText(m.retryDetail || m.content).then(
+                  () => { btn.textContent = "已复制"; setTimeout(() => { btn.textContent = "复制错误详情"; }, 1500); },
+                  () => { btn.textContent = "复制失败"; setTimeout(() => { btn.textContent = "复制错误详情"; }, 1500); },
+                );
+              }}
+            >复制错误详情</button>
+          </div>
+        </details>
       </div>
     );
   }

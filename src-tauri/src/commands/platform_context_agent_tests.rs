@@ -55,7 +55,7 @@ impl MockModel {
     }
     fn turn(&self,protocol:&str)->PlatformTurn {
         PlatformTurn{session_id:"s".into(),project_id:None,protocol:protocol.into(),base_url:platform_chat_url(&self.base,protocol).unwrap(),
-            api_key:"test-only-key".into(),model_id:"m".into(),effort:None,efforts:EffortMap::new(),extra_headers:vec![]}
+            api_key:"test-only-key".into(),model_id:"m".into(),effort:None,efforts:EffortMap::new(),extra_headers:vec![],client_identity:None}
     }
 }
 impl Drop for MockModel {
@@ -420,6 +420,22 @@ fn mock_real_context_loop_compresses_restores_and_persists_both_protocols() {
 }
 
 #[test]
+fn cr099_rejected_tool_result_does_not_break_history_replay() {
+    let (c,s)=fixture(1,65536);
+    // 模拟旧库：被拒调用只留下 tool_result（AC-02 不写 tool_use），以及一条正常工具交换。
+    c.execute_batch("INSERT INTO message(id,sessionId,role,content,metaJson,createdAt) VALUES
+        ('a9','s','assistant','回答',NULL,2),
+        ('u1','s','tool_use','get_context','{\"toolId\":\"ok1\",\"input\":\"{}\"}',3),
+        ('r1','s','tool_result','上下文','{\"toolId\":\"ok1\",\"isError\":false}',4),
+        ('r2','s','tool_result','工具 bash 不可用（未在允许清单或已停用）','{\"toolId\":\"rej1\",\"isError\":true}',5);").unwrap();
+    let history=memory::load_history(&c,&memory::scope_stamp(&c,&s).unwrap()).unwrap();
+    let turn=history.last().expect("最近轮次");
+    memory::validate_pairs(&turn.messages).expect("被拒结果不得让整段历史失效");
+    assert!(turn.messages.iter().all(|m|!matches!(m,ChatMsg::Tool{call_id,..} if call_id=="rej1")),"孤儿结果应被跳过");
+    assert!(turn.messages.iter().any(|m|matches!(m,ChatMsg::Tool{call_id,..} if call_id=="ok1")),"正常工具结果必须保留");
+}
+
+#[test]
 fn mock_global_tool_switch_is_rechecked_before_execution_and_next_request() {
     let (c,s)=fixture(0,32768);
     c.execute_batch("CREATE TABLE setting_default(scope TEXT,key TEXT,value TEXT);INSERT INTO setting_default VALUES('global','aiTools.enabled','1');").unwrap();
@@ -428,11 +444,11 @@ fn mock_global_tool_switch_is_rechecked_before_execution_and_next_request() {
     let database=Arc::new(Mutex::new(c));let gate=database.clone();
     let model=MockModel::new(move |body,n| {
         if n==0 {
-            assert!(body["tools"].as_array().unwrap().iter().any(|d|d["function"]["name"]==json!("write_requirement_doc")));
+            assert!(body["tools"].as_array().unwrap().iter().any(|d|d["function"]["name"]==json!("get_context")));
             gate.lock().unwrap().execute("UPDATE setting_default SET value='0'",[]).unwrap();
-            response(tool_stream("openai","g1","write_requirement_doc",&json!({"projectId":"never","kind":"story","title":"must not execute"})))
+            response(tool_stream("openai","g1","get_context",&json!({})))
         }else {
-            assert!(!body["tools"].as_array().unwrap().iter().any(|d|d["function"]["name"]==json!("write_requirement_doc")));
+            assert!(!body["tools"].as_array().unwrap().iter().any(|d|d["function"]["name"]==json!("get_context")));
             response(text_stream("openai","tools disabled",true))
         }
     });

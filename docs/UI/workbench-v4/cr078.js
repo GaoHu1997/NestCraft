@@ -238,7 +238,7 @@ window.CR078 = (() => {
   ];
   let seq = 11;
 
-  const state = { tab: "schedule", view: "2026-11", selected: "2026-11-24", dayTab: "events", form: null, editingTodo: null, picker: false, pickerYear: 2026, usageRange: "7d" };
+  const state = { tab: "schedule", view: "2026-11", selected: "2026-11-24", dayTab: "events", form: null, editingTodo: null, picker: false, pickerYear: 2026, usageRange: "today" };
   const TODAY = new Date(2026, 10, 24);
   /* v8：移除详情栏顶部天气条（含定位 / Open-Meteo 相关夹具与降级态），详情栏直接从日期标题开始。 */
 
@@ -296,7 +296,7 @@ window.CR078 = (() => {
   function schedulePage() {
     const { y, m } = monthMatrix(state.view);
     const selInfo = dayInfo(new Date(state.selected + "T00:00:00"));
-    return `<div class="page c078-page" data-design-version="UI-CR078-v8">
+    return `<div class="page c078-page" data-design-version="UI-CR078-v11">
       <div class="page-h"><div class="titles"><h1 class="page-title">概览</h1><p class="page-sub">日程与全平台用量集中在这里。</p></div></div>
       <div class="c078-tabs" role="tablist" aria-label="概览页签">
         <button class="c078-tab ${state.tab === "schedule" ? "active" : ""}" role="tab" aria-selected="${state.tab === "schedule"}" data-c078-act="tab" data-tab="schedule">${icon("calendar", "ico-16")}日程</button>
@@ -469,7 +469,7 @@ window.CR078 = (() => {
     { name: "deepseek-v4.1-flash", total: 28_300_000, hit: 96.9, source: "subagent" },
     { name: "glm-5.3-flash", total: 18_800_000, hit: 97.7, source: "subagent" }
   ];
-  const SOURCE_LABEL = { cli: "CLI", platform: "平台主代理", subagent: "子智能体" };
+  /* v11：来源文字标签（CLI / 平台主代理 / 子智能体）已移除，来源改由左侧图标区分，不再需要文本映射。 */
   /* 模型色板：沿用平台主题色，排行与趋势图共用同一套索引色，保证同一个模型在两处颜色一致。 */
   const MODEL_COLORS = [
     "var(--primary)", "var(--teal)", "var(--violet)", "var(--warning)",
@@ -515,11 +515,10 @@ window.CR078 = (() => {
     /* 活跃热力图是固定长周期视图（近 28 周），不随上方周期筛选变化，
        否则选「近 7 天」时 28 列里只有 2 列有数据、其余全是空框。 */
     const heatDays = USAGE;
-    const maxDay = Math.max(1, ...heatDays.map(d => d.in + d.out));
     const heat = heatGrid(heatDays);
     const heatCols = heat.cols;
     const heatStyle = `--cols:${heatCols};grid-template-columns:repeat(${heatCols}, minmax(0, 1fr))`;
-    return `<div class="page c078-page" data-design-version="UI-CR078-v8">
+    return `<div class="page c078-page" data-design-version="UI-CR078-v11">
       <div class="page-h"><div class="titles"><h1 class="page-title">概览</h1><p class="page-sub">日程与全平台用量集中在这里。</p></div></div>
       <div class="c078-tabs" role="tablist" aria-label="概览页签">
         <button class="c078-tab ${state.tab === "schedule" ? "active" : ""}" role="tab" aria-selected="${state.tab === "schedule"}" data-c078-act="tab" data-tab="schedule">${icon("calendar", "ico-16")}日程</button>
@@ -547,11 +546,11 @@ window.CR078 = (() => {
               <div class="c078-heat-grid" style="${heatStyle}">${heat.cells.map(c => c.blank ? `<i class="l-1 is-blank" style="grid-row:${c.row + 1};grid-column:${c.col + 1}" aria-hidden="true"></i>` : `<i class="l${c.level}" style="grid-row:${c.row + 1};grid-column:${c.col + 1}" title="${c.date} · ${fmt(c.value)} tokens · ${c.req} 次请求"></i>`).join("")}</div></div>
             </div></div>
           </section>
-          <section class="card c078-panel"><div class="card-h"><h3>按小时 Token 趋势</h3><span class="c078-legend">${MODELS.slice(0, 3).map(m => `<span title="${esc(m.name)}"><i style="background:${modelColor(m.name)}"></i>${esc(m.name)}</span>`).join("")}<span class="line">缓存命中率</span></span></div>
+          <section class="card c078-panel"><div class="card-h"><h3>按小时 Token 趋势</h3></div>
             <div class="card-b c078-chart"><div class="c078-chart-y">${[1, .75, .5, .25, 0].map(v => `<span>${v === 0 ? "0" : fmt(Math.round(hMax * v))}</span>`).join("")}</div>
               <div class="c078-chart-plot"><div class="c078-gridlines">${[0, 25, 50, 75, 100].map(v => `<i style="bottom:${v}%"></i>`).join("")}</div>
                 <div class="c078-bars">${hours.map((h, i) => `<div class="c078-bar" data-c078-hour="${i}" data-tip-total="${h.models.reduce((a, m) => a + m.tokens, 0)}" data-tip-hit="${h.in + h.cache > 0 ? ((h.cache / (h.in + h.cache)) * 100).toFixed(1) : ""}">${h.models.map(m => `<i style="height:${(m.tokens / hMax) * 100}%;background:${modelColor(m.name)}" data-model="${esc(m.name)}" data-tokens="${m.tokens}"></i>`).join("")}</div>`).join("")}</div>
-                <svg class="c078-line" viewBox="0 0 1000 100" preserveAspectRatio="none" aria-hidden="true"><polyline points="${hours.map((h, i) => { const r = h.in + h.cache > 0 ? h.cache / (h.in + h.cache) : null; return `${(i + 0.5) / 24 * 1000},${r == null ? 100 : 100 - r * 100}`; }).join(" ")}" /></svg>
+                <svg class="c078-line" viewBox="0 0 1000 100" preserveAspectRatio="none" aria-hidden="true"><path d="${smoothPath(hours.map((h, i) => { const r = h.in + h.cache > 0 ? h.cache / (h.in + h.cache) : null; return [(i + 0.5) / 24 * 1000, r == null ? 100 : 100 - r * 100]; }))}" /></svg>
                 <div class="c078-tip" role="tooltip" hidden></div></div>
               <div class="c078-chart-x">${[2, 5, 8, 11, 14, 17, 20, 23].map(h => `<span style="left:${(h + 0.5) / 24 * 100}%">${pad2(h)}:00</span>`).join("")}</div>
               <div class="c078-chart-y right">${[100, 75, 50, 25, 0].map(v => `<span>${v}%</span>`).join("")}</div></div>
@@ -559,24 +558,40 @@ window.CR078 = (() => {
         </div>
         <div class="c078-two">
           <section class="card c078-panel"><div class="card-h"><h3>按模型</h3><span class="sub">${MODELS.length} 个</span></div>
-            <ol class="c078-rank">${MODELS.map((m, i) => rank(i, m.source === "cli" ? cliLogo(m.name.startsWith("gpt") ? "codex" : m.name.startsWith("grok") ? "grok" : "claude", 18) : `<span class="c078-src">${icon(m.source === "platform" ? "sparkles" : "bot", "ico-16")}</span>`, m.name, SOURCE_LABEL[m.source], m.total, m.total / modelTotal * 100, m.hit, m.source)).join("")}</ol></section>
+            <ol class="c078-rank">${MODELS.map((m, i) => rank(i, m.source === "cli" ? cliLogo(m.name.startsWith("gpt") ? "codex" : m.name.startsWith("grok") ? "grok" : "claude", 18) : `<span class="c078-src">${icon(m.source === "platform" ? "sparkles" : "bot", "ico-16")}</span>`, m.name, m.total, m.total / modelTotal * 100, m.hit, m.source)).join("")}</ol></section>
           <section class="card c078-panel"><div class="card-h"><h3>按供应商</h3><span class="sub">${PROVIDERS.length} 个</span></div>
-            <ol class="c078-rank">${PROVIDERS.map((p, i) => rank(i, `<i class="c078-prov-dot" style="--i:${i}"></i>`, p.name, "供应商", p.in + p.out, (p.in + p.out) / provTotal * 100, p.hit, "provider")).join("")}</ol></section>
+            <ol class="c078-rank">${PROVIDERS.map((p, i) => rank(i, `<i class="c078-prov-dot" style="--i:${i}"></i>`, p.name, p.in + p.out, (p.in + p.out) / provTotal * 100, p.hit, "provider")).join("")}</ol></section>
         </div>
-        <div class="page-foot"><span>合成夹具 · 含 CLI、平台主代理与子智能体三类来源；不代表真实落库数据</span><span>最大单日 ${fmt(maxDay)} tokens</span></div>
       </div>
     </div>`;
   }
   function kpi(ic, label, value, sub, tone) {
     return `<div class="c078-kpi ${tone}"><div class="k"><span class="c078-kpi-ic">${icon(ic, "ico-16")}</span>${label}</div><div class="v">${value}</div><div class="s">${sub}</div></div>`;
   }
-  function rank(i, logo, name, source, total, pct, hit, kind) {
+  function rank(i, logo, name, total, pct, hit, kind) {
     // 模型条与趋势图共用 modelColor：同一个模型在两处颜色一致；供应商各自独立色相。
     // 供应商同样取平台色板，避免自造高饱和彩虹色偏离平台视觉。
     const barColor = kind === "provider" ? MODEL_COLORS[i % MODEL_COLORS.length] : modelColor(name);
-    return `<li class="c078-rank-row"><span class="c078-rank-n">${i + 1}</span>${logo}<div class="c078-rank-main"><div class="c078-rank-top"><b class="ellipsis">${esc(name)}</b><span class="c078-rank-v">${fmt(total)}</span></div>
+    /* v11：去掉「CLI / 平台主代理 / 子智能体 / 供应商」来源标签——图标已经区分来源，文字重复且没有增量信息；
+       左侧序号与图标统一进 20px 居中列，整行垂直居中。 */
+    return `<li class="c078-rank-row"><span class="c078-rank-n">${i + 1}</span><span class="c078-rank-ic">${logo}</span><div class="c078-rank-main"><div class="c078-rank-top"><b class="ellipsis">${esc(name)}</b><span class="c078-rank-v">${fmt(total)}</span></div>
       <div class="c078-rank-bar"><i style="width:${Math.max(2, pct)}%;background:${barColor}"></i></div>
-      <div class="c078-rank-sub"><span>${source === "供应商" ? "供应商" : `<span class="tag ${kind === "provider" ? "gray" : "violet"}">${source}</span>`} · ${pct.toFixed(1)}%</span><span>缓存命中率 ${hit == null ? "未上报" : hit.toFixed(1) + "%"}</span></div></div></li>`;
+      <div class="c078-rank-sub"><span>占比 ${pct.toFixed(1)}%</span><span>缓存命中率 ${hit == null ? "未上报" : hit.toFixed(1) + "%"}</span></div></div></li>`;
+  }
+  /* v11：命中率折线由折线段改为平滑曲线（Catmull-Rom → 三次贝塞尔）。
+     控制点 y 夹在 [0,100]，防止曲线冲出绘图区上下边界；x 不夹，保持时间均匀推进。 */
+  function smoothPath(pts) {
+    if (!pts.length) return "";
+    if (pts.length === 1) return `M ${pts[0][0]} ${pts[0][1]}`;
+    const clamp = v => Math.max(0, Math.min(100, v));
+    let d = `M ${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+      const c1x = p1[0] + (p2[0] - p0[0]) / 6, c1y = clamp(p1[1] + (p2[1] - p0[1]) / 6);
+      const c2x = p2[0] - (p3[0] - p1[0]) / 6, c2y = clamp(p2[1] - (p3[1] - p1[1]) / 6);
+      d += ` C ${c1x.toFixed(1)} ${c1y.toFixed(1)} ${c2x.toFixed(1)} ${c2y.toFixed(1)} ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`;
+    }
+    return d;
   }
   /* 热力图：周一起始、列优先（周一在上），网格按固定列数铺满。
      时间轴从右往左推进——最右列是最近一周（末格对齐到本周周日），左侧逐列往前推；

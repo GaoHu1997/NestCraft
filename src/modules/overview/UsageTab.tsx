@@ -27,7 +27,7 @@ const fmt = (n: number) =>
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
 export function UsageTab() {
-  const [range, setRange] = useState("7d");
+  const [range, setRange] = useState("today");
   const [custom, setCustom] = useState<{ from: string; to: string }>(() => {
     const n = new Date();
     const from = new Date(n); from.setDate(n.getDate() - 13);
@@ -92,14 +92,7 @@ export function UsageTab() {
           </div>
         </section>
         <section className="card ov-panel">
-          <div className="card-h"><h3>按小时 Token 趋势</h3>
-            <span className="ov-legend">
-              {models.slice(0, 3).map((m) => (
-                <span key={m.name} title={m.name}><i style={{ background: modelColor.get(m.name) }} />{m.name}</span>
-              ))}
-              <span className="line">缓存命中率</span>
-            </span>
-          </div>
+          <div className="card-h"><h3>按小时 Token 趋势</h3></div>
           <div className="card-b ov-chart">
             {stats && <Trend hours={stats.hours} colors={modelColor} />}
           </div>
@@ -113,7 +106,7 @@ export function UsageTab() {
               {models.map((m, i) => (
                 <RankRow key={m.name} i={i} name={m.name} total={m.total} pct={m.pct} hit={m.cacheHitRate} color={paletteColor(i)}
                   logo={m.source !== "platform" && m.source !== "mixed" && m.cliId ? <span className="cli-logo cli-brand" data-cli={m.cliId}><CliLogo id={m.cliId} /></span> : <span className="ov-src"><Icon name={m.source === "platform" ? "sparkles" : "bot"} size={16} /></span>}
-                  source={m.source === "platform" ? "平台主代理" : m.source === "cli" ? "CLI" : m.source === "mixed" ? "CLI + 平台" : m.source} />
+                />
               ))}
             </ol>
           ) : <Empty title={loading ? "加载中…" : "没有带用量上报的模型记录"} />}
@@ -125,15 +118,11 @@ export function UsageTab() {
               {providers.map((p, i) => (
                 <RankRow key={p.name} i={i} name={p.name} total={p.total} pct={p.pct} hit={p.cacheHitRate} color={paletteColor(i)}
                   logo={<i className="ov-prov-dot" style={{ background: paletteColor(i) }} />}
-                  source="供应商" />
+                />
               ))}
             </ol>
           ) : <Empty title={loading ? "加载中…" : "没有带用量上报的供应商记录"} />}
         </section>
-      </div>
-      <div className="nc-page-foot">
-        <span>来源：CLI 会话与平台主代理闭合步骤的落库用量；缺量的记录不计入，不做估算。</span>
-        <span>栖造 · NestCraft</span>
       </div>
     </div>
   );
@@ -207,14 +196,31 @@ function Heat({ days }: { days: api.UsageDay[] }) {
 }
 
 /** 按小时 Token 趋势：按模型堆叠（与「按模型」排行同色），悬停浮层列出该小时各模型用量。 */
+/* v11：命中率折线由折线段改为平滑曲线（Catmull-Rom → 三次贝塞尔）。
+   控制点 y 夹在 [0,100]，防止曲线冲出绘图区上下边界；x 不夹，保持时间均匀推进。 */
+function smoothPath(pts: [number, number][]): string {
+  if (!pts.length) return "";
+  if (pts.length === 1) return `M ${pts[0][0]} ${pts[0][1]}`;
+  const clamp = (v: number) => Math.max(0, Math.min(100, v));
+  let d = `M ${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+    const c1x = p1[0] + (p2[0] - p0[0]) / 6, c1y = clamp(p1[1] + (p2[1] - p0[1]) / 6);
+    const c2x = p2[0] - (p3[0] - p1[0]) / 6, c2y = clamp(p2[1] - (p3[1] - p1[1]) / 6);
+    d += ` C ${c1x.toFixed(1)} ${c1y.toFixed(1)} ${c2x.toFixed(1)} ${c2y.toFixed(1)} ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`;
+  }
+  return d;
+}
+
 function Trend({ hours, colors }: { hours: api.UsageHour[]; colors: Map<string, string> }) {
   const [tip, setTip] = useState<number | null>(null);
   const hMax = Math.max(1, ...hours.map((h) => h.models.reduce((a, m) => a + hourModelTokens(m), 0)));
-  const points = hours.map((h, i) => {
+  const points: [number, number][] = hours.map((h, i) => {
     const denom = h.inputTokens + h.cacheTokens;
     const r = denom > 0 ? h.cacheTokens / denom : null;
-    return `${((i + 0.5) / 24) * 1000},${r == null ? 100 : 100 - r * 100}`;
-  }).join(" ");
+    return [((i + 0.5) / 24) * 1000, r == null ? 100 : 100 - r * 100];
+  });
+  const linePath = smoothPath(points);
   const tipHour = tip != null && tip >= 0 && tip < hours.length ? hours[tip] : null;
   const tipTotal = tipHour ? tipHour.models.reduce((a, m) => a + hourModelTokens(m), 0) : 0;
   const tipDenom = tipHour ? tipHour.inputTokens + tipHour.cacheTokens : 0;
@@ -244,7 +250,7 @@ function Trend({ hours, colors }: { hours: api.UsageHour[]; colors: Map<string, 
             </div>
           ))}
         </div>
-        <svg className="ov-line" viewBox="0 0 1000 100" preserveAspectRatio="none" aria-hidden="true"><polyline points={points} /></svg>
+        <svg className="ov-line" viewBox="0 0 1000 100" preserveAspectRatio="none" aria-hidden="true"><path d={linePath} /></svg>
         {tipHour && (() => {
           /* 模型多时浮层会顶出绘图区：只列前 TIP_ROWS 个，其余汇总成一行，浮层高度恒定。 */
           const shown = tipHour.models.slice(0, TIP_ROWS);
@@ -288,18 +294,20 @@ function ranked<T extends { total: number }>(items: T[]): (T & { pct: number })[
     .map((x) => ({ ...x, pct: totalSum > 0 ? (x.total / totalSum) * 100 : 0 }));
 }
 
-function RankRow({ i, logo, name, total, pct, hit, source, color }: {
-  i: number; logo: React.ReactNode; name: string; total: number; pct: number; hit: number | null; source: string; color: string;
+function RankRow({ i, logo, name, total, pct, hit, color }: {
+  i: number; logo: React.ReactNode; name: string; total: number; pct: number; hit: number | null; color: string;
 }) {
+  /* v11：去掉「CLI / 平台主代理 / 子智能体 / 供应商」来源文字——左侧图标已区分来源，文字重复且无增量信息；
+     序号与图标统一进 20px 居中列，整行垂直居中。 */
   return (
     <li className="ov-rank-row">
       <span className="ov-rank-n">{i + 1}</span>
-      {logo}
+      <span className="ov-rank-ic">{logo}</span>
       <div className="ov-rank-main">
         <div className="ov-rank-top"><b className="ellipsis">{name}</b><span className="ov-rank-v">{fmt(total)}</span></div>
         <div className="ov-rank-bar"><i style={{ width: `${Math.max(2, pct)}%`, background: color }} /></div>
         <div className="ov-rank-sub">
-          <span>{source === "供应商" ? "供应商" : <span className="tag violet">{source}</span>} · {pct.toFixed(1)}%</span>
+          <span>占比 {pct.toFixed(1)}%</span>
           <span>缓存命中率 {hit == null ? "未上报" : hit.toFixed(1) + "%"}</span>
         </div>
       </div>

@@ -25,8 +25,12 @@ pub(crate) struct Prepared {
     pub pending_results: std::collections::BTreeMap<String,String>,
     /// CR-086：已启用技能的（名称, 描述）；正文由 read_skill 工具按需读取。
     pub skills: Vec<(String,String)>,
-    /// CR-092：个人记忆注入文本（画像摘要 + 相关记忆）；空串表示无记忆或已关闭注入。
-    pub memory_context: String,
+    /// CR-095：项目类型 code|work|""（未绑定），决定角色与默认工具组。
+    pub project_kind: String,
+    /// CR-095：一行极简画像（≤120 字）；详细由 profile_get 按需读取，空串表示无。
+    pub profile_line: String,
+    /// CR-099：本轮实际下发的内置工具名（与 platform_tool_defs_scoped 同源，不含上下文工具）。
+    pub tool_names: Vec<String>,
 }
 
 impl Prepared {
@@ -37,29 +41,79 @@ impl Prepared {
         let (revision,blocks) = memory::load_blocks(conn,&scope,&history)?;
         // CR-086：技能清单进系统提示，正文按需读取，避免整篇占用上下文。
         let skills = crate::commands::capabilities::skill_briefs(conn);
-        // CR-092：持有连接时计算一次个人记忆注入文本（内部复用同一 conn，不取新连接、不跨 await）。
-        let memory_context =
-            crate::commands::memory::build_memory_context_for_session(conn, &session, &prompt).unwrap_or_default();
+        // CR-095：项目类型与一行画像；不再预注入 TopK 记忆（按需由工具读取）。
+        let project_kind = session.project_id.as_ref()
+            .and_then(|pid| conn.query_row("SELECT type FROM project WHERE id=?1",[pid],|r| r.get::<_,String>(0)).ok())
+            .unwrap_or_default();
+        let memory_scope = session.project_id.as_ref().map(|p| format!("project:{p}")).unwrap_or_else(|| "global".into());
+        let profile_line = if crate::commands::memory::injection_enabled_for_session(conn,&session.id,&memory_scope) { crate::commands::memory::build_profile_line(conn, "global").unwrap_or_default() } else { String::new() };
         Ok(Self {session,scope,budget,history,blocks,drafts:Vec::new(),revision,prompt,
-            user_id:crate::models::new_id("msg"),base_len:0,usage:None,summary_requests:0,pending_results:Default::default(),skills,memory_context})
+            user_id:crate::models::new_id("msg"),base_len:0,usage:None,summary_requests:0,pending_results:Default::default(),skills,project_kind,profile_line,
+            tool_names:Vec::new()})
     }
 
+    /// 不含工具目录的系统提示；发送路径用 `system_with_tools` 输出本轮实际工具。
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn system(&self) -> String {
+        self.system_with_tools(None)
+    }
+
+    /// CR-099：system 的能力目录以本轮实际下发的工具名为准，避免「提示说能用、执行时拒绝」。
+    /// `None` 表示无工具目录（摘要等内部请求），只输出角色与画像。
+    pub fn system_with_tools(&self, tool_names: Option<&[String]>) -> String {
         let mut text = format!("{}{}\n当前项目：{}；执行特性：{}。",PLATFORM_SYSTEM_PROMPT,CONTEXT_PROMPT,
             self.scope.project_id.as_deref().unwrap_or("未绑定"),self.session.feature_id.as_deref().unwrap_or("无"));
+        let role = match self.project_kind.as_str() {
+            "code" => "编码项目",
+            "work" => "办公项目",
+            _ => "未绑定项目的助理",
+        };
+        text.push_str(&format!("\n你正在协助{}。", role));
+        if !self.profile_line.is_empty() {
+            text.push_str(&format!("\n用户画像（简）：{}（需要更详细时用 profile_get 读取，不要臆测）。", self.profile_line));
+        }
+        // CR-099：只列本轮真正下发的工具（与 platform_tool_defs_scoped 同源），停用项不再出现。
+        if let Some(names) = tool_names.filter(|names| !names.is_empty()) {
+            text.push_str("\n\n本次可用工具（名称区分大小写与下划线，必须使用下列精确名称；未列出即不可用）：");
+            let mut groups: Vec<&crate::commands::tool_groups::ToolGroup> =
+                crate::commands::tool_groups::groups_for(&self.project_kind).collect();
+            let mut listed = std::collections::BTreeSet::new();
+            for group in groups.drain(..) {
+                let available: Vec<&str> = group.tools.iter().copied()
+                    .filter(|name| names.iter().any(|n| n.as_str() == *name)).collect();
+                if available.is_empty() { continue; }
+                for name in &available { listed.insert((*name).to_string()); }
+                text.push_str(&format!("\n- {}：{}", group.label, available.join(", ")));
+            }
+            // MCP 工具不在静态分组里，必须单独列出，否则会被误判为不可用。
+            let extra: Vec<&String> = names.iter().filter(|name| !listed.contains(*name)).collect();
+            if !extra.is_empty() {
+                let rendered: Vec<&str> = extra.iter().map(|name| name.as_str()).collect();
+                text.push_str(&format!("\n- 扩展：{}", rendered.join(", ")));
+            }
+        }
         if !self.skills.is_empty() {
             text.push_str("\n\n可用技能（需要正文时调用 read_skill，name 用冒号前的名字）：");
             for (name, brief) in &self.skills {
                 text.push_str(&format!("\n- {}：{}", name, brief));
             }
         }
-        if !self.memory_context.is_empty() {
-            text.push_str(&self.memory_context);
-        }
+        text.push_str("\n\n使用指引：个人记忆跨项目通用，项目记忆只属于当前项目。用户要求记住时，通用偏好用 memory_save(scope=personal)，本项目约束用 memory_save(scope=project)；仅工具返回 saved=true 后才能声称已记住，失败须说明。历史用 memory_search、画像用 profile_get 按需读取；不要猜编号或写入未确认事实。");
         text
     }
 
-    pub fn messages(&self) -> Vec<ChatMsg> { memory::project(&self.history,&self.blocks,&self.system(),&self.prompt) }
+    pub fn messages(&self) -> Vec<ChatMsg> { memory::project(&self.history,&self.blocks,&self.system_with_tools(Some(&self.tool_names)),&self.prompt) }
+
+    /// CR-099：由本轮实际下发的工具定义刷新能力目录，与 tools 数组保持同源。
+    pub fn set_tool_names(&mut self, defs: &[super::PlatformTool], include_context: bool) {
+        let mut names: Vec<String> = defs.iter().map(|d| d.name.clone()).collect();
+        if include_context {
+            names.extend(crate::commands::platform_context::CONTEXT_TOOLS.iter().map(|name| (*name).to_string()));
+        }
+        names.sort();
+        names.dedup();
+        self.tool_names = names;
+    }
 
     pub fn refresh_projection(&mut self, messages: &mut Vec<ChatMsg>) {
         let tail = messages.split_off(self.base_len.min(messages.len()));

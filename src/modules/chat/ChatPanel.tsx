@@ -17,7 +17,7 @@ import type { PersistentSessionStats } from "./sessionStats";
 import { GoalBar, TodoPanel } from "./ChatDock";
 import { emptyPlan, projectPlan } from "./sessionPlan";
 import { ChatOverlayProvider, useChatOverlay } from "./overlay";
-import { addUsage, finishOnce, getRuntime, hydrateUsage, isCurrentTurn, markFirstDelta, markStreamStart, outputTps, recordToolResult, recordToolUse, rebuildStepsFromPairs, clearEndedBackground, dropRuntime, setStatus, setGoal, updateGoalState, upsertSubagent, hasBlockingChildren, settleSubagents } from "./sessionRuntime";
+import { addUsage, finishOnce, getRuntime, hydrateUsage, isCurrentTurn, liveTps, markFirstDelta, markStreamStart, noteLiveDelta, noteLiveToolArgs, outputTps, recordToolResult, recordToolUse, rebuildStepsFromPairs, clearEndedBackground, dropRuntime, setStatus, setGoal, updateGoalState, upsertSubagent, hasBlockingChildren, settleSubagents, tickLiveRate } from "./sessionRuntime";
 import { officeFileContentText } from "@/modules/office/office-model";
 import { requestPanel } from "./panelRequest";
 import type { PanelKind, PanelRequest } from "./panelRequest";
@@ -25,6 +25,8 @@ import { chatActionStatus } from "@/api/chat-actions";
 import type { ChatActionStatus } from "@/api/chat-actions";
 import "./chat.css";
 import "./chat-actions.css";
+// CR-100 / UI-CR100-v1：窄侧栏容器适配，必须在所有会话样式之后加载。
+import "./chat-narrow.css";
 
 interface ChatPanelProps {
   projectId?: string;
@@ -234,6 +236,8 @@ function Panel(props: PanelProps) {
   const [gitBranches, setGitBranches] = useState<{ name: string; current: boolean }[]>([]);
   const [msgs, setMsgs] = useState<UiMessage[]>([]);
   const [statsSnapshot, setStatsSnapshot] = useState<PersistentSessionStats | null>(null);
+  /** CR-101：生成中驱动统计条的实时流速刷新（节流 ≤4 次/秒），不写库、不改其它状态。 */
+  const [liveTick, setLiveTick] = useState(0);
   const statsReq = useRef(0);
   const [draft, setDraft] = useState("");
   const [runningIds, setRunningIds] = useState<string[]>([]);
@@ -314,7 +318,9 @@ function Panel(props: PanelProps) {
   // CR-037：当前会话绑定状态（阻塞时禁输入但保留草稿与历史；REF_NOT_READY 可直接重试）
   // BUG-003：平台通道不适用 CLI 原生绑定；后端已返回 null，这里再按 runner 兜底，
   // 避免旧缓存或旧构建的 binding 在升级瞬间继续锁住平台会话输入。
-  const binding = cur?.sessionRole === "executor" || cur?.runner === "platform" ? null : cur?.binding ?? null;
+  // BUG-004：运行中同样不派生绑定状态（后端已按运行态返回 null，这里对旧缓存兜底），
+  // 否则长任务刚发出、引用尚未结算时会被误报成「待确认重建」并锁住输入。
+  const binding = cur?.sessionRole === "executor" || cur?.runner === "platform" || running ? null : cur?.binding ?? null;
   const composerLocked =
     cfgBusy ||
     (binding?.state === "blocked" && binding.reasonCode !== "REF_NOT_READY") ||
@@ -919,10 +925,18 @@ function Panel(props: PanelProps) {
         void refreshSessionStats(request.sid, request.scope); return;
       }
       if (turn.finished || !isCurrentTurn(request.sid, generation)) return;
+      // CR-102：重连成功（收到任一后续输出/结束事件）后，把进行中的重连提示转为灰色恢复留痕（SC-102-04）。
+      // 终态 error 不转：错误卡紧随其后给出真实失败原因，重连行保留最后状态不冒充恢复。
+      if (ev.type !== "retrying" && ev.type !== "error") {
+        const r = turn.msgs.find(m => m.kind === "retrying");
+        if (r) { r.kind = "recovered"; publish(turn); bumpRt(); }
+      }
       switch (ev.type) {
         case "delta": case "thinking": {
           if (!ev.delta) break;
           const kind = ev.type === "thinking" ? "thinking" : "text";
+          // CR-101：正文与思考都属于输出 tokens，按码点密度累加进本轮实时估算。
+          noteLiveDelta(request.sid, ev.delta);
           if (kind === "thinking" && turn.thinkStarted === null) turn.thinkStarted = Date.now();
           if (kind === "text" && turn.thinkMs === null && turn.thinkStarted !== null) turn.thinkMs = Date.now() - turn.thinkStarted;
           if (turn.buffer?.kind !== kind) flush(turn);
@@ -937,6 +951,8 @@ function Panel(props: PanelProps) {
         case "toolUse": {
           if (turn.msgs.some(m => m.id === `tu-${generation}-${ev.toolId}`)) break;
           flush(turn); recordToolUse(request.sid, ev.toolId, ev.name);
+          // CR-101：工具调用参数同样计入输出 tokens（provider 的 outputTokens 包含它们）。
+          noteLiveToolArgs(request.sid, ev.inputJson);
           projectPlan(plan, ev);
           // CR-054 / STORY-073：AI 通过 workbench.open_panel 真实请求打开右栏。
           // 是否真正打开、用户关闭后是否重开、跨项目拒绝都交给 panelRequest 规则；
@@ -998,10 +1014,16 @@ function Panel(props: PanelProps) {
           flush(turn);
           setStatus(request.sid, "pending");
           turn.msgs.push(mkMsg({ id: `approval-${ev.requestId}`, role: "system", content: `待处理：${ev.toolName}。当前非交互CLI适配器未提供可用的人工审批流程，未自动放行。` })); publish(turn); bumpRt(); break;
-        case "retrying":
+        case "retrying": {
+          // CR-102：每轮单实例 upsert——无色块一行「正在重试 n/m · 原因」，原始错误进折叠详情。
           flush(turn);
-          turn.msgs.push(mkMsg({ id: `retry-${request.sid}-${generation}-${ev.attempt}`, role: "system", kind: "retrying", content: `供应商暂时不可用（${ev.reason}），${ev.delayMs}ms 后重试（${ev.attempt}/${ev.maxAttempts}）`, createdAt: Date.now() }));
+          const id = `retrying-${request.sid}-${generation}`;
+          const detail = ev.detail ?? ev.reason;
+          const msg = mkMsg({ id, role: "system", kind: "retrying", content: ev.reason, retryAttempt: ev.attempt, retryMax: ev.maxAttempts, retryDetail: ev.delayMs != null ? `${detail}\n平台将在 ${ev.delayMs}ms 后自动重试` : detail, createdAt: Date.now() });
+          const at = turn.msgs.findIndex(m => m.id === id);
+          if (at >= 0) turn.msgs[at] = msg; else turn.msgs.push(msg);
           publish(turn); bumpRt(); break;
+        }
         case "error": void finalize(turn, ev.message); break;
         case "done":
           // CR-068 J11：原生续接失败不再按成功收尾（后端 done 带 blocked 时显式失败 + 真实原因）。
@@ -1325,11 +1347,29 @@ function Panel(props: PanelProps) {
     finally { cfgLock.current = false; setCfgBusy(false); }
   };
 
+  // CR-101 R-CR101-8：生成中按 1s 节拍采样实时流速（与 DSH 统计行同一节拍）。
+  // 每次 tick 先 observe 再触发重渲染，保证渲染读到的是刚推进的发布值；
+  // 停止/结束时清定时器，终态不再增长（markStreamEnd 已清中间态）。
+  useEffect(() => {
+    if (!running || !cur?.id) return;
+    const sid = cur.id;
+    const beat = () => {
+      tickLiveRate(sid);
+      setLiveTick(n => n + 1);
+    };
+    beat();
+    const timer = window.setInterval(beat, 1_000);
+    return () => window.clearInterval(timer);
+  }, [running, cur?.id]);
+
   const statsData = useMemo(() => {
     const model = models.find(m => m.providerId === cur?.providerId && m.modelId === cur?.modelId);
     // DSH turns 只由权威 closed step 投影；当前消息未保留该元信息时为未知。
     const persisted = statsSnapshot?.sessionId === cur?.id ? statsSnapshot : null;
     const closedStats = persisted ?? projectSessionStats(msgs, { sessionId: cur?.id });
+    // CR-101 R-CR101-10/11：只在生成中给实时流速；闭合后 markStreamEnd 已清空中间态，
+    // 这里再按运行态兜底，避免历史残留被当成实时值。
+    const live = curRt && running ? liveTps(curRt) : null;
     return {
       rounds: closedStats.rounds, steps: closedStats.steps, statsSource: closedStats.source, msgs: msgs.length,
       modelMs: persisted?.modelMs ?? null, toolMs: curRt?.timingKnown ? curRt.toolMs : null,
@@ -1337,13 +1377,14 @@ function Panel(props: PanelProps) {
       timingSource: persisted ? "平台逐生成步骤测量；模型用时仅完整覆盖才累计，TTFT/TPS取最近闭合步骤" : "权威生成计时未上报",
       // CR-068 J10：TPS 只在「本轮输出 tokens + 生成窗口」都已知时给值，否则保持未知。
       tps: persisted?.tps ?? null,
+      liveTps: live?.tps ?? null, liveEstimated: live?.estimated ?? false,
       tokensIn: curRt?.usageKnown ? curRt.tokensIn : null, tokensOut: curRt?.usageKnown ? curRt.tokensOut : null,
       cacheRead: curRt?.cacheKnown ? curRt.cacheRead : null,
       // 上下文是最近一次请求上报的当前窗口占用，不是累计 tokens；上限只认模型声明的 contextWindow。
       contextUsed: curRt?.lastPromptTokens ?? null,
       contextLimit: model?.contextWindow ?? null,
     };
-  }, [msgs, statsSnapshot, cur?.id, cur?.providerId, cur?.modelId, models, curRt?.tokensIn, curRt?.tokensOut, curRt?.cacheRead, curRt?.timingKnown, curRt?.ttftMs, curRt?.lastPromptTokens, curRt?.lastOutTokens, curRt?.lastGenMs]);
+  }, [msgs, statsSnapshot, cur?.id, cur?.providerId, cur?.modelId, models, running, liveTick, curRt?.tokensIn, curRt?.tokensOut, curRt?.cacheRead, curRt?.timingKnown, curRt?.ttftMs, curRt?.lastPromptTokens, curRt?.lastOutTokens, curRt?.lastGenMs]);
   const agentRows = curRt?.subagents ?? [], bgRows = curRt?.background ?? [];
   const agentCount = agentRows.length, bgCount = bgRows.length;
   // CR-068 J12：只有真正需要用户处理（重建/另建）的绑定状态才显示标签与横幅；
@@ -1426,6 +1467,8 @@ function Panel(props: PanelProps) {
       {queued > 0 && <ChatQueuePanel
         rows={queueRows}
         paused={queuePaused}
+        folded={curRt?.queueFolded ?? false}
+        onToggleFold={() => { if (curRt) { curRt.queueFolded = !curRt.queueFolded; bumpRt(); } }}
         onRemove={removeQueued}
         onEdit={editQueued}
         onSendNow={index => { void sendQueuedNow(index); }}
@@ -1463,13 +1506,19 @@ function Panel(props: PanelProps) {
 }
 
 /**
- * 待发队列面板：展示当前会话的排队消息。
+ * 待发队列面板（CR-103）：展示当前会话的排队消息。
  * 数据来自 ChatPanel 的 queues.current（本机内存）；暂停/继续、编辑、删除、立即发送
  * 都是前端真实操作。后端目前没有队列持久化命令，所以没有“跨设备/重启恢复”。
+ * CR-103 密度调整：每条消息固定单行（超宽截断省略，完整内容悬浮 title），操作收进行内；
+ * 引用/附件以 🔗n/📎n 小标内联，暂停态由头部按钮统一表达；头部 ▾/▸ 可折叠
+ * （折叠状态存 SessionRuntime.queueFolded，会话内记忆）；列表限高滚动，滚动条按
+ * UI-SCROLL-001 由共享机制（src/components/scrollbar.ts）按需显示。
  */
 function ChatQueuePanel(props: {
   rows: PendingSend[];
   paused: boolean;
+  folded: boolean;
+  onToggleFold: () => void;
   onRemove: (index: number) => void;
   onEdit: (index: number, text: string) => void;
   onSendNow: (index: number) => void;
@@ -1477,13 +1526,16 @@ function ChatQueuePanel(props: {
 }) {
   const [editing, setEditing] = useState<{ index: number; text: string } | null>(null);
   if (!props.rows.length) return null;
-  return <div className="chat-queue-panel" role="region" aria-label="待发队列">
+  return <div className={`chat-queue-panel ${props.folded ? "folded" : ""}`} role="region" aria-label="待发队列">
     <div className="chat-queue-head">
-      <span className="chat-queue-title">待发队列 <b>{props.rows.length}</b></span>
+      <span className="chat-queue-hleft">
+        <button type="button" className="chat-queue-fold" aria-expanded={!props.folded} aria-label={props.folded ? "展开待发队列" : "收起待发队列"} title={props.folded ? "展开队列" : "收起队列"} onClick={props.onToggleFold}>{props.folded ? "▸" : "▾"}</button>
+        <span className="chat-queue-title">待发队列 <b>{props.rows.length}</b></span>
+      </span>
       <button type="button" className={`chat-queue-pause ${props.paused ? "paused" : ""}`} aria-pressed={props.paused} title={props.paused ? "继续自动发送队列" : "暂停自动发送队列"} onClick={props.onTogglePause}>{props.paused ? "继续" : "暂停"}</button>
     </div>
-    <ol className="chat-queue-list">
-      {props.rows.map((row, index) => editing?.index === index ? <li key={`edit-${row.sid}-${index}`} className="chat-queue-item">
+    {!props.folded && <ol className="chat-queue-list">
+      {props.rows.map((row, index) => editing?.index === index ? <li key={`edit-${row.sid}-${index}`} className="chat-queue-item editing">
         <div className="chat-queue-edit">
           <textarea aria-label="编辑排队消息" value={editing.text} rows={2} onChange={e => setEditing({ index, text: e.target.value })} />
           <div className="chat-queue-edit-actions">
@@ -1492,20 +1544,19 @@ function ChatQueuePanel(props: {
           </div>
         </div>
       </li> : <li key={`${row.sid}-${index}`} className="chat-queue-item">
-        <div className="chat-queue-text" title={row.text}>{row.text}</div>
-        <div className="chat-queue-meta">
-          {row.refs.length > 0 && <span>{row.refs.length} 个引用</span>}
-          {row.atts.length > 0 && <span>{row.atts.length} 个附件</span>}
-          {props.paused && <span className="chat-queue-tag">已暂停</span>}
-        </div>
-        <div className="chat-queue-actions">
+        {(row.refs.length > 0 || row.atts.length > 0) && <span className="chat-queue-meta">
+          {row.refs.length > 0 && <span title={`${row.refs.length} 个引用`}>🔗{row.refs.length}</span>}
+          {row.atts.length > 0 && <span title={`${row.atts.length} 个附件`}>📎{row.atts.length}</span>}
+        </span>}
+        <span className="chat-queue-text" title={row.text}>{row.text}</span>
+        <span className="chat-queue-actions">
           <button type="button" onClick={() => setEditing({ index, text: row.text })}>编辑</button>
           <button type="button" onClick={() => props.onSendNow(index)}>立即发送</button>
           <button type="button" className="danger" onClick={() => props.onRemove(index)}>删除</button>
-        </div>
+        </span>
       </li>)}
-    </ol>
-    <div className="chat-queue-note">队列仅保存在本机内存；关闭窗口或切换会话前请先发送或保存。后端暂无队列持久化。</div>
+    </ol>}
+    {!props.folded && <div className="chat-queue-note">队列仅保存在本机内存；关闭窗口或切换会话前请先发送或保存。后端暂无队列持久化。</div>}
   </div>;
 }
 

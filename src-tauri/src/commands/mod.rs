@@ -8,16 +8,22 @@ pub mod demo_seed;
 pub mod execution;
 pub mod chat;
 pub mod chat_binding;
+// CR-099：模拟客户端身份（仅客户端身份头，不触碰凭证）
+pub mod client_identity;
 pub mod fs;
 pub mod general;
 pub mod gitcmd;
 pub mod gitconfig;
 pub mod kb_index;
+// CR-097：本机受管 Office 转换组件（检测／首次使用下载／行政解包）
+pub mod kb_office;
 pub mod knowledge;
 // CR-092：个人记忆层（数据访问 / 业务 / 工具与命令）
 pub mod memory;
 pub mod memory_store;
 pub mod memory_tools;
+// CR-095：工具分组与按项目类型的默认暴露集
+pub mod tool_groups;
 pub mod model_probe;
 pub mod platform_agent;
 pub(crate) mod platform_context;

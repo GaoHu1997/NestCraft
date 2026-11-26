@@ -41,8 +41,7 @@ interface EditorDraft {
 type DiscoveredModel = Awaited<ReturnType<typeof api.providerDiscoverModels>>[number];
 type SubTab = "provider" | "models";
 const NEW = "__new_provider__";
-const SUBTABS: [SubTab, string][] = [["provider", "供应商配置"], ["models", "模型配置"]];
-const emptyModel = (sortOrder = 0): ModelDraft => ({
+const SUBTABS: [SubTab, string][] = [["provider", "供应商配置"], ["models", "模型配置"]];const emptyModel = (sortOrder = 0): ModelDraft => ({
   localId: crypto.randomUUID(),
   modelId: "", displayName: "", text: true, vision: null, imageGen: false,
   efforts: {}, mappings: {}, defaultEffort: null, contextWindow: "", maxTokens: "", thinking: null, sortOrder,
@@ -163,6 +162,10 @@ export function SettingsModels() {
   const [error, setError] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, EditorDraft>>({});
   const [openId, setOpenId] = useState<string | null>(null);
+  /* CR-099：新增供应商是**草稿**——保存前不进列表、不计入数量、不写库。 */
+  const [newOpen, setNewOpen] = useState(false);
+  /* CR-099：停用供应商默认折叠。 */
+  const [showDisabled, setShowDisabled] = useState(false);
   const [subTab, setSubTab] = useState<SubTab>("provider");
   const [openModel, setOpenModel] = useState<string | null>(null);
   const [keyEdit, setKeyEdit] = useState<{ index: number; mode: "value" | "scope" | "remove"; isNew?: boolean } | null>(null);
@@ -219,7 +222,12 @@ const [saveError, setSaveError] = useState("");
     setOpenId(id); setSubTab("provider"); setOpenModel(null); setKeyEdit(null); setKeyValue(""); setSaveError("");
   };
   useEffect(() => {
-    const listener = () => { if (!busy && !loading && !error) { if (openId === NEW) setSubTab("provider"); else open(null); } };
+    // CR-099：新增供应商改为列表下方草稿；头部入口已移除，这里只处理外部请求。
+    const listener = () => {
+      if (busy || loading || error) return;
+      if (openId === NEW) setSubTab("provider");
+      else { setNewOpen(true); open(null); }
+    };
     window.addEventListener("settings:new-provider", listener);
     return () => window.removeEventListener("settings:new-provider", listener);
   });
@@ -291,6 +299,11 @@ const [saveError, setSaveError] = useState("");
       if (saved) {
         setSaveError("");
         setOpenId(null); setOpenModel(null); setKeyEdit(null); setKeyValue("");
+        // CR-099：新供应商保存成功后才收起草稿区，此时它已进入上方列表。
+        if (newOpen) {
+          setNewOpen(false);
+          setDrafts(prev => { const next = { ...prev }; delete next[NEW]; return next; });
+        }
         toast("供应商与模型修改已保存");
         void probeAfterSave(saved.id);
       }
@@ -650,27 +663,63 @@ const [saveError, setSaveError] = useState("");
       <div className="set-provider-foot"><span className="spacer" /><button className="btn" disabled={busy} onClick={discard}>放弃修改</button><button className="btn primary" disabled={busy} onClick={() => save()}>{busy ? "处理中…" : "保存供应商"}</button></div>
     </div>;
   };
+  /* CR-099：在用与停用分开；停用项不进主列表，改由列表下方的折叠区承载。
+     顺序固定：在用列表 → 查看停用供应商 → 新增供应商 → 新供应商草稿。 */
+  const activeProviders = list.filter(p => !p.disabled);
+  const disabledProviders = list.filter(p => p.disabled);
+  const providerCard = (p: Provider, index: number) => <div key={p.id} className={`set-provider-card ${openId === p.id ? "open" : ""} ${dropTarget?.kind === "provider" && dropTarget.index === index ? `cr085-drop-${dropTarget.after ? "after" : "before"}` : ""}`}
+    onDragOver={e => { if (dragRef.current?.kind !== "provider") return; e.preventDefault(); const rect = e.currentTarget.getBoundingClientRect(); setDropTarget({ kind: "provider", index, after: e.clientY > rect.top + rect.height / 2 }); }}
+    onDrop={e => { if (dragRef.current?.kind !== "provider") return; e.preventDefault(); const rect = e.currentTarget.getBoundingClientRect(); void moveProvider(dragRef.current.index, dropIndex(dragRef.current.index, index, e.clientY > rect.top + rect.height / 2)); dragRef.current = null; setDropTarget(null); }}>
+    <div className="set-provider-head">
+      <button className="set-drag cr085-drag" disabled={busy} draggable={!busy} title="拖动排序 · Alt+↑/↓" aria-label={`排序供应商 ${p.name}`}
+        onDragStart={e => { dragRef.current = { kind: "provider", index }; e.dataTransfer.setData("text/plain", p.id); }} onDragEnd={() => { dragRef.current = null; setDropTarget(null); }}
+        onKeyDown={e => { if (e.altKey && ["ArrowUp", "ArrowDown"].includes(e.key)) { e.preventDefault(); void moveProvider(index, index + (e.key === "ArrowUp" ? -1 : 1)); } }}><SettingsIcon name="drag" /></button>
+      <button className="set-provider-select" disabled={busy} onClick={() => open(p)} aria-expanded={openId === p.id}>
+        <span className="set-provider-info"><b>{p.name}</b><span>{p.protocol} · {p.keys.length} 个密钥 · {p.endpoints.length} 个端点 · {p.models.length} 个模型</span></span>
+      </button>
+      <span className="set-status good">{p.disabled ? "停用" : "启用"}</span>
+      <SettingsSwitch checked={!p.disabled} label={`启用供应商 ${p.name}`} disabled={busy} onChange={v => toggle(p, v)} />
+      <button className="set-icon-btn" disabled={busy} aria-label={`删除供应商 ${p.name}`} onClick={() => setDeleteProvider(p)}><SettingsIcon name="trash" /></button>
+      <button className="set-icon-btn" disabled={busy} aria-label={`${openId === p.id ? "收起" : "展开"}供应商 ${p.name}`} onClick={() => open(p)}><SettingsIcon name={openId === p.id ? "up" : "down"} /></button>
+    </div>{openId === p.id && editor()}</div>;
   return <>
-    <div className="cr085-count">{list.length} 个供应商</div>
+    <div className="cr085-count">{activeProviders.length} 个在用供应商{disabledProviders.length ? ` · ${disabledProviders.length} 个停用` : ""}</div>
     {loading && <p className="set-caption">加载供应商中…</p>}
     {error && <div className="set-note" role="alert">供应商读取失败，已有草稿保留。<button className="btn sm" disabled={busy} onClick={refresh}>重试</button></div>}
-    {drafts[NEW] && <div className={`set-provider-card ${openId === NEW ? "open" : ""}`}><div className="set-provider-head"><button className="set-provider-select" disabled={busy} onClick={() => open(null)}><span className="set-provider-info"><b>{drafts[NEW].name || "新供应商"}</b><span>未保存草稿</span></span><SettingsIcon name={openId === NEW ? "up" : "down"} /></button></div>{openId === NEW && editor()}</div>}
-    {list.map((p, index) => <div key={p.id} className={`set-provider-card ${openId === p.id ? "open" : ""} ${dropTarget?.kind === "provider" && dropTarget.index === index ? `cr085-drop-${dropTarget.after ? "after" : "before"}` : ""}`}
-      onDragOver={e => { if (dragRef.current?.kind !== "provider") return; e.preventDefault(); const rect = e.currentTarget.getBoundingClientRect(); setDropTarget({ kind: "provider", index, after: e.clientY > rect.top + rect.height / 2 }); }}
-      onDrop={e => { if (dragRef.current?.kind !== "provider") return; e.preventDefault(); const rect = e.currentTarget.getBoundingClientRect(); void moveProvider(dragRef.current.index, dropIndex(dragRef.current.index, index, e.clientY > rect.top + rect.height / 2)); dragRef.current = null; setDropTarget(null); }}>
-      <div className="set-provider-head">
-        <button className="set-drag cr085-drag" disabled={busy} draggable={!busy} title="拖动排序 · Alt+↑/↓" aria-label={`排序供应商 ${p.name}`}
-          onDragStart={e => { dragRef.current = { kind: "provider", index }; e.dataTransfer.setData("text/plain", p.id); }} onDragEnd={() => { dragRef.current = null; setDropTarget(null); }}
-          onKeyDown={e => { if (e.altKey && ["ArrowUp", "ArrowDown"].includes(e.key)) { e.preventDefault(); void moveProvider(index, index + (e.key === "ArrowUp" ? -1 : 1)); } }}><SettingsIcon name="drag" /></button>
-        <button className="set-provider-select" disabled={busy} onClick={() => open(p)} aria-expanded={openId === p.id}>
-          <span className="set-provider-info"><b>{p.name}</b><span>{p.protocol} · {p.keys.length} 个密钥 · {p.endpoints.length} 个端点 · {p.models.length} 个模型</span></span>
-        </button>
-        <span className={`set-status ${p.disabled ? "" : "good"}`}>{p.disabled ? "停用" : "启用"}</span>
-        <SettingsSwitch checked={!p.disabled} label={`启用供应商 ${p.name}`} disabled={busy} onChange={v => toggle(p, v)} />
-        <button className="set-icon-btn" disabled={busy} aria-label={`删除供应商 ${p.name}`} onClick={() => setDeleteProvider(p)}><SettingsIcon name="trash" /></button>
-        <button className="set-icon-btn" disabled={busy} aria-label={`${openId === p.id ? "收起" : "展开"}供应商 ${p.name}`} onClick={() => open(p)}><SettingsIcon name={openId === p.id ? "up" : "down"} /></button>
-      </div>{openId === p.id && editor()}</div>)}
-    {!loading && !error && !list.length && !drafts[NEW] && <div className="set-empty">尚无供应商，请新建。</div>}
+    {activeProviders.map((p, index) => providerCard(p, index))}
+    {!loading && !error && !activeProviders.length && !drafts[NEW] && <div className="set-empty">尚无在用供应商，请新建。</div>}
+
+    {/* 停用供应商：默认折叠，入口在在用列表下方、新增供应商上方。 */}
+    {disabledProviders.length > 0 && <div className="cr099-disabled">
+      <button type="button" className="link-btn cr099-fold-btn" aria-expanded={showDisabled} onClick={() => setShowDisabled(v => !v)}>
+        <SettingsIcon name={showDisabled ? "up" : "down"} />查看停用供应商（{disabledProviders.length}）
+      </button>
+      {showDisabled && <div className="cr099-disabled-list" role="region" aria-label="停用供应商">
+        {disabledProviders.map(p => providerCard(p, list.findIndex(x => x.id === p.id)))}
+      </div>}
+    </div>}
+
+    {/* 新增供应商：文字按钮在列表下方；草稿卡在其下方，保存前不入列表。 */}
+    <div className="cr099-provider-actions">
+      <button type="button" className="link-btn cr099-add-btn" disabled={busy} aria-expanded={newOpen}
+        onClick={() => {
+          setNewOpen(true);
+          // 已有草稿时不要「收起」：ensureOpen 只在未打开时创建并展开。
+          if (openId !== NEW) {
+            if (!drafts[NEW]) setDrafts(prev => ({ ...prev, [NEW]: emptyDraft() }));
+            keyRequest.current++; setKeyLoading(false); setProtocolMenu(null); setEndpointOpen({});
+            setOpenId(NEW); setSubTab("provider"); setOpenModel(null); setKeyEdit(null); setKeyValue(""); setSaveError("");
+          }
+        }}><SettingsIcon name="plus" />新增供应商</button>
+      {newOpen && drafts[NEW] && <div className="set-provider-card open cr099-new-draft">
+        <div className="set-provider-head">
+          <span className="set-provider-info"><b>{drafts[NEW].name || "新供应商"}</b><span>未保存 · 填写后点「保存供应商」才进入列表</span></span>
+          <span className="set-status">未保存</span>
+          <button className="set-icon-btn" disabled={busy} aria-label="放弃新供应商草稿" onClick={() => { setNewOpen(false); setDrafts(prev => { const next = { ...prev }; delete next[NEW]; return next; }); setOpenId(null); }}><SettingsIcon name="trash" /></button>
+        </div>
+        {openId === NEW && editor()}
+      </div>}
+    </div>
     {deleteProvider && <SettingsConfirm title="删除供应商" message={`确定删除「${deleteProvider.name}」？其密钥、端点与模型配置将一并移除。`} busy={busy} onCancel={() => setDeleteProvider(null)} onOk={removeProvider} />}
     {deleteModel != null && d && <SettingsConfirm title="删除模型" message="确认从供应商草稿移除此模型？保存供应商后生效。" onCancel={() => setDeleteModel(null)} onOk={() => { update({ models: d.models.filter(m => m.localId !== deleteModel) }); setDeleteModel(null); setOpenModel(null); }} />}
     {protocolMenu && d && d.keys[protocolMenu.index] && <ModelProtocolMenu anchor={protocolMenu.anchor} value={d.keys[protocolMenu.index].protocol}

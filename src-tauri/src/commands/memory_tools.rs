@@ -1,266 +1,157 @@
-//! CR-092 / FEAT-026：记忆工具（供 ai_tools 调用）与 UI 命令。
-//!
-//! 数据访问走 `memory_store`，业务规则走 `memory`。工具侧 scope 由 projectId 派生，
-//! 授权沿用知识工具语义（global 归 owner；project:<id> 需项目可见）。预算见 LLD-FEAT-026 §5。
-
+//! FEAT-026 / MEM-FIX-001: owner UI 与 AI 的可信项目身份分离。
 use crate::commands::memory::{self, Extracted};
 use crate::commands::memory_store::{self, MemoryItem};
 use rusqlite::Connection;
 use serde_json::{json, Value};
 
-const LIST_MAX: usize = 20;
-const SNIPPET_MAX: usize = 200;
-const SAVE_MAX_BYTES: usize = 1024;
+fn text<'a>(args:&'a Value,key:&str)->Option<&'a str> { args.get(key).and_then(Value::as_str).map(str::trim).filter(|v|!v.is_empty()) }
+fn required(args:&Value,key:&str)->Result<String,String> { text(args,key).map(str::to_string).ok_or_else(||format!("缺少必填参数：{key}")) }
+fn limit(args:&Value)->usize { args.get("limit").and_then(Value::as_u64).unwrap_or(10).clamp(1,20) as usize }
+fn with_conn<T>(f:impl FnOnce(&Connection)->Result<T,String>)->Result<T,String> { let guard=crate::db::conn()?;f(guard.as_ref().ok_or("db not initialized")?) }
 
-fn opt_str(args: &Value, key: &str) -> Option<String> {
-    args.get(key)
-        .and_then(Value::as_str)
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-}
-
-fn req_str(args: &Value, key: &str) -> Result<String, String> {
-    opt_str(args, key).ok_or_else(|| format!("缺少必填参数：{key}"))
-}
-
-fn opt_usize(args: &Value, key: &str) -> Option<usize> {
-    args.get(key).and_then(Value::as_u64).map(|v| v as usize)
-}
-
-fn clip(text: &str, max: usize) -> String {
-    if text.chars().count() <= max {
-        text.to_string()
-    } else {
-        let mut out: String = text.chars().take(max).collect();
-        out.push('…');
-        out
+/// project_id来自宿主ToolContext，不允许模型参数覆盖。None读个人+当前项目，写默认当前项目。
+fn resolve_scope(conn:&Connection,requested:Option<&str>,project_id:Option<&str>,write:bool)->Result<Option<String>,String> {
+    match requested {
+        Some("personal"|"global") => Ok(Some("global".into())),
+        None if !write => Ok(None),
+        None if project_id.is_none() => Ok(Some("global".into())),
+        Some("project")|None => {
+            let id=project_id.ok_or("MEMORY_ACCESS_DENIED：无项目会话不能访问项目记忆")?;
+            ensure_project(conn,id)?;
+            Ok(Some(format!("project:{id}")))
+        },
+        Some(scope) if scope.starts_with("project:") => {
+            let id=scope.trim_start_matches("project:");
+            if project_id!=Some(id) { return Err("MEMORY_ACCESS_DENIED：只能访问当前项目记忆".into()); }
+            ensure_project(conn,id)?; Ok(Some(scope.into()))
+        },
+        Some(_) => Err("MEMORY_SCOPE_INVALID：请选择 personal 或 project".into()),
     }
 }
-
-/// 工具参数 → scope：projectId 优先（project:<id>），否则显式 scope，再否则 global。
-pub fn scope_from_args(args: &Value) -> String {
-    match opt_str(args, "projectId") {
-        Some(pid) => format!("project:{pid}"),
-        None => opt_str(args, "scope").unwrap_or_else(|| "global".into()),
-    }
+fn ensure_project(conn:&Connection,id:&str)->Result<(),String> {
+    if !conn.query_row("SELECT EXISTS(SELECT 1 FROM project WHERE id=?1)",[id],|r|r.get::<_,bool>(0)).map_err(|e|e.to_string())? { return Err("MEMORY_ACCESS_DENIED：项目不存在".into()); }
+    Ok(())
 }
-
-fn norm_scope(scope: Option<String>) -> String {
+fn owner_scope(conn:&Connection,scope:Option<&str>)->Result<String,String> {
     match scope {
-        Some(s) if memory::valid_scope(&s) => s,
-        _ => "global".into(),
+        None|Some("personal"|"global") => Ok("global".into()),
+        Some(s) if s.starts_with("project:") => { ensure_project(conn,&s[8..])?;Ok(s.into()) },
+        _=>Err("MEMORY_SCOPE_INVALID".into()),
     }
 }
-
-fn with_conn<T>(f: impl FnOnce(&Connection) -> Result<T, String>) -> Result<T, String> {
-    let guard = crate::db::conn()?;
-    let conn = guard.as_ref().ok_or("db not initialized")?;
-    f(conn)
+fn validate_item_access(conn:&Connection,item:&MemoryItem,project:Option<&str>)->Result<(),String> {
+    resolve_scope(conn,Some(&item.scope),project,true).map(|_|())
 }
-
-pub fn item_json(it: &MemoryItem) -> Value {
-    json!({
-        "id": it.id, "scope": it.scope, "kind": it.kind, "memKey": it.mem_key,
-        "content": it.content, "sourceType": it.source_type, "sourceRef": it.source_ref,
-        "trust": it.trust, "importance": it.importance, "confidence": it.confidence,
-        "status": it.status, "supersededBy": it.superseded_by, "accessCount": it.access_count,
-        "lastAccessAt": it.last_access_at, "createdAt": it.created_at, "updatedAt": it.updated_at
-    })
+fn visible_items(conn:&Connection,scope:Option<String>,project:Option<&str>,kind:Option<&str>,status:Option<&str>)->Result<Vec<MemoryItem>,String> {
+    if let Some(scope)=scope { return memory_store::list(conn,Some(&scope),kind,status,1000); }
+    let mut items=memory_store::list(conn,Some("global"),kind,status,1000)?;
+    if let Some(pid)=project { ensure_project(conn,pid)?;items.extend(memory_store::list(conn,Some(&format!("project:{pid}")),kind,status,1000)?); }
+    items.sort_by(|a,b|a.trust.eq("external").cmp(&b.trust.eq("external")).then(b.updated_at.cmp(&a.updated_at)));
+    Ok(items)
 }
+fn require_enabled_personal_library(conn:&Connection)->Result<(),String> {
+    let enabled:Option<i64>=conn.query_row("SELECT enabled FROM knowledge_library WHERE sourceKind='personal-memory' ORDER BY createdAt,id LIMIT 1",[],|r|r.get(0)).ok();
+    if enabled==Some(0) { return Err("MEMORY_LIBRARY_UNAVAILABLE：个人记忆库已停用".into()); }
+    Ok(())
+}
+fn finish(conn:&Connection,scope:&str)->Result<(),String> {
+    memory::rebuild_profile(conn,scope)?;
+    if scope=="global" { memory::sync_personal(conn)?; }
+    Ok(())
+}
+fn validate_content(content:&str,importance:Option<i64>)->Result<(),String> {
+    if content.trim().is_empty()||content.len()>2048 { return Err("记忆不能为空或超过2048字节".into()); }
+    if importance.is_some_and(|n|!(1..=5).contains(&n)) { return Err("重要度必须1～5".into()); }
+    Ok(())
+}
+pub fn item_json(item:&MemoryItem)->Value { serde_json::to_value(item).unwrap_or(Value::Null) }
 
-// ==================== 工具实现（供 ai_tools::run_tool 调用） ====================
-
-pub fn tool_search(args: &Value) -> Result<Value, String> {
-    let query = opt_str(args, "query").unwrap_or_default();
-    let scope = scope_from_args(args);
-    let kind = opt_str(args, "kind");
-    let limit = opt_usize(args, "limit").unwrap_or(10).clamp(1, LIST_MAX);
+/// AI入口：所有工具共用可信ctx，猜其它项目id亦不能delete。
+pub fn run_tool(ctx:&crate::commands::ai_tools::ToolContext,name:&str,args:&Value)->Result<Value,String> {
     with_conn(|conn| {
-        let items = memory_store::list(conn, Some(&scope), kind.as_deref(), Some("active"), 500)?;
-        let needle = query.to_lowercase();
-        let mut hits: Vec<Value> = Vec::new();
-        for it in items {
-            if !needle.is_empty() && !it.content.to_lowercase().contains(&needle) {
-                continue;
-            }
-            let _ = memory_store::touch_access(conn, &it.id);
-            hits.push(json!({
-                "id": it.id, "kind": it.kind, "content": clip(&it.content, SNIPPET_MAX),
-                "trust": it.trust, "importance": it.importance, "sourceType": it.source_type
-            }));
-            if hits.len() >= limit {
-                break;
-            }
+        require_enabled_personal_library(conn)?;
+        // 禁止把模型提供的projectId当作授权。
+        if let Some(given)=text(args,"projectId") {
+            if ctx.project_id.as_deref()!=Some(given) { return Err("MEMORY_ACCESS_DENIED：projectId与当前会话不一致".into()); }
         }
-        Ok(json!({ "scope": scope, "query": query, "hits": hits, "count": hits.len() }))
-    })
-}
-
-pub fn tool_save(args: &Value) -> Result<Value, String> {
-    let content = req_str(args, "content")?;
-    let kind = req_str(args, "kind")?;
-    if !memory::is_valid_kind(&kind) {
-        return Err(format!("kind 非法：{kind}（应为 fact|preference|goal|event|decision|relation）"));
-    }
-    if content.len() > SAVE_MAX_BYTES {
-        return Err(format!("content 超过 {SAVE_MAX_BYTES} 字节上限"));
-    }
-    let scope = scope_from_args(args);
-    if !memory::valid_scope(&scope) {
-        return Err(format!("scope 非法：{scope}"));
-    }
-    let importance = opt_usize(args, "importance").unwrap_or(3).clamp(1, 5) as i64;
-    let trust = opt_str(args, "trust").unwrap_or_else(|| "own".into());
-    let item = Extracted {
-        kind,
-        mem_key: opt_str(args, "memKey"),
-        content,
-        importance,
-        trust,
-    };
-    with_conn(|conn| {
-        let report = memory::merge(conn, &scope, &[item], "manual", None)?;
-        let _ = memory::rebuild_profile(conn, &scope);
-        Ok(json!({ "scope": scope, "report": report }))
-    })
-}
-
-pub fn tool_list(args: &Value) -> Result<Value, String> {
-    let scope = scope_from_args(args);
-    let kind = opt_str(args, "kind");
-    let status = opt_str(args, "status").or_else(|| Some("active".into()));
-    let limit = opt_usize(args, "limit").unwrap_or(20).clamp(1, LIST_MAX);
-    with_conn(|conn| {
-        let items = memory_store::list(conn, Some(&scope), kind.as_deref(), status.as_deref(), limit)?;
-        let arr: Vec<Value> = items.iter().map(item_json).collect();
-        Ok(json!({ "scope": scope, "items": arr, "count": arr.len() }))
-    })
-}
-
-pub fn tool_forget(args: &Value) -> Result<Value, String> {
-    let id = req_str(args, "id")?;
-    with_conn(|conn| {
-        memory_store::soft_delete(conn, &id)?;
-        Ok(json!({ "id": id, "deleted": true }))
-    })
-}
-
-pub fn tool_profile_get(args: &Value) -> Result<Value, String> {
-    let scope = scope_from_args(args);
-    with_conn(|conn| {
-        let profile = memory_store::get_profile(conn, &scope)?;
-        let fields: Value = serde_json::from_str(&profile.fields_json).unwrap_or(json!({}));
-        Ok(json!({
-            "scope": profile.scope, "summary": profile.summary,
-            "fields": fields, "fieldsJson": profile.fields_json, "revision": profile.revision
-        }))
-    })
-}
-
-// ==================== Tauri 命令（供前端调用） ====================
-
-#[tauri::command]
-pub fn memory_list_items(
-    scope: Option<String>,
-    kind: Option<String>,
-    status: Option<String>,
-    limit: Option<usize>,
-) -> Result<Value, String> {
-    let scope = norm_scope(scope);
-    let limit = limit.unwrap_or(100).clamp(1, 1000);
-    with_conn(|conn| {
-        let items = memory_store::list(conn, Some(&scope), kind.as_deref(), status.as_deref(), limit)?;
-        let arr: Vec<Value> = items.iter().map(item_json).collect();
-        Ok(json!({ "scope": scope, "items": arr, "count": arr.len() }))
-    })
-}
-
-#[tauri::command]
-pub fn memory_get_item(id: String) -> Result<Value, String> {
-    with_conn(|conn| match memory_store::get(conn, &id)? {
-        Some(it) => Ok(item_json(&it)),
-        None => Err(format!("记忆不存在：{id}")),
-    })
-}
-
-#[tauri::command]
-pub fn memory_update_item(id: String, content: String, importance: Option<i64>) -> Result<Value, String> {
-    with_conn(|conn| {
-        memory_store::update_content(conn, &id, &content, importance)?;
-        if let Some(item) = memory_store::get(conn, &id)? {
-            let _ = memory::rebuild_profile(conn, &item.scope);
+        let project=ctx.project_id.as_deref();
+        match name {
+            "memory_search"|"memory_list" => {
+                let scope=resolve_scope(conn,text(args,"scope"),project,false)?;
+                let query=if name=="memory_search" { required(args,"query")?.to_lowercase() } else { String::new() };
+                let status=text(args,"status").unwrap_or("active");
+                let items=visible_items(conn,scope,project,text(args,"kind"),Some(status))?;
+                let hits:Vec<_>=items.into_iter().filter(|it|query.is_empty()||it.content.to_lowercase().contains(&query)||it.mem_key.as_ref().is_some_and(|k|k.to_lowercase().contains(&query)))
+                    .take(limit(args)).map(|mut it| { it.content=it.content.chars().take(200).collect();item_json(&it) }).collect();
+                Ok(json!({"items":hits,"hits":hits,"count":hits.len(),"visibleScopes":if let Some(p)=project {vec!["global".to_string(),format!("project:{p}")]} else {vec!["global".into()]}}))
+            },
+            "memory_save" => {
+                let scope=resolve_scope(conn,text(args,"scope"),project,true)?.ok_or("MEMORY_SCOPE_INVALID")?;
+                let content=required(args,"content")?; let kind=required(args,"kind")?;
+                let importance=args.get("importance").and_then(Value::as_i64).unwrap_or(3);
+                validate_content(&content,Some(importance))?;
+                if content.len()>1024 { return Err("content超过1024字节".into()); }
+                if !memory::is_valid_kind(&kind) { return Err("记忆kind非法".into()); }
+                let item=Extracted {kind,mem_key:text(args,"memKey").map(str::to_string),content,importance,trust:"own".into(),memory_scope:if scope=="global" {"personal".into()} else {"project".into()} };
+                let tx=conn.unchecked_transaction().map_err(|e|e.to_string())?;
+                let report=memory::merge(&tx,&scope,&[item],"manual",None)?;
+                memory::rebuild_profile(&tx,&scope)?;
+                tx.commit().map_err(|e|e.to_string())?;
+                if scope=="global" { memory::sync_personal(conn)?; }
+                Ok(json!({"saved":true,"scope":scope,"synced":scope=="global","report":report}))
+            },
+            "memory_forget" => {
+                let id=required(args,"id")?;
+                let item=memory_store::get(conn,&id)?.ok_or("记忆不存在")?;
+                validate_item_access(conn,&item,project)?;
+                memory_store::soft_delete(conn,&id)?;finish(conn,&item.scope)?;
+                Ok(json!({"deleted":true,"id":id,"scope":item.scope}))
+            },
+            "profile_get" => {
+                let scope=resolve_scope(conn,Some(text(args,"scope").unwrap_or("personal")),project,false)?.ok_or("MEMORY_SCOPE_INVALID")?;
+                Ok(json!(memory_store::get_profile(conn,&scope)?))
+            },
+            _=>Err("未知记忆工具".into()),
         }
-        Ok(json!({ "id": id, "updated": true }))
     })
 }
 
+// owner UI 可选择任何现有项目，但AI不可调用这些owner IPC绕过ctx。
 #[tauri::command]
-pub fn memory_delete_item(id: String, hard: Option<bool>) -> Result<Value, String> {
-    with_conn(|conn| {
-        let item = memory_store::get(conn, &id)?;
-        let hard = hard.unwrap_or(false);
-        if hard {
-            memory_store::hard_delete(conn, &id)?;
-        } else {
-            memory_store::soft_delete(conn, &id)?;
-        }
-        if let Some(item) = item {
-            let _ = memory::rebuild_profile(conn, &item.scope);
-        }
-        Ok(json!({ "id": id, "deleted": true, "hard": hard }))
-    })
+pub fn memory_list_items(scope:Option<String>,kind:Option<String>,status:Option<String>,limit:Option<usize>)->Result<Value,String> {
+    with_conn(|conn| { let scope=owner_scope(conn,scope.as_deref())?;let items=memory_store::list(conn,Some(&scope),kind.as_deref(),status.as_deref(),limit.unwrap_or(500).clamp(1,1000))?;Ok(json!({"scope":scope,"items":items})) })
 }
-
 #[tauri::command]
-pub fn memory_get_profile(scope: Option<String>) -> Result<Value, String> {
-    let scope = norm_scope(scope);
-    with_conn(|conn| {
-        let profile = memory_store::get_profile(conn, &scope)?;
-        Ok(json!({
-            "scope": profile.scope,
-            "fieldsJson": profile.fields_json,
-            "summary": profile.summary,
-            "revision": profile.revision
-        }))
-    })
+pub fn memory_get_item(id:String)->Result<Value,String> { with_conn(|conn|memory_store::get(conn,&id)?.map(|it|item_json(&it)).ok_or("记忆不存在".into())) }
+#[tauri::command]
+pub fn memory_update_item(id:String,content:String,importance:Option<i64>)->Result<Value,String> {
+    validate_content(&content,importance)?;
+    with_conn(|conn| { let item=memory_store::get(conn,&id)?.ok_or("记忆不存在")?;memory_store::update_content(conn,&id,&content,importance)?;finish(conn,&item.scope)?;Ok(json!({"updated":true,"id":id,"scope":item.scope})) })
 }
-
 #[tauri::command]
-pub fn memory_update_profile(
-    scope: Option<String>,
-    fields_json: Option<String>,
-    summary: Option<String>,
-) -> Result<Value, String> {
-    let scope = norm_scope(scope);
-    with_conn(|conn| {
-        let current = memory_store::get_profile(conn, &scope)?;
-        let fields = fields_json.unwrap_or(current.fields_json);
-        let summary = summary.unwrap_or(current.summary);
-        memory_store::upsert_profile(conn, &scope, &fields, &summary)?;
-        Ok(json!({ "scope": scope, "updated": true }))
-    })
+pub fn memory_delete_item(id:String,hard:Option<bool>)->Result<Value,String> {
+    with_conn(|conn|{let item=memory_store::get(conn,&id)?.ok_or("记忆不存在")?;if hard.unwrap_or(false) {memory_store::hard_delete(conn,&id)?;}else{memory_store::soft_delete(conn,&id)?;}finish(conn,&item.scope)?;Ok(json!({"deleted":true,"id":id,"scope":item.scope}))})
 }
-
 #[tauri::command]
-pub fn memory_stats(scope: Option<String>) -> Result<Value, String> {
-    let scope = norm_scope(scope);
-    with_conn(|conn| memory_store::counts(conn, &scope))
+pub fn memory_get_profile(scope:Option<String>)->Result<Value,String> { with_conn(|conn|{let scope=owner_scope(conn,scope.as_deref())?;Ok(json!(memory_store::get_profile(conn,&scope)?))}) }
+#[tauri::command]
+pub fn memory_update_profile(scope:Option<String>,fields_json:Option<String>,summary:Option<String>)->Result<Value,String> {
+    with_conn(|conn| {let scope=owner_scope(conn,scope.as_deref())?;let p=memory_store::get_profile(conn,&scope)?;let fields=fields_json.unwrap_or(p.fields_json);serde_json::from_str::<Value>(&fields).map_err(|_|"fieldsJson非法")?;let summary=summary.unwrap_or(p.summary);if summary.len()>2048 {return Err("画像摘要超过2048字节".into());}memory_store::upsert_profile(conn,&scope,&fields,&summary)?;if scope=="global" {memory::sync_personal(conn)?;}Ok(json!({"updated":true,"scope":scope}))})
 }
-
 #[tauri::command]
-pub fn memory_ensure_library() -> Result<Value, String> {
-    let root = crate::storage_layout::root()?;
-    with_conn(|conn| {
-        let id = memory::ensure_memory_library(conn, &root)?;
-        Ok(json!({ "libraryId": id }))
-    })
-}
-
-/// 手动沉淀：同步执行；失败返回错误由前端提示（不伪装成功）。
+pub fn memory_stats(scope:Option<String>)->Result<Value,String> { with_conn(|conn|{let scope=owner_scope(conn,scope.as_deref())?;memory_store::counts(conn,&scope)}) }
 #[tauri::command]
-pub fn memory_resediment_session(session_id: String) -> Result<Value, String> {
-    match memory::run_extraction_for_session(&session_id) {
-        Ok(report) => Ok(json!({ "sessionId": session_id, "report": report })),
-        Err(error) => Err(error),
-    }
+pub fn memory_ensure_library()->Result<Value,String> { with_conn(|conn|{let root=crate::storage_layout::root()?;let id=memory::ensure_memory_library(conn,&root)?;let count=memory::sync_personal_at(conn,&root)?;Ok(json!({"libraryId":id,"synced":true,"fileCount":count}))}) }
+#[tauri::command]
+pub async fn memory_resediment_session(session_id:String)->Result<Value,String> { let id=session_id.clone();let report=tauri::async_runtime::spawn_blocking(move ||memory::run_extraction_for_session(&id)).await.map_err(|_|"抽取任务中断")??;Ok(json!({"sessionId":session_id,"report":report})) }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn conn()->Connection {let c=Connection::open_in_memory().unwrap();memory_store::ensure_schema(&c).unwrap();c.execute_batch("CREATE TABLE project(id TEXT PRIMARY KEY);INSERT INTO project VALUES('a'),('b');").unwrap();c}
+    fn item(scope:&str)->MemoryItem {MemoryItem{id:"m".into(),scope:scope.into(),kind:"fact".into(),mem_key:None,content:"fixture".into(),source_type:"manual".into(),source_ref:None,trust:"own".into(),importance:3,confidence:0.7,status:"active".into(),superseded_by:None,access_count:0,last_access_at:None,created_at:1,updated_at:1}}
+    #[test] fn personal_scope_not_overridden_by_current_project(){let c=conn();assert_eq!(resolve_scope(&c,Some("personal"),Some("a"),true).unwrap(),Some("global".into()));assert_eq!(resolve_scope(&c,Some("project"),Some("a"),true).unwrap(),Some("project:a".into()));}
+    #[test] fn other_projects_and_unknown_scope_rejected(){let c=conn();assert!(resolve_scope(&c,Some("project:b"),Some("a"),false).is_err());assert!(resolve_scope(&c,Some("project"),None,false).is_err());assert!(resolve_scope(&c,Some("all"),Some("a"),false).is_err());}
+    #[test] fn read_only_personal_and_current_project(){let c=conn();for s in ["global","project:a","project:b"]{let mut i=item(s);i.id=s.into();memory_store::insert(&c,&i).unwrap();}let rows=visible_items(&c,None,Some("b"),None,Some("active")).unwrap();assert_eq!(rows.len(),2);assert!(rows.iter().all(|it|it.scope!="project:a"));}
+    #[test] fn guessed_id_cannot_forget_other_project(){let c=conn();assert!(validate_item_access(&c,&item("project:a"),Some("b")).is_err());assert!(validate_item_access(&c,&item("project:a"),None).is_err());assert!(validate_item_access(&c,&item("global"),Some("b")).is_ok());}
 }

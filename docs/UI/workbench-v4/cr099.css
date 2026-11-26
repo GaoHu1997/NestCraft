@@ -1,0 +1,121 @@
+/* UI-CR099-v1：设置中心评审二轮与能力管理合并（设计稿样式，纯视觉层）。
+   只作用于设计原型；不改变正式软件样式与行为。
+   UI-SCROLL-001：本文件不新增滚动区域，滚动显隐仍由 scrollbar.js 接管（实际滚动出现、停止 700ms 隐藏）。 */
+
+/* ---------- 通用：粘附条与滚动容器的边界（修穿模） ----------
+   根因：粘附条用负上边距伸进 .set-scroll 的 padding-top，滚动到中段时
+   正文会在 padding 区域从条的上方露出。修法：通用页取消该 padding-top，
+   让粘附条正好贴住容器顶边并整幅不透明覆盖，正文不再出现在它上方。 */
+.set-scroll:has(.c91) { padding-top: 0; }
+.set-scroll .c91-bar { margin-top: 0; background: var(--surface); }
+.set-scroll .c91-bar::before {
+  content: ""; position: absolute; left: 0; right: 0; top: -1px; height: 1px;
+  background: var(--surface);
+}
+
+/* ---------- 通用：模拟客户端身份 ---------- */
+.c95-identity { display: flex; flex-direction: column; gap: 8px; }
+.c95-identity-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.c95-identity-presets { display: flex; align-items: center; gap: 6px; }
+.c95-identity-presets[data-disabled="true"] { opacity: .55; }
+.c95-identity-presets .c95-preset {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px;
+  border: 1px solid var(--line); border-radius: 7px; background: var(--surface);
+  font: inherit; font-size: 12px; color: var(--ink-2); cursor: pointer;
+}
+.c95-identity-presets .c95-preset[aria-checked="true"] {
+  border-color: var(--primary-line); background: var(--primary-soft); color: var(--primary); font-weight: 600;
+}
+.c95-identity-presets .c95-preset:disabled { cursor: not-allowed; }
+.c95-identity-hint { font-size: 11px; color: var(--muted); line-height: 1.55; }
+.c95-identity-hint b { color: var(--ink-2); font-weight: 600; }
+
+/* ---------- 模型管理：列表下方入口 ＋ 停用折叠 ----------
+   顺序：在用列表 → 停用折叠 → 新增供应商。
+   两个按钮都复用产品既有文字按钮 .text-add（cr059.css）：不覆盖颜色、内边距与悬停，
+   避免与既有外观分叉。停用卡是原型原节点搬入的，本文件不改卡片自身样式。 */
+.c95-provider-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--line-soft); }
+/* 草稿卡落在「新增供应商」这一行下面；它不是供应商数据，保存前不进列表、不计入数量。 */
+.c95-new-slot { display: grid; gap: 8px; width: 100%; }
+.c95-new-slot:empty { display: none; }
+.c95-new-slot .provider-card { margin-bottom: 0; }
+.c99-draft .tag.amber { flex: 0 0 auto; }
+.c95-disabled { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line-soft); }
+.c95-fold-btn[aria-expanded="true"] { color: var(--primary-strong); }
+.c95-disabled-list { display: grid; gap: 8px; margin-top: 6px; }
+.c95-disabled-list[hidden] { display: none; }
+
+/* ---------- 模型管理：端点输入框左缘对齐 ----------
+   原来「已填地址」渲染 label+input，「未填」渲染单个按钮，两者左缘不一致。
+   统一为定宽协议列 + 同起点输入框；未填时给同样的 label，输入框只是空占位。 */
+.settings-dialog .c85-endpoint {
+  display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: center; gap: 10px;
+}
+.settings-dialog .c85-endpoint > .endpoint-proto,
+.settings-dialog .c85-endpoint > label.endpoint-proto {
+  width: 76px; min-width: 76px; font-size: 12px; color: var(--muted); white-space: nowrap;
+}
+.settings-dialog .c85-endpoint > .input { width: 100%; min-width: 0; }
+
+/* ---------- 模型检测：这一段只讲指纹归因到哪个模型 ----------
+   用户第三轮：移除整段「存在不通过项」，此处只展示归因结论。
+   仍是一段 11.5px 正文，无边框、无底色、无独立卡片。 */
+.c95-result-text {
+  margin: 6px 0 0; font-size: 11.5px; line-height: 17px; color: var(--ink-2); min-width: 0;
+  overflow-wrap: anywhere;
+}
+.c95-result-text b { font-weight: 600; color: var(--ink); }
+.c95-result-text .mono { font-family: var(--mono); }
+.c95-result-text .c95-attr-flag { margin: 0 6px; vertical-align: 1px; }
+.c95-result-text .c95-attr-claimed { margin-right: 2px; color: var(--muted); }
+/* 结果区按内容长高（仍是一个结果区，不再出现第二块归因卡）。 */
+.probe-section.c95-probe .c85-result { height: auto; min-height: 108px; }
+.probe-section.c95-probe .c85-result-summary { height: auto; flex: 0 0 auto; -webkit-line-clamp: 2; }
+
+/* ---------- 能力管理：四个 tab ---------- */
+.c95-abilities { display: flex; flex-direction: column; gap: 14px; }
+.c95-ab-tabs { display: flex; align-items: center; gap: 2px; border-bottom: 1px solid var(--line); }
+.c95-ab-tabs button {
+  height: 34px; padding: 0 14px; border: 0; border-bottom: 2px solid transparent; background: transparent;
+  font: inherit; font-size: 12.5px; color: var(--muted); cursor: pointer;
+}
+.c95-ab-tabs button:hover { color: var(--ink); }
+.c95-ab-tabs button[aria-selected="true"] { color: var(--ink); font-weight: 600; border-bottom-color: var(--primary); }
+.c95-ab-tabs button:focus-visible { outline: none; box-shadow: var(--ring); border-radius: 5px 5px 0 0; }
+.c95-ab-panel { min-width: 0; }
+
+/* ---------- 搜索（能力 · 搜索） ---------- */
+.s95-search { display: grid; gap: 14px; }
+.c95-card { border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); overflow: hidden; }
+.c95-card-h { display: flex; flex-direction: column; gap: 3px; padding: 11px 14px; background: var(--surface-2); border-bottom: 1px solid var(--line-soft); }
+.c95-card-h b { font-size: 13px; }
+.c95-card-b { display: grid; gap: 12px; padding: 14px; }
+.c95-card-f { display: flex; align-items: center; gap: 8px; padding-top: 4px; }
+.c95-card-f .spacer { flex: 1 1 auto; }
+.c95-field { display: grid; grid-template-columns: 120px minmax(0, 1fr); align-items: center; gap: 12px; }
+.c95-field > label { font-size: 12px; color: var(--muted); }
+.c95-field .c95-hint { grid-column: 2; }
+/* 与软件侧一致：普通输入不吃满整行，长地址类单独放宽。 */
+.c95-field > .input { width: 100%; max-width: 300px; }
+.c95-field > .input.mono { max-width: 460px; }
+.c95-field .input.c95-num { width: 96px; max-width: 96px; }
+.c95-field > .seg { justify-self: start; }
+.c95-grant { border-top: 1px solid var(--line-soft); padding-top: 10px; display: grid; gap: 6px; }
+.c95-grant:first-child { border-top: 0; padding-top: 0; }
+.c95-grant-h { display: flex; align-items: center; gap: 8px; }
+.c95-grant-h b { font-size: 12.5px; }
+.c95-grant-row { display: flex; align-items: center; gap: 10px; padding-left: 2px; }
+.c95-grant-row .mono { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+
+/* ---------- 窄屏 ---------- */
+@media (max-width: 720px) {
+  .c95-field { grid-template-columns: minmax(0, 1fr); }
+  .c95-field .c95-hint { grid-column: 1; }
+  .c95-field-pair { grid-template-columns: minmax(0, 1fr); }
+  .c95-provider-actions { flex-wrap: wrap; row-gap: 8px; }
+  .settings-dialog .c85-endpoint { grid-template-columns: 64px minmax(0, 1fr); gap: 8px; }
+  .settings-dialog .c85-endpoint > .endpoint-proto { width: 64px; min-width: 64px; }
+  /* CR-099：左栏在窄屏横排换行后，按钮文字不能重叠（标签更长且多了一层「能力管理」）。 */
+  .settings-dialog .set-nav-list { gap: 4px 6px; }
+  .settings-dialog .s-item { width: auto; max-width: 100%; height: 32px; padding: 0 8px; gap: 6px; white-space: nowrap; font-size: 12.5px; }
+}

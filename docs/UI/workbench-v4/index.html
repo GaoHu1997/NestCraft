@@ -50,7 +50,15 @@
   <link rel="stylesheet" href="cr085-sdk.css">
   <link rel="stylesheet" href="cr085-settings.css">
   <link rel="stylesheet" href="cr091-general.css">
+  <!-- CR-099：设置中心评审二轮与能力管理合并（左栏五项、模型管理入口重排、检测归因并入、能力四 tab）。 -->
+  <link rel="stylesheet" href="cr099.css">
   <link rel="stylesheet" href="message-reference.css">
+  <!-- CR-096：AI 会话字号与聊天区视觉校正（字号统一、消息区背景、帽子灰底、轮次概览浮框、工作台隐藏侧栏开关）。
+       必须排在 message-reference.css 之后：本版要收敛该资源定义的 16/18px 正文与 #f8f8f8 灰底。 -->
+  <link rel="stylesheet" href="cr096.css">
+  <!-- CR-100：AI 侧栏按实际容器宽度适配（运行栏收缩、消息缩进、浮层宽度、长内容不撑破）。
+       必须排在 cr096.css 之后：本版用容器查询补窄栏档位，不覆盖 CR-096 字号与灰帽取值。 -->
+  <link rel="stylesheet" href="cr100.css">
 </head>
 <body>
   <div class="app" id="app"></div>
@@ -103,6 +111,11 @@
   <script src="cr085-settings.js"></script>
   <!-- CR-091：设置 → 通用 布局重排（分组、补充项、单一草稿保存）。仅合成演示，须在 cr085-settings.js 之后加载。 -->
   <script src="cr091-general.js"></script>
+  <!-- CR-099：设置中心评审二轮与能力管理合并。须在 cr085-* / cr091-general.js 之后，
+       因为它在既有设置渲染结果上做补丁（左栏、模型管理入口、检测归因、能力四 tab）。 -->
+  <script src="cr099.js"></script>
+  <!-- CR-096：轮次概览浮框（R2）挂载与滚动高亮；依赖 ai.js 的 AIPanel 与 core.js 的 UI.render，须在其后加载。 -->
+  <script src="cr096.js"></script>
   <!-- CR-026 执行计划桥接（execution-plan-model.js / execution-closure.js / execution-closure.css）
        为并行会话产物，文件原地保留；本版新外壳未挂载，待合并确认后再接入，避免两套派发流程互相覆盖。 -->
 </body>

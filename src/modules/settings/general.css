@@ -66,6 +66,27 @@ html[data-theme="dark"] .g-dirty { color: #e0a04a; }
 .g-version { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; }
 .g-about-meta { font-size: 11px; color: var(--set-muted); }
 
+/* ---------- CR-099：模拟客户端身份 ---------- */
+.g-identity { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.g-identity-presets { display: flex; align-items: center; gap: 6px; }
+.g-identity-presets[data-disabled="true"] { opacity: .55; }
+.g-identity-preset {
+  height: 30px; padding: 0 12px; border: 1px solid var(--set-line); border-radius: 7px;
+  background: var(--set-surface); color: var(--set-ink-2); font: inherit; font-size: 12px; cursor: pointer;
+}
+.g-identity-preset[aria-checked="true"] {
+  border-color: var(--set-primary-line); background: var(--set-primary-soft); color: var(--set-primary); font-weight: 600;
+}
+.g-identity-preset:disabled { cursor: not-allowed; }
+.g-identity-preset:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--set-primary-soft); }
+
+/* ---------- CR-099：粘附条与滚动容器边界（修穿模） ----------
+   原实现用负上边距把粘附条伸进 .set-scroll 的 padding-top，
+   滚动到中段时正文会在 padding 区域从条上方露出。取消该上内边距，
+   让粘附条正好贴住容器顶边并整幅不透明覆盖。 */
+.set-scroll:has(.g-general) { padding-top: 0; }
+.set-scroll .g-bar { margin-top: 0; background: var(--set-surface); }
+
 /* ---------- 紧凑密度（跟随设置项即时生效） ---------- */
 html[data-density="compact"] .g-row { padding: 7px 0; }
 html[data-density="compact"] .g-group { margin-bottom: 10px; }

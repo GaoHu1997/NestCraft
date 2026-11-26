@@ -1,4 +1,6 @@
-// WP-074-F012：仅格式/展示边界回归，不调用真实上游/IPC，不构建全项目。
+// WP-074-F012 + CR-101：仅格式/展示边界回归，不调用真实上游/IPC，不构建全项目。
+// CR-101 替代了「未知一律显示 —」的静态占位：本脚本相应断言已同步为「字段级省略」，
+// 未删除任何检查项，而是把预期更新为新规则并另外加反向断言。
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createRequire} from 'node:module';
@@ -21,7 +23,7 @@ vm.runInNewContext(output.outputText,{exports,require:id=>{
  if(id==='./sessionRuntime')return {formatDur:ms=>ms<1000?`${ms}ms`:ms<60000?`${(ms/1000).toFixed(1)}s`:`${Math.floor(ms/60000)}m${String(Math.round(ms%60000/1000)).padStart(2,'0')}s`};
  return require(id);
 }},{filename:'StatsBar.cjs'});
-const {fmtTok,statsPresentation,StatsBar}=exports;
+const {fmtTok,fmtTps,statsPresentation,statsView,StatsBar}=exports;
 const base={rounds:1,msgs:4,modelMs:null,toolMs:null,ttftMs:null,tps:null,tokensIn:null,tokensOut:null,cacheRead:null,contextUsed:null,contextLimit:null};
 const fixture={...base,steps:17,tps:22,tokensIn:105000,cacheRead:1395000,tokensOut:300000,contextUsed:150000,contextLimit:1000000};
 const html=(data,open=null)=>{activeOverlay=open;return renderToStaticMarkup(React.createElement(StatsBar,{data}));};
@@ -29,19 +31,38 @@ const checks=[];
 const check=(name,fn)=>{fn();checks.push({name,pass:true});};
 check('TSX syntax transpiles',()=>assert.ok(output.outputText));
 for(const [input,expected] of [[0,'0'],[1,'1'],[999,'999'],[1000,'1K'],[10000,'10K'],[128000,'128K'],[1000000,'1M'],[1800000,'1.8M'],[2000000,'2M'],[null,'—'],[undefined,'—'],[NaN,'—'],[Infinity,'—'],[-1,'—']])check(`fmtTok ${String(input)} => ${expected}`,()=>assert.equal(fmtTok(input),expected));
-check('reference groups and live 15% arc',()=>{const text=html(fixture);assert.ok(text.includes('1 轮 17 步 · 22 tok/s'));assert.ok(text.includes('1.8M tok · 缓存命中 93%'));assert.ok(text.includes('stroke-dasharray="15 100"'));assert.ok(text.includes('15%'));assert.equal((text.match(/data-chat-overlay-trigger=/g)||[]).length,3);});
-check('missing steps stays unknown without inference',()=>{const data={...fixture,steps:undefined,msgs:999};assert.ok(html(data).includes('1 轮 — 步 · 22 tok/s'));assert.equal(statsPresentation(data).steps,null);});
-check('zero fields stay known',()=>{const data={...fixture,rounds:0,msgs:0,steps:0,modelMs:0,toolMs:0,ttftMs:0,tps:0,tokensIn:0,tokensOut:0,cacheRead:0,contextUsed:0,contextLimit:100};const p=statsPresentation(data);assert.equal(p.empty,false);assert.equal(p.total,0);assert.equal(p.ctxPct,0);assert.ok(html(data).includes('0 轮 0 步 · 0 tok/s'));assert.ok(html(data).includes('0 tok · 缓存命中 —'));assert.ok(html(data,'session').includes('0ms'));assert.equal((html(data,'tokens').match(/<b>0 tok<\/b>/g)||[]).length,3);});
-check('cache miss is real 0% when denominator is known positive',()=>{const d={...fixture,tokensIn:100,cacheRead:0,tokensOut:0};assert.equal(statsPresentation(d).cacheHitPct,0);assert.ok(html(d).includes('100 tok · 缓存命中 0%'));});
-check('missing cache never claims complete total; partial stays in detail',()=>{const d={...base,tokensIn:100,tokensOut:20};const p=statsPresentation(d);assert.equal(p.total,null);assert.equal(p.partialTotal,120);assert.equal(p.cacheHitPct,null);assert.ok(html(d).includes('— tok · 缓存命中 —'));assert.ok(html(d,'tokens').includes('已知部分 120 tok（部分字段未上报）'));});
+for(const [input,expected] of [[126.44,'126'],[126,'126'],[12.0,'12'],[9.94,'9.9'],[9.96,'10'],[0.06,'0.1'],[-1,'0']])check(`fmtTps ${input} => ${expected}`,()=>assert.equal(fmtTps(input),expected));
+check('reference groups and live 15% arc',()=>{const text=html(fixture);assert.ok(text.includes('1 轮 17 步 · 22 tok/s'));assert.ok(text.includes('1.8M tok · 缓存 93%'));assert.doesNotMatch(text,/缓存命中/,'CR-101 R14：统计条不写「缓存命中」');assert.ok(text.includes('stroke-dasharray="15 100"'));assert.ok(text.includes('15%'));assert.equal((text.match(/data-chat-overlay-trigger=/g)||[]).length,3);});
+check('missing steps stays unknown without inference',()=>{const data={...fixture,steps:undefined,msgs:999};assert.ok(html(data).includes('1 轮 · 22 tok/s'),'CR-101：未知步数省略片段，不留「— 步」');assert.doesNotMatch(html(data),/— 步/);assert.equal(statsPresentation(data).steps,null);});
+check('zero fields stay known',()=>{const data={...fixture,rounds:0,msgs:0,steps:0,modelMs:0,toolMs:0,ttftMs:0,tps:0,tokensIn:0,tokensOut:0,cacheRead:0,contextUsed:0,contextLimit:100};const p=statsPresentation(data);assert.equal(p.empty,false);assert.equal(p.total,0);assert.equal(p.ctxPct,0);assert.ok(html(data).includes('0 轮 0 步 · 0 tok/s'),'可信零流速仍显示');assert.ok(html(data).includes('0 tok'),'可信零用量仍显示');assert.ok(html(data,'session').includes('0ms'));assert.equal((html(data,'tokens').match(/<b>0 tok<\/b>/g)||[]).length,3);});
+check('cache miss is real 0% when denominator is known positive',()=>{const d={...fixture,tokensIn:100,cacheRead:0,tokensOut:0};assert.equal(statsPresentation(d).cacheHitPct,0);assert.ok(html(d).includes('100 tok · 缓存 0%'));});
+check('missing cache never claims complete total; partial stays visible and in detail',()=>{const d={...base,tokensIn:100,tokensOut:20};const p=statsPresentation(d);assert.equal(p.total,null);assert.equal(p.partialTotal,120);assert.equal(p.cacheHitPct,null);
+ assert.ok(html(d).includes('已知 120 tok'),'CR-101：完整总量未知时显示已知部分，不冒充总量也不藏数据');
+ assert.doesNotMatch(html(d),/\btok · 缓存/,'无缓存命中率时不出现空的缓存片段');
+ assert.equal((html(d).match(/data-chat-overlay-trigger=/g)||[]).length,2,'会话组与 Token 组入口都在');
+ assert.ok(html(d,'tokens').includes('已知部分 120 tok（部分字段未上报）'),'详情仍说明是已知部分');});
 check('missing input/output retain partial without guessing',()=>{for(const key of ['tokensIn','tokensOut']){const d={...fixture,[key]:null};assert.equal(statsPresentation(d).total,null);assert.ok(html(d,'tokens').includes('已知部分'));}});
 check('zero denominator does not fabricate context/cache pct',()=>{const d={...fixture,tokensIn:0,cacheRead:0,contextUsed:0,contextLimit:0};const p=statsPresentation(d);assert.equal(p.ctxPct,null);assert.equal(p.cacheHitPct,null);assert.equal((html(d).match(/<circle/g)||[]).length,1);assert.ok(html(d,'context').includes('窗口上限为0，比例不可计算'));assert.ok(html(d,'context').includes('>0 tok</'));});
-check('unknown context is an empty track, not cumulative usage',()=>{for(const d of [{...fixture,contextUsed:null},{...fixture,contextLimit:null}]){assert.equal(statsPresentation(d).ctxPct,null);assert.equal((html(d).match(/<circle/g)||[]).length,1);assert.ok(!html(d).includes('15%'));}});
+check('unknown context never fabricates an arc or a placeholder',()=>{
+ const noUsed={...fixture,contextUsed:null};
+ assert.equal(statsPresentation(noUsed).ctxPct,null);
+ assert.equal(statsView(noUsed).groups.some(g=>g.id==='context'),false,'CR-101：无窗口占用时上下文组不渲染');
+ assert.equal((html(noUsed).match(/<circle/g)||[]).length,0,'无组即无圆环');
+ const noLimit={...fixture,contextLimit:null};
+ assert.equal(statsPresentation(noLimit).ctxPct,null);
+ assert.equal((html(noLimit).match(/<circle/g)||[]).length,1,'上限未知时只画空轨道，不造弧段');
+ assert.ok(html(noLimit).includes('~150K tok'),'上限未知时显示已用量而不是假百分比');
+ for(const d of [noUsed,noLimit])assert.ok(!html(d).includes('15%'));});
 check('only current window drives pct',()=>assert.equal(statsPresentation({...fixture,tokensIn:999999999,tokensOut:999999999}).ctxPct,15));
 check('over-limit context clamps arc at 100 without overflow',()=>{const p=statsPresentation({...fixture,contextUsed:Number.MAX_VALUE,contextLimit:1});assert.equal(p.ctxPct,100);assert.ok(html({...fixture,contextUsed:Number.MAX_VALUE,contextLimit:1}).includes('stroke-dasharray="100 100"'));});
 check('invalid, non-finite, negative and overflow cannot render NaN/Infinity',()=>{for(const value of [NaN,Infinity,-1]){const d=Object.fromEntries(Object.keys(fixture).map(k=>[k,value]));for(const open of [null,'session','tokens','context'])assert.doesNotMatch(html(d,open),/NaN|Infinity/);}assert.equal(statsPresentation({...fixture,tokensIn:Number.MAX_VALUE,cacheRead:Number.MAX_VALUE}).total,null);});
 check('only one detail and existing trigger contract retained',()=>{for(const open of ['session','tokens','context']){const text=html(fixture,open);assert.equal((text.match(/role="dialog"/g)||[]).length,1);assert.ok(text.includes(`data-chat-overlay="${open}"`));assert.ok(text.includes('chat-stat-pop-body'));}});
 check('each trigger delegates to existing overlay toggle',()=>{activeOverlay=null;const tree=StatsBar({data:fixture});const spans=tree.props.children;for(let i=0;i<3;i++){const button=spans[i].props.children[0];const trigger={test:i};button.props.onClick({currentTarget:trigger});assert.equal(toggles[i].trigger,trigger);}assert.deepEqual(toggles.map(x=>x.kind),['session','tokens','context']);});
-check('fresh empty session keeps placeholder but known zero usage is visible',()=>{assert.equal(statsPresentation({...base,rounds:0,msgs:0}).empty,true);assert.equal(statsPresentation({...base,rounds:0,msgs:0,tokensIn:0,tokensOut:0,cacheRead:0}).empty,false);});
-check('local style keeps native vertical body and does not change scrollbar width',()=>{assert.ok(css.includes('overflow-y: auto'));assert.ok(css.includes('overscroll-behavior: contain'));assert.doesNotMatch(css,/overflow(?:-y)?:\s*hidden|scrollbar-width|::-webkit-scrollbar|overflow-x/);});
-console.log(JSON.stringify({scope:'NestCraft/FEAT-012/WP-074-F012',checkedAt:new Date().toISOString(),status:'passed',checks,limitations:['TS transpilation + mocked overlay SSR only; parent owns whole-project tsc/build','No browser/WebView visual or live overlay/scroll verification','No upstream/private data; no usage aggregation changes']},null,2));
+check('fresh empty session renders nothing; known zero usage stays visible',()=>{const empty={...base,rounds:null,steps:null,msgs:0};
+ assert.equal(statsView(empty).groups.length,0,'CR-101 R1：三组全无可信数据时不产生任何组');
+ assert.equal(statsPresentation(empty).empty,true);
+ assert.equal(StatsBar({data:empty}),null,'整条不渲染，返回 null 而不是空容器');
+ assert.equal(statsPresentation({...base,rounds:0,msgs:0}).empty,false,'可信零不是空态');});
+check('msgs alone never决定空态',()=>{const d={...base,rounds:null,steps:null,msgs:0};assert.equal(statsPresentation(d).empty,true);const withMsgs={...d,msgs:42};assert.equal(statsPresentation(withMsgs).empty,true,'CR-101 R5：有消息但无计量数据仍为空态');});
+check('local style keeps native vertical body and does not change scrollbar width',()=>{assert.ok(css.includes('overflow-y: auto'));assert.ok(css.includes('overscroll-behavior: contain'));assert.ok(css.includes(':empty'));assert.doesNotMatch(css,/overflow(?:-y)?:\s*hidden|scrollbar-width|::-webkit-scrollbar|overflow-x/);});
+console.log(JSON.stringify({scope:'NestCraft/FEAT-012/WP-074-F012+CR-101',checkedAt:new Date().toISOString(),status:'passed',checks,limitations:['TS transpilation + mocked overlay SSR only; parent owns whole-project tsc/build','No browser/WebView visual or live overlay/scroll verification','No upstream/private data; no usage aggregation changes']},null,2));

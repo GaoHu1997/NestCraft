@@ -63,6 +63,11 @@ pub fn chat_status(id: String) -> bool {
     RUNNING.lock().map(|r| r.contains_key(&id)).unwrap_or(true)
 }
 
+/// BUG-004：绑定派生用的运行态。锁失败时按「运行中」保守处理，宁可不显示阻塞也不误锁输入。
+pub(crate) fn is_running(session_id: &str) -> bool {
+    RUNNING.lock().map(|r| r.contains_key(session_id)).unwrap_or(true)
+}
+
 pub(crate) fn project_is_running(conn: &rusqlite::Connection, project_id: &str) -> Result<bool, String> {
     let mut statement = conn.prepare("SELECT id FROM session WHERE projectId=?1").map_err(|e| e.to_string())?;
     let rows = statement.query_map([project_id], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
@@ -115,6 +120,9 @@ pub(crate) fn resolve_execution_feature(conn: &rusqlite::Connection, project_id:
 }
 
 fn session_row(row: &rusqlite::Row) -> rusqlite::Result<SessionMeta> {
+    let id: String = row.get(0)?;
+    // BUG-004：运行态参与绑定派生；运行中的会话不显示「待确认重建」也不锁输入。
+    let running = is_running(&id);
     let session_role = row.get::<_, Option<String>>(16)?.unwrap_or_else(|| "ordinary".into());
     // CR-037：绑定派生视图只含状态/原因/脱敏指纹/期望修订，原引用永不出后端。
     let thread_ref: Option<String> = row.get(17)?;
@@ -129,6 +137,7 @@ fn session_row(row: &rusqlite::Row) -> rusqlite::Result<SessionMeta> {
     let binding = crate::commands::chat_binding::derive_view(
         &session_role,
         &runner,
+        running,
         cli_id.as_str(),
         thread_ref.as_deref(),
         binding_revision,
@@ -138,7 +147,7 @@ fn session_row(row: &rusqlite::Row) -> rusqlite::Result<SessionMeta> {
         message_count,
     );
     Ok(SessionMeta {
-        id: row.get(0)?,
+        id,
         project_id: row.get(1)?,
         server_id: row.get(2)?,
         title: row.get(3)?,
@@ -714,7 +723,17 @@ pub async fn chat_send(
         let compat_key = crate::commands::chat_binding::compatibility_key(&cli_id, cli_version.as_deref().unwrap_or("unknown"), "headless", &provider_fp, &scope);
         let current_grant_rev = crate::commands::chat_binding::grant_revision_snapshot(conn, session.project_id.as_deref())?;
         let snapshot = crate::commands::chat_binding::load_binding(conn, &session_id)?;
-        let decision = crate::commands::chat_binding::resolve_binding(&snapshot, &cli_id, &compat_key, current_grant_rev, session.message_count > 0);
+        // BUG-004：最新轮若为 CREATE_FAILED（首轮确定未建立上下文），允许直接重试 create。
+        let latest_reason: Option<String> = conn
+            .query_row(
+                "SELECT reasonCode FROM execution_session_turn WHERE sessionId=?1 ORDER BY createdAt DESC, rowid DESC LIMIT 1",
+                [&session_id],
+                |r| r.get(0),
+            )
+            .ok()
+            .flatten();
+        let create_failed = latest_reason.as_deref() == Some("CREATE_FAILED");
+        let decision = crate::commands::chat_binding::resolve_binding(&snapshot, &cli_id, &compat_key, current_grant_rev, session.message_count > 0, create_failed);
         match decision {
             crate::commands::chat_binding::BindingDecision::Send { mode, requested } => Ok((requested, mode, compat_key)),
             crate::commands::chat_binding::BindingDecision::FreshPending { reason } => {
@@ -801,7 +820,8 @@ pub async fn chat_send(
                         "attempt": attempt,
                         "maxAttempts": max_attempts,
                         "delayMs": delay_ms,
-                        "reason": reason
+                        "reason": reason,
+                        "detail": fail.message
                     }));
                     tokio::time::sleep(std::time::Duration::from_millis(delay_ms as u64)).await;
                     if *abort_rx.borrow() {
@@ -1023,6 +1043,15 @@ fn persist_and_settle(
         })
     };
     tx.commit().map_err(|_| "回复保存失败，流式内容保留但未持久化".to_string())?;
+    // CR-092 / FEAT-026：CLI 会话每轮落库后后台抽取个人记忆（与平台 persist 一致；失败仅记日志、不阻塞对话，可经 memory.extract.enabled 关闭）。
+    let memory_session_id = session_id.to_string();
+    std::thread::spawn(move || match crate::commands::memory::run_extraction_for_session(&memory_session_id) {
+        Ok(report) => eprintln!(
+            "[CR-092] CLI 记忆抽取完成 session={} added={} updated={} superseded={}",
+            memory_session_id, report.added, report.updated, report.superseded
+        ),
+        Err(error) => eprintln!("[CR-092] CLI 记忆抽取跳过 session={memory_session_id}: {error}"),
+    });
     Ok(payload)
 }
 
@@ -1038,8 +1067,17 @@ fn failure_turn(
     ordinary: bool,
     _cli_id: &str,
 ) -> Result<Option<serde_json::Value>, String> {
-    if !ordinary || requested_resume.is_none() {
-        // 非绑定相关失败：不写轮次行（进程未产生任何上下文），按原错误路径报错。
+    if !ordinary {
+        return Ok(None);
+    }
+    if requested_resume.is_none() {
+        // BUG-004：首轮 create 失败（没有任何模型输出、没有引用）要留下明确证据，
+        // 供派生视图判定「确定未建立上下文」并允许直接重发；否则会话会永久停在 REF_NOT_ESTABLISHED。
+        let guard = db::conn()?;
+        let conn = guard.as_ref().ok_or("db not initialized")?;
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        record_turn_row_tx(&tx, session_id, turn_id, "create", "archived", binding_revision, grant_revision, "CREATE_FAILED")?;
+        tx.commit().map_err(|e| e.to_string())?;
         return Ok(None);
     }
     let verdict = crate::commands::chat_binding::judge_turn(
@@ -1090,10 +1128,15 @@ fn first_confirmed_settled_at(session_id: &str) -> Result<Option<i64>, String> {
 /// 只开放当前适配器能生成明确原生参数的模式；未知或危险模式必须拒绝。
 fn validate_permission(cli_id: &str, permission_id: Option<&str>) -> Result<(), String> {
     if !matches!(cli_id, "claude" | "codex" | "grok") { return Err("未知 CLI".into()); }
+    // CR-099：与设置界面按 CLI 的定义保持一致，避免「界面能选、发送被拒」。
+    // 每档都必须能映射到该 CLI 真实存在的启动参数，映射见 spawn_cli。
     match permission_id {
-        None | Some("default") => Ok(()),
-        Some("plan" | "agent") if matches!(cli_id, "claude" | "codex") => Ok(()),
-        Some(_) => Err("当前 CLI/版本未核验该权限模式或缺少审批/隔离能力，发送已拒绝".into()),
+        // 未指定＝沿用 CLI 原生默认。
+        None => Ok(()),
+        Some("default" | "plan" | "agent" | "auto" | "full") if matches!(cli_id, "claude" | "codex") => Ok(()),
+        // Grok 无头通道不提供原生 plan / 自动审核，只放行这三档。
+        Some("default" | "agent" | "full") if cli_id == "grok" => Ok(()),
+        Some(_) => Err("该 CLI 不支持所选权限模式，发送已拒绝".into()),
     }
 }
 
@@ -1572,9 +1615,13 @@ fn spawn_cli(
     let mut cmd = match cli_id {
         "claude" => {
             let mut c = Command::new(&cli_bin);
+            // CR-099：五档与界面一致。plan/agent/auto/full 均映射到 CLI 原生 --permission-mode，
+            // 沿用 Claude Code 自身语义（auto 由原生审核通道裁决，不在此另加旗标）。
             let permission_mode = match permission_id {
                 Some("plan") => "plan",
                 Some("agent") => "acceptEdits",
+                Some("auto") => "auto",
+                Some("full") => "bypassPermissions",
                 _ => "default",
             };
             c.arg("-p")
@@ -1634,12 +1681,20 @@ fn spawn_cli(
             }
             c.arg("-c").arg("project_doc_max_bytes=65536");
             // 权限覆盖置于供应商覆盖之后，禁止旧 override 抢占显式模式。
+            // CR-099：五档与界面一致。auto 交给原生审批通道裁决（on-request），
+            // full 放开沙箱并关闭审批——界面已就风险单独提示。
             match permission_id {
                 Some("plan") => {
                     c.arg("--sandbox").arg("read-only").arg("-c").arg("approval_policy=\"never\"");
                 }
                 Some("agent") => {
                     c.arg("--sandbox").arg("workspace-write").arg("-c").arg("approval_policy=\"never\"");
+                }
+                Some("auto") => {
+                    c.arg("--sandbox").arg("workspace-write").arg("-c").arg("approval_policy=\"on-request\"");
+                }
+                Some("full") => {
+                    c.arg("--sandbox").arg("danger-full-access").arg("-c").arg("approval_policy=\"never\"");
                 }
                 _ => {}
             }
@@ -1658,6 +1713,11 @@ fn spawn_cli(
             // 思考档位：grok 与 claude/codex 用同一语义、不同承载（命令行参数）。
             if !effort.is_empty() && effort != "off" {
                 c.arg("--reasoning-effort").arg(effort);
+            }
+            // CR-099：Grok 只有 default / agent / full 三档；
+            // full 对应 always-approve（界面已就风险单独提示）。
+            if permission_id == Some("full") {
+                c.arg("--always-approve");
             }
             c
         }
@@ -1723,6 +1783,34 @@ fn retry_reason(fail: &StreamFailure) -> Option<&'static str> {
         return Some("供应商暂时不可用");
     }
     None
+}
+
+/// CR-102：识别内核自动重连通知（如 codex `Reconnecting… 1/5 (unexpected status 502 …)`）。
+/// 这是进行中的重试而非终态错误：返回 (attempt, maxAttempts, 中文原因摘要)，原文由调用方放入 detail。
+fn split_reconnect(message: &str) -> Option<(i64, i64, String)> {
+    let lower = message.to_ascii_lowercase();
+    let idx = lower.find("reconnecting")?;
+    // 宽容省略号/空格/连字符：Reconnecting... 1/5、Reconnecting 1/5、reconnecting… 2/5
+    let rest = lower[idx + "reconnecting".len()..].trim_start_matches(['.', '…', ' ', '-', ',']);
+    let (attempt, max) = {
+        let mut parts = rest.splitn(2, '/');
+        let a: i64 = parts.next()?.trim().parse().ok()?;
+        let m: i64 = parts.next()?.chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse().ok()?;
+        (a, m)
+    };
+    if !(1..=99).contains(&attempt) || !(1..=99).contains(&max) || attempt > max {
+        return None;
+    }
+    let reason = if let Some(code) = ["502", "503", "504"].iter().find(|c| lower.contains(*c)) {
+        format!("上游暂时不可用（{code}）")
+    } else if lower.contains("timeout") || lower.contains("timed out") {
+        "请求超时".to_string()
+    } else if lower.contains("429") || lower.contains("rate limit") {
+        "请求过于频繁（429）".to_string()
+    } else {
+        "连接中断".to_string()
+    };
+    Some((attempt, max, reason))
 }
 
 async fn run_cli_stream(
@@ -2196,6 +2284,16 @@ fn parse_cli_line(
         }
         (_, "error") => {
             let msg = v.get("message").and_then(|m| m.as_str()).unwrap_or("未知错误");
+            // CR-102：内核自动重连通知（如 codex `Reconnecting… n/m (…)`）是进行中的重试，
+            // 分流为 retrying 事件交给界面一行摘要呈现；终态错误仍走 error 卡。内核放弃时会
+            // 另发终态 error，届时由既有链路终止本轮。
+            if let Some((attempt, max, reason)) = split_reconnect(msg) {
+                send(channel, serde_json::json!({
+                    "type": "retrying", "attempt": attempt, "maxAttempts": max,
+                    "delayMs": serde_json::Value::Null, "reason": reason, "detail": msg
+                }));
+                return;
+            }
             send(channel, serde_json::json!({ "type": "error", "message": msg }));
         }
         // ---------- 通用回退 ----------
@@ -2481,6 +2579,27 @@ pub fn chat_action_status(session_id: String) -> Result<ChatActionStatus, String
 mod tests {
     use super::*;
 
+    // CR-102：内核重连通知识别与摘要。
+    #[test]
+    fn split_reconnect_extracts_attempt_max_and_reason() {
+        let (a, m, r) = split_reconnect("Reconnecting... 1/5 (unexpected status 502 Bad Gateway: Upstream service temporarily unavailable, url: https://api.primerelay.online/v1/responses, request id: 28411477-1c9d-42cd-8d6f-86d449084565)").unwrap();
+        assert_eq!((a, m), (1, 5));
+        assert_eq!(r, "上游暂时不可用（502）");
+
+        let (a, m, r) = split_reconnect("reconnecting… 2/5 (error sending request: request timed out)").unwrap();
+        assert_eq!((a, m), (2, 5));
+        assert_eq!(r, "请求超时");
+
+        let (a, m, r) = split_reconnect("Reconnecting 3/5 (connection closed before message completed)").unwrap();
+        assert_eq!((a, m), (3, 5));
+        assert_eq!(r, "连接中断");
+
+        // 非重连错误不命中；畸形计数不命中。
+        assert!(split_reconnect("invalid request: API 调用参数有误").is_none());
+        assert!(split_reconnect("Reconnecting... x/5 (bad)").is_none());
+        assert!(split_reconnect("Reconnecting... 9/5 (bad)").is_none());
+    }
+
     #[test]
     fn reply_persistence_is_atomic_and_reports_failure() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
@@ -2728,15 +2847,24 @@ mod tests {
     }
 
     #[test]
-    fn permission_none_is_legacy_and_unsupported_modes_never_upgrade() {
+    fn permission_whitelist_matches_ui_per_cli() {
+        // CR-099：白名单与设置界面的按 CLI 定义一致，避免界面能选、发送被拒。
         assert!(validate_permission("grok", None).is_ok());
-        assert!(validate_permission("claude", Some("agent")).is_ok());
-        assert!(validate_permission("codex", Some("agent")).is_ok());
-        for mode in ["auto", "full", "bypassPermissions", ""] {
-            assert!(validate_permission("claude", Some(mode)).is_err());
-            assert!(validate_permission("codex", Some(mode)).is_err());
+        // Claude / Codex：五档全放行。
+        for mode in ["default", "plan", "agent", "auto", "full"] {
+            assert!(validate_permission("claude", Some(mode)).is_ok(), "claude 应放行 {mode}");
+            assert!(validate_permission("codex", Some(mode)).is_ok(), "codex 应放行 {mode}");
         }
-        assert!(validate_permission("grok", Some("agent")).is_err());
+        // Grok：只放行 default / agent / full，没有原生计划与自动审核。
+        for mode in ["default", "agent", "full"] {
+            assert!(validate_permission("grok", Some(mode)).is_ok(), "grok 应放行 {mode}");
+        }
+        for mode in ["plan", "auto"] {
+            assert!(validate_permission("grok", Some(mode)).is_err(), "grok 不应放行 {mode}");
+        }
+        // 未定义档位与未知 CLI 仍然拒绝（不因放开而放水）。
+        assert!(validate_permission("claude", Some("bypassPermissions")).is_err());
+        assert!(validate_permission("claude", Some("")).is_err());
         assert!(validate_permission("unknown", None).is_err());
         let payload: SendPayload = serde_json::from_str(r#"{"sessionId":"s","content":"x","refs":[],"attachments":[]}"#).unwrap();
         assert!(payload.permission_id.is_none());

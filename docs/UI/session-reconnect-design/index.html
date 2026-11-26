@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UI-CR102-v1 · 会话流式重连提示样式（无色块 / 摘要+展开详情）</title>
+<style>
+:root{
+  --font:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+  --mono:ui-monospace,Consolas,"Cascadia Mono",monospace;
+}
+/* 浅色主题 tokens（对齐平台现有中性灰体系） */
+html[data-theme="light"]{
+  --base:#f6f7f8; --paper:#ffffff; --ink:#1f2328; --muted:#6a737d;
+  --line:#e4e7ea; --line-2:#d7dbe0; --accent:#2563eb;
+  --danger:#c6303e; --ok:#1a7f4b;
+  /* 滚动条活动色（UI-SCROLL-001） */
+  --sb-thumb:#a4abb5; --sb-thumb-hover:#86909c;
+}
+html[data-theme="dark"]{
+  --base:#141719; --paper:#1d2126; --ink:#e6e8eb; --muted:#9aa3ad;
+  --line:#2c3238; --line-2:#3a4148; --accent:#7aa2f7;
+  --danger:#ef6a76; --ok:#4cc38a;
+  --sb-thumb:#7d8794; --sb-thumb-hover:#9aa3ae;
+}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.65 var(--font);color:var(--ink);background:var(--base)}
+.wrap{max-width:1060px;margin:0 auto;padding:28px 20px 60px}
+h1{font-size:20px;margin:0 0 4px}
+h2{font-size:15px;margin:28px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+.sub{color:var(--muted);font-size:13px;margin:0 0 8px}
+.bar{display:flex;gap:8px;align-items:center;margin:12px 0 4px;flex-wrap:wrap}
+button.ctl{font:13px var(--font);padding:5px 12px;border-radius:6px;border:1px solid var(--line-2);background:var(--paper);color:var(--ink);cursor:pointer}
+button.ctl:hover{border-color:var(--accent);color:var(--accent)}
+.demo{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:18px 18px 14px;margin:10px 0}
+.msg-user{background:var(--base);border:1px solid var(--line);border-radius:10px 10px 10px 2px;padding:8px 12px;max-width:70%;margin-left:auto;color:var(--ink)}
+.msg-ai{max-width:86%;margin:10px 0 2px;color:var(--ink)}
+.msg-ai p{margin:6px 0}
+.muted{color:var(--muted)}
+.cap{font-size:12px;color:var(--muted);margin:14px 0 4px}
+.cap b{color:var(--ink);font-weight:600}
+
+/* ============ 现状对照（将被本版替代） ============ */
+.old-block{background:#fdeaea;color:#c6303e;border-radius:6px;padding:10px 12px;font:13px var(--font);overflow-wrap:anywhere}
+html[data-theme="dark"] .old-block{background:#3a2326;color:#ef6a76}
+.old-retry{display:inline-flex;gap:5px;align-items:center;margin-top:8px;color:#c6303e;font-size:13px}
+html[data-theme="dark"] .old-retry{color:#ef6a76}
+
+/* ============ 新设计：重连指示行（SC-102-01 折叠摘要态） ============
+   无色块：透明背景、无边框；仅一行中性文字 + 图标 + 两个文字动作 */
+.retry-line{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin:8px 0 2px;
+  font:13px var(--font);color:var(--muted);background:transparent;border:0;padding:0}
+.retry-line .spin{display:inline-block;animation:sp 1.2s linear infinite;color:var(--muted)}
+@keyframes sp{to{transform:rotate(360deg)}}
+.retry-line .reason{color:var(--muted)}
+.retry-line .cnt{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+.linklike{background:none;border:0;padding:0;font:13px var(--font);color:var(--accent);cursor:pointer}
+.linklike:hover{text-decoration:underline}
+.linklike.danger{color:var(--danger)}
+.sep{color:var(--line-2)}
+
+/* ============ SC-102-02 展开详情态：默认折叠，展开后纯文字区 ============ */
+.retry-details{margin:6px 0 2px}
+.retry-details>pre{
+  margin:6px 0 0;padding:10px 12px 10px 14px;border:0;border-left:2px solid var(--line-2);
+  background:transparent;color:var(--muted);font:12px/1.6 var(--mono);
+  white-space:pre-wrap;overflow-wrap:anywhere;
+  max-height:170px;overflow-y:auto;overflow-x:hidden;
+  scrollbar-width:thin;scrollbar-color:transparent transparent;
+}
+.retry-details>pre::-webkit-scrollbar{width:10px;background:transparent}
+.retry-details>pre::-webkit-scrollbar-thumb{border-radius:8px;border:3px solid transparent;background-color:transparent}
+.retry-details>pre.is-scrolling{scrollbar-color:var(--sb-thumb) transparent}
+.retry-details>pre.is-scrolling::-webkit-scrollbar-thumb{background-color:var(--sb-thumb)}
+.retry-details>pre.is-scrollbar-hover::-webkit-scrollbar-thumb{background-color:var(--sb-thumb-hover)}
+.retry-details .kv{color:var(--ink)}
+
+/* ============ SC-102-03 最终失败态：沿用错误卡（细左边线，非大面积色块） ============ */
+.err-card{border:1px solid var(--line);border-left:3px solid var(--danger);border-radius:8px;
+  padding:10px 14px;margin:10px 0 2px;max-width:86%}
+.err-card .t{font-weight:600;color:var(--danger);font-size:13px}
+.err-card .act{margin-top:6px;display:flex;gap:14px}
+
+/* ============ SC-102-04 恢复后留痕（待确认项，默认呈现） ============ */
+.recovered{font:12px var(--font);color:var(--muted);margin:6px 0 2px}
+.recovered .ic{color:var(--ok)}
+
+/* 390 窄档预览 */
+.narrow{max-width:390px}
+@media (prefers-reduced-motion:reduce){.retry-line .spin{animation:none}}
+table.spec{border-collapse:collapse;width:100%;font-size:13px;margin:8px 0}
+table.spec td,table.spec th{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+table.spec th{background:var(--base);font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>会话流式重连提示样式（UI-CR102-v1）</h1>
+  <p class="sub">2026-11-26 · 来源：用户附图「Reconnecting… 1/5 (502 Bad Gateway …)」并要求「不要色块，只写重试几次、为什么重试，需要展开再显示」。本页为自包含设计稿（浅/深切换、390 窄档），仅设计演示，不接入真实执行。</p>
+  <div class="bar">
+    <button class="ctl" onclick="toggleTheme()">浅 / 深切换</button>
+    <button class="ctl" onclick="setWide(this)">桌面 720</button>
+    <button class="ctl" onclick="setNarrow(this)">侧栏 390</button>
+    <span class="muted">关联：<b>CR-102</b> · Story 增量挂 <b>STORY-062</b>（消息流）· 滚动条适用 <b>UI-SCROLL-001</b>（展开详情区）</span>
+  </div>
+
+  <h2>现状对照（将被替代，仅留档）</h2>
+  <div class="demo">
+    <div class="old-block">Reconnecting… 1/5 (unexpected status 502 Bad Gateway: Upstream service temporarily unavailable, url: https://api.primerelay.online/v1/responses, request id: 28411477-1c9d-42cd-8d6f-86d449084565)</div>
+    <div class="old-retry">⟳ 重试</div>
+    <p class="cap">现状问题：粉色大面积色块；原始英文报错整段平铺；「重试」按钮悬浮其下。</p>
+  </div>
+
+  <h2>SC-102-01 → SC-102-02 重试中：折叠摘要（默认）→ 展开详情</h2>
+  <div class="demo" id="stage">
+    <div class="msg-user">开三个子代理 codex / claude / grok 分别给出 1-10 的随机数，统计给我</div>
+    <div class="msg-ai">
+      <p>好的，我依次调用三个 CLI 子代理……<span class="muted">（前文输出保持原位，不被打断）</span></p>
+      <p class="muted">▌正在调用 grok…</p>
+
+      <!-- 新设计：一行摘要，无色块 -->
+      <div class="retry-line" id="retryLine">
+        <span class="spin">⟳</span>
+        <span>正在重试 <span class="cnt">1/5</span></span>
+        <span class="sep">·</span>
+        <span class="reason">上游暂时不可用（502）</span>
+        <button class="linklike" id="detailBtn" aria-expanded="false" aria-controls="detailBox">详情</button>
+        <span class="sep">|</span>
+        <button class="linklike" onclick="alert('演示：手动立即重试')">立即重试</button>
+      </div>
+
+      <!-- 展开详情：纯文字 + 细左线；内容超高时详情区自身按 UI-SCROLL-001 按需显示滚动条 -->
+      <div class="retry-details" id="detailBox" hidden>
+        <pre id="detailPre">自动重连（第 1/5 次）
+状态：502 Bad Gateway（上游暂时不可用）
+接口：POST https://api.primerelay.online/v1/responses
+request id：28411477-1c9d-42cd-8d6f-86d449084565
+原始返回：
+{"error":{"message":"Upstream service temporarily unavailable","type":"upstream_error","code":502}}
+说明：将在数秒后自动进行下一次重试；也可点击「立即重试」。
+（此处保留原始报错全文，供排查与反馈给中转服务商。）</pre>
+        <div style="margin-top:6px"><button class="linklike" onclick="copyDetail()">复制错误详情</button> <span class="muted" id="copyTip"></span></div>
+      </div>
+    </div>
+  </div>
+
+  <h2>SC-102-03 最终失败（5/5 后仍失败 → 沿用错误卡）</h2>
+  <div class="demo">
+    <div class="err-card">
+      <div class="t">自动重试 5 次后仍失败，本轮已停止</div>
+      <div class="muted" style="font-size:13px;margin-top:2px">最后一次错误：上游暂时不可用（502）· <a href="#" onclick="this.blur();return false;">详情</a></div>
+      <div class="act">
+        <button class="linklike" onclick="alert('演示：重新发送本轮')">重新发送</button>
+        <button class="linklike" onclick="alert('演示：仅续跑当前轮')">继续</button>
+      </div>
+    </div>
+    <p class="cap">沿用现行错误卡样式（CR-100 侧栏适配约束），不新增第二套错误视觉。</p>
+  </div>
+
+  <h2>SC-102-04 重试成功（留痕样式，待确认项）</h2>
+  <div class="demo">
+    <div class="msg-ai">
+      <p>（流式输出继续）……统计结果如下：codex=7，claude=3，grok=9。</p>
+      <div class="recovered"><span class="ic">✓</span> 途中上游中断，已自动重试 2 次后恢复</div>
+    </div>
+    <p class="cap">成功后红色/重连指示消失，仅留一行灰色小字说明发生过中断；是否保留该留痕待用户确认，不保留则为无痕。</p>
+  </div>
+
+  <h2>规则摘要</h2>
+  <table class="spec">
+    <tr><th>编号</th><th>规则</th></tr>
+    <tr><td>R-CR102-1</td><td>重连进行中不使用任何大面积色块（红/粉底），透明背景、无边框</td></tr>
+    <tr><td>R-CR102-2</td><td>仅一行中文摘要：「正在重试 n/5 · 原因摘要」；不整段平铺原始英文报错</td></tr>
+    <tr><td>R-CR102-3</td><td>完整原始错误（状态码、URL、request id、原始返回）默认折叠，「详情」展开；等宽字体、可复制</td></tr>
+    <tr><td>R-CR102-4</td><td>5/5 仍失败 → 转现行错误卡并保留重发；成功 → 指示消失（留痕与否待确认）</td></tr>
+    <tr><td>R-CR102-5</td><td>保留手动「立即重试」文字链入口</td></tr>
+    <tr><td>R-CR102-6</td><td>浅/深、侧栏 390 与工作台两布局无溢出；展开详情超高时该区自身为滚动容器，适用 UI-SCROLL-001（静止隐藏、滚动显示、停止 700ms 后隐藏）</td></tr>
+  </table>
+</div>
+<script>
+if(new URLSearchParams(location.search).get('theme')==='dark'){document.documentElement.dataset.theme='dark'}
+function toggleTheme(){
+  var h=document.documentElement;
+  h.dataset.theme=(h.dataset.theme==='dark')?'light':'dark';
+}
+function setNarrow(btn){document.getElementById('stage').classList.add('narrow');mark(btn)}
+function setWide(btn){document.getElementById('stage').classList.remove('narrow');mark(btn)}
+function mark(btn){document.querySelectorAll('.bar .ctl').forEach(b=>b.style.borderColor='');btn.style.borderColor='var(--accent)'}
+function copyDetail(){
+  var t=document.getElementById('detailPre').textContent;
+  (navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(
+    ()=>{document.getElementById('copyTip').textContent='已复制'},
+    ()=>{document.getElementById('copyTip').textContent='（演示环境未复制）'});
+}
+// 展开详情：切换 + 滚动条按需显示（UI-SCROLL-001 演示实现）
+var btn=document.getElementById('detailBtn'),box=document.getElementById('detailBox'),pre=document.getElementById('detailPre');
+btn.addEventListener('click',function(){
+  box.hidden=!box.hidden;
+  btn.textContent=box.hidden?'详情':'收起';
+  btn.setAttribute('aria-expanded',String(!box.hidden));
+});
+var timer=null;
+pre.addEventListener('scroll',function(){
+  pre.classList.add('is-scrolling');
+  clearTimeout(timer);
+  timer=setTimeout(function(){pre.classList.remove('is-scrolling','is-scrollbar-hover')},700);
+});
+pre.addEventListener('mousemove',function(){if(pre.classList.contains('is-scrolling'))return});
+</script>
+</body>
+</html>

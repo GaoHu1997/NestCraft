@@ -260,14 +260,27 @@ export function SettingsSdk() {
     return id === "claude" ? m.protocol === "anthropic" : m.protocol === "openai";
   });
 
+  /** CR-099：模型候选为空时必须说明原因，否则用户只看到「未选择」。
+   *  原因来自真实过滤口径：有无供应商、是否全部停用、该 CLI 需要的协议有没有可对话模型。 */
+  const modelEmptyReason = (id: string): string => {
+    if (!models.length) return "尚未配置供应商：先到「模型管理」新增供应商与文本模型。";
+    const compatible = compatibleModels(id);
+    if (compatible.length) return "";
+    return id === "claude"
+      ? "没有 Anthropic 协议的可对话模型：该 CLI 只认 Anthropic 端点，请检查供应商的 Anthropic 地址与密钥是否启用。"
+      : "没有 OpenAI 协议的可对话模型：该 CLI 只认 Chat／Responses 端点，请检查端点与密钥的启用状态。";
+  };
+
   const cliBody = (state: SdkState) => {
     const preference = preferences[state.id] || { route: emptyRoute(), permission: "default" };
     const detection = detections[state.id];
     const disabled = !prefReady[state.id] || !!pending[state.id];
+    const emptyReason = modelEmptyReason(state.id);
     return <div className="set-cli-body"><fieldset className="set-fieldset" disabled={disabled}>
       <CliRoute cliId={state.id} cliName={sdkName(state.id)} route={preference.route}
         models={compatibleModels(state.id)} disabled={disabled}
         onChange={route => updatePreference(state.id, { route })} />
+      {emptyReason && <p className="set-caption cr099-model-empty" role="status">{emptyReason}</p>}
       <div>
         <label className="set-field-label">权限模式</label>
         <PermissionSelect cliId={state.id} value={preference.permission} disabled={disabled}

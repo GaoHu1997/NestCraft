@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>会话绑定状态 · BUG-004 设计（SC-069-10／11）</title>
+<style>
+/* BUG-004 设计资源：CLI 首轮运行中不显示绑定横幅（SC-069-10）＋ 首轮失败可直接重发（SC-069-11）。
+   独立静态设计稿，令牌沿用 chat.css / theme-tokens 冻结值；不是第二业务原型入口，不代表正式软件。
+   软件对照证据另存 docs/Test/screenshots/bug004-software/。 */
+*{box-sizing:border-box}
+[hidden]{display:none !important}
+html,body{margin:0;min-height:100%}
+:root{
+  --base:#f5f6f7;--paper:#ffffff;--line:#e5e6eb;--line-soft:#eff0f3;
+  --ink:#1f2329;--muted:#646a73;
+  --accent:#2b6cf6;--accent-ink:#ffffff;--soft:#eef3ff;
+  --warn-bg:#fff8e6;--warn-line:#f0c27a;--warn-deep:#7f5500;
+  --danger-bg:#fef0ef;--danger-line:#f3b6b2;--danger-deep:#b12720;
+  --good-ink:#1f7a3f;--good-dot:#2ea44f;
+  --msg-bg:#f7f8fa;
+  --radius-card:8px;--radius-ctl:6px;
+  --font-title:system-ui,-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+  color-scheme:light;
+}
+html[data-theme="dark"]{
+  color-scheme:dark;
+  --base:#17181a;--paper:#1f2022;--line:#2e3033;--line-soft:#33363a;
+  --ink:#e6e8ea;--muted:#9aa0a6;
+  --accent:#4f8bff;--accent-ink:#0b1220;--soft:#232a36;
+  --warn-bg:#2e2617;--warn-line:#5c4a24;--warn-deep:#f6d79b;
+  --danger-bg:#35201f;--danger-line:#6b3a37;--danger-deep:#ffb3ad;
+  --good-ink:#7fd39a;--good-dot:#48b96b;
+  --msg-bg:#232426;
+}
+body{font:13px/1.6 var(--font-title);color:var(--ink);background:var(--base)}
+button{font:inherit;color:inherit;cursor:pointer;background:none;border:0;padding:0}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.review{border-bottom:1px solid var(--line);background:var(--paper);padding:10px 18px;display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;position:sticky;top:0;z-index:5}
+.review .rb-t{display:flex;align-items:baseline;gap:8px;margin-right:auto;min-width:0}
+.review .rb-t b{font-size:12px;padding:1px 7px;border-radius:4px;background:var(--soft);color:var(--accent);font-weight:600}
+.review .rb-t span{font-size:11.5px;color:var(--muted)}
+.review .chip{border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:11.5px;color:var(--ink)}
+.review .chip.on{background:var(--soft);border-color:var(--accent);color:var(--accent);font-weight:600}
+.review .note{font-size:11px;color:var(--muted);max-width:760px;flex-basis:100%}
+.stage{display:flex;flex-wrap:wrap;gap:20px;padding:18px;align-items:flex-start}
+.card{width:380px;flex:0 0 auto}
+.card h2{font-size:13px;margin:0 0 4px}
+.card h2 small{font-weight:400;color:var(--muted);font-size:11px;margin-left:6px}
+.card .lead{font-size:11.5px;color:var(--muted);margin:0 0 8px;min-height:34px}
+.canvas{border:1px solid var(--line);border-radius:var(--radius-card);background:var(--paper);overflow:hidden}
+.canvas .cap{padding:8px 12px;border-top:1px dashed var(--line);font-size:11px;color:var(--muted)}
+.sidebar{display:flex;flex-direction:column;height:420px}
+.sb-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)}
+.sb-head .dot{width:8px;height:8px;border-radius:50%;background:var(--good-dot)}
+.sb-head b{font-size:12.5px}
+.sb-head .spacer{flex:1}
+.sb-head .run{font-size:10.5px;color:var(--accent);display:flex;align-items:center;gap:5px}
+.sb-head .run i{width:7px;height:7px;border-radius:50%;border:1.5px solid var(--accent);border-top-color:transparent;display:inline-block;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.sb-msgs{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px;min-height:0}
+.msg{max-width:92%}
+.msg .who{font-size:10.5px;color:var(--muted);margin-bottom:2px}
+.msg .bubble{background:var(--msg-bg);border-radius:var(--radius-card);padding:8px 10px}
+.msg.user{align-self:flex-end;text-align:right}
+.msg.user .bubble{background:var(--soft);text-align:left}
+.msg .meta{font-size:10px;color:var(--muted);margin-top:3px}
+.msg.err .bubble{border:1px solid var(--danger-line);background:var(--danger-bg);color:var(--danger-deep)}
+.composer{border-top:1px solid var(--line);padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.composer textarea{width:100%;min-height:52px;resize:none;border:1px solid var(--line);border-radius:var(--radius-ctl);background:var(--paper);color:var(--ink);font:inherit;padding:8px}
+.composer .row{display:flex;gap:8px;align-items:center}
+.composer .send{margin-left:auto;border-radius:var(--radius-ctl);background:var(--accent);color:var(--accent-ink);padding:5px 14px;font-weight:600;font-size:12px}
+.composer .stop{margin-left:auto;border:1px solid var(--line);border-radius:var(--radius-ctl);padding:5px 12px;font-size:12px;color:var(--muted)}
+.composer .foot{font-size:10.5px;color:var(--muted)}
+.banner{border-top:1px solid var(--warn-line);background:var(--warn-bg);padding:10px 12px;display:flex;gap:8px;align-items:flex-start}
+.banner .ico{flex:0 0 auto;width:16px;height:16px;border-radius:4px;border:1px solid var(--warn-line);color:var(--warn-deep);font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.banner .title{font-size:12px;font-weight:600;color:var(--warn-deep)}
+.banner .reason{font-size:11px;color:var(--warn-deep);margin-top:2px}
+.legend{border-top:1px solid var(--line);background:var(--paper);padding:14px 18px;font-size:12px}
+.legend h3{font-size:12.5px;margin:0 0 6px}
+.legend table{border-collapse:collapse;width:100%;max-width:980px}
+.legend th,.legend td{border:1px solid var(--line);padding:5px 8px;text-align:left;font-size:11.5px;vertical-align:top}
+.legend th{background:var(--line-soft);font-weight:600}
+.legend code{font-size:11px;background:var(--line-soft);padding:1px 4px;border-radius:3px}
+</style>
+</head>
+<body>
+<div class="review">
+  <div class="rb-t"><b>BUG-004</b><span>CLI 首轮运行态与失败重试 · SC-069-10／11</span></div>
+  <button class="chip on" id="themeBtn" type="button">浅色 / 深色</button>
+  <div class="note">
+    依据：绑定横幅只在「确实需要用户处理」时出现。本轮仍在运行、或首轮 create 已确定失败且没有任何模型输出时，都不该要求确认重建。
+    本页只描述状态与文案；软件实现与成对截图见验证报告。
+  </div>
+</div>
+
+<div class="stage">
+  <section class="card">
+    <h2>E · CLI 首轮运行中<small>SC-069-10</small></h2>
+    <p class="lead">user 消息已落库、本轮仍在执行（如派发子代理、生图）。不显示绑定横幅、不锁输入，顶部保留运行中指示。</p>
+    <div class="canvas">
+      <div class="sidebar">
+        <div class="sb-head"><span class="dot"></span><b>AI 会话 · CLI</b><span class="spacer"></span><span class="run"><i></i>运行中</span></div>
+        <div class="sb-msgs">
+          <div class="msg user"><div class="bubble">派发三个子代理，codex/claude/grok 分别看一下我们的工具是否可以让他们调用，比如生图。</div><div class="meta">13:54</div></div>
+          <div class="msg"><div class="who">Codex · 工作中</div><div class="bubble">正在准备子代理任务…（工具执行中）</div><div class="meta">已运行 00:42</div></div>
+        </div>
+        <div class="composer">
+          <textarea placeholder="输入消息，Enter 发送；运行中可选择排队或打断"></textarea>
+          <div class="row"><span class="foot">草稿已保留</span><button class="stop" type="button">停止</button></div>
+        </div>
+      </div>
+      <div class="cap">预期：无「上下文待确认重建」横幅；输入可用；运行结束且无引用时才回到既有判定。</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>F · CLI 首轮失败<small>SC-069-11</small></h2>
+    <p class="lead">首轮 create 未产生任何模型输出（无 assistant 消息）。保留真实错误说明，但不要求确认重建，可直接重发。</p>
+    <div class="canvas">
+      <div class="sidebar">
+        <div class="sb-head"><span class="dot"></span><b>AI 会话 · CLI</b><span class="spacer"></span></div>
+        <div class="sb-msgs">
+          <div class="msg user"><div class="bubble">派发三个子代理，codex/claude/grok 分别看一下我们的工具是否可以让他们调用，比如生图。</div><div class="meta">13:54</div></div>
+          <div class="msg err"><div class="who">系统</div><div class="bubble">本轮未开始：CLI 在建立上下文前退出（示例原因）。没有生成回复，也没有可续接的上下文。</div><div class="meta">13:55</div></div>
+        </div>
+        <div class="composer">
+          <textarea placeholder="直接修改后重发，或换 CLI / 助理通道"></textarea>
+          <div class="row"><span class="foot">无需重建；重发将以全新上下文创建</span><button class="send" type="button">发送</button></div>
+        </div>
+      </div>
+      <div class="cap">预期：无「确认重建…」入口；重发走 create；历史 user 消息保留可见。</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>对照 · 仍应显示横幅<small>BUG-003 既有状态</small></h2>
+    <p class="lead">已有模型输出但引用缺失、或原生线程不可续接时，仍按既有规则要求用户确认，不静默 fresh。</p>
+    <div class="canvas">
+      <div class="sidebar">
+        <div class="sb-head"><span class="dot"></span><b>AI 会话 · CLI</b><span class="spacer"></span></div>
+        <div class="sb-msgs">
+          <div class="msg user"><div class="bubble">继续上一轮的修改。</div><div class="meta">15:02</div></div>
+          <div class="msg"><div class="who">Codex</div><div class="bubble">上一轮已完成的改动说明（历史保留）…</div><div class="meta">15:03</div></div>
+        </div>
+        <div class="banner" role="alert">
+          <span class="ico" aria-hidden>!</span>
+          <div>
+            <div class="title">上下文待确认重建</div>
+            <div class="reason">原因：引用缺失（历史无原生绑定）。历史记录仍可查看；未发送草稿已保留。</div>
+          </div>
+        </div>
+        <div class="composer"><textarea placeholder="输入被锁定，需先确认重建"></textarea><div class="row"><button class="send" type="button" disabled>发送</button></div></div>
+      </div>
+      <div class="cap">预期：与 BUG-003 一致——有 assistant 输出且无引用时仍需确认，避免静默丢失可续接内容。</div>
+    </div>
+  </section>
+</div>
+
+<div class="legend">
+  <h3>状态与出路对照</h3>
+  <table>
+    <thead><tr><th>场景</th><th>派生结果</th><th>界面</th><th>发送行为</th></tr></thead>
+    <tbody>
+      <tr><td>CLI 首轮运行中</td><td>不派生绑定（<code>None</code>）</td><td>无横幅，输入可用，显示运行中</td><td>本轮占用；结束后按正常结果派生</td></tr>
+      <tr><td>首轮 create 失败（无任何输出）</td><td><code>None</code>；turn 记 <code>CREATE_FAILED</code></td><td>错误卡说明，无重建入口</td><td>直接以 <code>create</code> 重发</td></tr>
+      <tr><td>已有 assistant 输出、无引用</td><td><code>freshPending + REF_MISSING</code></td><td>横幅＋确认重建</td><td>拒绝，需确认重建</td></tr>
+      <tr><td>历史来自旧版本、无 turn</td><td><code>freshPending + REF_NOT_ESTABLISHED</code></td><td>横幅＋确认重建</td><td>拒绝，需确认重建</td></tr>
+      <tr><td>原生线程不可续接</td><td><code>blocked</code></td><td>横幅＋重建上下文</td><td>拒绝</td></tr>
+      <tr><td>平台 / 执行会话</td><td><code>None</code></td><td>无绑定横幅</td><td>走各自通道</td></tr>
+    </tbody>
+  </table>
+  <p style="font-size:11px;color:var(--muted);margin:8px 0 0">滚动条：本页无新增滚动容器，沿用侧栏消息区；<code>UI-SCROLL-001</code> 记为不适用。</p>
+</div>
+
+<script>
+document.getElementById('themeBtn').addEventListener('click', () => {
+  const root = document.documentElement;
+  root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+});
+</script>
+</body>
+</html>

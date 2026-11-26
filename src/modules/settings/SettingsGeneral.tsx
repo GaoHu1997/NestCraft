@@ -22,6 +22,8 @@ type Form = {
   sendMode: SendMode; notifyDone: boolean; restoreLastWindow: boolean;
   port: string; defaultUser: string; auth: Auth;
   dataDir: string;
+  /** CR-099：模拟客户端身份（只改客户端身份标识，不伪造凭证）。 */
+  identityEnabled: boolean; identityPreset: "codex" | "claude";
 };
 
 const DEFAULTS: Form = {
@@ -31,6 +33,7 @@ const DEFAULTS: Form = {
   sendMode: "queue", notifyDone: true, restoreLastWindow: true,
   port: "22", defaultUser: "", auth: "key",
   dataDir: "",
+  identityEnabled: false, identityPreset: "codex",
 };
 
 type SettingField = "name" | "email" | "role" | "timezone" | "codeTheme" | "fontSize" | "tabSize" | "wrap" | "sendMode" | "density" | "notifyDone" | "restoreLastWindow" | "port" | "defaultUser" | "auth";
@@ -98,12 +101,15 @@ export function SettingsGeneral() {
     let alive = true;
     setLoading(true); setError("");
     const reads = (Object.keys(KEYS) as SettingField[]).map(async field => ({ field, value: await getSetting(KEYS[field]) }));
+    const identityRead = getSetting("chat.clientIdentity").catch(() => null);
     Promise.all([
       ...reads,
       api.storageDataDir().then(location => ["dataDir", location.path] as const).catch(() => ["dataDir", ""] as const),
       getVersion().catch(() => ""),
+      identityRead,
     ]).then(values => {
       if (!alive) return;
+      const lastValue = values[values.length - 1];
       const next: Form = { ...DEFAULTS, themeMode };
       const appVersion = values.find(item => typeof item === "string");
       if (typeof appVersion === "string") setVersion(appVersion);
@@ -120,6 +126,15 @@ export function SettingsGeneral() {
         else if (field === "sendMode") next.sendMode = String(value) === "immediate" ? "immediate" : "queue";
         else (next as unknown as Record<string, unknown>)[field] = String(value);
       }
+      // 身份 JSON 单独解析：非法或缺失都按关闭处理，不影响其它设置读取。
+      const rawIdentity = lastValue as string | null;
+      if (rawIdentity) {
+        try {
+          const parsed = JSON.parse(rawIdentity) as { enabled?: boolean; preset?: string };
+          next.identityEnabled = parsed.enabled === true;
+          next.identityPreset = parsed.preset === "claude" ? "claude" : "codex";
+        } catch { /* 忽略非法值 */ }
+      }
       setForm(next); setSaved(next);
       api.storageDataDir().then(location => { if (alive) setRestartRequired(Boolean(location.restartRequired)); }).catch(() => {});
     }).catch(e => { if (alive) setError(errMsg(e)); }).finally(() => { if (alive) setLoading(false); });
@@ -131,7 +146,8 @@ export function SettingsGeneral() {
     return (Object.keys(KEYS) as SettingField[]).some(key => {
       const left = form[key], right = saved[key];
       return typeof left === "boolean" ? left !== right : String(left) !== String(right);
-    }) || form.dataDir !== saved.dataDir || form.themeMode !== saved.themeMode;
+    }) || form.dataDir !== saved.dataDir || form.themeMode !== saved.themeMode
+      || form.identityEnabled !== saved.identityEnabled || form.identityPreset !== saved.identityPreset;
   }, [form, saved]);
   const dirtyCount = useMemo(() => {
     if (!saved) return 0;
@@ -139,6 +155,7 @@ export function SettingsGeneral() {
     (Object.keys(KEYS) as SettingField[]).forEach(key => { if (String(form[key]) !== String(saved[key])) count += 1; });
     if (form.dataDir !== saved.dataDir) count += 1;
     if (form.themeMode !== saved.themeMode) count += 1;
+    if (form.identityEnabled !== saved.identityEnabled || form.identityPreset !== saved.identityPreset) count += 1;
     return count;
   }, [form, saved]);
 
@@ -195,6 +212,8 @@ export function SettingsGeneral() {
         await setSetting(KEYS[key], typeof value === "boolean" ? String(value) : String(value));
       }
       await setThemeMode(normalized.themeMode);
+      // CR-099：身份模拟存单键 JSON；关闭时也写回，避免残留上次的预设。
+      await setSetting("chat.clientIdentity", JSON.stringify({ enabled: normalized.identityEnabled, preset: normalized.identityPreset }));
       await api.storageSetDataDir(normalized.dataDir || null);
       const location = await api.storageDataDir().catch(() => null);
       setForm(normalized); setSaved(normalized); setErrors({});
@@ -336,6 +355,20 @@ export function SettingsGeneral() {
       </Row>
       <Row label="启动时恢复窗口" hint="偏好已保存；启动恢复逻辑尚未接入，当前启动固定打开工作台。">
         <Switch checked={form.restoreLastWindow} onChange={value => update("restoreLastWindow", value)} label="启动时恢复窗口" />
+      </Row>
+      {/* CR-099：模拟客户端身份——只改客户端身份标识，不伪造凭证、账号与计费。 */}
+      <Row label="模拟客户端身份"
+        hint="开启后，平台 runtime 请求模型时按所选 CLI 携带客户端身份标识；不改变凭证、账号与计费归属，也不影响 CLI 会话自身的启动参数。">
+        <div className="g-identity">
+          <Switch checked={form.identityEnabled} onChange={value => update("identityEnabled", value)} label="模拟客户端身份" />
+          <div className="g-identity-presets" role="radiogroup" aria-label="模拟身份" data-disabled={!form.identityEnabled}>
+            {([["codex", "Codex"], ["claude", "Claude"]] as const).map(([value, text]) => (
+              <button key={value} type="button" role="radio" aria-checked={form.identityPreset === value}
+                className="g-identity-preset" disabled={!form.identityEnabled}
+                onClick={() => update("identityPreset", value)}>{text}</button>
+            ))}
+          </div>
+        </div>
       </Row>
     </Group>
 

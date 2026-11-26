@@ -6,6 +6,9 @@
   font-size: 11px;
   padding: 8px 0 0;
 }
+/* CR-101 R-CR101-1：空态一律不渲染容器；这里做防御，保证即使上游产出空容器也不留空白占位
+   （不用零高度裁切、不禁滚、不改变正文宽度）。 */
+.chat-stats.cr074-stats:empty { display: none; }
 .chat-stats.cr074-stats .chat-stat-btn {
   display: inline-flex;
   align-items: center;

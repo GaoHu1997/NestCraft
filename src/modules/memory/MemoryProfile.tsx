@@ -98,7 +98,7 @@ function ProfileLoading() {
   );
 }
 
-export function MemoryProfile({ refreshToken }: { refreshToken: number }) {
+export function MemoryProfile({ scope, refreshToken }: { scope:string; refreshToken: number }) {
   const [profile, setProfile] = useState<MemoryProfileData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const loadSeq = useRef(0);
@@ -107,14 +107,14 @@ export function MemoryProfile({ refreshToken }: { refreshToken: number }) {
     const seq = ++loadSeq.current;
     setError(null);
     try {
-      const next = await memoryGetProfile(null);
+      const next = await memoryGetProfile(scope);
       if (seq !== loadSeq.current) return;
       setProfile(next);
     } catch (loadError) {
       if (seq !== loadSeq.current) return;
       setError(errText(loadError));
     }
-  }, []);
+  }, [scope]);
 
   useEffect(() => {
     setProfile(null);

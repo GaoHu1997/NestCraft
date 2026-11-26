@@ -3,29 +3,39 @@
 
    UI-SCROLL-001：条目多时容器限高、overflow-y:auto 原生滚动；滚动条静止透明，
    实际滚动由全局共享机制 src/components/scrollbar.ts 加 `.scrollbar-active` 着色，
-   颜色/宽度规则见 src/theme/base.css，本文件不自行切换宽度或 display。 */
+   颜色/宽度规则见 src/theme/base.css，本文件不自行切换宽度或 display。
+
+   CR-096 R2（UI-CR096-v1）：浮框由 11px／132px 单行省略改为可读卡片——
+   12px 字号、232px 上限、「第 N 轮」小标题 + 摘要两行。
+   两个关键约束（来自设计验证踩过的坑）：
+   1) 容器是 overflow:auto 的窄条，若浮框相对容器 absolute 定位，横向会被
+      overflow-x 计算值裁掉；单轮会话时容器仅约 28px 高，纵向也会裁掉标题行。
+      因此浮框用 position:fixed，位置由组件在 hover/focus 时按刻度按钮的
+      真实屏幕坐标计算（见 TurnNavigator.tsx placeLabel）。
+   2) 容器不能用 transform 做垂直居中——transform 祖先会让 position:fixed
+      退化为相对该祖先定位，浮框坐标会被放大而飞出视口。改用固定 top。 */
 
 .chat-turn-nav {
   position: absolute;
-  top: 50%;
-  right: 6px;
+  top: 96px;
+  right: 10px;
   z-index: 6;
   box-sizing: border-box;
-  /* 宽度包含左侧的悬停标签通道，指针事件整体放行，避免遮挡消息区。 */
-  width: 180px;
-  max-height: min(56vh, 440px);
-  padding: 8px;
+  /* 宽度包含左侧的悬停卡片通道（左内边距 4 + 卡片 232 + 间隔 8 + 刻度 18 + 右内边距 4），
+     指针事件整体放行，避免遮挡消息区。 */
+  width: 288px;
+  max-height: min(60vh, 460px);
+  padding: 6px 4px;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   justify-content: flex-start;
-  gap: 1px;
+  gap: 2px;
   overflow-y: auto;
   overflow-x: hidden;
   pointer-events: none;
   background: transparent;
   border: 0;
-  transform: translateY(-50%);
 }
 
 /* 单个刻度按钮：命中区比刻度略大，便于点击/滚轮滚动；只它本身接收指针事件。 */
@@ -38,7 +48,7 @@
   justify-content: center;
   width: auto;
   min-height: 16px;
-  padding: 4px;
+  padding: 3px 4px;
   border: 0;
   background: transparent;
   color: var(--muted);
@@ -50,7 +60,7 @@
 .chat-turn-nav-tick {
   display: block;
   flex: 0 0 auto;
-  width: 9px;
+  width: 10px;
   height: 3px;
   border-radius: 2px;
   background: var(--muted-2);
@@ -70,7 +80,7 @@
 /* 悬停 / 键盘聚焦：刻度加长加深。 */
 .chat-turn-nav-item:hover .chat-turn-nav-tick,
 .chat-turn-nav-item:focus-visible .chat-turn-nav-tick {
-  width: 14px;
+  width: 15px;
   background: var(--muted);
   opacity: 1;
 }
@@ -86,38 +96,63 @@
   color: var(--primary);
 }
 .chat-turn-nav-item.is-active .chat-turn-nav-tick {
-  width: 15px;
+  width: 16px;
   height: 4px;
   background: var(--primary);
   opacity: 1;
 }
 
-/* 悬停标签（轻量 HoverCard）：位于刻度左侧，默认透明隐藏；
-   标签宽度 + 通道已算入容器宽度，滚动容器不会横向裁切；原生 title 兜底。 */
+/* 悬停卡片（可读 HoverCard）：fixed 定位脱离窄滚动容器的裁切，
+   坐标由 TurnNavigator.tsx 在悬停/聚焦时计算；显示与隐藏仍由 CSS 控制。 */
 .chat-turn-nav-label {
-  position: absolute;
-  top: 50%;
-  right: calc(100% + 8px);
-  max-width: 132px;
-  padding: 3px 8px;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: max-content;
+  max-width: 232px;
+  min-width: 120px;
+  padding: 8px 10px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--surface, var(--paper));
   color: var(--ink);
-  font-size: 11px;
-  line-height: 1.4;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  box-shadow: var(--shadow-card);
+  font-size: 12px;
+  line-height: 1.55;
+  text-align: left;
+  white-space: normal;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .12);
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
   transition: opacity .1s ease;
-  z-index: 1;
+  z-index: 70;
 }
 .chat-turn-nav-item:hover .chat-turn-nav-label,
 .chat-turn-nav-item:focus-visible .chat-turn-nav-label {
   opacity: 1;
   visibility: visible;
+}
+
+/* 卡片结构：「第 N 轮」小标题 + 摘要正文两行。 */
+.chat-turn-nav-idx {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: .02em;
+}
+.chat-turn-nav-summary {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+}
+
+/* 窄屏（侧栏 390 视口）：卡片与容器同步收窄，不越出视口。 */
+@media (max-width: 720px) {
+  .chat-turn-nav { width: 264px; right: 4px; }
+  .chat-turn-nav-label { max-width: 208px; min-width: 104px; }
 }

@@ -28,11 +28,13 @@ pub mod snapshot;
 pub mod transfers;
 #[path = "kb_preview.rs"]
 pub mod preview;
+#[path = "memory_sync.rs"]
+pub(crate) mod memory_sync;
 pub use files::{ExportResult, ImportOutcome, KnowledgeFileData, KnowledgeFileInfo, RecycleItem, UploadItem, UploadResult};
 
 fn enabled_root(conn: &Connection, id: &str) -> Result<files::SafeRoot, String> {
     let source: String = conn.query_row(
-        "SELECT sourceRef FROM knowledge_library WHERE id=?1 AND enabled=1 AND sourceKind='managed-directory'",
+        "SELECT sourceRef FROM knowledge_library WHERE id=?1 AND enabled=1 AND sourceKind IN ('managed-directory','personal-memory')",
         [id], |r| r.get(0),
     ).map_err(|_| "知识库不存在、已禁用或不是受管本机目录".to_string())?;
     files::SafeRoot::new(Path::new(&source))
@@ -475,7 +477,15 @@ pub fn kb_save_markdown(id: String, note_id: String, expected_hash: String, cont
     let conn = guard.as_ref().ok_or("db not initialized")?;
     let mut root = enabled_root(conn,&id)?;
     let (rel,_) = resolve(conn,&mut root,&id,&note_id)?;
+    let personal:bool=conn.query_row("SELECT sourceKind='personal-memory' FROM knowledge_library WHERE id=?1",[&id],|r|r.get(0)).unwrap_or(false);
+    let edit=if personal {memory_sync::edited_item(conn,&rel,&content)?} else {None};
     files::save_markdown(&mut root,&rel,&expected_hash,&content)?;
+    if let Some((memory_id,body))=edit {
+        crate::commands::memory_store::update_content(conn,&memory_id,&body,None)?;
+        crate::commands::memory::rebuild_profile(conn,"global")?;
+        memory_sync::sync_locked(conn,&id)?;
+        return read_note(conn,&id,&note_id);
+    }
     Ok(saved_note(conn,&id,&rel,content,Some(&note_id)))
 }
 fn rich_note(rel: &str, content: String, hash: String) -> NoteContent {
@@ -519,7 +529,15 @@ pub fn kb_delete_doc(id: String, relative_uri: String) -> Result<(), String> {
     let guard = db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
     let mut root = enabled_root(conn, &id)?;
+    let personal:bool=conn.query_row("SELECT sourceKind='personal-memory' FROM knowledge_library WHERE id=?1",[&id],|r|r.get(0)).unwrap_or(false);
+    let memory_id=if personal {memory_sync::deleted_item(conn,&relative_uri)?} else {None};
     files::delete_entry(&mut root, &relative_uri)?;
+    if let Some(memory_id)=memory_id {
+        crate::commands::memory_store::soft_delete(conn,&memory_id)?;
+        crate::commands::memory::rebuild_profile(conn,"global")?;
+        memory_sync::sync_locked(conn,&id)?;
+        return Ok(());
+    }
     conn.execute("DELETE FROM knowledge_note_index WHERE libraryId=?1 AND relativeUri=?2", [&id, &relative_uri]).map_err(|e| e.to_string())?;
     if let Err(error) = links::rebuild_from_root(conn, &id, &mut root) {
         eprintln!("[CR-088] 删除后链接索引重建失败：{error}");

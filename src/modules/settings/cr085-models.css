@@ -4,8 +4,23 @@
 .cr085-provider-identity,.cr085-key-fields{display:grid;grid-template-columns:minmax(120px,1fr) minmax(180px,2fr);gap:12px}
 .cr085-key-fields{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .cr085-provider-identity .input:disabled{opacity:.6;background:var(--set-surface-3,var(--set-surface-2));cursor:not-allowed}
-.cr085-endpoint{display:flex;align-items:center;gap:10px;margin-top:8px;font-size:12px}
-.cr085-endpoint .input{flex:1;min-width:0}.cr085-endpoint .set-link{display:inline-flex;align-items:center;gap:6px}
+/* CR-099：端点输入框左缘对齐——协议标签定宽，两个端点从同一列开始。 */
+.cr085-endpoint{display:grid;grid-template-columns:76px minmax(0,1fr);align-items:center;gap:10px;margin-top:8px;font-size:12px}
+.cr085-endpoint .input{width:100%;min-width:0}
+.cr085-endpoint .set-link{display:inline-flex;align-items:center;gap:6px;grid-column:2}
+/* CR-099：新增供应商在列表下方、停用折叠在它上方，两者都是文字按钮。 */
+.cr099-disabled{margin-top:10px;padding-top:10px;border-top:1px solid var(--set-line-soft)}
+.cr099-fold-btn{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--set-muted);padding:4px 0;background:transparent;border:0;cursor:pointer}
+.cr099-fold-btn:hover{color:var(--set-ink-2)}
+.cr099-fold-btn[aria-expanded="true"]{color:var(--set-primary)}
+.cr099-disabled-list{display:grid;gap:8px;margin-top:8px}
+.cr099-disabled-list .set-provider-card{margin-bottom:0}
+.cr099-provider-actions{margin-top:8px;padding-top:10px;border-top:1px solid var(--set-line-soft);display:grid;gap:8px}
+.cr099-add-btn{display:inline-flex;align-items:center;gap:6px;width:fit-content;font-size:12.5px;color:var(--set-primary);background:transparent;border:0;padding:4px 0;cursor:pointer}
+.cr099-add-btn:hover{text-decoration:underline}
+.cr099-add-btn:focus-visible{outline:none;box-shadow:0 0 0 3px var(--set-primary-soft);border-radius:4px}
+.cr099-new-draft{margin:0;border-style:dashed}
+@media(max-width:720px){.cr085-endpoint{grid-template-columns:64px minmax(0,1fr);gap:8px}}
 .set-key-list .cr085-add-key{display:flex;align-items:center;justify-content:center;width:100%;height:36px;margin:0;gap:6px;border-radius:0}
 .cr085-key-row{gap:8px;min-height:40px;padding:4px 12px;flex-wrap:nowrap}
 .cr085-key-identity{flex-wrap:nowrap;min-width:170px}
@@ -33,6 +48,14 @@
 .cr085-result-label{font-size:11px;color:var(--set-muted);white-space:nowrap}
 .cr085-result-grid b{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cr085-result-summary{height:32px;flex:0 0 32px;margin-top:8px;font-size:11.5px;line-height:16px;color:var(--set-muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+/* CR-099：归因是一行正文，无边框/底色/阴影；结果区按内容长高，避免溢出裁切。 */
+.probe-attr-line{margin:6px 0 0;font-size:11.5px;line-height:17px;color:var(--set-ink-2);overflow-wrap:anywhere;border:0;background:transparent;box-shadow:none}
+.probe-attr-line b{font-weight:600;color:var(--set-ink)}
+.probe-attr-line .mono{font-family:var(--mono)}
+.probe-attr-line .tag{margin:0 6px;vertical-align:1px}
+.probe-attr-line .probe-attr-claimed{color:var(--set-muted);margin-left:2px}
+/* 结果区在渲染归因时需要更高：只增高度，不隐藏内容。 */
+.cr085-result.has-attribution{height:auto;min-height:108px}
 .cr085-probe-progress{position:absolute;left:12px;bottom:6px;width:calc(100% - 24px);height:3px}
 @media(max-width:720px){
  .cr085-provider-identity{grid-template-columns:repeat(2,minmax(0,1fr))}

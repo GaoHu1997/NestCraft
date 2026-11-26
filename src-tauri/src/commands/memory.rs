@@ -36,6 +36,8 @@ pub struct Extracted {
     pub content: String,
     pub importance: i64,
     pub trust: String,
+    /// personal/global or project; missing old model output stays conservatively project-local.
+    pub memory_scope: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -228,6 +230,10 @@ pub fn parse_extraction(raw: &str) -> Vec<Extracted> {
             content: content.to_string(),
             importance,
             trust,
+            memory_scope: match object.get("memoryScope").or_else(||object.get("scope")).and_then(Value::as_str) {
+                Some("personal" | "global") => "personal".into(),
+                _ => "project".into(),
+            },
         });
         if out.len() >= MAX_EXTRACTED_ITEMS {
             break;
@@ -262,6 +268,10 @@ pub fn merge(
 
         if let Some(key) = mem_key {
             if let Some(existing) = memory_store::find_by_key(conn, scope, &kind, key)? {
+                if existing.trust == "own" && trust == "external" {
+                    report.skipped += 1;
+                    continue;
+                }
                 if normalize_for_match(&existing.content) == normalize_for_match(content) {
                     report.skipped += 1;
                 } else {
@@ -353,6 +363,35 @@ pub fn rebuild_profile(conn: &Connection, scope: &str) -> Result<(), String> {
     };
     let fields_json = serde_json::to_string(&Value::Object(fields)).unwrap_or_else(|_| "{}".to_string());
     memory_store::upsert_profile(conn, scope, &fields_json, &summary)
+}
+
+/// CR-095：一行极简画像（≤120 字），用于平台 system 常驻；详细内容由 profile_get 按需读取。
+pub fn build_profile_line(conn: &Connection, scope: &str) -> Result<String, String> {
+    let profile = memory_store::get_profile(conn, scope)?;
+    let fields: Value = serde_json::from_str(&profile.fields_json).unwrap_or_else(|_| json!({}));
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(list) = fields.get("preferences").and_then(Value::as_array) {
+        let items: Vec<&str> = list.iter().filter_map(Value::as_str).take(4).collect();
+        if !items.is_empty() {
+            parts.push(format!("偏好{}", items.join("、")));
+        }
+    }
+    if let Some(list) = fields.get("goals").and_then(Value::as_array) {
+        let items: Vec<&str> = list.iter().filter_map(Value::as_str).take(3).collect();
+        if !items.is_empty() {
+            parts.push(format!("目标{}", items.join("、")));
+        }
+    }
+    if parts.is_empty() {
+        let line = profile
+            .summary
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty() && !line.starts_with('【'))
+            .unwrap_or("");
+        parts.push(line.to_string());
+    }
+    Ok(parts.join("；").chars().take(120).collect())
 }
 
 pub fn valid_scope(scope: &str) -> bool {
@@ -618,7 +657,7 @@ fn resolve_model_channel(conn: &Connection, provider_id: &str, model_id: &str) -
     })
 }
 
-const EXTRACTION_PROMPT: &str = "你是个人记忆抽取器。只输出 JSON 数组，不要 markdown 围栏或解释。每个对象字段：kind（fact|preference|goal|event|decision|relation）、memKey（可空，稳定英文短键）、content（一句简体中文原子事实）、importance（1-5）、trust（own|external）。只抽取对未来对话有长期价值且由用户表达或确认的信息；不要复制密码、令牌、密钥或大段原文；最多 20 条；没有可记内容时输出 []。";
+const EXTRACTION_PROMPT: &str = "你是个人记忆抽取器。只输出 JSON 数组，不要 markdown 围栏或解释。每个对象字段：memoryScope（personal|project：用户跨项目通用身份、沟通习惯、长期偏好用personal；只属于当前项目的架构、任务、决定、环境用project，禁止把项目秘密提升为个人偏好）、kind（fact|preference|goal|event|decision|relation）、memKey（可空，稳定英文短键）、content（一句简体中文原子事实）、importance（1-5）、trust（own|external）。只抽取对未来对话有长期价值且由用户表达或确认的信息；不要复制密码、令牌、密钥或大段原文；最多 20 条；没有可记内容时输出 []。";
 
 fn model_response_text(protocol: &str, value: &Value) -> Option<String> {
     if protocol == "anthropic" {
@@ -695,9 +734,10 @@ fn call_extraction_model(protocol: &str, url: &str, api_key: &str, model_id: &st
 /// 会话结束后台抽取：取消息 → 平台模型抽取 → merge → rebuild_profile。
 /// 模型通道不可用时返回明确 Err，由调用方只记日志。
 pub fn run_extraction_for_session(session_id: &str) -> Result<MergeReport, String> {
-    let (scope, provider_id, model_id) = {
+    let (project_id, provider_id, model_id) = {
         let guard = crate::db::conn()?;
         let conn = guard.as_ref().ok_or("db not initialized")?;
+        if !extraction_enabled(conn) { return Ok(MergeReport::default()); }
         let (project_id, provider_id, model_id): (Option<String>, Option<String>, Option<String>) = conn
             .query_row(
                 "SELECT projectId, providerId, modelId FROM session WHERE id=?1",
@@ -711,10 +751,7 @@ pub fn run_extraction_for_session(session_id: &str) -> Result<MergeReport, Strin
         let model_id = model_id
             .filter(|value| !value.trim().is_empty())
             .ok_or("MEMORY_MODEL_UNAVAILABLE：会话未绑定平台模型")?;
-        let scope = project_id
-            .map(|id| format!("project:{id}"))
-            .unwrap_or_else(|| "global".to_string());
-        (scope, provider_id, model_id)
+        (project_id, provider_id, model_id)
     };
 
     let messages: Vec<(String, String)> = {
@@ -763,12 +800,109 @@ pub fn run_extraction_for_session(session_id: &str) -> Result<MergeReport, Strin
     )?;
     let extracted = parse_extraction(&raw);
     if extracted.is_empty() {
+        if json_region(&raw) == "[]" { return Ok(MergeReport::default()); }
         return Err("MEMORY_EXTRACTION_INVALID：模型未返回可解析的记忆".into());
     }
 
     let guard = crate::db::conn()?;
     let conn = guard.as_ref().ok_or("db not initialized")?;
-    let report = merge(conn, &scope, &extracted, "session", Some(session_id))?;
-    rebuild_profile(conn, &scope)?;
+    let tx = conn.unchecked_transaction().map_err(|e|e.to_string())?;
+    let report = merge_routed(&tx, project_id.as_deref(), &extracted, Some(session_id))?;
+    tx.commit().map_err(|e|e.to_string())?;
+    sync_personal(conn)?;
     Ok(report)
+}
+
+/// 单轮抽取结果按每条的个人/项目范围路由；旧输出保守留项目。
+pub fn merge_routed(conn:&Connection, project_id:Option<&str>, items:&[Extracted], source_ref:Option<&str>) -> Result<MergeReport,String> {
+    let mut total = MergeReport::default();
+    let mut scopes = HashSet::new();
+    for item in items {
+        let scope = if item.memory_scope == "personal" { "global".to_string() } else {
+            project_id.map(|p|format!("project:{p}")).unwrap_or_else(||"global".into())
+        };
+        let r = merge(conn,&scope,std::slice::from_ref(item),"session",source_ref)?;
+        total.added += r.added; total.updated += r.updated; total.superseded += r.superseded; total.skipped += r.skipped;
+        scopes.insert(scope);
+    }
+    for scope in scopes { rebuild_profile(conn,&scope)?; }
+    Ok(total)
+}
+
+/// 同步的是global镜像，绝不导出任何project记录。
+pub fn sync_personal(conn:&Connection) -> Result<usize,String> {
+    let root=crate::storage_layout::root()?;
+    sync_personal_at(conn,&root)
+}
+pub fn sync_personal_at(conn:&Connection,root:&Path) -> Result<usize,String> {
+    let id=ensure_memory_library(conn,root)?;
+    crate::commands::knowledge::memory_sync::sync(conn,&id).map_err(|e|format!("MEMORY_SYNC_FAILED：数据库已保存，个人知识库尚未同步，请刷新重试：{e}"))
+}
+
+#[cfg(test)]
+mod scope_fix_tests {
+    use super::*;
+    struct Fixture { c:Connection, root:std::path::PathBuf }
+    impl Fixture {
+        fn new()->Self {
+            let c=Connection::open_in_memory().unwrap();
+            c.execute_batch("CREATE TABLE schema_version(version INTEGER PRIMARY KEY,appliedAt INTEGER); CREATE TABLE knowledge_library(id TEXT PRIMARY KEY,name TEXT,sourceKind TEXT,sourceRef TEXT,revision INTEGER,enabled INTEGER,createdAt INTEGER); CREATE TABLE knowledge_note_index(libraryId TEXT,noteId TEXT,title TEXT,relativeUri TEXT,contentHash TEXT,updatedAt INTEGER,PRIMARY KEY(libraryId,noteId),UNIQUE(libraryId,relativeUri));").unwrap();
+            memory_store::ensure_schema(&c).unwrap();
+            crate::commands::kb_index::migrate_cr030_knowledge_index(&c).unwrap();
+            let root=std::fs::canonicalize(std::env::temp_dir()).unwrap().join(format!("nc-memory-test-{}",uuid::Uuid::new_v4()));
+            std::fs::create_dir(&root).unwrap();
+            Self{c,root}
+        }
+        fn sync(&self) {
+            for _ in 0..200 {
+                match sync_personal_at(&self.c,&self.root) {
+                    Ok(_)=>return,
+                    Err(e) if e.contains("MEMORY_SYNC_BUSY")=>std::thread::sleep(std::time::Duration::from_millis(25)),
+                    Err(e)=>panic!("{e}"),
+                }
+            }
+            panic!("memory file lock remained busy");
+        }
+    }
+    impl Drop for Fixture {fn drop(&mut self){
+        // 此测试唯一生成的绝对临时目录，已核验归属才清理。
+        let temp=std::fs::canonicalize(std::env::temp_dir()).unwrap();
+        if self.root.starts_with(&temp)&&self.root.file_name().unwrap().to_string_lossy().starts_with("nc-memory-test-") {let _=std::fs::remove_dir_all(&self.root);}
+    }}
+    #[test]
+    fn mixed_extraction_routes_personal_and_project_without_promoting_legacy() {
+        let f=Fixture::new();
+        let items=parse_extraction(r#"[{"kind":"preference","memoryScope":"personal","memKey":"reply","content":"用户偏好简洁中文回复"},{"kind":"decision","memoryScope":"project","memKey":"db","content":"项目A使用SQLite"},{"kind":"fact","content":"旧输出未标注范围"}]"#);
+        assert_eq!(items.len(),3);
+        let r=merge_routed(&f.c,Some("a"),&items,None).unwrap();assert_eq!(r.added,3);
+        assert_eq!(memory_store::list(&f.c,Some("global"),None,Some("active"),100).unwrap().len(),1);
+        assert_eq!(memory_store::list(&f.c,Some("project:a"),None,Some("active"),100).unwrap().len(),2);
+        assert!(memory_store::list(&f.c,Some("project:b"),None,Some("active"),100).unwrap().is_empty());
+    }
+    #[test]
+    fn personal_markdown_index_update_delete_roundtrip_and_project_exclusion() {
+        let f=Fixture::new();
+        let items=parse_extraction(r#"[{"kind":"preference","memoryScope":"personal","memKey":"reply","content":"用户偏好简洁中文回复"},{"kind":"decision","memoryScope":"project","content":"项目隔离秘密SQLite"}]"#);
+        merge_routed(&f.c,Some("a"),&items,None).unwrap();f.sync();f.sync();
+        let id=ensure_memory_library(&f.c,&f.root).unwrap();
+        let active=memory_store::list(&f.c,Some("global"),None,Some("active"),10).unwrap();
+        let path=f.root.join("knowledge/memory/记忆").join(format!("nc-memory-{}.md",active[0].id));
+        let original=std::fs::read_to_string(&path).unwrap();assert!(original.contains("简洁中文"));assert!(!original.contains("项目隔离秘密"));
+        let count:i64=f.c.query_row("SELECT COUNT(*) FROM knowledge_note_index WHERE libraryId=?1",[&id],|r|r.get(0)).unwrap();assert_eq!(count,2);
+        let query=crate::commands::kb_index::parse_query("简洁中文").unwrap();
+        let (hits,_)=crate::commands::kb_index::search_library(&f.c,&id,&query).unwrap();assert!(!hits.is_empty());
+        memory_store::update_content(&f.c,&active[0].id,"用户偏好详细中文回复",None).unwrap();rebuild_profile(&f.c,"global").unwrap();f.sync();
+        let updated=std::fs::read_to_string(&path).unwrap();assert!(updated.contains("详细中文"));assert!(!updated.contains("简洁中文"));
+        memory_store::soft_delete(&f.c,&active[0].id).unwrap();rebuild_profile(&f.c,"global").unwrap();f.sync();assert!(!path.exists());assert!(memory_store::get_profile(&f.c,"global").unwrap().summary.is_empty());
+        let count:i64=f.c.query_row("SELECT COUNT(*) FROM knowledge_note_index WHERE libraryId=?1",[&id],|r|r.get(0)).unwrap();assert_eq!(count,1);
+        memory_store::hard_delete(&f.c,&active[0].id).unwrap();f.sync();assert!(!path.exists());
+    }
+    #[test]
+    fn same_keys_are_not_merged_across_scopes() {
+        let f=Fixture::new();let mut i=parse_extraction(r#"[{"kind":"preference","memKey":"style","content":"fixture"}]"#).remove(0);
+        merge(&f.c,"global",std::slice::from_ref(&i),"manual",None).unwrap();i.content="project fixture".into();
+        merge(&f.c,"project:a",&[i],"manual",None).unwrap();
+        assert_eq!(memory_store::find_by_key(&f.c,"global","preference","style").unwrap().unwrap().content,"fixture");
+        assert_eq!(memory_store::find_by_key(&f.c,"project:a","preference","style").unwrap().unwrap().content,"project fixture");
+    }
 }

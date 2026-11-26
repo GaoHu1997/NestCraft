@@ -89,7 +89,7 @@ function DeleteDialog({ item, busy, onCancel, onConfirm }: {
   );
 }
 
-export function MemoryList({ refreshToken, onChanged }: { refreshToken: number; onChanged: () => void }) {
+export function MemoryList({ scope, onEditingChange, refreshToken, onChanged }: { scope:string; onEditingChange:(v:boolean)=>void; refreshToken: number; onChanged: () => void }) {
   const toast = useToast();
   const [items, setItems] = useState<MemoryItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -108,14 +108,14 @@ export function MemoryList({ refreshToken, onChanged }: { refreshToken: number; 
     const seq = ++loadSeq.current;
     setError(null);
     try {
-      const rows = await memoryListItems({ limit: 500 });
+      const rows = await memoryListItems({ scope, limit: 500 });
       if (seq !== loadSeq.current) return;
       setItems(rows);
     } catch (loadError) {
       if (seq !== loadSeq.current) return;
       setError(errText(loadError));
     }
-  }, []);
+  }, [scope]);
 
   useEffect(() => {
     setItems(null);
@@ -124,6 +124,7 @@ export function MemoryList({ refreshToken, onChanged }: { refreshToken: number; 
   }, [load, refreshToken]);
 
   useEffect(() => () => { loadSeq.current += 1; }, []);
+  useEffect(()=>{onEditingChange(editingId!==null||saving||deleting);},[editingId,saving,deleting,onEditingChange]);
 
   const needle = query.trim().toLowerCase();
   const rows = (items ?? [])
@@ -236,7 +237,7 @@ export function MemoryList({ refreshToken, onChanged }: { refreshToken: number; 
           <div className="memory-empty-icon" aria-hidden="true">🗂️</div>
           <div>{filtersActive ? "没有匹配的记忆" : "还没有记忆"}</div>
           <div className="memory-hint">
-            {filtersActive ? "调整搜索词或筛选条件后再试。" : "AI 会在会话结束后自动沉淀，你也可以在 AI 对话中让它记住偏好。"}
+            {filtersActive ? "调整搜索词或筛选条件后再试。" : (scope==='global'?"通用偏好会进入个人记忆；项目约束请在对应项目范围查看。":"当前项目尚无记忆，不会展示其他项目的记录。")}
           </div>
         </div>
       ) : (
@@ -247,6 +248,7 @@ export function MemoryList({ refreshToken, onChanged }: { refreshToken: number; 
               <article className="memory-card" key={item.id}>
                 <div className="memory-card-head">
                   <span className={`memory-badge memory-badge-${item.kind}`}>{kindLabel(item.kind)}</span>
+                  <span className="memory-badge">{item.scope==='global'?'个人记忆':'项目记忆'}</span>
                   <span className="memory-stars" title={`重要度 ${item.importance}/5`} aria-label={`重要度 ${item.importance}/5`}>
                     {stars(item.importance)}
                   </span>

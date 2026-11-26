@@ -1,7 +1,7 @@
 # LLD-CR078：概览页日程与用量实现
 
-- 状态：**v8 待验收（仅限本轮已核查场景）**（2026-11-25）；用户明确「授权，设计+软件一起做」。2026-11-24 无编码授权 / 设计未实现为初版历史，不是当前边界。
-- 关联：[CR-078](../PRD/CR-078-概览页日程与用量.md) / [STORY-097](../Plan/Story/STORY-097-概览页日程与用量.md)（唯一父项 FEAT-001）/ [UI-CR078-v8](../UI/文档/UI-CR078-概览页日程与用量.md) / [DB-CR078](../DB/DB-CR078-日程表与用量聚合.md)。
+- 状态：**v11 待验收（仅限本轮已核查场景）**（2026-11-26）；2026-11-26 用户确认「设计+软件一起做（推荐）」覆盖用量页修正（v9 三点 + v10 去图例 + v11 排行/曲线）。2026-11-24 无编码授权、v8 及更早为历史边界。
+- 关联：[CR-078](../PRD/CR-078-概览页日程与用量.md) / [STORY-097](../Plan/Story/STORY-097-概览页日程与用量.md)（唯一父项 FEAT-001）/ [UI-CR078-v11](../UI/文档/UI-CR078-概览页日程与用量.md) / [DB-CR078](../DB/DB-CR078-日程表与用量聚合.md)。
 
 ## 0. v8 实现与验证约束（AC-23～27）
 
@@ -143,6 +143,7 @@ src/modules/overview/
 | --- | --- |
 | 2026-11-24 | v1 设计稿与方案建立，未实现。 |
 | 2026-11-25 | v6：选中日期态改「中性浅底 + 主色描边」、补日程编辑（详见 §8）。 |
+| 2026-11-26 | v9：用量页默认「今日」、补 `.ov-panel > .card-h` 卡片头、移除底部说明条；v10：移除趋势卡模型图例；v11：排行去来源文字 + 序号图标居中、命中率改平滑曲线（详见 §10）。 |
 
 ## 9. v7 增量（2026-11-25 三次反馈：月/年切换按钮与年月快速选择）
 
@@ -158,3 +159,14 @@ src/modules/overview/
 - **日程编辑**：`OverviewHome.tsx` 的 `form` 状态扩展为可携带 `id` 与各字段；新增 `openNew` / `openEdit`；新建与编辑共用弹窗，编辑时回填原值并以 `form.id` 保存。后端 `schedule_event_save` 已按 id upsert（存在则 UPDATE），故无需改后端与接口。详情栏日程行新增 `.ov-ev-edit`（铅笔）入口，月历条带 `.ov-band` 亦可点击编辑（`role=button` + Enter 键）。
 - **待办编辑**：待办行新增 `.ov-todo-edit-btn`（铅笔）→ 切换为 `.ov-todo-edit` 行内输入；Enter / 失焦保存、Esc 取消（`todoCancelRef` 防误存）、空值不覆盖；保存走既有 `schedule_todo_save`（同样按 id upsert）。勾选与新增不变。
 - **历史验证归属 v7（非 v6 / v8 结果）**：设计稿 110/110、软件侧 49/49 断言通过（新增「选中底色≠蓝色条带」「编辑弹窗回填」「同 id 更新不新增条目」「待办行内编辑保存」「年月选择器」），0 运行时异常；`npx tsc --noEmit` / `npm run build` exit 0。
+
+## 10. v9 / v10 / v11 增量（2026-11-26 用量页修正）
+
+- **问题定位**：软件 `src/theme/base.css` 只有 `.card`，没有设计稿 `workbench-v4/base.css` 的 `.card-h` / `.card-b`；`UsageTab.tsx` 使用 `card-h` 却无对应样式，导致四张卡片标题贴边、无内边距 / 下分隔线，标题与右侧图例、「N 个」副标各自换行。底部 `nc-page-foot`（来源说明 + 品牌）为软件额外渲染，默认周期写死 `"7d"`，趋势卡右上常驻模型图例（模型名长时挤占 46px 标题行）。
+- **卡片头**：在 `overview.css` 新增 `.ov-panel > .card-h`（`display:flex; align-items/justify: space-between; gap:12px; height:46px; padding:0 16px; border-bottom:1px solid var(--line-soft); flex-wrap:nowrap`）、`> h3`（14px / 600 / nowrap）、`> .sub`（12px / muted）。作用域限定用量页 `ov-panel`，不改表单弹窗与全局 `.card`；不补全局 `.card-b`，因为用量页卡片体由 `ov-heat-wrap` / `ov-chart` / `ov-rank` 自带内边距，补了会叠加。
+- **默认周期**：`UsageTab.tsx` `useState("7d")` → `"today"`；设计稿 `state.usageRange` 同步 `"today"`。
+- **底部说明条**：删除 `UsageTab.tsx` 的 `.nc-page-foot`（来源说明 + 「栖造 · NestCraft」）；设计稿同步删除用量页 `.page-foot`。来源口径仍在 PRD §2.1-C-7 / 本文件与 UI 说明保留。
+- **趋势卡图例（v10）**：删除 `UsageTab.tsx` 趋势卡头部的 `.ov-legend`（前 3 个模型色点 + 模型名 + 「缓存命中率」线段），`modelColor` 映射保留（堆叠段、悬停浮层、排行条仍共用同一颜色，识别能力由浮层承担）；设计稿同步删除 `.c078-legend`。热力图「较少 → 较多」色阶标尺不动（它是色阶标尺，不是模型清单）。
+- **排行结构（v11）**：`RankRow` 去掉 `source` 参数与 `.tag` 来源文字，副行改为「占比 x%」+「缓存命中率 x%」；图标包进 `.ov-rank-ic`（20px 居中列）。CSS `.ov-rank-row` 由 `align-items:flex-start` 改 `center`，删除序号 `padding-top:3px` 与图标 `margin-top`；`.ov-rank-n` 宽度 18→20px、`line-height:20px`，与 `.ov-rank-ic` 同宽，序号与图标因而在整行垂直居中且水平居中。实测（lead 一次性 CDP 测量，未纳入正式断言）：改前序号中心比行中心高 15.31px、图标高 13.40px；改后两者 |Δ|≤1px，且正式脚本已把「±1px + 同宽 20px + padding-top=0」写成断言。
+- **命中率平滑曲线（v11）**：新增 `smoothPath(pts)`——Catmull-Rom 控制点公式 `c1 = p1 + (p2-p0)/6`、`c2 = p2 - (p3-p1)/6` 转三次贝塞尔，24 点输出 23 段 `C`；控制点 y `clamp(0,100)` 防出界，x 不夹。渲染由 `<polyline points>` 改 `<path d>`，CSS `.ov-line polyline` → `.ov-line path`（保留 `fill:none`，否则 path 会被填成色块）并加 `stroke-linecap:round`。数据口径与右轴刻度不变。
+- **校验**：软件断言（默认今日、四卡卡片头 46px/同行/分隔线、无 `.nc-page-foot`、趋势卡图例数 = 0、命中率 23 段平滑曲线且无填充、排行无来源文字、序号/图标与行中心 ±1px 且同宽 20px，并保留趋势与排行同色 / 悬停浮层 / 同行等高）；`npx tsc --noEmit`、`npm run build` exit 0；设计 111/111、软件 59/59，0 异常。真实 Tauri 外观与 SQLite 未验证。

@@ -7,7 +7,7 @@
 - 目标用户与价值：AI 在长期使用中自动记住用户的事实、偏好、目标与决策，逐渐形成画像，从而"越来越懂我"，全程本地且用户可控。
 - 范围与边界：内置「个人记忆库」（`sourceKind='personal-memory'`，目录 `data/knowledge/memory/`）；`memory_item`/`memory_profile` 派生表；抽取→合并→落盘管道；会话结束后台抽取 + 手动沉淀；新会话注入画像摘要与相关记忆；`memory_search/save/list/forget/profile_get` 5 个工具；记忆管理界面。不含云端 embedding、独立向量库、多租户。
 - 负责人：主代理。优先级 P0（P1 界面随本批一并交付）。
-- 当前状态：待验收（技术验证通过：`cargo check --all-targets` exit 0、`cargo test --lib` 607/0、`npm run build` exit 0；平台会话自动抽取已接线，CLI 自动抽取、真实 Tauri 端到端、设计稿视觉对照未完成。见 [REPORT-FEAT-026](../../Test/REPORT-FEAT-026-个人记忆层验证.md)）。
+- 当前状态：待验收（技术验证通过：`cargo check --all-targets` exit 0、`cargo test --lib` 607/0、`npm run build` exit 0；平台与 CLI 会话自动抽取均已接线，CLI 自动注入、真实 Tauri 端到端、设计稿视觉对照未完成。见 [REPORT-FEAT-026](../../Test/REPORT-FEAT-026-个人记忆层验证.md)）。
 - 整体验收：见 [PRD-CR092](../../PRD/CR-092-个人记忆层与默认记忆库.md) 的 AC；关闭记忆注入/删除记忆后系统行为回到现状。
 
 ## 子项
@@ -22,3 +22,7 @@
 ## 关联与证据
 
 - [PRD-CR092](../../PRD/CR-092-个人记忆层与默认记忆库.md)／[LLD-FEAT-026](../../LLD/LLD-FEAT-026-个人记忆层实现.md)／[DB-FEAT-026](../../DB/DB-FEAT-026-个人记忆数据设计.md)／[UI](../../UI/文档/UI-FEAT-026-记忆管理界面.md)／[方案调研](../../调研/RESEARCH-008-个人记忆层与默认个人知识库方案建议.md)。
+
+## MEM-FIX-001 现行增量
+
+2026-11-26 用户要求个人通用、项目隔离、个人记忆进知识库。原报告错误地把编译与既有单测当作完整记忆闭环，现修复以[方案](../../LLD/LLD-FEAT-026-记忆范围与落盘修复.md)及[新验证](../../Test/REPORT-MEMFIX001-记忆范围与落盘修复.md)为准；旧project记录不自动提升个人。真实正在运行的便携exe未更新，不宣称本机该历史会话已保存成功。

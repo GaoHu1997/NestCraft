@@ -30,6 +30,10 @@ export interface StatsData {
   cacheRead: number | null;
   contextUsed: number | null;
   contextLimit: number | null;
+  /** CR-101：生成中的实时流速（1 位小数）；null 表示无可用实时值，该片段省略。 */
+  liveTps?: number | null;
+  /** true 表示 liveTps 由字符折算估算，展示必须带 `~` 且在详情标注估算。 */
+  liveEstimated?: boolean;
 }
 
 /** 只在展示层归一化；未知/非法值不参与求和，不以0替代未知。 */
@@ -47,6 +51,12 @@ export function fmtTok(n: number | null | undefined): string {
   if (value >= 1_000_000) return `${Number((value / 1_000_000).toFixed(1))}M`;
   if (value >= 1000) return `${Number((value / 1000).toFixed(1))}K`;
   return String(value);
+}
+
+/** CR-101：速度格式对齐 DSH 统计行——≥10 取整，<10 保留 1 位小数。 */
+export function fmtTps(n: number): string {
+  const clamped = Math.max(0, n);
+  return clamped >= 10 ? String(Math.round(clamped)) : String(Math.round(clamped * 10) / 10);
 }
 
 /** WP-074-F012：消费现行互斥字段，聚合/请求去重由现有上游负责，本函数不计数请求。 */
@@ -70,10 +80,64 @@ export function statsPresentation(data: StatsData) {
   const ctxPct = values.contextUsed != null && values.contextLimit != null && values.contextLimit > 0
     ? values.contextUsed >= values.contextLimit ? 100 : Math.round(values.contextUsed / values.contextLimit * 100)
     : null;
-  // 沿用全新空会话占位规则；可信零用量/零步骤/零耗时仍是已知数据，不能被隐藏。
-  const empty = values.rounds === 0 && values.msgs === 0 && values.steps == null
-    && [values.modelMs, values.toolMs, values.ttftMs, values.tps, ...tokenParts, values.contextUsed].every(n => n == null);
-  return { ...values, total, partialTotal, cacheHitPct, ctxPct, empty };
+  // CR-101 R5：空态只看「是否存在可信数据」，不再用消息条数 msgs 参与判空。
+  const live = nonNegative(data.liveTps);
+  const empty = values.rounds == null && values.steps == null && values.tps == null && live == null
+    && [values.modelMs, values.toolMs, values.ttftMs, ...tokenParts, values.contextUsed].every(n => n == null);
+  return { ...values, total, partialTotal, cacheHitPct, ctxPct, empty, live };
+}
+
+/* ---------------- CR-101：组级可见 + 字段级省略 ---------------- */
+
+export type StatGroupId = "session" | "tokens" | "context";
+export interface StatFragment { key: string; text: string }
+export interface StatGroup { id: StatGroupId; label: string; fragments: StatFragment[] }
+export interface StatsView { groups: StatGroup[] }
+
+/**
+ * CR-101 R-CR101-1～5：把统计归一化为「可见组 + 组内片段」。
+ * - 组内某字段未知时不生成片段，因此不会出现「—」占位或分隔符残骸；
+ * - 可信 0 生成片段（0 轮／0 tok／缓存 0%），与 null 严格区分；
+ * - 三组都没有片段时返回空数组，调用方必须整条不渲染。
+ */
+export function statsView(data: StatsData): StatsView {
+  const p = statsPresentation(data);
+  const groups: StatGroup[] = [];
+
+  // 会话组：轮与步共用计数段（空格相连），流速独立片段（· 相连）。
+  const counts = [
+    p.rounds != null ? `${p.rounds} 轮` : "",
+    p.steps != null ? `${p.steps} 步` : "",
+  ].filter(Boolean).join(" ");
+  const fragments: StatFragment[] = [];
+  if (counts) fragments.push({ key: "counts", text: counts });
+  // R-CR101-10：生成中优先实时值；无实时值时回落到权威测量，不并列显示两种口径。
+  if (p.live != null && p.live > 0) {
+    // R-CR101-9：实时值始终是密度估算，带 `~` 前缀；取整为 0 时不显示。
+    fragments.push({ key: "tps", text: `~${fmtTps(p.live)} tok/s` });
+  } else if (p.tps != null) {
+    // R-CR101-4：权威测得的 0 是可信零值，必须显示（区别于实时估算取整为 0 的省略）。
+    fragments.push({ key: "tps", text: `${fmtTps(p.tps)} tok/s` });
+  }
+  if (fragments.length) groups.push({ id: "session", label: "会话统计", fragments });
+
+  // Token 组：完整总量 / 已知部分 / 缓存命中率各自独立判定。
+  // 完整总量未知但已有部分字段时显示「已知 N tok」，不冒充完整累计，也不把真实数据藏掉。
+  const tokenFragments: StatFragment[] = [];
+  if (p.total != null) tokenFragments.push({ key: "total", text: `${fmtTok(p.total)} tok` });
+  else if (p.partialTotal != null) tokenFragments.push({ key: "total", text: `已知 ${fmtTok(p.partialTotal)} tok` });
+  // R-CR101-14：统计条写两字「缓存」省空间；详情浮层仍写完整「缓存命中」。
+  if (p.cacheHitPct != null) tokenFragments.push({ key: "cache", text: `缓存 ${p.cacheHitPct}%` });
+  if (tokenFragments.length) groups.push({ id: "tokens", label: "Token 用量", fragments: tokenFragments });
+
+  // 上下文组：只在当前窗口占用可信时出现；上限未知时给已用量而非假百分比。
+  if (p.contextUsed != null) {
+    groups.push({
+      id: "context", label: "上下文",
+      fragments: [{ key: "ctx", text: p.ctxPct != null ? `${p.ctxPct}%` : `~${fmtTok(p.contextUsed)} tok` }],
+    });
+  }
+  return { groups };
 }
 
 function SessionGauge() {
@@ -98,12 +162,29 @@ function Row(props: { label: string; value: string }) {
 export function StatsBar(props: { data: StatsData }) {
   const overlay = useChatOverlay();
   const open = overlay.activeOverlay;
-  const toggle = (k: "session" | "tokens" | "context", trigger: HTMLElement) => overlay.toggle(k, trigger);
+  const toggle = (k: StatGroupId, trigger: HTMLElement) => overlay.toggle(k, trigger);
   const data = statsPresentation(props.data);
-  const { total, partialTotal, cacheHitPct, contextUsed, contextLimit, ctxPct, tps, empty } = data;
+  const view = statsView(props.data);
+  const { total, partialTotal, cacheHitPct, contextUsed, contextLimit, ctxPct } = data;
+  const find = (id: StatGroupId) => view.groups.find(g => g.id === id);
+  const session = find("session"), tokens = find("tokens"), context = find("context");
+  // CR-101 R-CR101-1：三组全无可信数据时整条不渲染——不输出容器、不留 padding／min-height
+  // 空白、不提供只能打开空浮层的入口。可信零值仍会生成片段，因此不会被这里误隐藏。
+  if (!session && !tokens && !context) return null;
+  const groupText = (g: StatGroup) => g.fragments.map(f => f.text).join(" · ");
+  /** R-CR101-6：详情内未知字段写「未上报」，不用「—」冒充数值。 */
+  const unknown = "未上报";
+  const liveActive = data.live != null && data.live > 0;
+  const tpsLabel = liveActive
+    ? `~${fmtTps(data.live!)} tok/s（生成中实时估算）`
+    : data.tps != null
+      ? `${fmtTps(data.tps)} tok/s（本轮闭合测量）`
+      : null;
+  const countsText = [data.rounds != null ? `${data.rounds} 轮` : "", data.steps != null ? `${data.steps} 步` : ""].filter(Boolean).join(" ");
 
   return (
-    <div className={`chat-stats cr074-stats${empty ? " is-empty" : ""}`} aria-hidden={empty || undefined}>
+    <div className="chat-stats cr074-stats">
+      {session && (
       <span className="chat-stat-wrap">
         <button
           className={`chat-stat-btn ${open === "session" ? "on" : ""}`}
@@ -113,29 +194,31 @@ export function StatsBar(props: { data: StatsData }) {
           data-chat-overlay-trigger="session" onClick={e => toggle("session", e.currentTarget)}
         >
           <SessionGauge />
-          {data.rounds ?? "—"} 轮 {data.steps ?? "—"} 步 · {tps ?? "—"} tok/s
+          {groupText(session)}
         </button>
         {open === "session" && (
           <div className="chat-stat-pop" data-chat-overlay="session" role="dialog" aria-label="会话统计详情">
             <div className="chat-stat-pop-head">
               <b>会话统计</b>
-              <span className="muted">{data.msgs ?? "—"} 条消息</span>
+              <span className="muted">{data.msgs != null ? `${data.msgs} 条消息` : unknown}</span>
             </div>
             <div className="chat-stat-pop-body">
             <div className="chat-stat-rows">
-              <Row label="会话轮次" value={`${data.rounds ?? "—"} 轮`} />
-              <Row label="执行步数" value={`${data.steps ?? "—"} 步`} />
-              <Row label="模型用时" value={data.modelMs != null ? formatDur(data.modelMs) : "—"} />
-              <Row label="工具调用用时" value={data.toolMs != null ? `${formatDur(data.toolMs)}（估算）` : "—"} />
-              <Row label="本轮首 token（TTFT）" value={data.ttftMs != null ? formatDur(data.ttftMs) : "—"} />
-              <Row label="输出速度（TPS）" value={tps != null ? `${tps} tok/s` : "—"} />
+              <Row label="会话轮次" value={data.rounds != null ? `${data.rounds} 轮` : unknown} />
+              <Row label="执行步数" value={data.steps != null ? `${data.steps} 步` : unknown} />
+              <Row label="模型用时" value={data.modelMs != null ? formatDur(data.modelMs) : unknown} />
+              <Row label="工具调用用时" value={data.toolMs != null ? `${formatDur(data.toolMs)}（估算）` : unknown} />
+              <Row label="本轮首 token（TTFT）" value={data.ttftMs != null ? formatDur(data.ttftMs) : unknown} />
+              <Row label="输出速度（TPS）" value={tpsLabel ?? unknown} />
             </div>
-            <div className="chat-stat-pop-foot">{props.data.statsSource ?? "未上报权威闭合步骤边界时，轮次和步数保持未知"}；{props.data.timingSource ?? "客户端本轮测量"}；工具耗时为事件差，TPS 未有本轮输出计量时保持未知</div>
+            <div className="chat-stat-pop-foot">{props.data.statsSource ?? "未上报权威闭合步骤边界时，轮次和步数保持未知"}；{props.data.timingSource ?? "客户端本轮测量"}；实时流速按 DeepSeek 官方字符密度（中文 0.6／英文 0.3 token）估算并用已结算步骤校准，属估算值；工具耗时为事件差</div>
             </div>
           </div>
         )}
       </span>
+      )}
 
+      {tokens && (
       <span className="chat-stat-wrap">
         <button
           className={`chat-stat-btn ${open === "tokens" ? "on" : ""}`}
@@ -145,27 +228,29 @@ export function StatsBar(props: { data: StatsData }) {
           data-chat-overlay-trigger="tokens" onClick={e => toggle("tokens", e.currentTarget)}
         >
           <TokenDatabase />
-          {fmtTok(total)} tok · 缓存命中 {cacheHitPct != null ? `${cacheHitPct}%` : "—"}
+          {groupText(tokens)}
         </button>
         {open === "tokens" && (
           <div className="chat-stat-pop" data-chat-overlay="tokens" role="dialog" aria-label="Token 用量详情">
             <div className="chat-stat-pop-head">
               <b>Token 用量</b>
-              <span className="muted">{total != null ? `${total.toLocaleString()} tok` : partialTotal != null ? `已知部分 ${partialTotal.toLocaleString()} tok（部分字段未上报）` : "用量未知"}</span>
+              <span className="muted">{total != null ? `${total.toLocaleString()} tok` : partialTotal != null ? `已知部分 ${partialTotal.toLocaleString()} tok（部分字段未上报）` : unknown}</span>
             </div>
             <div className="chat-stat-pop-body">
             <div className="chat-stat-rows">
-              <Row label="缓存命中" value={cacheHitPct != null ? `${cacheHitPct}%` : "—"} />
-              <Row label="未缓存输入" value={data.tokensIn != null ? `${fmtTok(data.tokensIn)} tok` : "—"} />
-              <Row label="缓存读取" value={data.cacheRead != null ? `${fmtTok(data.cacheRead)} tok` : "—"} />
-              <Row label="输出" value={data.tokensOut != null ? `${fmtTok(data.tokensOut)} tok` : "—"} />
+              <Row label="缓存命中" value={cacheHitPct != null ? `${cacheHitPct}%` : unknown} />
+              <Row label="未缓存输入" value={data.tokensIn != null ? `${fmtTok(data.tokensIn)} tok` : unknown} />
+              <Row label="缓存读取" value={data.cacheRead != null ? `${fmtTok(data.cacheRead)} tok` : unknown} />
+              <Row label="输出" value={data.tokensOut != null ? `${fmtTok(data.tokensOut)} tok` : unknown} />
             </div>
             <div className="chat-stat-pop-foot">累计口径：请求内累计上报去重，跨请求累加；未知不推算，字段不完整时不展示完整总量</div>
             </div>
           </div>
         )}
       </span>
+      )}
 
+      {context && (
       <span className="chat-stat-wrap">
         <button
           className={`chat-stat-btn ${open === "context" ? "on" : ""}`}
@@ -175,7 +260,7 @@ export function StatsBar(props: { data: StatsData }) {
           data-chat-overlay-trigger="context" onClick={e => toggle("context", e.currentTarget)}
         >
           <ContextRing percent={ctxPct} />
-          {ctxPct != null ? `${ctxPct}%` : "—"}
+          {groupText(context)}
         </button>
         {open === "context" && (
           <div className="chat-stat-pop" data-chat-overlay="context" role="dialog" aria-label="上下文详情">
@@ -191,15 +276,16 @@ export function StatsBar(props: { data: StatsData }) {
             </div>
             <div className="chat-stat-pop-body">
             <div className="chat-stat-rows">
-              <Row label="已用 tokens" value={contextUsed != null ? `~${fmtTok(contextUsed)} tok` : "—"} />
-              <Row label="窗口上限" value={contextLimit != null ? fmtTok(contextLimit) + " tok" : "—"} />
-              <Row label="剩余" value={contextUsed != null && contextLimit != null && contextLimit > 0 ? `${fmtTok(Math.max(0, contextLimit - contextUsed))} tok` : "—"} />
+              <Row label="已用 tokens" value={contextUsed != null ? `~${fmtTok(contextUsed)} tok` : unknown} />
+              <Row label="窗口上限" value={contextLimit != null ? fmtTok(contextLimit) + " tok" : unknown} />
+              <Row label="剩余" value={contextUsed != null && contextLimit != null && contextLimit > 0 ? `${fmtTok(Math.max(0, contextLimit - contextUsed))} tok` : unknown} />
             </div>
-            <div className="chat-stat-rows"><Row label="系统提示词" value="未知（未上报）" /><Row label="工具定义" value="未知（未上报）" /><Row label="对话消息" value="未知（未上报）" /></div><div className="chat-stat-pop-foot">取最近一次请求上报的当前窗口占用；不累加历史窗口，不用累计 Token 或配置上限推算</div>
+            <div className="chat-stat-rows"><Row label="系统提示词" value="未上报" /><Row label="工具定义" value="未上报" /><Row label="对话消息" value="未上报" /></div><div className="chat-stat-pop-foot">取最近一次请求上报的当前窗口占用；不累加历史窗口，不用累计 Token 或配置上限推算</div>
             </div>
           </div>
         )}
       </span>
+      )}
     </div>
   );
 }
