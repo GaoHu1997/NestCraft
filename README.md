@@ -13,7 +13,7 @@ npm run tauri dev    # 开发运行（首次编译 Rust 需数分钟）
 
 - 本地安装包：`npm run tauri build`（NSIS，未含签名配置）。
 - 本地免安装 exe：`npx tauri build --no-bundle --target x86_64-pc-windows-msvc`，产物在 `src-tauri/target/x86_64-pc-windows-msvc/release/`。
-- GitHub 发布：`.github/workflows/release-windows.yml` 通过手动触发或推送 `v*` 标签构建 Windows x64 免安装 exe，生成 `nestcraft-win64.json` 更新清单并创建 Release；当前只发布免安装 exe，不发布安装包。0.0.7 发布启动：推送 `v0.0.7` 标签触发 CI 与免安装 exe 构建，Release 资产核验结果随流水线完成后补记。历史发布：[v0.0.6](https://github.com/GaoHu1997/NestCraft/releases/tag/v0.0.6)、[v0.0.5](https://github.com/GaoHu1997/NestCraft/releases/tag/v0.0.5)、[v0.0.4](https://github.com/GaoHu1997/NestCraft/releases/tag/v0.0.4)、[v0.0.3](https://github.com/GaoHu1997/NestCraft/releases/tag/v0.0.3)、[v0.0.2](https://github.com/GaoHu1997/NestCraft/releases/tag/v0.0.2)、[v0.0.1](https://github.com/GaoHu1997/NestCraft/releases/tag/v0.0.1)。
+- GitHub 发布：`.github/workflows/release-windows.yml` 通过手动触发或推送 `v*` 标签构建 Windows x64 免安装 exe，生成 `nestcraft-win64.json` 更新清单并创建 Release；当前只发布免安装 exe，不发布安装包。0.0.7 已发布：[v0.0.7](https://github.com/GaoHu1997/NestCraft/releases/tag/v0.0.7)（免安装 exe／zip／`.sha256`／`nestcraft-win64.json` 四资产，SHA-256 三方一致）。历史发布：[v0.0.6](https://github.com/GaoHu1997/NestCraft/releases/tag/v0.0.6)、[v0.0.5](https://github.com/GaoHu1997/NestCraft/releases/tag/v0.0.5)、[v0.0.4](https://github.com/GaoHu1997/NestCraft/releases/tag/v0.0.4)、[v0.0.3](https://github.com/GaoHu1997/NestCraft/releases/tag/v0.0.3)、[v0.0.2](https://github.com/GaoHu1997/NestCraft/releases/tag/v0.0.2)、[v0.0.1](https://github.com/GaoHu1997/NestCraft/releases/tag/v0.0.1)。
 - 持续集成：`.github/workflows/ci.yml` 在 push / PR 到 main 时执行前端类型检查与构建、`cargo check`、`cargo test --lib`。
 
 环境要求：Node 24+、Rust 1.99+（MSVC 工具链）、git、Windows WebView2。
@@ -51,6 +51,6 @@ docs/                研发文档（正式）+ tmp/（过程）+ 参考/（本�
 
 ## 状态
 
-当前版本 **0.0.7**：0.0.6 之后的 CR-095~CR-103、BUG-004~006、CR-104/CR-105、FEAT-027 与 STORY-117 批量成果（平台提示分层与工具按需、AI 会话字号与聊天区视觉校正、知识库阅读与文件交互修正、设置中心评审二轮与能力管理合并、AI 工具调用报错与侧栏窄容器适配、会话统计空态与实时流速、流式重连提示、待发队列单行紧凑、CLI 首轮运行态与生图密钥路径及侧栏焦点框修复、本地搜索授权会话化、AI 服务器连接工具与 AI 搜索工具等）已入库；本地验证 npm run build（tsc + vite build）exit 0、cargo check --all-targets exit 0、cargo test --lib 629 通过 / 0 失败 / 11 忽略、npm ci --dry-run --offline exit 0；CI 与免安装 exe 发布流水线随 v0.0.7 标签执行，Release 资产核验与运行时逐项验收待补记。当前状态：**待用户验收**。
+当前版本 **0.0.7**：0.0.6 之后的 CR-095~CR-103、BUG-004~006、CR-104/CR-105、FEAT-027 与 STORY-117 批量成果（平台提示分层与工具按需、AI 会话字号与聊天区视觉校正、知识库阅读与文件交互修正、设置中心评审二轮与能力管理合并、AI 工具调用报错与侧栏窄容器适配、会话统计空态与实时流速、流式重连提示、待发队列单行紧凑、CLI 首轮运行态与生图密钥路径及侧栏焦点框修复、本地搜索授权会话化、AI 服务器连接工具与 AI 搜索工具等）已入库；本地验证 npm run build（tsc + vite build）exit 0、cargo check --all-targets exit 0、cargo test --lib 629 通过 / 0 失败 / 11 忽略、npm ci --dry-run --offline exit 0；CI（run 45917076396）与发布构建（run 45917680730）均 success，CI 日志 `629 passed; 0 failed; 11 ignored`，Release `v0.0.7` 四资产已完成哈希核验（清单、`.sha256` 与 GitHub asset digest 三方一致，SHA-256 955cd00c…a3be6f，42,135,552 字节），`releases/latest` 指向 v0.0.7；运行时逐项验收与安装包发布未完成。当前状态：**待用户验收**。
 
 2026-11-25 修复 BUG-001（便携版首次启动迁移 3.5 GB 历史数据被系统判「未响应」）：启动同步段只迁核心数据（含数据库），`chat/<cli>-profiles` 改为后台续传，迁移由「目标目录存在即整目录跳过」改为逐文件合并（缺失补齐、已有不覆盖），并新增 `data/logs/startup.log` 记录耗时。验证：`cargo test --lib` 538 通过 / 0 失败 / 8 忽略（新增 2 项）、`cargo check --all-targets` exit 0；全新目录 + 真实 3.5 GB 源实测窗口 3.8 s 出现且全程响应，详见 [REPORT-BUG-001](docs/Test/REPORT-BUG-001-首启迁移未响应修复验证.md)。**修复仅入源码，便携版 exe 需重新打包后才生效。**
